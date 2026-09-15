@@ -31,7 +31,8 @@ Anime works out of the box. Movies and TV need a free TMDB key:
 
 1. Sign up at <https://www.themoviedb.org>
 2. Settings → API → request an API key (choose personal use)
-3. In Catalog, click the **⚙** button → paste it under **Movie and TV search**
+3. In Catalog, click the **⚙** button → **Services** → paste it under
+   **Film and TV search**
 
 That page shows you **two** credentials and doesn't explain the difference.
 **Either one works** — paste whichever you have:
@@ -42,6 +43,16 @@ That page shows you **two** credentials and doesn't explain the difference.
 It's checked against TMDB before saving, so a typo or a stray space gets caught
 immediately. It's stored in your library file, in a table that every export and
 backup deliberately skips — so it never ends up on GitHub.
+
+## IMDb and Rotten Tomatoes
+
+Optional, and separate from the key above. TMDB publishes its own score and
+nothing else, so IMDb, Rotten Tomatoes and Metacritic come from
+[OMDb](https://www.omdbapi.com/apikey.aspx) — free for 1,000 lookups a day.
+Pick **FREE**, and click the link they email you or the key won't work.
+
+Paste it into **Settings → Services**. Scores are looked up once per title and
+then stored, so the daily limit goes a long way.
 
 ## Adding things
 
@@ -59,7 +70,8 @@ empty on purpose.
 
 ## Getting your list out
 
-Settings → **Export**. Pick a category and a status, then choose a shape:
+Settings → **Library** → Export. Pick a category and a status, then choose a
+shape:
 
 | | |
 | --- | --- |
@@ -178,7 +190,8 @@ works even when the PIN lock is misbehaving.
 | **The library page** | `src/routes/+page.svelte` and `+page.server.ts` |
 | **Search and adding** | `src/routes/entry/new/+page.svelte` |
 | **Bulk import** | `src/routes/import/+page.svelte` |
-| **Settings** | `src/routes/settings/+page.svelte` |
+| **Settings** | `src/routes/settings/` — one folder per section |
+| **A title's page** | `src/routes/entry/[id]/` (yours), `src/routes/title/` (not yours) |
 | **Where titles come from** | `src/lib/server/metadata/` — AniList and TMDB |
 | **Every database query** | `src/lib/server/db/queries.ts`, as plain SQL |
 | **Statuses and sort options** | `src/lib/constants.ts` |

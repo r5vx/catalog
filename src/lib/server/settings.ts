@@ -24,6 +24,8 @@ db.exec(`
 export type Settings = {
 	/** Free key from themoviedb.org. Without it, only anime search works. */
 	tmdbApiKey?: string;
+	/** Free key from omdbapi.com. Optional — adds IMDb and Rotten Tomatoes. */
+	omdbApiKey?: string;
 	/** Optional. When set, the app asks for it before showing anything. */
 	pinHash?: string;
 	/** Random per-install value, so a PIN cookie can't be guessed. */

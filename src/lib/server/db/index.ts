@@ -147,7 +147,18 @@ const laterColumns: Record<string, string> = {
 	show_status: 'TEXT',
 	season_counts: 'TEXT',
 	next_air_date: 'TEXT',
-	checked_at: 'TEXT'
+	checked_at: 'TEXT',
+	// Scores from everywhere else, fetched from OMDb and kept so the page can
+	// show them instantly. `scores_checked_at` is what stops us asking again
+	// for something we looked up last week.
+	imdb_id: 'TEXT',
+	imdb_rating: 'REAL',
+	imdb_votes: 'INTEGER',
+	rt_score: 'INTEGER',
+	metascore: 'INTEGER',
+	content_rating: 'TEXT',
+	awards: 'TEXT',
+	scores_checked_at: 'TEXT'
 };
 
 for (const [name, type] of Object.entries(laterColumns)) {

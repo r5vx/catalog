@@ -2,28 +2,124 @@
 	import { libraryHref } from '$lib/nav';
 	import EntryForm from '$lib/EntryForm.svelte';
 	import TitleSearch from '$lib/TitleSearch.svelte';
+	import ScoreStrip from '$lib/ScoreStrip.svelte';
+	import Synopsis from '$lib/Synopsis.svelte';
+	import TagChips from '$lib/TagChips.svelte';
+	import CastRow from '$lib/CastRow.svelte';
 	import { progressSummary } from '$lib/progress';
+	import { statusLabel } from '$lib/constants';
 	import type { SearchResult } from '$lib/server/metadata/types';
 	import type { PageData, ActionData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
-	let fixing = $state(false);
 	let busyKey = $state<string | null>(null);
-	let swapped = $state('');
 	let backToLibrary = $state('/');
 
 	$effect(() => {
 		backToLibrary = libraryHref();
 	});
 
+	const entry = $derived(data.entry);
+
+	const category = $derived(
+		data.categories.find((one) => one.id === entry.categoryId) ?? null
+	);
+
 	const added = $derived(
-		new Date(data.entry.createdAt).toLocaleDateString(undefined, {
+		new Date(entry.createdAt).toLocaleDateString(undefined, {
 			day: 'numeric',
 			month: 'long',
 			year: 'numeric'
 		})
 	);
+
+	const facts = $derived(
+		[
+			entry.year ? String(entry.year) : null,
+			category?.name ?? null,
+			entry.episodesTotal ? `${entry.episodesTotal} episodes` : null,
+			entry.runtimeMinutes ? `${entry.runtimeMinutes} min` : null,
+			entry.rewatches ? `Watched ${entry.rewatches + 1}×` : null
+		].filter(Boolean)
+	);
+
+	/* ------------------------------------- things fetched after the page loads */
+
+	/**
+	 * The synopsis, the outside scores, and — for entries added before the app
+	 * kept them — the tags and cast.
+	 *
+	 * Fetched after the page has rendered rather than during the load, so a
+	 * slow API never keeps you staring at a blank screen. Everything is saved,
+	 * so it only happens once per title.
+	 */
+	let overview = $state<string | null>(null);
+	let tags = $state<{ id?: number; name: string; kind: string }[]>([]);
+	let cast = $state<{ id: number; name: string; photo: string | null; character: string | null }[]>(
+		[]
+	);
+	let scores = $state<{
+		imdbRating: number | null;
+		imdbVotes: number | null;
+		rtScore: number | null;
+		metascore: number | null;
+		contentRating: string | null;
+		awards: string | null;
+	} | null>(null);
+
+	let looking = $state(false);
+
+	$effect(() => {
+		const current = entry;
+
+		// Seed from what's stored, then go and get whatever's missing.
+		overview = current.overview;
+		tags = data.tags;
+		cast = data.cast;
+		scores = {
+			imdbRating: current.imdbRating,
+			imdbVotes: current.imdbVotes,
+			rtScore: current.rtScore,
+			metascore: current.metascore,
+			contentRating: current.contentRating,
+			awards: current.awards
+		};
+
+		const wantScores = data.scoresAvailable && !current.scoresCheckedAt;
+		const wantDetails = !current.overview;
+
+		if (!wantScores && !wantDetails) return;
+		if (!current.sourceId) return;
+
+		enrich(current.id);
+	});
+
+	async function enrich(id: number) {
+		looking = true;
+
+		try {
+			const response = await fetch('/api/scores', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ id })
+			});
+
+			if (!response.ok) return;
+
+			const payload = await response.json();
+			scores = payload.scores;
+			if (payload.overview) overview = payload.overview;
+			if (payload.tags?.length) tags = payload.tags;
+			if (payload.cast?.length) cast = payload.cast;
+		} catch {
+			// Offline. What's stored is already on screen.
+		} finally {
+			looking = false;
+		}
+	}
+
+	/* --------------------------------------------------------- the wrong match */
 
 	async function useInstead(result: SearchResult) {
 		busyKey = result.key;
@@ -31,7 +127,7 @@
 			const response = await fetch('/api/rematch', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ id: data.entry.id, result })
+				body: JSON.stringify({ id: entry.id, result })
 			});
 
 			if (!response.ok) return;
@@ -46,120 +142,135 @@
 	}
 </script>
 
-<svelte:head><title>{data.entry.title} · Catalog</title></svelte:head>
+<svelte:head><title>{entry.title} · Catalog</title></svelte:head>
 
-<header>
-	<a href={backToLibrary} class="back faint">&larr; Library</a>
-	<h1>{data.entry.title}</h1>
-	<p class="added faint tabular">Added {added}</p>
-</header>
+<a href={backToLibrary} class="back faint">&larr; Library</a>
 
 {#if form?.error}
 	<p class="notice error" role="alert">{form.error}</p>
 {:else if form?.saved}
 	<p class="notice saved" role="status">Saved.</p>
-{:else if swapped}
-	<p class="notice saved" role="status">
-		Now matched to <strong>{swapped}</strong>. Your rating, notes and dates were kept.
-	</p>
 {/if}
 
-{#if progressSummary(data.entry)}
-	<p class="airing muted">{progressSummary(data.entry)}</p>
-{/if}
-
-{#if data.cast.length > 0}
-	<section class="cast">
-		<h2 class="label">Cast</h2>
-		<ul>
-			{#each data.cast as person (person.id)}
-				<li>
-					<a
-						href="/person/{person.id}?from={data.entry.id}"
-						title="Everything else with {person.name}"
-					>
-						{#if person.photo}
-							<img src={person.photo} alt="" loading="lazy" />
-						{:else}
-							<span class="noface" aria-hidden="true">?</span>
-						{/if}
-						<span class="who">{person.name}</span>
-						{#if person.character}
-							<span class="role faint">{person.character}</span>
-						{/if}
-					</a>
-				</li>
-			{/each}
-		</ul>
-		<p class="faint hint">Billing order. Click anyone to see what else you've watched with them.</p>
-	</section>
-{/if}
-
-
-
-<form method="POST" action="?/save">
-	<EntryForm categories={data.categories} entry={data.entry} submitLabel="Save changes" />
-</form>
-
-<section class="fix">
-	{#if fixing}
-		<div class="fix-head">
-			<span class="label">Match it to something else</span>
-			<button type="button" class="btn" onclick={() => (fixing = false)}>Cancel</button>
+<article>
+	<header>
+		<div class="poster">
+			{#if entry.posterUrl}
+				<img src={entry.posterUrl} alt="" />
+			{:else}
+				<span class="empty" aria-hidden="true">{category?.emoji ?? '?'}</span>
+			{/if}
 		</div>
-		<TitleSearch
-			initial={data.entry.title}
-			label="Find the right title"
-			placeholder="Search for the right one…"
-			{busyKey}
-			onpick={useInstead}
-		/>
-	{:else}
-		<button type="button" class="btn" onclick={() => (fixing = true)}>Wrong match? Fix it</button>
-	{/if}
-</section>
 
-<form
-	method="POST"
-	action="?/delete"
-	class="danger-zone"
-	onsubmit={(event) => {
-		if (!confirm(`Remove "${data.entry.title}" from your library?`)) event.preventDefault();
-	}}
->
-	<button type="submit" class="btn btn-danger">Delete this entry</button>
-</form>
+		<div class="meta">
+			<div class="pills">
+				<span class="pill {entry.status}">{statusLabel(entry.status)}</span>
+				{#if entry.favorite}<span class="pill fav">★ Favourite</span>{/if}
+			</div>
+
+			<h1>{entry.title}</h1>
+			<p class="facts faint tabular">{facts.join(' · ')}</p>
+
+			<ScoreStrip
+				mine={entry.rating}
+				site={entry.externalRating}
+				siteName={entry.source === 'anilist' ? 'AniList' : 'TMDB'}
+				{...entry.source === 'anilist' ? {} : { siteVotes: entry.externalVotes }}
+				imdb={scores?.imdbRating ?? null}
+				imdbVotes={scores?.imdbVotes ?? null}
+				rt={scores?.rtScore ?? null}
+				metascore={scores?.metascore ?? null}
+				contentRating={scores?.contentRating ?? null}
+				loading={looking}
+			/>
+
+			{#if progressSummary(entry)}
+				<p class="airing muted">{progressSummary(entry)}</p>
+			{/if}
+
+			{#if entry.notes}
+				<blockquote class="yours">{entry.notes}</blockquote>
+			{/if}
+		</div>
+	</header>
+
+	<Synopsis text={overview} pending={looking} />
+
+	{#if scores?.awards}
+		<section>
+			<h2 class="label">Awards</h2>
+			<p class="awards muted">{scores.awards}</p>
+		</section>
+	{/if}
+
+	<TagChips {tags} />
+
+	<CastRow
+		{cast}
+		from={entry.id}
+		note="Billing order. Click anyone to see what else you've watched with them."
+	/>
+
+	<!-- Closed by default: opening a film should show you the film, not a
+	     wall of empty text boxes. -->
+	<details class="editor">
+		<summary>
+			<span class="summary-title">Edit</span>
+			<span class="summary-sub faint">rating, status, dates, your own notes</span>
+		</summary>
+
+		<div class="editor-body">
+			<form method="POST" action="?/save">
+				<EntryForm categories={data.categories} {entry} submitLabel="Save changes" />
+			</form>
+
+			<div class="sub-tool">
+				<div>
+					<p class="tool-title">Wrong match?</p>
+					<p class="faint hint">Swap it for the right title. Your rating and notes are kept.</p>
+				</div>
+				<TitleSearch
+					initial={entry.title}
+					label="Find the right title"
+					placeholder="Search for the right one…"
+					{busyKey}
+					onpick={useInstead}
+				/>
+			</div>
+
+			<form
+				method="POST"
+				action="?/delete"
+				class="sub-tool danger"
+				onsubmit={(event) => {
+					if (!confirm(`Remove "${entry.title}" from your library?`)) event.preventDefault();
+				}}
+			>
+				<div>
+					<p class="tool-title">Remove it</p>
+					<p class="faint hint">Added {added}. This can't be undone.</p>
+				</div>
+				<button type="submit" class="btn btn-danger">Delete this entry</button>
+			</form>
+		</div>
+	</details>
+</article>
 
 <style>
-	header {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-		margin-bottom: 26px;
-	}
-
 	.back {
 		font-size: 0.85rem;
-		width: fit-content;
+		display: inline-block;
+		margin-bottom: 14px;
 	}
 
 	.back:hover {
 		color: var(--accent);
 	}
 
-	h1 {
-		font-size: clamp(1.6rem, 4vw, 2.1rem);
-	}
-
-	.added {
-		font-size: 0.8rem;
-		margin: 2px 0 0;
-	}
-
 	.notice {
 		border-radius: var(--radius-sm);
 		padding: 10px 14px;
-		margin: 0 0 20px;
+		margin: 0 0 18px;
 		font-size: 0.9rem;
 	}
 
@@ -175,15 +286,88 @@
 		color: var(--good);
 	}
 
+	article {
+		display: flex;
+		flex-direction: column;
+		gap: 30px;
+	}
+
+	header {
+		display: flex;
+		gap: 24px;
+		align-items: flex-start;
+	}
+
+	.poster {
+		flex: 0 0 190px;
+		aspect-ratio: 2 / 3;
+		background: var(--surface-2);
+		border: 1px solid var(--rule);
+		border-radius: var(--radius);
+		overflow: hidden;
+		display: grid;
+		place-items: center;
+	}
+
+	.poster img {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		display: block;
+	}
+
+	.empty {
+		font-size: 2.4rem;
+		opacity: 0.4;
+	}
+
+	.meta {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+
+	.pills {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+	}
+
+	.pill.fav {
+		background: var(--accent-bg);
+		color: var(--accent);
+		border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+	}
+
+	h1 {
+		font-size: clamp(1.6rem, 4.5vw, 2.3rem);
+		margin: -4px 0 0;
+	}
+
+	.facts {
+		margin: -6px 0 0;
+		font-size: 0.87rem;
+	}
+
 	.airing {
 		font-size: 0.9rem;
-		margin: 0 0 16px;
+		margin: 2px 0 0;
 		padding-left: 11px;
 		border-left: 2px solid var(--good);
 	}
 
-	.cast {
-		margin-bottom: 26px;
+	/* Your own words about it, which outrank anything a database says. */
+	.yours {
+		margin: 2px 0 0;
+		padding-left: 13px;
+		border-left: 2px solid var(--accent);
+		font-size: 0.93rem;
+		line-height: 1.6;
+		color: var(--ink-soft);
+		white-space: pre-wrap;
+		max-width: 62ch;
 	}
 
 	.label {
@@ -193,96 +377,109 @@
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
 		color: var(--ink-faint);
-		margin: 0 0 10px;
+		margin: 0 0 8px;
 	}
 
-	.cast ul {
-		list-style: none;
+	.awards {
 		margin: 0;
-		padding: 0 0 4px;
+		font-size: 0.92rem;
+		max-width: 68ch;
+	}
+
+	/* ------------------------------------------------------------- editing */
+
+	.editor {
+		border: 1px solid var(--rule);
+		border-radius: var(--radius);
+		background: var(--surface);
+	}
+
+	.editor summary {
 		display: flex;
-		gap: 14px;
-		overflow-x: auto;
+		align-items: baseline;
+		gap: 10px;
+		flex-wrap: wrap;
+		padding: 14px 18px;
+		cursor: pointer;
+		list-style: none;
 	}
 
-	.cast li {
-		flex: 0 0 88px;
+	.editor summary::-webkit-details-marker {
+		display: none;
 	}
 
-	.cast a {
+	/* A caret that turns, drawn rather than imported. */
+	.editor summary::before {
+		content: '';
+		width: 7px;
+		height: 7px;
+		border-right: 2px solid var(--ink-faint);
+		border-bottom: 2px solid var(--ink-faint);
+		transform: rotate(-45deg);
+		transition: transform 0.15s ease;
+		flex: none;
+		align-self: center;
+	}
+
+	.editor[open] summary::before {
+		transform: rotate(45deg);
+	}
+
+	.editor summary:hover .summary-title {
+		color: var(--accent);
+	}
+
+	.summary-title {
+		font-weight: 600;
+	}
+
+	.summary-sub {
+		font-size: 0.83rem;
+	}
+
+	.editor-body {
+		padding: 4px 18px 20px;
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
+		gap: 26px;
 	}
 
-	.cast img,
-	.noface {
-		width: 88px;
-		height: 88px;
-		border-radius: 50%;
-		object-fit: cover;
-		border: 1px solid var(--rule);
-		transition: border-color 0.14s ease;
+	.sub-tool {
+		border-top: 1px solid var(--rule);
+		padding-top: 18px;
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
 	}
 
-	.noface {
-		display: grid;
-		place-items: center;
-		background: var(--surface-2);
-		color: var(--ink-faint);
+	.sub-tool.danger {
+		align-items: flex-start;
 	}
 
-	.cast a:hover img,
-	.cast a:hover .noface {
-		border-color: var(--accent);
-	}
-
-	.who {
-		font-size: 0.8rem;
+	.tool-title {
 		font-weight: 600;
-		line-height: 1.25;
-	}
-
-	.role {
-		font-size: 0.73rem;
-		line-height: 1.25;
+		margin: 0;
+		font-size: 0.93rem;
 	}
 
 	.hint {
-		font-size: 0.78rem;
-		margin: 8px 0 0;
+		font-size: 0.8rem;
+		margin: 2px 0 0;
 	}
 
-	.fix {
-		margin-top: 36px;
-		display: flex;
-		flex-direction: column;
-		gap: 12px;
-		background: var(--surface);
-		border: 1px solid var(--rule);
-		border-radius: var(--radius);
-		padding: 16px 18px;
-		margin-bottom: 28px;
-	}
+	@media (max-width: 620px) {
+		header {
+			flex-direction: column;
+			gap: 18px;
+		}
 
-	.fix-head {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 12px;
-	}
+		.poster {
+			flex: none;
+			width: 150px;
+		}
 
-	.label {
-		font-size: 0.72rem;
-		font-weight: 600;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: var(--ink-faint);
-	}
-
-	.danger-zone {
-		margin-top: 48px;
-		padding-top: 22px;
-		border-top: 1px solid var(--rule);
+		.editor-body {
+			padding-inline: 14px;
+		}
 	}
 </style>

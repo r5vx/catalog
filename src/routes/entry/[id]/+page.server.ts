@@ -1,5 +1,7 @@
 import { listCategories, getEntry, updateEntry, deleteEntry } from '$lib/server/db/queries';
 import { castForEntry } from '$lib/server/db/people';
+import { tagsForEntry } from '$lib/server/db/tags';
+import { omdbConfigured } from '$lib/server/metadata/omdb';
 import { parseEntryForm } from '$lib/server/form';
 import { error, fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
@@ -8,7 +10,14 @@ export const load: PageServerLoad = async ({ params }) => {
 	const entry = getEntry(Number(params.id));
 	if (!entry) error(404, 'That entry does not exist.');
 
-	return { entry, categories: listCategories(), cast: castForEntry(entry.id) };
+	return {
+		entry,
+		categories: listCategories(),
+		cast: castForEntry(entry.id),
+		tags: tagsForEntry(entry.id),
+		// The page only offers to look up outside scores when it can.
+		scoresAvailable: omdbConfigured()
+	};
 };
 
 export const actions: Actions = {

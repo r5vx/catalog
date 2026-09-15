@@ -37,6 +37,14 @@ const ENTRY_COLUMNS = `
 	season_counts    AS seasonCounts,
 	next_air_date    AS nextAirDate,
 	checked_at       AS checkedAt,
+	imdb_id          AS imdbId,
+	imdb_rating      AS imdbRating,
+	imdb_votes       AS imdbVotes,
+	rt_score         AS rtScore,
+	metascore,
+	content_rating   AS contentRating,
+	awards,
+	scores_checked_at AS scoresCheckedAt,
 	created_at       AS createdAt,
 	updated_at       AS updatedAt
 `;
@@ -380,4 +388,58 @@ export function listForExport(
 	`;
 
 	return plainAll<ExportRow>(db.prepare(sql).all(...params));
+}
+
+/* ------------------------------------------------------------------- scores */
+
+/**
+ * Scores from IMDb, Rotten Tomatoes and Metacritic, saved against the entry.
+ *
+ * They're written once and read forever after: the page shows what's stored
+ * instantly, and only asks OMDb again when the stamp is old. Nobody's IMDb
+ * score moves enough to be worth a network round trip on every page view.
+ */
+export function saveScores(
+	id: number,
+	scores: {
+		imdbId: string | null;
+		imdbRating: number | null;
+		imdbVotes: number | null;
+		rtScore: number | null;
+		metascore: number | null;
+		contentRating: string | null;
+		awards: string | null;
+	}
+): void {
+	db.prepare(
+		`UPDATE entries SET
+			imdb_id = ?, imdb_rating = ?, imdb_votes = ?, rt_score = ?,
+			metascore = ?, content_rating = ?, awards = ?,
+			scores_checked_at = ?
+		 WHERE id = ?`
+	).run(
+		scores.imdbId,
+		scores.imdbRating,
+		scores.imdbVotes,
+		scores.rtScore,
+		scores.metascore,
+		scores.contentRating,
+		scores.awards,
+		new Date().toISOString(),
+		id
+	);
+}
+
+/** Fills in a synopsis for an older entry that was added before we kept one. */
+export function saveOverview(id: number, overview: string): void {
+	db.prepare('UPDATE entries SET overview = ? WHERE id = ?').run(overview, id);
+}
+
+/** Whether something is already in the library, and which entry it is. */
+export function entryIdForSource(source: string, sourceId: string): number | null {
+	const row = db
+		.prepare('SELECT id FROM entries WHERE source = ? AND source_id = ?')
+		.get(source, sourceId) as { id: number } | undefined;
+
+	return row?.id ?? null;
 }

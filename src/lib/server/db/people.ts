@@ -147,3 +147,21 @@ export function allTitleKeys(): Set<string> {
 export function hasAnyCast(): boolean {
 	return Boolean((db.prepare('SELECT 1 FROM entry_cast LIMIT 1').get() as unknown));
 }
+
+/**
+ * Which of these people are already in your library, by provider id.
+ *
+ * A title you don't own still lists its cast, and anyone you've seen elsewhere
+ * should still be clickable — so the page asks who it already knows rather
+ * than linking blindly to people who have no page.
+ */
+export function knownPeople(sourceIds: string[]): Map<string, number> {
+	if (sourceIds.length === 0) return new Map();
+
+	const holes = sourceIds.map(() => '?').join(', ');
+	const rows = db
+		.prepare(`SELECT id, source_id AS sourceId FROM people WHERE source_id IN (${holes})`)
+		.all(...sourceIds) as { id: number; sourceId: string }[];
+
+	return new Map(rows.map((row) => [row.sourceId, row.id]));
+}

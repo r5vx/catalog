@@ -124,34 +124,41 @@
 			{#each visible as credit (credit.title + credit.year)}
 				{@const key = `${credit.source}:${credit.sourceId}`}
 				<li>
-					<div class="poster">
-						{#if credit.poster}
-							<img src={credit.poster} alt="" loading="lazy" />
-						{:else}
-							<span class="fallback" aria-hidden="true">?</span>
+					<!-- Read about it first; the + adds it without leaving the page. -->
+					<a
+						class="card"
+						href="/title/{credit.source}/{credit.sourceId}?from={data.person.id}"
+						title="Read about {credit.title}"
+					>
+						<div class="poster">
+							{#if credit.poster}
+								<img src={credit.poster} alt="" loading="lazy" />
+							{:else}
+								<span class="fallback" aria-hidden="true">?</span>
+							{/if}
+						</div>
+						<h3 class="name">{credit.title}</h3>
+						<p class="sub faint tabular">{credit.year || '—'}</p>
+						{#if credit.character}
+							<p class="role faint">as {credit.character}</p>
 						{/if}
+					</a>
 
-						{#if justAdded[key]}
-							<a class="added-badge" href="/entry/{justAdded[key]}" title="Added — open it">
-								Added
-							</a>
-						{:else}
-							<button
-								type="button"
-								class="add"
-								disabled={adding === key}
-								title="Add to your watchlist"
-								aria-label="Add {credit.title} to your watchlist"
-								onclick={() => addToWatchlist(credit)}
-							>
-								{adding === key ? '…' : '+'}
-							</button>
-						{/if}
-					</div>
-					<h3 class="name">{credit.title}</h3>
-					<p class="sub faint tabular">{credit.year || '—'}</p>
-					{#if credit.character}
-						<p class="role faint">as {credit.character}</p>
+					{#if justAdded[key]}
+						<a class="added-badge" href="/entry/{justAdded[key]}" title="Added — open it">
+							Added
+						</a>
+					{:else}
+						<button
+							type="button"
+							class="add"
+							disabled={adding === key}
+							title="Add to your watchlist"
+							aria-label="Add {credit.title} to your watchlist"
+							onclick={() => addToWatchlist(credit)}
+						>
+							{adding === key ? '…' : '+'}
+						</button>
 					{/if}
 				</li>
 			{/each}
@@ -286,7 +293,7 @@
 		margin-top: 4px;
 	}
 
-	.known .poster {
+	.known li {
 		position: relative;
 	}
 

@@ -200,10 +200,56 @@ for the same reason the backup does — the TMDB key.
 A **filtered** JSON backup would be a trap: restoring one would quietly drop
 everything it excluded. So the filters apply to csv/txt/print and not to json.
 
-### Settings page order
-Colour, Export, Movie and TV search, PIN lock, Updates, Your files — most-used
-first, set-once things after. A row of jump-link chips under the heading covers
-the scrolling. Section ids (`#colour`, `#export`, …) are what the chips target.
+### Settings, as sections
+One page per section under `/settings/*`, with a shared `+layout.svelte` holding
+the nav: **Appearance / Library / Services / Privacy / Updates**. `/settings`
+itself is an "at a glance" summary.
+
+Two columns on a wide screen, and on a phone it behaves like a phone's own
+settings — the index is the list, and picking one replaces it. That's the
+`.shell.index` class plus a 720px breakpoint, not two separate layouts.
+
+Adding a section means a folder and an entry in `SECTIONS`. Updates hides
+itself when `updateMode` is `none`.
+
+### Reading about a title
+Every title has a page worth landing on, not just a form.
+
+**`/entry/[id]`** — poster, status, scores, synopsis, tags, cast, and *then* a
+closed `<details>` holding the edit form, the re-match tool and delete. The
+user's words: clicking a film shouldn't "immediately show you a ton of text
+boxes". Shared pieces are `ScoreStrip`, `Synopsis`, `TagChips` and `CastRow`.
+
+**`/title/[source]/[id]`** — the same page for something you *don't* own,
+reached by clicking an actor's "also known for". `[id]` is the provider's own
+id, colon and all: `/title/tmdb/movie:550`. Anything already in the library
+**redirects to its entry**, so there's never a preview of something you have.
+Its cast links only for people already in `people` — the rest would be dead
+links.
+
+On the person page the `+` button is a **sibling** of the card link, not inside
+it: a button nested in an anchor is invalid and swallows the click.
+
+### Scores from elsewhere
+TMDB carries its own rating and nothing else. IMDb, Rotten Tomatoes and
+Metacritic come from **OMDb** (`omdbApiKey`, free, 1,000/day), which is the one
+free source carrying all three in one response. Entirely optional — with no key
+the section simply doesn't appear.
+
+Looked up by IMDb id where TMDB gives one (`append_to_response=external_ids`
+for TV; films carry `imdb_id` directly), and by title+year for AniList, which
+has no IMDb id at all.
+
+**Stored on the entry, not fetched per view** — `imdb_rating`, `rt_score`,
+`metascore`, `content_rating`, `awards`, `scores_checked_at`. `POST /api/scores`
+runs *after* the page renders so a slow API never blocks it, and a lookup that
+finds nothing still stamps `scores_checked_at` — otherwise every page view
+re-asks about something OMDb has never heard of.
+
+That endpoint also backfills the synopsis, tags and cast for entries added
+before the app kept them, and **returns the tags and cast** rather than letting
+the page reload — a reload would throw away anything half-typed in the edit
+form.
 
 ### Notes
 `notes` table; rich text via `contenteditable` + `execCommand` (still the only

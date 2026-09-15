@@ -46,6 +46,19 @@ export type Entry = {
 	nextAirDate: string | null;
 	checkedAt: string | null;
 
+	/** Scores from everywhere else, via OMDb. Null until they're looked up. */
+	imdbId: string | null;
+	imdbRating: number | null;
+	imdbVotes: number | null;
+	/** Rotten Tomatoes, as a percentage. */
+	rtScore: number | null;
+	/** Metacritic, out of 100. */
+	metascore: number | null;
+	/** "PG-13", "TV-MA". */
+	contentRating: string | null;
+	awards: string | null;
+	scoresCheckedAt: string | null;
+
 	createdAt: string;
 	updatedAt: string;
 };
