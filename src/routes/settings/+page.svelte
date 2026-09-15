@@ -423,7 +423,8 @@
 		<section id="updates">
 			<div class="head">
 				<h2>Updates</h2>
-				{#if data.appVersion}<span class="pill">v{data.appVersion}</span>{/if}
+				<!-- .pill uppercases, which would turn a "v" prefix into "V1.0.0". -->
+				{#if data.appVersion}<span class="pill tabular">{data.appVersion}</span>{/if}
 			</div>
 
 			<p class="muted">

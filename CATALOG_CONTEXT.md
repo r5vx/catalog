@@ -27,7 +27,7 @@ call). Don't raise encryption or password storage again unless they do.
 | **`node:sqlite`** (built into Node) | better-sqlite3 needed Visual Studio build tools they don't have |
 | adapter-node | Self-hosted; no cloud |
 | Electron 38 | They wanted a real app icon, like Steam or Duolingo |
-| **Zero runtime dependencies** | `dependencies` in package.json is empty, deliberately |
+| **One runtime dependency** | `dependencies` was empty on purpose until 2026-09-15; `electron-updater` is the only thing in it, and only so installed copies can update themselves |
 
 Data lives in **`%APPDATA%\Catalog\library.db`** — shared by `npm run dev` and
 the packaged app, so there's only ever one library.
@@ -233,6 +233,7 @@ npm run backfill   fill in public ratings for older entries
 npm run backup     export + snapshot + push to GitHub
 npm run restore    preview a restore (-- --write to apply)
 npm run check      type check
+npm run release    build and publish a new version to everyone
 ```
 
 **Testing against their real data safely:** copy `library.db` (plus `-wal`,
@@ -262,28 +263,80 @@ Restore has been tested end to end, not just written.
 
 ---
 
-## Sharing it with other people — open, 2026-09-15
+## Sharing it with other people
 
-The user wants friends to be able to install Catalog and **keep getting updates**
-as it changes. Nothing has been built for this yet. What's already true:
+Decided 2026-09-15: **public repo, anyone can install; each friend brings their
+own TMDB key.** Built the same day.
 
-- The project is **not a git repository** — `git init` is step one.
-- **No secrets are in the source.** The TMDB key and PIN hash live in the
-  `settings` table inside `%APPDATA%\Catalog\library.db`, and `.env` is ignored.
-  A public repo is therefore safe.
-- The database path is **per Windows user**, so a friend gets their own empty
-  library automatically. Nothing to change there.
-- The current updater (`Update Catalog.bat` → `npm run pack`) rebuilds **from a
-  source checkout**. A friend who installs an .exe has no source, no
-  `node_modules` and no npm, so it cannot work for them. They need
-  `electron-updater` against GitHub Releases instead — which means the first
-  real entry in `dependencies`, currently deliberately empty.
-- `scripts/backup.mjs` pushes to `r5vx/catalog-backups`, which is **the user's**
-  repo. Friends can't use it. For them, Settings → Export → full backup is the
-  substitute.
-- Each friend needs **their own free TMDB key**. Bundling the user's key into a
-  public repo would get it scraped and disabled. Settings already handles this;
-  a first-run screen would make it obvious.
+### How a friend gets it and keeps it
+
+They download `Catalog-Setup-<version>.exe` from the repo's Releases page and
+run it. From then on `electron-updater` checks GitHub on every launch,
+downloads a new version in the background and installs it on quit. No account,
+no server, no shared anything — their library is a file on their own PC.
+
+**Two update paths now exist and the app picks between them itself.**
+`electron/main.cjs` looks for `Update Catalog.bat` two folders above the exe:
+
+| Found | Mode | What Settings offers |
+| --- | --- | --- |
+| yes | `source` | rebuild in place — the owner's own copy |
+| no | `release` | check / download / restart — an installed copy |
+| (`npm run dev`) | `none` | no Updates section at all |
+
+The mode is passed to the server as `CATALOG_UPDATE_MODE`.
+
+**Progress has to cross a process boundary.** Only Electron can talk to GitHub,
+only the SvelteKit server can answer the browser. They already had an IPC
+channel (it's how `quit-for-update` works), so update events travel over it and
+`src/lib/server/updater.ts` parks the latest state for the page to poll at
+`GET /api/update`. That listener is registered from `hooks.server.ts` — via a
+side-effect import — so the check made at launch isn't lost before anyone opens
+Settings.
+
+### Releasing
+
+`npm run release` (or **Release Catalog.bat**): bump → `npm run pack` → wrap in
+an installer → commit, tag, push → upload.
+
+The installer step is `electron-builder --win nsis --prepackaged
+dist-app/win-unpacked`, **not** a plain nsis build. `npm run pack` sets the icon
+with rcedit after electron-builder gives up (lesson 8), so the installer has to
+be made from the folder that already has the icon on it — otherwise an
+installed Catalog gets Electron's default icon back.
+
+Publishing reads `GH_TOKEN` from `.env` (gitignored, parsed by hand — no dotenv
+dependency). Without a token it still builds and prints what to upload. Both
+files matter: **a release without `latest.yml` updates nobody.**
+
+Verified 2026-09-15: `--win nsis` completes cleanly and produces a 96 MB
+installer plus `latest.yml`. The winCodeSign failure from lesson 8 does not
+affect this target — signing is simply skipped.
+
+### First run
+
+`setupNeeded()` in `settings.ts` gates a `/welcome` screen (redirect lives in
+`hooks.server.ts`). It **self-heals for existing installs**: a library with
+entries, or a key already saved, is marked done rather than asking someone who
+has used the app for months to introduce themselves to it. Answering it either
+way sets `setupDone` permanently.
+
+### What is still the owner's alone
+
+- `scripts/backup.mjs` pushes to **`r5vx/catalog-backups`**. Friends can't use
+  it; Settings → Export → full backup is their substitute.
+- The nightly Task Scheduler job.
+- `electron-updater` is now the **only** entry in `dependencies`, which used to
+  be empty on purpose. It earns its place: an installed app has no source code,
+  no npm and no `node_modules`, so nothing else can update it.
+
+### Deliberately not done
+
+- **Code signing.** A certificate is a few hundred a year; friends click through
+  SmartScreen's "unknown publisher" once. The README says so up front so nobody
+  thinks the app is malware.
+- **Bundling the owner's TMDB key.** In a public repo it would be scraped and
+  disabled within days.
 
 ## Working style the user wants
 
