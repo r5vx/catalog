@@ -8,7 +8,7 @@
 	const SECTIONS = [
 		{ href: '/settings/appearance', label: 'Appearance', hint: 'Colour' },
 		{ href: '/settings/library', label: 'Library', hint: 'Export, where your files live' },
-		{ href: '/settings/services', label: 'Services', hint: 'TMDB, IMDb and Rotten Tomatoes' },
+		{ href: '/settings/services', label: 'Services', hint: 'Where titles and scores come from' },
 		{ href: '/settings/privacy', label: 'Privacy', hint: 'PIN lock' },
 		{ href: '/settings/updates', label: 'Updates', hint: 'Keep Catalog current' }
 	];

@@ -33,12 +33,12 @@ export const load: PageServerLoad = async ({ params, url }) => {
 	}));
 
 	const scores = omdbConfigured()
-		? await fetchScores({
+		? ((await fetchScores({
 				imdbId: details.imdbId,
 				title: details.title,
 				year: details.year,
 				isSeries: details.categorySlug === 'tv'
-			})
+			})) ?? null)
 		: null;
 
 	return {

@@ -44,6 +44,7 @@ const ENTRY_COLUMNS = `
 	metascore,
 	content_rating   AS contentRating,
 	awards,
+	box_office       AS boxOffice,
 	scores_checked_at AS scoresCheckedAt,
 	created_at       AS createdAt,
 	updated_at       AS updatedAt
@@ -409,12 +410,13 @@ export function saveScores(
 		metascore: number | null;
 		contentRating: string | null;
 		awards: string | null;
+		boxOffice: number | null;
 	}
 ): void {
 	db.prepare(
 		`UPDATE entries SET
 			imdb_id = ?, imdb_rating = ?, imdb_votes = ?, rt_score = ?,
-			metascore = ?, content_rating = ?, awards = ?,
+			metascore = ?, content_rating = ?, awards = ?, box_office = ?,
 			scores_checked_at = ?
 		 WHERE id = ?`
 	).run(
@@ -425,6 +427,7 @@ export function saveScores(
 		scores.metascore,
 		scores.contentRating,
 		scores.awards,
+		scores.boxOffice,
 		new Date().toISOString(),
 		id
 	);

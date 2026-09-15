@@ -8,6 +8,7 @@
 	import CastRow from '$lib/CastRow.svelte';
 	import { progressSummary } from '$lib/progress';
 	import { statusLabel } from '$lib/constants';
+	import { money } from '$lib/format';
 	import type { SearchResult } from '$lib/server/metadata/types';
 	import type { PageData, ActionData } from './$types';
 
@@ -34,16 +35,6 @@
 		})
 	);
 
-	const facts = $derived(
-		[
-			entry.year ? String(entry.year) : null,
-			category?.name ?? null,
-			entry.episodesTotal ? `${entry.episodesTotal} episodes` : null,
-			entry.runtimeMinutes ? `${entry.runtimeMinutes} min` : null,
-			entry.rewatches ? `Watched ${entry.rewatches + 1}×` : null
-		].filter(Boolean)
-	);
-
 	/* ------------------------------------- things fetched after the page loads */
 
 	/**
@@ -66,9 +57,22 @@
 		metascore: number | null;
 		contentRating: string | null;
 		awards: string | null;
+		boxOffice: number | null;
 	} | null>(null);
 
 	let looking = $state(false);
+
+	// Declared after `scores` because box office only arrives with them.
+	const facts = $derived(
+		[
+			entry.year ? String(entry.year) : null,
+			category?.name ?? null,
+			entry.episodesTotal ? `${entry.episodesTotal} episodes` : null,
+			entry.runtimeMinutes ? `${entry.runtimeMinutes} min` : null,
+			entry.rewatches ? `Watched ${entry.rewatches + 1}×` : null,
+			money(scores?.boxOffice)
+		].filter(Boolean)
+	);
 
 	$effect(() => {
 		const current = entry;
@@ -83,7 +87,8 @@
 			rtScore: current.rtScore,
 			metascore: current.metascore,
 			contentRating: current.contentRating,
-			awards: current.awards
+			awards: current.awards,
+			boxOffice: current.boxOffice
 		};
 
 		const wantScores = data.scoresAvailable && !current.scoresCheckedAt;

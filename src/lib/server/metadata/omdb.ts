@@ -1,55 +1,27 @@
 import { env } from '$env/dynamic/private';
 import { readSettings } from '../settings';
+import { parseOmdb, real, EMPTY_SCORES, type Scores } from './omdbParse';
 
 /**
  * Scores from everywhere that isn't TMDB.
  *
- * TMDB has its own rating and nothing else — no IMDb number, no Rotten
- * Tomatoes, no Metacritic. OMDb is the one free source that carries all three
- * in a single response, so that's where this comes from.
+ * TMDB publishes its own rating and nothing else — no IMDb number, no Rotten
+ * Tomatoes, no Metacritic. OMDb is the one free source carrying all three in a
+ * single response, along with the age rating, awards and box office.
  *
- * It's optional. Without a key the app works exactly as before and the scores
- * section simply doesn't appear.
+ * It's optional. Without a key the app works exactly as before and the extra
+ * scores simply don't appear.
+ *
+ * Reading the response lives in `omdbParse.ts`, which imports nothing, so it
+ * can be tested without a key or a network.
  */
 
-export type Scores = {
-	imdbId: string | null;
-	imdbRating: number | null;
-	imdbVotes: number | null;
-	/** Rotten Tomatoes, as a percentage. */
-	rtScore: number | null;
-	/** Metacritic, out of 100. */
-	metascore: number | null;
-	/** "PG-13", "TV-MA" — what it's rated. */
-	contentRating: string | null;
-	awards: string | null;
-};
-
-export const EMPTY_SCORES: Scores = {
-	imdbId: null,
-	imdbRating: null,
-	imdbVotes: null,
-	rtScore: null,
-	metascore: null,
-	contentRating: null,
-	awards: null
-};
+export type { Scores };
+export { EMPTY_SCORES };
 
 const omdbKey = () => (readSettings().omdbApiKey || env.OMDB_API_KEY || '').trim();
 
 export const omdbConfigured = () => Boolean(omdbKey());
-
-/** OMDb writes "N/A" where other APIs would write null. */
-const real = (value: unknown): string | null => {
-	const text = String(value ?? '').trim();
-	return text && text !== 'N/A' ? text : null;
-};
-
-const toNumber = (value: string | null): number | null => {
-	if (value === null) return null;
-	const n = Number(value.replace(/,/g, ''));
-	return Number.isFinite(n) ? n : null;
-};
 
 /** Checks a key before it's saved, so a typo is caught immediately. */
 export async function verifyOmdbKey(key: string): Promise<{ ok: boolean; message: string }> {
@@ -59,16 +31,18 @@ export async function verifyOmdbKey(key: string): Promise<{ ok: boolean; message
 		url.searchParams.set('i', 'tt0111161'); // The Shawshank Redemption
 
 		const response = await fetch(url);
+
+		// A bad key comes back 401 with the reason in the body — "Invalid API
+		// key!", or "No API key provided." — so read it either way rather than
+		// reporting a status code at someone.
+		const data = await response.json().catch(() => null);
+		const problem = real(data?.Error);
+
+		if (problem) return { ok: false, message: problem };
 		if (!response.ok) return { ok: false, message: `OMDb said ${response.status}.` };
+		if (data?.Response === 'False') return { ok: false, message: 'OMDb rejected that key.' };
 
-		const data = await response.json();
-
-		// OMDb answers 200 with {"Response":"False"} for a bad key.
-		if (data?.Response === 'False') {
-			return { ok: false, message: real(data.Error) ?? 'OMDb rejected that key.' };
-		}
-
-		return { ok: true, message: 'Key saved. IMDb and Rotten Tomatoes scores are on.' };
+		return { ok: true, message: 'Key saved. Extra scores are on.' };
 	} catch {
 		return { ok: false, message: 'Could not reach OMDb. Check your connection.' };
 	}
@@ -80,15 +54,20 @@ export async function verifyOmdbKey(key: string): Promise<{ ok: boolean; message
  * Anime from AniList has no IMDb id at all, so the title-and-year fallback is
  * the only way those get scores — it's less certain, which is why the id is
  * always preferred.
+ *
+ * **Returns null when it couldn't ask** — no key, rejected key, daily limit
+ * reached, or offline — as opposed to `EMPTY_SCORES`, which means it asked and
+ * OMDb has nothing. The caller must not record a failed ask as "checked", or
+ * fixing the key later would change nothing for a month.
  */
 export async function fetchScores(lookup: {
 	imdbId?: string | null;
 	title?: string | null;
 	year?: number | null;
 	isSeries?: boolean;
-}): Promise<Scores> {
+}): Promise<Scores | null> {
 	const key = omdbKey();
-	if (!key) return EMPTY_SCORES;
+	if (!key) return null;
 
 	const url = new URL('https://www.omdbapi.com/');
 	url.searchParams.set('apikey', key);
@@ -100,34 +79,18 @@ export async function fetchScores(lookup: {
 		if (lookup.year) url.searchParams.set('y', String(lookup.year));
 		if (lookup.isSeries) url.searchParams.set('type', 'series');
 	} else {
+		// Nothing to look it up by. That's an answer, not a failure.
 		return EMPTY_SCORES;
 	}
 
 	try {
 		const response = await fetch(url);
-		if (!response.ok) return EMPTY_SCORES;
 
-		const data = await response.json();
-		if (data?.Response === 'False') return EMPTY_SCORES;
+		// 401 is a bad key or the daily limit; both mean "ask again later".
+		if (!response.ok) return null;
 
-		// Rotten Tomatoes and Metacritic only appear inside the Ratings list.
-		const ratings: { Source?: string; Value?: string }[] = data.Ratings ?? [];
-		const valueFrom = (source: string) =>
-			real(ratings.find((entry) => entry.Source === source)?.Value);
-
-		const rt = valueFrom('Rotten Tomatoes');
-		const meta = valueFrom('Metacritic');
-
-		return {
-			imdbId: real(data.imdbID),
-			imdbRating: toNumber(real(data.imdbRating)),
-			imdbVotes: toNumber(real(data.imdbVotes)),
-			rtScore: rt ? toNumber(rt.replace('%', '')) : null,
-			metascore: meta ? toNumber(meta.split('/')[0]) : toNumber(real(data.Metascore)),
-			contentRating: real(data.Rated),
-			awards: real(data.Awards)
-		};
+		return parseOmdb(await response.json());
 	} catch {
-		return EMPTY_SCORES;
+		return null;
 	}
 }

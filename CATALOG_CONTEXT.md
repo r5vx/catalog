@@ -250,10 +250,26 @@ On the person page the `+` button is a **sibling** of the card link, not inside
 it: a button nested in an anchor is invalid and swallows the click.
 
 ### Scores from elsewhere
-TMDB carries its own rating and nothing else. IMDb, Rotten Tomatoes and
-Metacritic come from **OMDb** (`omdbApiKey`, free, 1,000/day), which is the one
-free source carrying all three in one response. Entirely optional — with no key
-the section simply doesn't appear.
+TMDB carries its own rating and nothing else. **OMDb** (`omdbApiKey`, free,
+1,000/day) supplies everything else it has: IMDb rating + votes, Rotten
+Tomatoes, Metacritic, the age rating, awards and box office. Those are *all*
+the rating sources OMDb returns — there is no audience score, and no
+Letterboxd. Entirely optional; with no key none of it appears.
+
+Parsing lives in **`omdbParse.ts`, which imports nothing**, so it can be run
+against captured payloads with no key and no network. There is a test at
+`scratchpad/omdb.test.mjs` (`node --experimental-strip-types`) covering a film,
+a series with no RT entry, `N/A` handling, the Metascore fallback and the money
+formatting.
+
+**`fetchScores` returns `null` when it couldn't ask** — no key, rejected key,
+daily limit, offline — versus `EMPTY_SCORES` meaning it asked and OMDb has
+nothing. Only the latter is recorded as checked. Conflating them meant one bad
+key, or one day over the limit, permanently stamped every title you opened as
+"no scores" for a month.
+
+A bad key comes back **HTTP 401** with the reason in the body, not a 200 — so
+`verifyOmdbKey` reads the body either way and shows OMDb's own message.
 
 Looked up by IMDb id where TMDB gives one (`append_to_response=external_ids`
 for TV; films carry `imdb_id` directly), and by title+year for AniList, which

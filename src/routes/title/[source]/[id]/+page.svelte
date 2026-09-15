@@ -5,6 +5,7 @@
 	import CastRow from '$lib/CastRow.svelte';
 	import { STATUSES } from '$lib/constants';
 	import { libraryHref } from '$lib/nav';
+	import { money } from '$lib/format';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -29,7 +30,8 @@
 			details.seasons ? `${details.seasons} season${details.seasons === 1 ? '' : 's'}` : null,
 			details.episodesTotal ? `${details.episodesTotal} episodes` : null,
 			details.runtimeMinutes ? `${details.runtimeMinutes} min` : null,
-			details.status
+			details.status,
+			money(data.scores?.boxOffice)
 		].filter(Boolean)
 	);
 </script>

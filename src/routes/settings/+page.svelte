@@ -9,11 +9,7 @@
 			value: `${data.entries} ${data.entries === 1 ? 'title' : 'titles'}, ${data.notes} ${data.notes === 1 ? 'note' : 'notes'}`
 		},
 		{ label: 'Film and TV search', value: data.tmdbKeySaved ? 'On' : 'Off', on: data.tmdbKeySaved },
-		{
-			label: 'IMDb and Rotten Tomatoes',
-			value: data.extraScores ? 'On' : 'Off',
-			on: data.extraScores
-		},
+		{ label: 'More scores', value: data.extraScores ? 'On' : 'Off', on: data.extraScores },
 		{ label: 'PIN lock', value: data.pinSet ? 'On' : 'Off', on: data.pinSet }
 	]);
 </script>
