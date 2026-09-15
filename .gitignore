@@ -29,3 +29,5 @@ backups/
 
 # Packaged desktop app
 dist-app/
+# Release builds, kept apart so a running Catalog never blocks one
+dist-release/

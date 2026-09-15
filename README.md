@@ -153,6 +153,9 @@ Double-click **Release Catalog.bat**, or run `npm run release`. It bumps the
 version, builds an installer, commits, tags, pushes, and uploads the release.
 Everyone who has Catalog installed gets it the next time they open the app.
 
+You can leave Catalog open while it runs — a release builds into its own
+`dist-release` folder, so it never has to wait for the app you're using.
+
 ```
 npm run release              1.0.0 -> 1.0.1
 npm run release -- minor     1.0.0 -> 1.1.0

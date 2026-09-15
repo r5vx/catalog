@@ -14,11 +14,16 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const exe = join(root, 'dist-app', 'win-unpacked', 'Catalog.exe');
+
+// Which build to stamp. A release builds into its own folder so it never has
+// to wait for a running Catalog.exe to be closed.
+const unpacked = process.argv[2] ?? join('dist-app', 'win-unpacked');
+
+const exe = join(root, unpacked, 'Catalog.exe');
 const icon = join(root, 'assets', 'icon.ico');
 
 if (!existsSync(exe)) {
-	console.error('No built app found. Run `npm run pack` first.');
+	console.error(`No built app found at ${unpacked}. Run \`npm run pack\` first.`);
 	process.exit(1);
 }
 
