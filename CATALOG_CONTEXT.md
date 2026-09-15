@@ -118,6 +118,16 @@ redirected, which a script launched by the app always is. Use
 while the release carried on regardless. npm and npx need `shell: true` on
 Windows because they're `.cmd` files; **git must not have it**.
 
+**13. A release must publish *this* version's files, by name.**
+Installers are named per version so they never overwrite each other — which
+means `dist-release` accumulates them. Picking "the first `Catalog-Setup-*.exe`
+in the folder" published **1.0.0 under the v1.0.1 tag**, with a `latest.yml`
+naming a file that wasn't in the release. Every updater would have fetched that
+manifest and 404'd. The folder is now cleared before each build, the installer
+is found by exact name, and foreign assets are deleted from the release before
+upload. **Verify a release by fetching `latest.yml` and downloading the file it
+names** — that is the only check that proves the update path.
+
 ---
 
 ## How the pieces work
