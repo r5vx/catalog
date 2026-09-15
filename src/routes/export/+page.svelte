@@ -27,11 +27,6 @@
 	</button>
 </div>
 
-<p class="noprint faint hint">
-	In the print window, choose <strong>Save as PDF</strong> as the printer to get a file
-	instead of paper.
-</p>
-
 <article class="sheet">
 	<header>
 		<h1>Catalog</h1>
@@ -87,11 +82,6 @@
 
 	.back:hover {
 		color: var(--accent);
-	}
-
-	.hint {
-		font-size: 0.82rem;
-		margin: 0 0 22px;
 	}
 
 	header {

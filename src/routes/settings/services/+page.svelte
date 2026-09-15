@@ -16,10 +16,10 @@
 		</div>
 
 		<p class="muted">
-			Anime works without setup. Films and TV need a free key from
+			Films and TV need a free key from
 			<a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noreferrer"
 				>themoviedb.org</a
-			>. Either the API Key or the Read Access Token works.
+			>. Anime doesn't. Either key they show you works.
 		</p>
 
 		{#if form?.tmdbError}
@@ -57,7 +57,6 @@
 				/>
 				<button type="submit" class="btn btn-primary">Save</button>
 			</form>
-			<p class="faint hint">Checked against TMDB before saving.</p>
 		{/if}
 	</section>
 
@@ -70,11 +69,9 @@
 		</div>
 
 		<p class="muted">
-			Optional. TMDB carries its own score and nothing else, so IMDb, Rotten Tomatoes and
-			Metacritic come from
-			<a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noreferrer">OMDb</a>,
-			which is free for 1,000 lookups a day. Pick <strong>FREE</strong>, and they email you a
-			key you have to click to activate.
+			Optional, from
+			<a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noreferrer">OMDb</a>.
+			Pick <strong>FREE</strong>, then click the link they email you or the key won't work.
 		</p>
 
 		{#if form?.omdbError}
@@ -112,9 +109,6 @@
 				/>
 				<button type="submit" class="btn">Save</button>
 			</form>
-			<p class="faint hint">
-				Scores are looked up once per title and then stored, so the daily limit is generous.
-			</p>
 		{/if}
 	</section>
 </div>
@@ -213,10 +207,5 @@
 		background: var(--good-bg);
 		border: 1px solid var(--good);
 		color: var(--good);
-	}
-
-	.hint {
-		font-size: 0.8rem;
-		margin: 0;
 	}
 </style>

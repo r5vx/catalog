@@ -118,7 +118,7 @@
 {#if data.knownFor.length > 0}
 	<section class="known">
 		<h2>Also known for</h2>
-		<p class="muted small">Their most popular work you haven't added.</p>
+		<p class="muted small">Not in your library.</p>
 
 		<ul class="grid">
 			{#each visible as credit (credit.title + credit.year)}

@@ -21,7 +21,7 @@ exit /b 0
 
 :failed
 echo.
-echo   Something went wrong. Leave this window open and tell Claude what it says.
+echo   The release failed. The message above says why.
 echo.
 pause
 exit /b 1

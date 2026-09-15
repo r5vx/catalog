@@ -28,7 +28,7 @@
 <svelte:head><title>Appearance · Catalog</title></svelte:head>
 
 <section style="--accent: {accent}">
-	<p class="muted">Used for buttons, links and highlights throughout the app.</p>
+	<p class="muted">Buttons, links and highlights.</p>
 
 	{#if form?.accentError}
 		<p class="msg bad" role="alert">{form.accentError}</p>

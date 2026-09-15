@@ -27,8 +27,6 @@
 	<section>
 		<div class="head"><h2>Export</h2></div>
 
-		<p class="muted">Your library as a file — to print, to open in a spreadsheet, or to keep.</p>
-
 		<div class="picks">
 			<label class="field">
 				<span>Include</span>
@@ -66,19 +64,14 @@
 			<a class="btn" href={fileHref('txt')} download>Plain list</a>
 		</div>
 
-		<p class="faint hint">
-			Printable opens a clean page; print it and choose <strong>Save as PDF</strong>.
-		</p>
-
 		<div class="saved-row">
-			<span class="muted">Full backup — every entry, note, tag and rating in one file.</span>
+			<span class="muted">Full backup</span>
 			<a class="btn" href="/api/export?format=json" download>Download</a>
 		</div>
 	</section>
 
 	<section>
 		<div class="head"><h2>Your files</h2></div>
-		<p class="muted">Backups go in a <code>backups</code> subfolder.</p>
 		<dl class="paths">
 			<dt>Library</dt>
 			<dd><code>{data.dbPath}</code></dd>
@@ -125,11 +118,6 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: 8px;
-	}
-
-	.hint {
-		font-size: 0.8rem;
-		margin: 0;
 	}
 
 	.saved-row {

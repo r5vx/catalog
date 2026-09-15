@@ -43,7 +43,7 @@ export const POST: RequestHandler = async ({ url }) => {
 	const script = updaterPath();
 	if (!script) error(400, 'Updating is only available in the desktop app.');
 
-	const child = spawn('cmd.exe', ['/c', 'start', '""', '/wait', script], {
+	const child = spawn('cmd.exe', ['/c', 'start', 'Updating Catalog', '/wait', script], {
 		cwd: projectRoot(),
 		detached: true,
 		stdio: 'ignore',

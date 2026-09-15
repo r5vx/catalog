@@ -92,10 +92,7 @@
 
 	<TagChips tags={details.tags} />
 
-	<CastRow
-		cast={data.cast.map((person) => ({ ...person, id: person.entryPersonId }))}
-		note="Anyone you've already watched something with is a link."
-	/>
+	<CastRow cast={data.cast.map((person) => ({ ...person, id: person.entryPersonId }))} />
 
 	{#if details.homepage}
 		<p class="away">

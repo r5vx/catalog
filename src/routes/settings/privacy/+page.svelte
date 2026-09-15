@@ -12,10 +12,7 @@
 		<span class="pill" class:completed={data.pinSet}>{data.pinSet ? 'On' : 'Off'}</span>
 	</div>
 
-	<p class="muted">
-		Your library is reachable from other devices on your network. A PIN means being on the
-		network isn't enough to open it.
-	</p>
+	<p class="muted">Asks for a PIN before opening Catalog on another device.</p>
 
 	{#if form?.pinError}
 		<p class="msg bad" role="alert">{form.pinError}</p>

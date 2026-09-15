@@ -111,11 +111,6 @@
 
 {#if data.updateMode === 'source'}
 	<section>
-		<p class="muted">
-			Applies code changes Claude has made. Catalog closes, rebuilds, and reopens on its own —
-			your library isn't touched.
-		</p>
-
 		{#if updateNote}
 			<p class="msg good" role="status">{updateNote}</p>
 		{/if}
@@ -126,15 +121,10 @@
 			</button>
 		</div>
 
-		<p class="faint hint">Takes about a minute. A window will appear showing progress.</p>
+		<p class="faint hint">Takes about a minute. Your library isn't touched.</p>
 	</section>
 {:else if data.updateMode === 'release'}
 	<section>
-		<p class="muted">
-			Catalog looks for a new version each time it opens and downloads it in the background.
-			Your library is never touched by an update.
-		</p>
-
 		{#if releaseNote}
 			<p class="msg {release.status === 'error' ? 'bad' : 'good'}" role="status">{releaseNote}</p>
 		{/if}
@@ -157,7 +147,7 @@
 		</div>
 	</section>
 {:else}
-	<p class="muted">There's nothing to update — this is the development server.</p>
+	<p class="muted">Nothing to update here.</p>
 {/if}
 
 <style>

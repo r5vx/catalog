@@ -13,16 +13,15 @@
 	<section>
 		<h2>One thing to set up</h2>
 		<p class="muted">
-			Searching for anime works straight away. Films and TV come from
-			<a href="https://www.themoviedb.org" target="_blank" rel="noreferrer">themoviedb.org</a>,
-			which gives out free keys.
+			Films and TV need a free key from
+			<a href="https://www.themoviedb.org" target="_blank" rel="noreferrer">themoviedb.org</a>.
+			Anime doesn't.
 		</p>
 
 		<ol class="steps">
-			<li>Make an account at themoviedb.org.</li>
-			<li>Open <strong>Settings → API</strong> and request a key. Pick Developer; the form
-				accepts anything sensible.</li>
-			<li>Paste either the <strong>API Key</strong> or the <strong>Read Access Token</strong> below.</li>
+			<li>Make an account there.</li>
+			<li>Open <strong>Settings → API</strong> and request a key.</li>
+			<li>Paste it below.</li>
 		</ol>
 
 		{#if form?.keyError}
@@ -39,8 +38,6 @@
 			/>
 			<button type="submit" class="btn btn-primary">Start</button>
 		</form>
-
-		<p class="faint hint">Checked against TMDB before it's saved.</p>
 	</section>
 
 	<form method="POST" action="?/skip">
@@ -115,11 +112,6 @@
 		background: var(--accent-bg);
 		border: 1px solid var(--accent);
 		color: var(--accent);
-	}
-
-	.hint {
-		font-size: 0.8rem;
-		margin: 8px 0 0;
 	}
 
 	.skip {

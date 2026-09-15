@@ -205,11 +205,7 @@
 
 	<TagChips {tags} />
 
-	<CastRow
-		{cast}
-		from={entry.id}
-		note="Billing order. Click anyone to see what else you've watched with them."
-	/>
+	<CastRow {cast} from={entry.id} />
 
 	<!-- Closed by default: opening a film should show you the film, not a
 	     wall of empty text boxes. -->
@@ -227,7 +223,7 @@
 			<div class="sub-tool">
 				<div>
 					<p class="tool-title">Wrong match?</p>
-					<p class="faint hint">Swap it for the right title. Your rating and notes are kept.</p>
+					<p class="faint hint">Your rating and notes are kept.</p>
 				</div>
 				<TitleSearch
 					initial={entry.title}
@@ -248,7 +244,7 @@
 			>
 				<div>
 					<p class="tool-title">Remove it</p>
-					<p class="faint hint">Added {added}. This can't be undone.</p>
+					<p class="faint hint">Added {added}.</p>
 				</div>
 				<button type="submit" class="btn btn-danger">Delete this entry</button>
 			</form>

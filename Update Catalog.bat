@@ -1,4 +1,5 @@
 @echo off
+setlocal
 title Updating Catalog
 cd /d "%~dp0"
 
@@ -6,21 +7,29 @@ echo.
 echo   Updating Catalog
 echo   ----------------
 echo.
-echo   Waiting for Catalog to close...
 
 set /a tries=0
 
 :wait
 tasklist /fi "imagename eq Catalog.exe" 2>nul | find /i "Catalog.exe" >nul
 if errorlevel 1 goto build
+
 set /a tries+=1
-if %tries% GEQ 90 goto stuck
-timeout /t 1 /nobreak >nul
+if %tries%==1 echo   Waiting for Catalog to close...
+if %tries% GEQ 60 goto stuck
+
+rem A one-second sleep. Not `timeout`, which refuses to run at all when its
+rem input is redirected - and this script is started by the app, not by you.
+ping -n 2 127.0.0.1 >nul
 goto wait
 
 :stuck
 echo.
-echo   Catalog is still running. Close it and run this again.
+echo   Catalog is still running after a minute:
+echo.
+tasklist /fi "imagename eq Catalog.exe" /fo table /nh
+echo.
+echo   Close it and run this again.
 echo.
 pause
 exit /b 1
@@ -34,12 +43,11 @@ if errorlevel 1 goto failed
 echo.
 echo   Starting Catalog...
 start "" "dist-app\win-unpacked\Catalog.exe"
-timeout /t 2 /nobreak >nul
 exit /b 0
 
 :failed
 echo.
-echo   Something went wrong. Leave this window open and tell Claude what it says.
+echo   The rebuild failed. The message above says why.
 echo.
 pause
 exit /b 1

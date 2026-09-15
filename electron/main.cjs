@@ -210,5 +210,39 @@ if (!app.requestSingleInstanceLock()) {
 	});
 
 	app.on('window-all-closed', () => app.quit());
-	app.on('quit', () => server?.kill());
+
+	/**
+	 * Stopping the server, properly.
+	 *
+	 * It's forked with Electron's own binary, so Windows lists it as a second
+	 * "Catalog.exe". If it outlives the window, anything waiting for Catalog to
+	 * close waits forever — which is exactly how the updater used to hang.
+	 *
+	 * So: ask it to stop as soon as we start quitting, and insist shortly
+	 * after if it hasn't. SQLite is in WAL mode and survives the process
+	 * ending; what it would not survive is being killed mid-write, hence the
+	 * grace period rather than an immediate kill.
+	 */
+	let stopping = false;
+
+	function stopServer() {
+		if (!server || stopping) return;
+		stopping = true;
+
+		const child = server;
+		child.kill();
+
+		const insist = setTimeout(() => {
+			if (!child.killed || child.exitCode === null) child.kill('SIGKILL');
+		}, 2000);
+
+		// Don't hold the app open just for this timer.
+		insist.unref?.();
+		child.once('exit', () => clearTimeout(insist));
+	}
+
+	app.on('before-quit', stopServer);
+	app.on('quit', stopServer);
+	// A crash or a force-close of the main process would otherwise orphan it.
+	process.on('exit', () => server?.kill('SIGKILL'));
 }
