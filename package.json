@@ -1,0 +1,74 @@
+{
+	"name": "catalog",
+	"private": true,
+	"version": "1.0.0",
+	"type": "module",
+	"description": "Your personal library of everything you've watched.",
+	"main": "electron/main.cjs",
+	"scripts": {
+		"dev": "vite dev --host",
+		"build": "vite build",
+		"preview": "vite preview",
+		"start": "node build/index.js",
+		"icon": "node scripts/make-icon.mjs",
+		"app": "npm run build && electron .",
+		"prepare": "svelte-kit sync || echo ''",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"pack": "node scripts/pack.mjs",
+		"installer": "npm run build && electron-builder --win nsis",
+		"release": "node scripts/release.mjs",
+		"backup": "node scripts/backup.mjs",
+		"restore": "node scripts/restore.mjs",
+		"backfill": "node scripts/backfill-ratings.mjs",
+		"refresh": "node scripts/refresh-shows.mjs",
+		"tag": "node scripts/tag-library.mjs"
+	},
+	"dependencies": {
+		"electron-updater": "^6.8.9"
+	},
+	"devDependencies": {
+		"@sveltejs/adapter-node": "^5.2.12",
+		"@sveltejs/kit": "^2.63.0",
+		"@sveltejs/vite-plugin-svelte": "^7.1.2",
+		"electron": "^38.0.0",
+		"electron-builder": "^25.1.8",
+		"svelte": "^5.56.1",
+		"svelte-check": "^4.6.0",
+		"typescript": "^6.0.3",
+		"vite": "^8.0.16"
+	},
+	"build": {
+		"appId": "com.blura.catalog",
+		"productName": "Catalog",
+		"directories": {
+			"output": "dist-app",
+			"buildResources": "assets"
+		},
+		"files": [
+			"build/**/*",
+			"electron/**/*",
+			"node_modules/**/*",
+			"package.json"
+		],
+		"publish": [
+			{
+				"provider": "github",
+				"owner": "r5vx",
+				"repo": "catalog"
+			}
+		],
+		"win": {
+			"target": "nsis",
+			"icon": "assets/icon.ico"
+		},
+		"nsis": {
+			"oneClick": false,
+			"perMachine": false,
+			"allowToChangeInstallationDirectory": true,
+			"createDesktopShortcut": true,
+			"createStartMenuShortcut": true,
+			"shortcutName": "Catalog",
+			"artifactName": "Catalog-Setup-${version}.${ext}"
+		}
+	}
+}
