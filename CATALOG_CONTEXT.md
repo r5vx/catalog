@@ -99,6 +99,25 @@ Samuel L. Jackson's cameos in Iron Man and Thor fall outside stored billing, so
 `allTitleKeys()` — every title in the library, normalised — not the person's
 cast links.
 
+**11. The SvelteKit server is also called Catalog.exe.**
+`electron/main.cjs` forks it with `execPath: process.execPath`, so Windows
+lists a second `Catalog.exe`. It could outlive the window — and
+`Update Catalog.bat` waits for Catalog to close, so it waited forever. The user
+reported it as *"it says waiting for catalog to close, and even though its
+closed nothing happens"*. The server is now stopped on `before-quit` as well as
+`quit`, escalates to SIGKILL after 2s, and is killed on `process.exit`.
+**Never diagnose "is Catalog running?" by process name alone.**
+
+Also: `timeout /t 1` exits immediately with an error when its input is
+redirected, which a script launched by the app always is. Use
+`ping -n 2 127.0.0.1 >nul` to sleep in a batch file.
+
+**12. `spawnSync(..., { shell: true })` concatenates arguments, it doesn't quote them.**
+`run('git', ['commit', '-m', 'Release 1.0.0'])` reached git as
+`commit -m Release 1.0.0`, which read the version as a pathspec and failed —
+while the release carried on regardless. npm and npx need `shell: true` on
+Windows because they're `.cmd` files; **git must not have it**.
+
 ---
 
 ## How the pieces work
@@ -342,22 +361,26 @@ Settings.
 
 ### Releasing
 
-`npm run release` (or **Release Catalog.bat**): bump → `npm run pack` → wrap in
-an installer → commit, tag, push → upload.
+`npm run release` (or **Release Catalog.bat**): bump → build → icon → installer
+→ commit, tag, push → upload.
 
-The installer step is `electron-builder --win nsis --prepackaged
-dist-app/win-unpacked`, **not** a plain nsis build. `npm run pack` sets the icon
-with rcedit after electron-builder gives up (lesson 8), so the installer has to
-be made from the folder that already has the icon on it — otherwise an
-installed Catalog gets Electron's default icon back.
+It builds into **`dist-release`**, not `dist-app`, so a release never waits for
+the running app. The icon goes on **before** the installer is made — an
+installer built from an un-iconed folder installs an un-iconed app, and
+electron-builder's own icon step doesn't run here (lesson 8).
 
-Publishing reads `GH_TOKEN` from `.env` (gitignored, parsed by hand — no dotenv
-dependency). Without a token it still builds and prints what to upload. Both
-files matter: **a release without `latest.yml` updates nobody.**
+The installer is built with `--publish never` and **uploaded by our own code**
+against the GitHub API. electron-builder's publisher writes `latest.yml` only
+as it uploads, so a failed upload left an installer with no way to publish it
+by hand — and **a release without `latest.yml` updates nobody**. Built this way
+both files always exist and a failed upload can just be rerun.
 
-Verified 2026-09-15: `--win nsis` completes cleanly and produces a 96 MB
-installer plus `latest.yml`. The winCodeSign failure from lesson 8 does not
-affect this target — signing is simply skipped.
+`GH_TOKEN` comes from `.env` (gitignored, parsed by hand — no dotenv). A
+fine-grained token needs **Contents: Read and write** on the repo; without it
+GitHub returns a 403 whose message doesn't say which permission is missing, so
+`explain()` says it instead.
+
+**v1.0.0 shipped 2026-09-15** to `github.com/r5vx/catalog/releases`.
 
 ### First run
 
