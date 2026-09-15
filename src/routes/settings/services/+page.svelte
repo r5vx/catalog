@@ -62,16 +62,16 @@
 
 	<section>
 		<div class="head">
-			<h2>IMDb and Rotten Tomatoes</h2>
+			<h2>More scores</h2>
 			<span class="pill" class:completed={data.omdbKeySaved}>
 				{data.omdbKeySaved ? 'On' : 'Off'}
 			</span>
 		</div>
 
 		<p class="muted">
-			Optional, from
-			<a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noreferrer">OMDb</a>.
-			Pick <strong>FREE</strong>, then click the link they email you or the key won't work.
+			IMDb, Rotten Tomatoes, Metacritic, the age rating, awards and box office. Optional,
+			from <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noreferrer">OMDb</a>
+			— pick <strong>FREE</strong>, then click the link they email you or the key won't work.
 		</p>
 
 		{#if form?.omdbError}

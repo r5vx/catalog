@@ -57,6 +57,8 @@ export type Entry = {
 	/** "PG-13", "TV-MA". */
 	contentRating: string | null;
 	awards: string | null;
+	/** Worldwide gross in dollars. Films only. */
+	boxOffice: number | null;
 	scoresCheckedAt: string | null;
 
 	createdAt: string;

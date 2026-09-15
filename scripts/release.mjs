@@ -36,8 +36,18 @@ const packageFile = join(root, 'package.json');
 const OUT = 'dist-release';
 const UNPACKED = `${OUT}/win-unpacked`;
 
+/** npm and npx are .cmd files on Windows, so they need a shell to start. */
 const run = (command, args) =>
 	spawnSync(command, args, { cwd: root, stdio: 'inherit', shell: true });
+
+/**
+ * git, without a shell.
+ *
+ * With `shell: true` the arguments are concatenated rather than quoted, so
+ * `commit -m Release 1.0.1` reached git as three words and it read the version
+ * as a file path — the commit failed while the release carried on regardless.
+ */
+const git = (...args) => spawnSync('git', args, { cwd: root, stdio: 'inherit' });
 
 const stop = (message) => {
 	console.error(`\n${message}\n`);
@@ -134,11 +144,19 @@ const artefacts = [join(outDir, installerName), join(outDir, manifestName)];
 
 // Before the release is created, so the tag it points at already exists.
 if (existsSync(join(root, '.git'))) {
-	run('git', ['add', '-A']);
-	run('git', ['commit', '-m', `Release ${next}`]);
-	run('git', ['tag', `v${next}`]);
+	git('add', '-A');
 
-	if (run('git', ['push', '--follow-tags']).status !== 0) {
+	// Nothing staged is fine — the changes may already have been committed.
+	if (spawnSync('git', ['diff', '--cached', '--quiet'], { cwd: root }).status !== 0) {
+		if (git('commit', '-m', `Release ${next}`).status !== 0) {
+			abort('Could not commit the version bump. Nothing was released.');
+		}
+	}
+
+	// Annotated, so `push --follow-tags` actually carries it.
+	git('tag', '-a', `v${next}`, '-m', `Catalog ${next}`);
+
+	if (git('push', '--follow-tags').status !== 0) {
 		console.log('\n(The push failed. Push when you can — the build itself is fine.)');
 	}
 } else {

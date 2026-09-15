@@ -158,6 +158,7 @@ const laterColumns: Record<string, string> = {
 	metascore: 'INTEGER',
 	content_rating: 'TEXT',
 	awards: 'TEXT',
+	box_office: 'INTEGER',
 	scores_checked_at: 'TEXT'
 };
 

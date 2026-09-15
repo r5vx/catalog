@@ -47,7 +47,8 @@ export const POST: RequestHandler = async ({ request }) => {
 		rtScore: entry.rtScore,
 		metascore: entry.metascore,
 		contentRating: entry.contentRating,
-		awards: entry.awards
+		awards: entry.awards,
+		boxOffice: entry.boxOffice
 	};
 
 	if (omdbConfigured() && isStale(entry.scoresCheckedAt)) {
@@ -59,9 +60,12 @@ export const POST: RequestHandler = async ({ request }) => {
 		});
 
 		// A lookup that found nothing still counts as checked — otherwise every
-		// page view would ask again for something OMDb has never heard of.
-		saveScores(entry.id, fresh);
-		scores = fresh;
+		// page view would ask again for something OMDb has never heard of. A
+		// lookup that couldn't happen (null) is not recorded at all.
+		if (fresh) {
+			saveScores(entry.id, fresh);
+			scores = fresh;
+		}
 	}
 
 	const updated = getEntry(entry.id);
