@@ -7,6 +7,8 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 1.3.0 — 2026-09-16
+
 - **Sorting by "Longest" now works.** Nothing in the library had a runtime,
   because searching for a title doesn't return one — so the sort had nothing to
   work with and fell back to alphabetical. Settings → Library → **Missing
