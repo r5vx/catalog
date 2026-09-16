@@ -166,6 +166,14 @@ for (const [name, type] of Object.entries(laterColumns)) {
 	if (!existing.has(name)) db.exec(`ALTER TABLE entries ADD COLUMN ${name} ${type}`);
 }
 
+// Notes can be locked behind the PIN, one by one.
+const noteColumns = new Set(
+	(db.prepare('PRAGMA table_info(notes)').all() as { name: string }[]).map((c) => c.name)
+);
+if (!noteColumns.has('locked')) {
+	db.exec('ALTER TABLE notes ADD COLUMN locked INTEGER NOT NULL DEFAULT 0');
+}
+
 // `tags` predates the kind column, so add it to an existing table too.
 const tagColumns = new Set(
 	(db.prepare('PRAGMA table_info(tags)').all() as { name: string }[]).map((c) => c.name)

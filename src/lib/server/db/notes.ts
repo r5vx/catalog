@@ -4,23 +4,32 @@ export type Note = {
 	id: number;
 	title: string;
 	body: string;
+	locked: boolean;
 	createdAt: string;
 	updatedAt: string;
 };
 
-const COLUMNS = 'id, title, body, created_at AS createdAt, updated_at AS updatedAt';
+const COLUMNS =
+	'id, title, body, locked, created_at AS createdAt, updated_at AS updatedAt';
 
-/** Titles only — the list page doesn't need every note's full contents. */
+/**
+ * Titles only — the list page doesn't need every note's full contents.
+ *
+ * A locked note's preview is left empty **in SQL**, so its text never reaches
+ * the page at all. Hiding it in the template would still have sent it.
+ */
 export function listNotes() {
 	return plainAll<Omit<Note, 'body'> & { preview: string }>(
 		db
 			.prepare(
-				`SELECT id, title, created_at AS createdAt, updated_at AS updatedAt,
-				        substr(replace(replace(body, '<', ' <'), '>', '> '), 1, 400) AS preview
+				`SELECT id, title, locked, created_at AS createdAt, updated_at AS updatedAt,
+				        CASE WHEN locked = 1 THEN ''
+				             ELSE substr(replace(replace(body, '<', ' <'), '>', '> '), 1, 400)
+				        END AS preview
 				 FROM notes ORDER BY updated_at DESC`
 			)
 			.all()
-	);
+	).map((note) => ({ ...note, locked: Boolean(note.locked) }));
 }
 
 export function countNotes(): number {
@@ -29,7 +38,18 @@ export function countNotes(): number {
 
 export function getNote(id: number): Note | null {
 	const row = db.prepare(`SELECT ${COLUMNS} FROM notes WHERE id = ?`).get(id);
-	return row ? plain<Note>(row) : null;
+	if (!row) return null;
+
+	const note = plain<Note>(row);
+	return { ...note, locked: Boolean(note.locked) };
+}
+
+export function setNoteLocked(id: number, locked: boolean): void {
+	db.prepare('UPDATE notes SET locked = ? WHERE id = ?').run(locked ? 1 : 0, id);
+}
+
+export function anyNotesLocked(): boolean {
+	return Boolean(db.prepare('SELECT 1 FROM notes WHERE locked = 1 LIMIT 1').get());
 }
 
 export function createNote(title = 'Untitled'): number {

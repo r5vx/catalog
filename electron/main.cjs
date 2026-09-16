@@ -68,6 +68,8 @@ function startServer() {
 			app.quit();
 		}
 
+		if (message?.type === 'print-pdf') makePdf(message.id, message.path);
+
 		if (message?.type === 'check-for-updates') checkForUpdates();
 
 		if (message?.type === 'install-update') {
@@ -79,6 +81,46 @@ function startServer() {
 
 	server.stdout?.on('data', (chunk) => console.log('[server]', String(chunk).trim()));
 	server.stderr?.on('data', (chunk) => console.error('[server]', String(chunk).trim()));
+}
+
+/**
+ * Renders one of our own pages to a PDF.
+ *
+ * A hidden window, Chromium's own PDF engine, and the page's `@media print`
+ * rules — the same thing the print dialog would have done, without depending
+ * on a printer driver to produce a readable file.
+ */
+async function makePdf(id, path) {
+	const reply = (extra) => {
+		try {
+			server?.send({ type: 'pdf-done', id, ...extra });
+		} catch {
+			// The server went away while we were rendering.
+		}
+	};
+
+	let win = null;
+
+	try {
+		win = new BrowserWindow({
+			show: false,
+			webPreferences: { nodeIntegration: false, contextIsolation: true, javascript: true }
+		});
+
+		await win.loadURL(ORIGIN + path);
+
+		const data = await win.webContents.printToPDF({
+			pageSize: 'A4',
+			printBackground: false,
+			margins: { marginType: 'default' }
+		});
+
+		reply({ data: data.toString('base64') });
+	} catch (error) {
+		reply({ error: String(error?.message || error) });
+	} finally {
+		win?.destroy();
+	}
 }
 
 /* ------------------------------------------------- updating an installed app */

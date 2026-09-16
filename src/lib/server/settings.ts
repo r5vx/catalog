@@ -118,6 +118,17 @@ export function checkPin(pin: string): boolean {
 	return hashPin(pin, salt) === pinHash;
 }
 
+/**
+ * The value in the note-unlock cookie.
+ *
+ * Separate from the login token so signing in on a device doesn't also open
+ * your locked pages — you enter the PIN again for those.
+ */
+export function notesToken(): string {
+	const { pinHash } = readSettings();
+	return pinHash ? createHash('sha256').update(`notes:${pinHash}`).digest('hex') : '';
+}
+
 /** The value stored in the login cookie — never the PIN itself. */
 export function sessionToken(): string {
 	const { pinHash } = readSettings();

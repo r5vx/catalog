@@ -64,8 +64,8 @@ const EMPTY: TitleDetails = {
 	categorySlug: 'movies'
 };
 
-/** Main cast only — billing order, which is who you'd actually recognise. */
-const CAST_LIMIT = 15;
+/** Main cast only — the people you'd actually recognise. */
+const CAST_LIMIT = 20;
 
 const tmdbKey = () => (readSettings().tmdbApiKey || env.TMDB_API_KEY || '').trim();
 
@@ -110,9 +110,22 @@ export async function fetchKnownFor(sourceId: string) {
 			if (!response.ok) return [];
 
 			const data = await response.json();
+
+			// The same title can be credited twice — a guest spot and a hosting
+			// slot on the same talk show, say. Two entries with one title and
+			// year break a keyed list, which froze "Show more" on the click
+			// that first reached one.
+			const seen = new Set<string>();
+
 			return (data.cast ?? [])
 				.filter((c: Record<string, unknown>) => (c.vote_count as number) > 20)
 				.sort((a: Record<string, number>, b: Record<string, number>) => b.vote_count - a.vote_count)
+				.filter((c: Record<string, unknown>) => {
+					const id = `${c.media_type}:${c.id}`;
+					if (seen.has(id)) return false;
+					seen.add(id);
+					return true;
+				})
 				.slice(0, KNOWN_FOR_DEPTH)
 				.map((c: Record<string, unknown>) => ({
 					title: (c.title as string) ?? (c.name as string) ?? '',
@@ -174,9 +187,22 @@ async function fromTmdb(sourceId: string): Promise<TitleDetails> {
 	const [kind, id] = sourceId.split(':');
 	if (!id) return EMPTY;
 
+	const isSeries = kind === 'tv';
+
 	const url = new URL(`https://api.themoviedb.org/3/${kind}/${id}`);
-	// external_ids is where a TV show's IMDb id lives; a film carries its own.
-	url.searchParams.set('append_to_response', 'credits,external_ids');
+
+	/**
+	 * For a series, `credits` is only whoever is billed on the show record —
+	 * The Office returns **four people**. The full cast across every season
+	 * lives in `aggregate_credits` (689 for the same show), where each person
+	 * carries a `roles` list instead of a single character.
+	 *
+	 * external_ids is where a series keeps its IMDb id; a film carries its own.
+	 */
+	url.searchParams.set(
+		'append_to_response',
+		`${isSeries ? 'aggregate_credits' : 'credits'},external_ids`
+	);
 
 	const init = key.startsWith('eyJ')
 		? { headers: { Authorization: `Bearer ${key}` } }
@@ -196,8 +222,9 @@ async function fromTmdb(sourceId: string): Promise<TitleDetails> {
 		if (company?.name) tags.push({ name: company.name, kind: 'studio' });
 	}
 
-	const directors = (data.credits?.crew ?? []).filter(
-		(person: { job?: string }) => person.job === 'Director'
+	const crew = data.credits?.crew ?? data.aggregate_credits?.crew ?? [];
+	const directors = crew.filter((person: { job?: string; jobs?: { job?: string }[] }) =>
+		person.job === 'Director' || person.jobs?.some((one) => one.job === 'Director')
 	);
 	// TV uses created_by rather than a director credit.
 	const creators = data.created_by ?? [];
@@ -211,17 +238,26 @@ async function fromTmdb(sourceId: string): Promise<TitleDetails> {
 		tags.push({ name: collection.replace(/\s+Collection$/i, '').trim(), kind: 'franchise' });
 	}
 
-	const cast: DerivedCast[] = (data.credits?.cast ?? [])
+	// Whoever appeared most is the main cast; `order` breaks the ties.
+	const billed = isSeries
+		? [...(data.aggregate_credits?.cast ?? [])].sort(
+				(a: Record<string, number>, b: Record<string, number>) =>
+					(b.total_episode_count ?? 0) - (a.total_episode_count ?? 0) ||
+					(a.order ?? 999) - (b.order ?? 999)
+			)
+		: (data.credits?.cast ?? []);
+
+	const cast: DerivedCast[] = billed
 		.slice(0, CAST_LIMIT)
-		.map((person: Record<string, unknown>) => ({
+		.map((person: Record<string, any>) => ({
 			sourceId: `tmdb:${person.id}`,
 			name: String(person.name ?? ''),
 			photo: person.profile_path ? `https://image.tmdb.org/t/p/w185${person.profile_path}` : null,
-			character: (person.character as string) || null
+			// A series lists every part someone played; the first is the one.
+			character: (isSeries ? person.roles?.[0]?.character : person.character) || null
 		}))
 		.filter((person: DerivedCast) => person.sourceId && person.name);
 
-	const isSeries = kind === 'tv';
 	const released = String(data.release_date ?? data.first_air_date ?? '');
 
 	return {
@@ -269,7 +305,7 @@ async function fromAniList(id: string): Promise<TitleDetails> {
 				bannerImage
 				genres
 				studios(isMain:true){nodes{name}}
-				characters(sort:ROLE, perPage:15){
+				characters(sort:ROLE, perPage:20){
 					edges{
 						node{ name{ full } }
 						voiceActors(language:JAPANESE){ id name{ full } image{ medium } }

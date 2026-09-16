@@ -1,4 +1,5 @@
 import { rowsFor } from '$lib/server/export';
+import { desktopAvailable } from '$lib/server/pdf';
 import { statusLabel } from '$lib/constants';
 import type { ExportRow } from '$lib/server/db/queries';
 import type { PageServerLoad } from './$types';
@@ -21,5 +22,11 @@ export const load: PageServerLoad = async ({ url }) => {
 		.filter(Boolean)
 		.join(' · ');
 
-	return { groups, total: rows.length, scope, query: url.search };
+	return {
+		groups,
+		total: rows.length,
+		scope,
+		query: url.search,
+		canMakePdf: desktopAvailable()
+	};
 };

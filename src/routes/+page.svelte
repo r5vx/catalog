@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { STATUSES, SORTS, statusLabel } from '$lib/constants';
+	import { STATUSES, statusLabel } from '$lib/constants';
+	import SortPicker from '$lib/SortPicker.svelte';
 	import { episodesBehind } from '$lib/progress';
 	import { page } from '$app/state';
 	import { rememberLibrary } from '$lib/nav';
@@ -49,7 +50,7 @@
 		<h1>Catalog</h1>
 		<div class="header-actions">
 			<a href="/settings" class="btn" title="Settings" aria-label="Settings">⚙</a>
-			<a href="/people" class="btn">People</a>
+			<a href="/people" class="btn">Actors</a>
 			<a href="/import" class="btn">Bulk add</a>
 			<a href="/entry/new" class="btn btn-primary">+ Add</a>
 		</div>
@@ -94,16 +95,7 @@
 		{/each}
 	</select>
 
-	<select
-		id="sort"
-		aria-label="Sort by"
-		value={data.filters.sort}
-		onchange={(e) => setParam('sort', e.currentTarget.value)}
-	>
-		{#each SORTS as sort (sort.value)}
-			<option value={sort.value}>{sort.label}</option>
-		{/each}
-	</select>
+	<SortPicker value={data.filters.sort} onchange={(next) => setParam('sort', next)} />
 </div>
 
 {#if data.entries.length === 0}

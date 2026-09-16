@@ -155,6 +155,11 @@
 	<p class="notice error" role="alert">{form.error}</p>
 {:else if form?.saved}
 	<p class="notice saved" role="status">Saved.</p>
+{:else if form?.refreshed}
+	<p class="notice saved" role="status">
+		Refreshed — {form.refreshed} cast {form.refreshed === 1 ? 'member' : 'members'}, tags and
+		synopsis are up to date.
+	</p>
 {/if}
 
 <article>
@@ -223,6 +228,14 @@
 		<div class="editor-body">
 			<form method="POST" action="?/save">
 				<EntryForm categories={data.categories} {entry} submitLabel="Save changes" />
+			</form>
+
+			<form method="POST" action="?/refresh" class="sub-tool">
+				<div>
+					<p class="tool-title">Out of date?</p>
+					<p class="faint hint">Fetch the synopsis, tags, cast and scores again.</p>
+				</div>
+				<button type="submit" class="btn">Refresh from the database</button>
 			</form>
 
 			<div class="sub-tool">
@@ -453,7 +466,8 @@
 		gap: 12px;
 	}
 
-	.sub-tool.danger {
+	.sub-tool.danger,
+	form.sub-tool {
 		align-items: flex-start;
 	}
 

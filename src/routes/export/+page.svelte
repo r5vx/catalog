@@ -21,10 +21,15 @@
 <svelte:head><title>Catalog · Printable list</title></svelte:head>
 
 <div class="bar noprint">
-	<a href="/settings" class="back faint">&larr; Settings</a>
-	<button type="button" class="btn btn-primary" onclick={() => window.print()}>
-		Print / Save as PDF
-	</button>
+	<a href="/settings/library" class="back faint">&larr; Settings</a>
+	<div class="bar-actions">
+		{#if data.canMakePdf}
+			<a class="btn btn-primary" href="/api/export?format=pdf{data.query.replace('?', '&')}" download>
+				Save as PDF
+			</a>
+		{/if}
+		<button type="button" class="btn" onclick={() => window.print()}>Print</button>
+	</div>
 </div>
 
 <article class="sheet">
@@ -77,7 +82,12 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 12px;
-		margin-bottom: 6px;
+		margin-bottom: 22px;
+	}
+
+	.bar-actions {
+		display: flex;
+		gap: 8px;
 	}
 
 	.back:hover {
