@@ -166,7 +166,10 @@
 			<p class="msg good" role="status">Everything is filled in.</p>
 		{:else}
 			<div class="saved-row">
-				<span class="muted tabular">{missing} titles still to go.</span>
+				<span class="muted tabular">
+					{missing}
+					{missing === 1 ? 'title' : 'titles'} still to go.
+				</span>
 				<button type="button" class="btn" onclick={startFilling}>Do it now</button>
 			</div>
 		{/if}

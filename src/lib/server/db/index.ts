@@ -159,7 +159,15 @@ const laterColumns: Record<string, string> = {
 	content_rating: 'TEXT',
 	awards: 'TEXT',
 	box_office: 'INTEGER',
-	scores_checked_at: 'TEXT'
+	scores_checked_at: 'TEXT',
+	// When the detail endpoint was last asked about this title. Some things
+	// genuinely have no runtime and no synopsis to give — a stamp is the only
+	// way to tell those apart from the ones nobody has looked up yet.
+	details_checked_at: 'TEXT',
+	// Where you can stream it, as JSON, with the date it was fetched. Cached
+	// because availability moves slowly and the page shouldn't wait on it.
+	providers: 'TEXT',
+	providers_checked_at: 'TEXT'
 };
 
 for (const [name, type] of Object.entries(laterColumns)) {

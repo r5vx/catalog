@@ -170,11 +170,44 @@ mean the window never opens at all, so the marker carries an attempt count and
 gives up after two, leaving a note instead. Verified by simulation: restart,
 restart, then open normally.
 
+**Verified on the real app, not only in theory.** Stage a build, write
+`dist-staged/pending.txt` with a deliberately *different* version so the
+startup check fires, then launch `dist-app/win-unpacked/Catalog.exe`. What
+proves it: `dist-app`'s `app.asar` mtime moves to the staged build's, the marker
+deletes itself, `last-update.txt` reads "Updated.", and the app answers HTTP 200
+having relaunched. A successful swap renames only `<staged>/win-unpacked` into
+place, so the parent folder is left behind empty — the next build's tidy loop
+removes it, and it is not a sign of failure.
+
 Two helpers were also racing — one from pressing Update, one from the quit
 handler. The first swapped and relaunched the app; the second found the folder
 busy and **overwrote "Updated." with an EPERM failure**, so a working update
 reported itself broken. `dist-staged/applying.txt` is the lock; the loser exits
 quietly. **When diagnosing an update, read the timestamps, not just the note.**
+
+**18. A missing value is not an unanswered question.**
+"Missing information" sat at 44 titles no matter how many times it ran, and
+reported "filled in 0". The query asked `WHERE runtime_minutes IS NULL`, which
+cannot tell *nobody has looked* from *there is nothing to find* — so the same
+44 were fetched, found to have no runtime, and counted as missing again.
+
+Every lookup now records that it happened. `details_checked_at` is stamped
+whenever the detail endpoint answers, **even when the answer is empty**, and the
+count asks `details_checked_at IS NULL AND (…)`. `scores_checked_at` already
+worked this way; the same rule was simply missing on the details side. The
+matching distinction in the code: `fetchDetails` returning a title, or
+`fetchScores` returning `EMPTY_SCORES` rather than `null`, means *asked*. A
+failure must never stamp, or one flat network would mark a library complete.
+
+The underlying cause was worth finding rather than papering over. **All 44 were
+TV series, and TMDB now returns `episode_run_time: []` for nearly every show** —
+Breaking Bad, The Office, Squid Game, all empty. The runtime moved to
+`last_episode_to_air.runtime`, which is populated for all of them.
+`details.ts` falls back to it (then `next_episode_to_air`), and after one pass
+every one of the 44 had a runtime. Sorting by "Longest" covers the library now.
+
+The general shape: **before silencing a count, check whether the data really is
+absent or has just moved.** Stamping alone would have hidden a fixable bug.
 
 ---
 
@@ -304,17 +337,19 @@ one of our own paths.
 ### Reading about a title
 Every title has a page worth landing on, not just a form.
 
-**`/entry/[id]`** — poster, status, scores, synopsis, tags, cast, and *then* a
-closed `<details>` holding the edit form, the re-match tool and delete. The
-user's words: clicking a film shouldn't "immediately show you a ton of text
-boxes". Shared pieces are `ScoreStrip`, `Synopsis`, `TagChips` and `CastRow`.
+**`/entry/[id]`** — poster, status, scores, synopsis, where to watch, tags,
+cast, and *then* a closed `<details>` holding the edit form, the re-match tool
+and delete. The user's words: clicking a film shouldn't "immediately show you a
+ton of text boxes". Shared pieces are `ScoreStrip`, `Synopsis`,
+`WhereToWatch`, `TagChips` and `CastRow`.
 
 **`/title/[source]/[id]`** — the same page for something you *don't* own,
-reached by clicking an actor's "also known for". `[id]` is the provider's own
-id, colon and all: `/title/tmdb/movie:550`. Anything already in the library
-**redirects to its entry**, so there's never a preview of something you have.
-Its cast links only for people already in `people` — the rest would be dead
-links.
+reached from an actor's "also known for", from Browse, or from someone else's
+shared list. `[id]` is the provider's own id, colon and all:
+`/title/tmdb/movie:550`. Anything already in the library **redirects to its
+entry**, so there's never a preview of something you have. Its `add` action and
+`POST /api/add` share one function, `addFromSource()` in `entries.ts`, so
+adding works out the same wherever it's done.
 
 On the person page the `+` button is a **sibling** of the card link, not inside
 it: a button nested in an anchor is invalid and swallows the click.
@@ -329,8 +364,12 @@ saved from the detail fetch. Runtime and episode counts are now stored by
 enrichment, and on Refresh.
 
 `src/lib/server/backfill.ts` walks the whole library once for anything still
-missing, with a progress bar in Settings → Library. A button rather than
-automatic: it is hundreds of API calls.
+missing. It starts by itself a few seconds after the app opens
+(`scheduleBackfill`), shows a thin line on the library page while it runs
+(`FillingIn.svelte`) and a progress bar in Settings → Library. What counts as
+missing is one shared `OUTSTANDING` condition, and it turns on the *stamps*
+rather than the values — see lesson 18, which is the whole reason the count
+used to be stuck at 44.
 
 `sortBadge()` in `constants.ts` puts the sorted-on value on each card, and
 returns null where the card already shows it (title, year, your rating).
@@ -361,13 +400,62 @@ Chromium embeds subset fonts, so the words aren't ASCII in the file.
 ### Sharing a library
 `/api/export?format=share` writes a file with the list, the public scores and
 tags — and your own ratings and reviews only when asked. It is **not** a
-backup: no ids, no note pages, and a different filename so the two are never
-confused.
+backup: none of our own ids, no note pages, no settings, and a different
+filename so the two are never confused.
+
+It **does** carry `source` and `sourceId` (`catalogShare: 2`). That is the
+difference between a list you can read and a list you can use: without them
+nothing in someone else's catalog can be opened, looked into, or added, which
+is what the first version was — a wall of text. They're public catalogue
+numbers, nothing personal. Older files without them still open; the page says
+why their titles aren't clickable and falls back to matching on title.
 
 `/shared` reads a file the browser picks, with `FileReader`. **Nothing is
-uploaded and nothing is stored** — the server only supplies `allTitleKeys()` so
-the page can mark the overlap and filter to "only what I haven't seen", which
-is the point of looking at someone else's list.
+uploaded and nothing is stored** — the server only supplies `allTitleKeys()`
+and `existingSourceKeys()` so the page can work out the overlap. Matching on the
+provider id is exact; the title keys are the fallback for old files.
+
+From there it behaves like the library: sort by any of the same values (with
+the same `sortBadge` under each card), filter to *everything*, *only what I
+haven't seen*, or *only what we've both seen*, click any title through to
+`/title/[source]/[id]`, and add one with **Watchlist** or **Seen it** via
+`POST /api/add`. Cards added in the session update in place rather than
+reloading, so the list doesn't jump under you.
+
+### Browsing
+`/browse` is the other half of `/entry/new`: Add is for something you know the
+name of, Browse is for finding something you don't. With no query it shows what
+`browseShelves()` returns — TMDB's weekly trending for films and series, and
+AniList `TRENDING_DESC` for anime, one shelf each, or two pages deep when a
+single category is chosen. With a query it runs the ordinary `searchAll` at a
+much wider limit (60 rather than 12), because the thing you want when browsing
+is often the twentieth result.
+
+Everything already in the library is marked from `existingSourceKeys()` and
+dimmed — browsing should not offer you your own library back. Cards carry the
+synopsis the search endpoint already returns, so you can read what something is
+before deciding to open it.
+
+### Where to watch
+TMDB carries JustWatch's availability, per country: `/movie|tv/{id}/watch/
+providers` → `results[REGION]` with `flatrate`, `free`, `ads`, `rent`, `buy`
+and a `link`. `providers.ts` folds `free` and `ads` together and keeps the rest
+apart.
+
+**The country is the whole answer.** `watchRegion()` takes the one saved in
+Settings → Services, else the region of this PC's locale
+(`new Intl.Locale(...).maximize().region`), else `US`. A stored answer for a
+different region is thrown away rather than shown.
+
+AniList has no availability data, so an anime added from there is matched to
+TMDB by name first, and only when the normalised title matches **and** the year
+is within a year — the wrong show is worse than no answer.
+
+Asked for after the page renders (`/api/providers`), never during load: it's an
+extra round trip, two for anime. Library entries keep the answer on the row
+(`providers`, `providers_checked_at`, stale after 7 days); titles you don't own
+sit in a small capped in-memory map. As everywhere else here, `null` means
+*couldn't ask* and is never stored — only an answer is.
 
 ### Locked note pages
 `notes.locked`, gated on the same PIN. The body is withheld **in SQL**

@@ -61,6 +61,20 @@ export type Entry = {
 	boxOffice: number | null;
 	scoresCheckedAt: string | null;
 
+	/**
+	 * When the detail endpoint last answered about this title.
+	 *
+	 * Not every title has a runtime or a synopsis to give — a five-minute short
+	 * or an obscure series often has neither. Without this, those look
+	 * identical to the ones that simply haven't been looked up, so they were
+	 * counted as missing forever and asked about on every pass.
+	 */
+	detailsCheckedAt: string | null;
+
+	/** Where to stream it, as stored JSON. See `metadata/providers.ts`. */
+	providers: string | null;
+	providersCheckedAt: string | null;
+
 	createdAt: string;
 	updatedAt: string;
 };

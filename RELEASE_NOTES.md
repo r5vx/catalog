@@ -7,6 +7,21 @@ and stamps it with the version number.
 
 ## Unreleased
 
+- A **Browse** button beside Add, for finding something rather than looking it
+  up. It opens on what people are watching this week and searches everything
+  the databases have — synopsis, cast and scores on every title, and a
+  Watchlist or Seen it button without leaving the page.
+- Titles now show **where to watch** them: what's streaming, free, for rent or
+  to buy in your country. Settings → Services picks the country if the one it
+  guessed is wrong.
+- **Someone else's catalog is usable now.** Open a shared list and you can
+  click into any title, sort it however you sort your own, filter down to
+  what you've both seen, and add anything straight to your library.
+- **"Missing information" reaches zero.** It counted 44 series forever because
+  TMDB stopped filling in the field their runtime used to live in. Those
+  runtimes are back, and anything the databases genuinely have nothing for is
+  now left alone instead of being asked about on every pass.
+
 ## 1.5.0 — 2026-09-16
 
 - **Updates install themselves properly now.** A finished update used to wait

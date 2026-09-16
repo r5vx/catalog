@@ -200,30 +200,66 @@ export async function searchTmdb(query: string): Promise<SearchResult[]> {
 		// Everything TMDB returned is handed back, NOT just the first handful.
 		// "X-Men" (2000) comes back 14th in their ordering, so trimming here
 		// threw the film away before it could ever be ranked.
-		return results.map((item): SearchResult => {
-			const title = item.title ?? item.name ?? 'Untitled';
-			const original = item.original_title ?? item.original_name ?? null;
-			const { slug, confident } = categorize(item);
+		return results.map(toResult);
+	} catch {
+		return [];
+	}
+}
 
-			return {
-				key: `tmdb:${item.media_type}:${item.id}`,
-				source: 'tmdb',
-				sourceId: `${item.media_type}:${item.id}`,
-				title,
-				altTitle: original && original !== title ? original : null,
-				year: yearOf(item.release_date ?? item.first_air_date),
-				posterUrl: item.poster_path ? `${IMAGE}${item.poster_path}` : null,
-				overview: plainText(item.overview),
-				categorySlug: slug,
-				confident,
-				kind: item.media_type === 'movie' ? 'Movie' : 'TV',
-				episodesTotal: null,
-				runtimeMinutes: null,
-				externalRating: item.vote_average ? item.vote_average : null,
-				externalVotes: item.vote_count ?? null,
-				popularity: scaleFame(item.vote_count ?? 0, item.popularity ?? 0)
-			};
-		});
+/** One TMDB record in the shape the rest of the app uses. */
+function toResult(item: TmdbItem): SearchResult {
+	const title = item.title ?? item.name ?? 'Untitled';
+	const original = item.original_title ?? item.original_name ?? null;
+	const { slug, confident } = categorize(item);
+
+	return {
+		key: `tmdb:${item.media_type}:${item.id}`,
+		source: 'tmdb',
+		sourceId: `${item.media_type}:${item.id}`,
+		title,
+		altTitle: original && original !== title ? original : null,
+		year: yearOf(item.release_date ?? item.first_air_date),
+		posterUrl: item.poster_path ? `${IMAGE}${item.poster_path}` : null,
+		overview: plainText(item.overview),
+		categorySlug: slug,
+		confident,
+		kind: item.media_type === 'movie' ? 'Movie' : 'TV',
+		episodesTotal: null,
+		runtimeMinutes: null,
+		externalRating: item.vote_average ? item.vote_average : null,
+		externalVotes: item.vote_count ?? null,
+		popularity: scaleFame(item.vote_count ?? 0, item.popularity ?? 0)
+	};
+}
+
+/**
+ * What everyone else is watching this week.
+ *
+ * The browse page needs something to show before you've typed anything —
+ * searching only helps when you already know what you're looking for, and the
+ * point of that page is finding something you don't.
+ */
+export async function trendingTmdb(
+	kind: 'movie' | 'tv',
+	page = 1
+): Promise<SearchResult[]> {
+	const key = tmdbKey();
+	if (!key) return [];
+
+	try {
+		const url = new URL(`${BASE}/trending/${kind}/week`);
+		url.searchParams.set('page', String(page));
+
+		const response = await fetch(url, authorize(url, key));
+		if (!response.ok) return [];
+
+		const payload = (await response.json()) as { results?: TmdbItem[] };
+
+		return (payload.results ?? [])
+			// Trending rows don't always carry the field the mapping reads.
+			.map((item) => ({ ...item, media_type: item.media_type ?? kind }))
+			.filter((item) => !isPlaceholder(item))
+			.map(toResult);
 	} catch {
 		return [];
 	}

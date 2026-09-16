@@ -53,6 +53,9 @@
 			<a href="/settings" class="btn" title="Settings" aria-label="Settings">⚙</a>
 			<a href="/people" class="btn">Actors</a>
 			<a href="/import" class="btn">Bulk add</a>
+			<!-- Add is for something you know the name of; Browse is for when
+			     you don't. -->
+			<a href="/browse" class="btn">Browse</a>
 			<a href="/entry/new" class="btn btn-primary">+ Add</a>
 		</div>
 	</div>

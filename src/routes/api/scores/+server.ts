@@ -38,7 +38,8 @@ export const POST: RequestHandler = async ({ request }) => {
 
 		saveFacts(entry.id, {
 			runtimeMinutes: details.runtimeMinutes,
-			episodesTotal: details.episodesTotal
+			episodesTotal: details.episodesTotal,
+			checked: Boolean(details.title)
 		});
 
 		// AniList has no IMDb id, so OMDb is asked by name instead.

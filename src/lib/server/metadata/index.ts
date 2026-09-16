@@ -1,5 +1,5 @@
-import { searchAniList } from './anilist';
-import { searchTmdb, hasTmdbKey } from './tmdb';
+import { searchAniList, trendingAniList } from './anilist';
+import { searchTmdb, trendingTmdb, hasTmdbKey } from './tmdb';
 import { normalizeTitle, type SearchResult } from './types';
 
 export { hasTmdbKey };
@@ -108,4 +108,57 @@ export async function searchAll(
 /** The handful of best guesses for a title, used by the bulk importer. */
 export async function bestMatch(title: string, year: number | null = null) {
 	return searchAll(title, { year, limit: 5 });
+}
+
+/* ---------------------------------------------------------------- browsing */
+
+export type Shelf = { key: string; label: string; results: SearchResult[] };
+
+/**
+ * What to show someone who hasn't typed anything yet.
+ *
+ * Search only helps when you already know the name of the thing you want.
+ * Browsing is for the other half of the problem — finding something you've
+ * never heard of — so the page opens on what everyone else is watching this
+ * week, in the three categories the library keeps.
+ */
+export async function browseShelves(only?: string): Promise<Shelf[]> {
+	// One category on its own gets two pages, since it's the whole page.
+	const deep = Boolean(only);
+
+	const wanted: { key: string; label: string; get: () => Promise<SearchResult[]> }[] = [
+		{
+			key: 'movies',
+			label: 'Films people are watching',
+			get: async () =>
+				deep
+					? (await Promise.all([trendingTmdb('movie', 1), trendingTmdb('movie', 2)])).flat()
+					: trendingTmdb('movie')
+		},
+		{
+			key: 'tv',
+			label: 'Series people are watching',
+			get: async () =>
+				deep
+					? (await Promise.all([trendingTmdb('tv', 1), trendingTmdb('tv', 2)])).flat()
+					: trendingTmdb('tv')
+		},
+		{
+			key: 'anime',
+			label: 'Anime people are watching',
+			get: () => trendingAniList(deep ? 48 : 24)
+		}
+	];
+
+	const shelves = only ? wanted.filter((one) => one.key === only) : wanted;
+
+	const filled = await Promise.all(
+		shelves.map(async (shelf) => ({
+			key: shelf.key,
+			label: shelf.label,
+			results: await shelf.get()
+		}))
+	);
+
+	return filled.filter((shelf) => shelf.results.length > 0);
 }

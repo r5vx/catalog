@@ -38,6 +38,8 @@ export type Settings = {
 	updatePromptOff?: string;
 	/** Sort options you've turned off, comma separated. */
 	hiddenSorts?: string;
+	/** Two-letter country for "where to watch". Blank means use this PC's. */
+	watchRegion?: string;
 };
 
 export function readSettings(): Settings {

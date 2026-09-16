@@ -1,7 +1,27 @@
 <script lang="ts">
+	import { WATCH_REGIONS } from '$lib/constants';
 	import type { PageData, ActionData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
+
+	/**
+	 * The country names come from the browser rather than a list we maintain,
+	 * so they arrive in the language it's set to and never go out of date.
+	 */
+	const countries = (() => {
+		let name: (code: string) => string;
+
+		try {
+			const names = new Intl.DisplayNames(undefined, { type: 'region' });
+			name = (code) => names.of(code) ?? code;
+		} catch {
+			name = (code) => code;
+		}
+
+		return WATCH_REGIONS.map((code) => ({ code, name: name(code) })).sort((a, b) =>
+			a.name.localeCompare(b.name)
+		);
+	})();
 </script>
 
 <svelte:head><title>Services · Catalog</title></svelte:head>
@@ -110,6 +130,36 @@
 				<button type="submit" class="btn">Save</button>
 			</form>
 		{/if}
+	</section>
+
+	<section>
+		<div class="head">
+			<h2>Where to watch</h2>
+			<span class="pill completed">{data.regionInUse}</span>
+		</div>
+
+		<p class="muted">
+			Titles show what's streaming, free, or for rent — which depends entirely on the country
+			asking. Catalog follows this PC unless you tell it otherwise.
+		</p>
+
+		{#if form?.regionError}
+			<p class="msg bad" role="alert">{form.regionError}</p>
+		{:else if form?.regionOk}
+			<p class="msg good" role="status">Saved.</p>
+		{/if}
+
+		<form method="POST" action="?/saveRegion" class="inline-form">
+			<select name="watchRegion" aria-label="Country">
+				<option value="" selected={!data.region}>This PC's country ({data.regionInUse})</option>
+				{#each countries as country (country.code)}
+					<option value={country.code} selected={data.region === country.code}>
+						{country.name}
+					</option>
+				{/each}
+			</select>
+			<button type="submit" class="btn">Save</button>
+		</form>
 	</section>
 </div>
 

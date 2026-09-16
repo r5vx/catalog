@@ -84,34 +84,75 @@ export async function searchAniList(query: string, perPage = 20): Promise<Search
 
 		const media = payload.data?.Page?.media ?? [];
 
-		return media.map((item): SearchResult => {
-			const title = item.title.english || item.title.romaji || 'Untitled';
-			const alt = item.title.english && item.title.romaji !== item.title.english
-				? item.title.romaji
-				: null;
-
-			return {
-				key: `anilist:${item.id}`,
-				source: 'anilist',
-				sourceId: String(item.id),
-				title,
-				altTitle: alt,
-				year: item.startDate?.year ?? null,
-				posterUrl: item.coverImage?.large ?? null,
-				overview: plainText(item.description),
-				categorySlug: 'anime',
-				confident: true,
-				kind: FORMAT_LABELS[item.format ?? ''] ?? 'Anime',
-				episodesTotal: item.episodes ?? null,
-				runtimeMinutes: item.duration ?? null,
-				// AniList scores out of 100; everything else here is out of 10.
-				externalRating: item.averageScore != null ? item.averageScore / 10 : null,
-				externalVotes: item.popularity ?? null,
-				popularity: scalePopularity(item.popularity ?? 0)
-			};
-		});
+		return media.map(toResult);
 	} catch {
 		// Offline, or AniList is having a moment. Search still works via TMDB.
+		return [];
+	}
+}
+
+/** One AniList record in the shape the rest of the app uses. */
+function toResult(item: AniListMedia): SearchResult {
+	const title = item.title.english || item.title.romaji || 'Untitled';
+	const alt =
+		item.title.english && item.title.romaji !== item.title.english ? item.title.romaji : null;
+
+	return {
+		key: `anilist:${item.id}`,
+		source: 'anilist',
+		sourceId: String(item.id),
+		title,
+		altTitle: alt,
+		year: item.startDate?.year ?? null,
+		posterUrl: item.coverImage?.large ?? null,
+		overview: plainText(item.description),
+		categorySlug: 'anime',
+		confident: true,
+		kind: FORMAT_LABELS[item.format ?? ''] ?? 'Anime',
+		episodesTotal: item.episodes ?? null,
+		runtimeMinutes: item.duration ?? null,
+		// AniList scores out of 100; everything else here is out of 10.
+		externalRating: item.averageScore != null ? item.averageScore / 10 : null,
+		externalVotes: item.popularity ?? null,
+		popularity: scalePopularity(item.popularity ?? 0)
+	};
+}
+
+const TRENDING = `
+query ($perPage: Int, $page: Int) {
+  Page(perPage: $perPage, page: $page) {
+    media(type: ANIME, sort: TRENDING_DESC, isAdult: false) {
+      id
+      title { romaji english }
+      startDate { year }
+      episodes
+      duration
+      format
+      popularity
+      averageScore
+      coverImage { large }
+      description(asHtml: false)
+    }
+  }
+}`;
+
+/** What's being watched right now — the anime half of the browse page. */
+export async function trendingAniList(perPage = 24, page = 1): Promise<SearchResult[]> {
+	try {
+		const response = await fetch(ENDPOINT, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+			body: JSON.stringify({ query: TRENDING, variables: { perPage, page } })
+		});
+
+		if (!response.ok) return [];
+
+		const payload = (await response.json()) as {
+			data?: { Page?: { media?: AniListMedia[] } };
+		};
+
+		return (payload.data?.Page?.media ?? []).map(toResult);
+	} catch {
 		return [];
 	}
 }
