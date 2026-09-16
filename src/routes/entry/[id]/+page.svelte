@@ -215,7 +215,7 @@
 
 	<TagChips {tags} />
 
-	<CastRow {cast} from={entry.id} />
+	<CastRow {cast} back="/entry/{entry.id}" />
 
 	<!-- Closed by default: opening a film should show you the film, not a
 	     wall of empty text boxes. -->

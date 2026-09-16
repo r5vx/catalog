@@ -36,6 +36,8 @@ export type Settings = {
 	setupDone?: string;
 	/** Set when you ask not to be told about updates any more. */
 	updatePromptOff?: string;
+	/** Sort options you've turned off, comma separated. */
+	hiddenSorts?: string;
 };
 
 export function readSettings(): Settings {

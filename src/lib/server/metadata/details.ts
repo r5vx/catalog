@@ -376,3 +376,56 @@ async function fromAniList(id: string): Promise<TitleDetails> {
 		categorySlug: 'anime'
 	};
 }
+
+/**
+ * Who someone is, for a person who isn't in your library.
+ *
+ * The cast of a film you don't own has no row here, so their page has to be
+ * built from the provider instead — otherwise every actor on a preview page is
+ * a dead end, which is exactly what it was.
+ */
+export async function fetchPerson(
+	sourceId: string
+): Promise<{ name: string; photo: string | null } | null> {
+	const [provider, id] = sourceId.split(':');
+
+	try {
+		if (provider === 'tmdb') {
+			const key = tmdbKey();
+			if (!key) return null;
+
+			const url = new URL(`https://api.themoviedb.org/3/person/${id}`);
+			const init = key.startsWith('eyJ')
+				? { headers: { Authorization: `Bearer ${key}` } }
+				: (url.searchParams.set('api_key', key), {});
+
+			const response = await fetch(url, init);
+			if (!response.ok) return null;
+
+			const data = await response.json();
+			if (!data?.name) return null;
+
+			return {
+				name: String(data.name),
+				photo: data.profile_path ? `https://image.tmdb.org/t/p/w185${data.profile_path}` : null
+			};
+		}
+
+		const response = await fetch('https://graphql.anilist.co', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				query: `query($id:Int){Staff(id:$id){ name{ full } image{ medium } }}`,
+				variables: { id: Number(id) }
+			})
+		});
+		if (!response.ok) return null;
+
+		const staff = (await response.json())?.data?.Staff;
+		if (!staff?.name?.full) return null;
+
+		return { name: staff.name.full, photo: staff.image?.medium ?? null };
+	} catch {
+		return null;
+	}
+}

@@ -8,18 +8,29 @@
 	 */
 	let {
 		cast,
-		from = null,
+		back = null,
 		heading = 'Cast',
 		note = null
 	}: {
-		cast: { id?: number | null; name: string; photo: string | null; character: string | null }[];
-		/** Entry id to come back to, carried through so "back" works. */
-		from?: number | null;
+		cast: {
+			id?: number | null;
+			/** The provider's id, used when this person isn't in the library. */
+			sourceId?: string | null;
+			name: string;
+			photo: string | null;
+			character: string | null;
+		}[];
+		/** The page to return to, so a long chain of links stays navigable. */
+		back?: string | null;
 		heading?: string;
 		note?: string | null;
 	} = $props();
 
-	const href = (id: number) => (from ? `/person/${id}?from=${from}` : `/person/${id}`);
+	/** Our own id where we have one; the provider's where we don't. */
+	const href = (person: { id?: number | null; sourceId?: string | null }) => {
+		const who = person.id || person.sourceId;
+		return back ? `/person/${who}?back=${encodeURIComponent(back)}` : `/person/${who}`;
+	};
 </script>
 
 {#if cast.length > 0}
@@ -28,8 +39,8 @@
 		<ul>
 			{#each cast as person, index (person.id ?? person.name + index)}
 				<li>
-					{#if person.id}
-						<a href={href(person.id)} title="Everything else with {person.name}">
+					{#if person.id || person.sourceId}
+						<a href={href(person)} title="Everything else with {person.name}">
 							{#if person.photo}
 								<img src={person.photo} alt="" loading="lazy" />
 							{:else}

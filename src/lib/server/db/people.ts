@@ -165,3 +165,12 @@ export function knownPeople(sourceIds: string[]): Map<string, number> {
 
 	return new Map(rows.map((row) => [row.sourceId, row.id]));
 }
+
+/** The same person, found by the provider's id rather than ours. */
+export function getPersonBySourceId(sourceId: string): Person | null {
+	const row = db
+		.prepare('SELECT id, source_id AS sourceId, name, photo FROM people WHERE source_id = ?')
+		.get(sourceId);
+
+	return row ? ({ ...(row as object) } as Person) : null;
+}

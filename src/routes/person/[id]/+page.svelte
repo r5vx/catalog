@@ -12,8 +12,12 @@
 		libraryBack = libraryHref();
 	});
 
-	const backHref = $derived(data.from ? `/entry/${data.from}` : libraryBack);
-	const backLabel = $derived(data.from ? 'Back' : 'Library');
+	const backHref = $derived(data.back ?? libraryBack);
+	const backLabel = $derived(data.back ? 'Back' : 'Library');
+
+	/** Our own id where this person is in the library, the provider's if not. */
+	const personKey = $derived(data.person.id || data.person.sourceId);
+	const here = $derived(`/person/${personKey}`);
 
 	/** Titles added from here, so the button can show it worked. */
 	let justAdded = $state<Record<string, number>>({});
@@ -87,10 +91,14 @@
 	{/if}
 	<div>
 		<h1>{data.person.name}</h1>
-		<p class="muted tabular">
-			In {data.entries.length}
-			{data.entries.length === 1 ? 'title' : 'titles'} you've watched
-		</p>
+		{#if data.entries.length > 0}
+			<p class="muted tabular">
+				In {data.entries.length}
+				{data.entries.length === 1 ? 'title' : 'titles'} you've watched
+			</p>
+		{:else}
+			<p class="muted">Nothing of theirs in your library yet.</p>
+		{/if}
 	</div>
 </header>
 
@@ -127,7 +135,7 @@
 					<!-- Read about it first; the + adds it without leaving the page. -->
 					<a
 						class="card"
-						href="/title/{credit.source}/{credit.sourceId}?from={data.person.id}"
+						href="/title/{credit.source}/{credit.sourceId}?back={encodeURIComponent(here)}"
 						title="Read about {credit.title}"
 					>
 						<div class="poster">

@@ -10,11 +10,22 @@
 	 */
 	let {
 		value,
+		hidden = [],
 		onchange
 	}: {
 		value: string;
+		/** Sort options turned off in Personalization. */
+		hidden?: string[];
 		onchange: (next: string) => void;
 	} = $props();
+
+	// The one in use stays listed even if it's hidden, so an active sort is
+	// never something you can see the effect of but not the name of.
+	const shown = $derived(SORTS.filter((one) => !hidden.includes(one.value) || one.value === value));
+
+	const groups = $derived(
+		SORT_GROUPS.filter((group) => shown.some((one) => one.group === group.key))
+	);
 
 	let open = $state(false);
 	let panel = $state<HTMLDivElement | null>(null);
@@ -55,7 +66,7 @@
 
 	{#if open}
 		<div class="panel">
-			{#each SORT_GROUPS as group (group.key)}
+			{#each groups as group (group.key)}
 				{@const showing = isOpen(group.key)}
 				<button
 					type="button"
@@ -69,7 +80,7 @@
 
 				{#if showing}
 					<ul>
-						{#each SORTS.filter((one) => one.group === group.key) as option (option.value)}
+						{#each shown.filter((one) => one.group === group.key) as option (option.value)}
 							<li>
 								<button
 									type="button"

@@ -5,12 +5,25 @@
 
 	let { children, data }: { children: Snippet; data: LayoutData } = $props();
 
-	const SECTIONS = [
-		{ href: '/settings/appearance', label: 'Appearance', hint: 'Colour' },
+	type Section = {
+		href: string;
+		label: string;
+		hint: string;
+		/** Which attention flag, if any, belongs to this section. */
+		flag?: 'services' | 'updates';
+	};
+
+	const SECTIONS: Section[] = [
+		{ href: '/settings/personalization', label: 'Personalization', hint: 'Colour and sorting' },
 		{ href: '/settings/library', label: 'Library', hint: 'Export, where your files live' },
-		{ href: '/settings/services', label: 'Services', hint: 'Where titles and scores come from' },
+		{
+			href: '/settings/services',
+			label: 'Services',
+			hint: 'Where titles and scores come from',
+			flag: 'services'
+		},
 		{ href: '/settings/privacy', label: 'Privacy', hint: 'PIN lock' },
-		{ href: '/settings/updates', label: 'Updates', hint: 'Keep Catalog current' }
+		{ href: '/settings/updates', label: 'Updates', hint: 'Keep Catalog current', flag: 'updates' }
 	];
 
 	const sections = $derived(
@@ -46,7 +59,18 @@
 						class:active={page.url.pathname.startsWith(section.href)}
 						aria-current={page.url.pathname.startsWith(section.href) ? 'page' : undefined}
 					>
-						<span class="name">{section.label}</span>
+						<span class="name">
+							{section.label}
+							{#if section.flag && data.needs[section.flag]}
+								<span
+									class="dot"
+									title={section.flag === 'services'
+										? 'A key is missing'
+										: 'An update is waiting'}
+									aria-label="Needs attention"
+								></span>
+							{/if}
+						</span>
 						<span class="hint faint">{section.hint}</span>
 						<span class="chevron" aria-hidden="true"></span>
 					</a>
@@ -130,6 +154,18 @@
 		grid-area: name;
 		font-weight: 600;
 		font-size: 0.93rem;
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	/* Only where there's something to do about it. */
+	.dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: var(--accent);
+		flex: none;
 	}
 
 	.hint {
