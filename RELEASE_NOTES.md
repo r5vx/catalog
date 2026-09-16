@@ -7,6 +7,8 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 1.2.1 — 2026-09-16
+
 - Fixed an update that could stop at "Waiting for Catalog to close" and go no
   further. Updates no longer reuse a build folder, so a file Windows is still
   holding on to can't block the next one.
