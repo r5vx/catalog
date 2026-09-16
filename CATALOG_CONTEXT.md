@@ -458,6 +458,14 @@ side-effect import — so the check made at launch isn't lost before anyone open
 Settings.
 
 ### Updating a source build
+**A build that misses its swap is not thrown away.** The helper waits five
+minutes for the exe to unlock, and `rebuild.ts` writes `dist-staged/pending.txt`
+naming the build. `main.cjs` reads that marker on **any** quit and starts the
+helper again, so reopening Catalog while the swap is waiting delays the update
+rather than wasting it. That was the real failure: two complete builds sat
+unused while the app stayed on the old version, because the one-minute window
+expired when the app was reopened.
+
 **The button no longer opens a console.** `scripts/stage-update.mjs` builds into
 `dist-staged` **while Catalog is still open** — nothing it writes is locked —
 printing `::step n/total label` lines. `src/lib/server/rebuild.ts` reads those
