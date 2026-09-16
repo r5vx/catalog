@@ -154,7 +154,16 @@ if (!existsSync(join(outDir, manifestName))) {
 	);
 }
 
+/**
+ * The blockmap lets an update download only the parts that changed, instead
+ * of the whole 92 MB installer. It needs to be present for both the installed
+ * version and the new one, so it only starts paying off once two releases in
+ * a row have carried it.
+ */
+const blockmapName = `${installerName}.blockmap`;
+
 const artefacts = [join(outDir, installerName), join(outDir, manifestName)];
+if (existsSync(join(outDir, blockmapName))) artefacts.push(join(outDir, blockmapName));
 
 /* ----------------------------------------------------------------- the notes */
 

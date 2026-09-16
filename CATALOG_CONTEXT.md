@@ -465,6 +465,22 @@ the update in this project, and pulling over them would fight them.
 `Update Catalog.bat` still exists — it's what `updateMode()` checks to tell a
 source build from a release — but it's a manual fallback now.
 
+### Updating across several versions
+electron-updater reads `latest.yml` from the **newest** release and goes
+straight there — it does not step through versions. Verified 2026-09-16 that a
+v1.0.0 install is pointed at 1.2.1 in one hop.
+
+Schema migrations are additive and guarded by `PRAGMA table_info`, so any
+starting point converges. Verified by building a database with the **v1.0.0
+schema** (`git show v1.0.0:src/lib/server/db/index.ts`), filling it, then
+opening it with today's code: `box_office` and `notes.locked` were added,
+integrity ok, and every rating, rewatch, favourite, status, review and note
+body survived byte for byte. Worth repeating whenever a column is added.
+
+The `.blockmap` is uploaded alongside the installer so updates download only
+what changed. Both the installed and the new version need one, so it only
+starts paying off from 1.2.1 onwards.
+
 ### Release notes
 `RELEASE_NOTES.md` is the source. Write bullets under `## Unreleased`;
 `npm run release` **refuses to run without them**, publishes them as the GitHub
