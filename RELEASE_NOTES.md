@@ -7,6 +7,8 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 1.6.0 — 2026-09-16
+
 - A **Browse** button beside Add, for finding something rather than looking it
   up. It opens on what people are watching this week and searches everything
   the databases have — synopsis, cast and scores on every title, and a
