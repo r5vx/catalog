@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { page } from '$app/state';
+
 	/**
 	 * Offers an update when one is waiting.
 	 *
@@ -11,6 +13,8 @@
 	let offer = $state<Offer | null>(null);
 	let dismissed = $state(false);
 	let starting = $state(false);
+	/** So a successful answer isn't asked for again on every navigation. */
+	let answered = $state(false);
 
 	const SESSION_KEY = 'catalog.updateDismissed';
 
@@ -21,6 +25,18 @@
 			// No session storage. It just shows again.
 		}
 
+		/**
+		 * Read so this re-runs when you move between pages.
+		 *
+		 * With a PIN set, Catalog opens on the login page — and this component
+		 * lives in the layout, which stays mounted right through signing in. It
+		 * asked once, from behind the lock, got the login page instead of an
+		 * answer, and never asked again. Anyone with a PIN was simply never
+		 * told an update was waiting.
+		 */
+		const path = page.url.pathname;
+		if (path === '/login' || answered) return;
+
 		look();
 	});
 
@@ -28,7 +44,13 @@
 		try {
 			const response = await fetch('/api/update');
 			if (!response.ok) return;
+
+			// Behind the lock this comes back as the login page, with a cheerful
+			// 200. Parsing it would throw, be swallowed, and look like "no update".
+			if (!response.headers.get('content-type')?.includes('application/json')) return;
+
 			offer = (await response.json()).offer ?? null;
+			answered = true;
 		} catch {
 			// Not the desktop app, or offline.
 		}

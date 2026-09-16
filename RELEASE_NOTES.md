@@ -7,6 +7,19 @@ and stamps it with the version number.
 
 ## Unreleased
 
+- **"An update is ready" now appears when you have a PIN.** It was asking from
+  the login screen, getting the login page back instead of an answer, and never
+  asking again — so with a PIN set you were never told an update was waiting.
+- **Fixed an update that could report itself as failed while it was still
+  working.** Every time Catalog was opened during an install it started a second
+  helper, which gave up instantly because the first one was mid-job — and the
+  app closed anyway. A few of those in a row used up the retry budget and the
+  update declared itself impossible while a perfectly good one was in progress.
+- Installing an update now says so on screen instead of the app silently
+  refusing to open, so there's no reason to keep clicking.
+- An update that runs out of time no longer blocks the next one for ten
+  minutes.
+
 ## 1.6.0 — 2026-09-16
 
 - A **Browse** button beside Add, for finding something rather than looking it

@@ -185,7 +185,51 @@ busy and **overwrote "Updated." with an EPERM failure**, so a working update
 reported itself broken. `dist-staged/applying.txt` is the lock; the loser exits
 quietly. **When diagnosing an update, read the timestamps, not just the note.**
 
-**18. A missing value is not an unanswered question.**
+**18. "Did it work?" is not the same question as "did I start it?"**
+The 1.6.0 update failed on the owner's own machine, and the reason is worth
+keeping. The helper was waiting for Catalog to close, as designed. Every launch
+during that wait ran the startup-install path, which spawned *another* helper —
+and that one exited within milliseconds because `applying.txt` was held by the
+first. But `startHelper()` returned `true` (spawning hadn't thrown), so the app
+charged itself an attempt and quit. Three launches in ten seconds spent the
+whole budget without one real swap, the guard declared the update
+uninstallable, deleted the marker, and the finished build was orphaned — while
+the original helper was still sitting there, perfectly healthy, waiting.
+
+Three things came out of it:
+
+- **The lock is a heartbeat**, rewritten every second while a helper waits, so
+  "someone is on the job" can be told from "someone died holding it". Startup
+  checks it: if a helper is working, step aside without spawning a rival and
+  **without charging an attempt**.
+- **Every exit path releases the lock.** The timeout path didn't, so one slow
+  update blocked every helper for the next ten minutes.
+- **Say what's happening.** The app quit in silence to install, which looks
+  exactly like Catalog refusing to open — so it got clicked again and again,
+  each click landing in the middle of the swap. It shows a small "Installing
+  Catalog x.y.z…" window now. The human failure was the important one.
+
+Verified against a fake project tree: heartbeat moves, a rival helper exits 0
+without touching the note, the swap completes when the exe unlocks, and a
+timed-out helper releases the lock while keeping the marker for the next start.
+
+**19. Test with the lock on.**
+The update banner never appeared for the owner, and the reason it was missed is
+more instructive than the bug. `UpdateBanner` lives in the root layout, which
+the **login page shares**. With a PIN set, Catalog opens on `/login`, the
+banner asks `/api/update` from behind the lock, and the hook redirects it to the
+login page — which arrives as a cheerful `200` full of HTML. `.json()` throws,
+the `catch` swallows it, `offer` stays null, and because the layout survives
+signing in the effect never runs again. **Everyone with a PIN was silently
+never told.**
+
+It was missed because the test copy of the database had its `pinHash` deleted
+to get in — removing the exact condition that breaks it. **When a fixture is
+made easier to test with, check what the removal was load-bearing for.** The
+fix re-runs the check on navigation, skips `/login`, and treats a non-JSON
+reply as "no answer yet" rather than "no update".
+
+**20. A missing value is not an unanswered question.**
 "Missing information" sat at 44 titles no matter how many times it ran, and
 reported "filled in 0". The query asked `WHERE runtime_minutes IS NULL`, which
 cannot tell *nobody has looked* from *there is nothing to find* — so the same
@@ -368,7 +412,7 @@ missing. It starts by itself a few seconds after the app opens
 (`scheduleBackfill`), shows a thin line on the library page while it runs
 (`FillingIn.svelte`) and a progress bar in Settings → Library. What counts as
 missing is one shared `OUTSTANDING` condition, and it turns on the *stamps*
-rather than the values — see lesson 18, which is the whole reason the count
+rather than the values — see lesson 20, which is the whole reason the count
 used to be stuck at 44.
 
 `sortBadge()` in `constants.ts` puts the sorted-on value on each card, and
