@@ -245,6 +245,17 @@ if (!app.requestSingleInstanceLock()) {
 		 */
 		const pending = pendingUpdate();
 		if (pending && startHelper(pending.staged)) {
+			// Counted before we step aside, so a swap that never works stops.
+			try {
+				fs.writeFileSync(
+					pending.marker,
+					`${pending.staged}\n${pending.version}\n${pending.attempts + 1}`,
+					'utf8'
+				);
+			} catch {
+				// Then it gets one more go than intended. Not worth failing over.
+			}
+
 			console.log(`[app] installing ${pending.version || 'an update'} before starting`);
 			app.quit();
 			return;
@@ -315,7 +326,7 @@ if (!app.requestSingleInstanceLock()) {
 		if (!fs.existsSync(marker)) return null;
 
 		try {
-			const [staged, version] = fs.readFileSync(marker, 'utf8').trim().split('\n');
+			const [staged, version, tries] = fs.readFileSync(marker, 'utf8').trim().split('\n');
 			if (!staged) return null;
 
 			const exe = path.join(projectRoot(), staged, 'win-unpacked', 'Catalog.exe');
@@ -330,7 +341,33 @@ if (!app.requestSingleInstanceLock()) {
 				return null;
 			}
 
-			return { staged, version: (version ?? '').trim() };
+			/**
+			 * Give up rather than loop.
+			 *
+			 * Restarting into an update that cannot be installed would mean the
+			 * window never opens at all, and an app you can't use is far worse
+			 * than an update you haven't got. After two goes it stays put, says
+			 * so, and Settings can still try again by hand.
+			 */
+			const attempts = Number(tries ?? 0) || 0;
+
+			if (attempts >= 2) {
+				try {
+					fs.writeFileSync(
+						path.join(projectRoot(), 'dist-app', 'last-update.txt'),
+						`Version ${version || 'the update'} was built but could not be installed. ` +
+							'Close Catalog completely, then open it again.',
+						'utf8'
+					);
+				} catch {
+					// The marker still goes, which is the part that matters.
+				}
+
+				fs.rmSync(marker, { force: true });
+				return null;
+			}
+
+			return { staged, version: (version ?? '').trim(), attempts, marker };
 		} catch {
 			return null;
 		}

@@ -157,6 +157,25 @@ installing it**: `Catalog-Setup-x.y.z.exe /S /D=<dir>`, run it with its own
 `GET /api/update` — `"mode":"release"` with a real status proves the chain.
 Uninstall afterwards with `Uninstall Catalog.exe /S`.
 
+**17. Waiting for the app to close is not a mechanism.**
+The swap needs Catalog shut, so the helper waited for it — and a finished 1.4.0
+build sat unused for five minutes because the app stayed open. It only applied
+when the user happened to close it, which read to them as "clicking update does
+nothing". **The update is installed at startup now**: a pending marker makes the
+app restart into the new build before opening a window, which converges whatever
+happened before.
+
+That path must be loop-proof. Restarting into an update that can't install would
+mean the window never opens at all, so the marker carries an attempt count and
+gives up after two, leaving a note instead. Verified by simulation: restart,
+restart, then open normally.
+
+Two helpers were also racing — one from pressing Update, one from the quit
+handler. The first swapped and relaunched the app; the second found the folder
+busy and **overwrote "Updated." with an EPERM failure**, so a working update
+reported itself broken. `dist-staged/applying.txt` is the lock; the loser exits
+quietly. **When diagnosing an update, read the timestamps, not just the note.**
+
 ---
 
 ## How the pieces work

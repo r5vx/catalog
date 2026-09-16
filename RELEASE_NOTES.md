@@ -7,6 +7,14 @@ and stamps it with the version number.
 
 ## Unreleased
 
+- **Updates install themselves properly now.** A finished update used to wait
+  for you to close Catalog, and sat unused if you didn't. It's installed when
+  the app next starts instead — worst case, one extra restart.
+- A **Library** link sits beside Back on every page, so you don't have to walk
+  back up a long chain of films and actors.
+- The library page shows a thin progress line while runtimes and scores are
+  being filled in, rather than doing it invisibly.
+
 ## 1.4.0 — 2026-09-16
 
 - Runtimes, box office and scores now fill themselves in shortly after Catalog
