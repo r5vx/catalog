@@ -1,19 +1,22 @@
 import { json, error } from '@sveltejs/kit';
-import { spawn } from 'node:child_process';
 import {
-	updaterPath,
-	projectRoot,
 	updateMode,
 	updateState,
 	requestUpdateCheck,
 	installUpdate,
 	appVersion
 } from '$lib/server/updater';
+import { startRebuild, rebuildState } from '$lib/server/rebuild';
 import type { RequestHandler } from './$types';
 
 /** Where the Settings page polls while an update is running. */
 export const GET: RequestHandler = async () =>
-	json({ mode: updateMode(), version: appVersion(), state: updateState() });
+	json({
+		mode: updateMode(),
+		version: appVersion(),
+		state: updateState(),
+		rebuild: rebuildState()
+	});
 
 /**
  * Two kinds of update, picked by `?action=`.
@@ -23,9 +26,9 @@ export const GET: RequestHandler = async () =>
  * comes back on the same channel.
  *
  * The default is the rebuild, for a copy running from the project folder.
- * Windows won't let anything overwrite Catalog.exe while it's running, so the
- * helper is launched detached, waits for this app to close, rebuilds, and
- * starts it again. That's why the app shuts itself down a moment later.
+ * It builds into a staging folder with the app still open, so the page can
+ * show real progress. The app only closes for the final swap, which is a
+ * folder move rather than a build.
  */
 export const POST: RequestHandler = async ({ url }) => {
 	const action = url.searchParams.get('action') ?? 'rebuild';
@@ -40,19 +43,10 @@ export const POST: RequestHandler = async ({ url }) => {
 		return json({ started: true });
 	}
 
-	const script = updaterPath();
-	if (!script) error(400, 'Updating is only available in the desktop app.');
+	if (updateMode() !== 'source') {
+		error(400, 'Updating is only available in the desktop app.');
+	}
 
-	const child = spawn('cmd.exe', ['/c', 'start', 'Updating Catalog', '/wait', script], {
-		cwd: projectRoot(),
-		detached: true,
-		stdio: 'ignore',
-		windowsHide: false
-	});
-	child.unref();
-
-	// Give the browser a moment to show "updating" before the window closes.
-	setTimeout(() => process.send?.({ type: 'quit-for-update' }), 1200);
-
+	startRebuild();
 	return json({ started: true });
 };

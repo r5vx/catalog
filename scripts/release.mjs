@@ -156,6 +156,52 @@ if (!existsSync(join(outDir, manifestName))) {
 
 const artefacts = [join(outDir, installerName), join(outDir, manifestName)];
 
+/* ----------------------------------------------------------------- the notes */
+
+const notesFile = join(root, 'RELEASE_NOTES.md');
+
+/**
+ * Takes the bullets from under "## Unreleased", and stamps that heading with
+ * the version being shipped.
+ *
+ * The app shows these on its Updates page, so they're written for whoever is
+ * using it rather than whoever wrote it. An empty section is a mistake worth
+ * stopping for — a release nobody can read the changes of is half a release.
+ */
+function takeNotes() {
+	if (!existsSync(notesFile)) return '';
+
+	const text = readFileSync(notesFile, 'utf8');
+	const match = /^## Unreleased\s*$([\s\S]*?)(?=^## |\Z)/m.exec(text);
+
+	const body = (match?.[1] ?? '').trim();
+	if (!body) return '';
+
+	const today = new Date().toISOString().slice(0, 10);
+
+	writeFileSync(
+		notesFile,
+		text.replace(/^## Unreleased\s*$/m, `## Unreleased
+
+## ${next} — ${today}`),
+		'utf8'
+	);
+
+	return body;
+}
+
+const notes = takeNotes();
+
+if (!notes) {
+	abort(
+		'There is nothing under "## Unreleased" in RELEASE_NOTES.md.\n' +
+			'  Write a couple of bullets about what changed, then run this again.'
+	);
+}
+
+console.log('\nWhat this release says:\n');
+console.log(notes.replace(/^/gm, '  '));
+
 /* --------------------------------------------------------------- the commit */
 
 // Before the release is created, so the tag it points at already exists.
@@ -242,7 +288,11 @@ async function upload() {
 			body: JSON.stringify({
 				tag_name: tag,
 				name: `Catalog ${next}`,
-				body: 'Download **Catalog-Setup.exe** below. Existing copies update themselves.'
+				body: `${notes}
+
+---
+
+Download **Catalog-Setup-${next}.exe** below. Copies already installed update themselves.`
 			})
 		});
 

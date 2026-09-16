@@ -31,3 +31,5 @@ backups/
 dist-app/
 # Release builds, kept apart so a running Catalog never blocks one
 dist-release/
+# Where an update is built while the app is still running
+dist-staged/

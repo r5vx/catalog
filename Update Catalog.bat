@@ -7,6 +7,9 @@ echo.
 echo   Updating Catalog
 echo   ----------------
 echo.
+echo   The Update button in Settings does this without a window, and
+echo   without closing the app first. This is the manual fallback.
+echo.
 
 set /a tries=0
 

@@ -1,0 +1,121 @@
+/**
+ * Builds the new Catalog while the old one is still running.
+ *
+ * It builds into `dist-staged`, never `dist-app`, so nothing it touches is
+ * locked by the app you're looking at. That's what lets the update show a
+ * progress bar in the app instead of a console window: the slow part happens
+ * with Catalog open, and only the final swap needs it closed.
+ *
+ * Progress is printed as `::step <n>/<total> <label>` lines, which the server
+ * reads and the Settings page turns into a bar. Everything else the build
+ * prints goes to stderr, where it stays out of the way unless something fails.
+ */
+import { spawn } from 'node:child_process';
+import { existsSync, rmSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+export const STAGED = 'dist-staged';
+const UNPACKED = join(root, STAGED, 'win-unpacked');
+
+const STEPS = ['Fetching the latest code', 'Building', 'Packaging', 'Finishing up'];
+
+let current = 0;
+
+function step(label) {
+	current += 1;
+	// The one thing on stdout the server cares about.
+	process.stdout.write(`::step ${current}/${STEPS.length} ${label}\n`);
+}
+
+function fail(message) {
+	process.stdout.write(`::fail ${message}\n`);
+	process.exit(1);
+}
+
+/** Runs a command, keeping its chatter on stderr where the bar won't see it. */
+function run(command, args) {
+	return new Promise((resolve) => {
+		const child = spawn(command, args, { cwd: root, shell: true, stdio: ['ignore', 'pipe', 'pipe'] });
+
+		let tail = '';
+		const keep = (chunk) => {
+			tail = (tail + chunk).slice(-4000);
+			process.stderr.write(chunk);
+		};
+
+		child.stdout.on('data', keep);
+		child.stderr.on('data', keep);
+		child.on('close', (code) => resolve({ code, tail }));
+	});
+}
+
+/* ------------------------------------------------------------------ the work */
+
+step(STEPS[0]);
+
+/**
+ * Pull, but only when there's nothing of your own to lose.
+ *
+ * Uncommitted changes in the folder *are* the update — that's the usual case
+ * here — and pulling over them would either fail or fight them. A clean clone
+ * with a remote is the only time fetching is the right move.
+ */
+if (existsSync(join(root, '.git'))) {
+	const dirty = (await run('git', ['status', '--porcelain'])).tail.trim();
+	const remotes = (await run('git', ['remote'])).tail.trim();
+
+	if (dirty) {
+		process.stderr.write('\n(Local changes present — building those rather than pulling.)\n');
+	} else if (remotes) {
+		const pulled = await run('git', ['pull', '--ff-only']);
+		if (pulled.code !== 0) {
+			process.stderr.write('\n(Could not pull. Building what is already here.)\n');
+		}
+	}
+}
+
+step(STEPS[1]);
+
+const web = await run('npm', ['run', 'build']);
+if (web.code !== 0) fail('The build failed. Nothing was changed.');
+
+step(STEPS[2]);
+
+/**
+ * Clear the staging folder, retrying briefly.
+ *
+ * A stale one would leave the previous build's files behind after the swap.
+ * Windows will refuse for a few seconds after a large exe is written while
+ * something scans it, and that is worth waiting out rather than failing on.
+ */
+if (existsSync(join(root, STAGED))) {
+	let cleared = false;
+
+	for (let attempt = 0; attempt < 6 && !cleared; attempt++) {
+		try {
+			rmSync(join(root, STAGED), { recursive: true, force: true });
+			cleared = true;
+		} catch {
+			await new Promise((resolve) => setTimeout(resolve, 1000));
+		}
+	}
+
+	if (!cleared) fail('Could not clear the last build. Try again in a moment.');
+}
+
+await run('npx', ['electron-builder', '--win', 'dir', `-c.directories.output=${STAGED}`]);
+
+if (!existsSync(join(UNPACKED, 'Catalog.exe'))) {
+	fail('The app could not be packaged. Nothing was changed.');
+}
+
+step(STEPS[3]);
+
+// electron-builder's own icon step doesn't run on this machine, so the icon
+// goes on here — before the swap, or the installed app loses it.
+await run('node', ['scripts/set-exe-icon.mjs', `${STAGED}/win-unpacked`]);
+
+process.stdout.write('::ready\n');
