@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { libraryHref } from '$lib/nav';
+	import BackBar from '$lib/BackBar.svelte';
 	import EntryForm from '$lib/EntryForm.svelte';
 	import TitleSearch from '$lib/TitleSearch.svelte';
 	import ScoreStrip from '$lib/ScoreStrip.svelte';
@@ -15,11 +15,6 @@
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	let busyKey = $state<string | null>(null);
-	let backToLibrary = $state('/');
-
-	$effect(() => {
-		backToLibrary = libraryHref();
-	});
 
 	const entry = $derived(data.entry);
 
@@ -149,7 +144,7 @@
 
 <svelte:head><title>{entry.title} · Catalog</title></svelte:head>
 
-<a href={backToLibrary} class="back faint">&larr; Library</a>
+<BackBar />
 
 {#if form?.error}
 	<p class="notice error" role="alert">{form.error}</p>

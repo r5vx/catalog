@@ -1,19 +1,8 @@
 <script lang="ts">
-	import { libraryHref } from '$lib/nav';
+	import BackBar from '$lib/BackBar.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
-
-	// Only the library fallback needs the browser (it reads sessionStorage);
-	// arriving from a film is known on the server, so it renders right first time.
-	let libraryBack = $state('/');
-
-	$effect(() => {
-		libraryBack = libraryHref();
-	});
-
-	const backHref = $derived(data.back ?? libraryBack);
-	const backLabel = $derived(data.back ? 'Back' : 'Library');
 
 	/** Our own id where this person is in the library, the provider's if not. */
 	const personKey = $derived(data.person.id || data.person.sourceId);
@@ -81,7 +70,7 @@
 
 <svelte:head><title>{data.person.name} · Catalog</title></svelte:head>
 
-<a href={backHref} class="back faint">&larr; {backLabel}</a>
+<BackBar href={data.back} />
 
 <header>
 	{#if data.person.photo}
@@ -182,15 +171,6 @@
 {/if}
 
 <style>
-	.back {
-		font-size: 0.85rem;
-		display: inline-block;
-		margin-bottom: 12px;
-	}
-	.back:hover {
-		color: var(--accent);
-	}
-
 	header {
 		display: flex;
 		align-items: center;

@@ -6,6 +6,7 @@
 	import { page } from '$app/state';
 	import { rememberLibrary } from '$lib/nav';
 	import CategoryTabs from '$lib/CategoryTabs.svelte';
+	import FillingIn from '$lib/FillingIn.svelte';
 	import TagFilter from '$lib/TagFilter.svelte';
 	import type { PageData } from './$types';
 
@@ -68,6 +69,8 @@
 	noteCount={data.noteCount}
 	active={data.filters.cat}
 />
+
+<FillingIn />
 
 <div class="toolbar">
 	<input

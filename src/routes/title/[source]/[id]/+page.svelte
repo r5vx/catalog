@@ -4,22 +4,11 @@
 	import TagChips from '$lib/TagChips.svelte';
 	import CastRow from '$lib/CastRow.svelte';
 	import { STATUSES } from '$lib/constants';
-	import { libraryHref } from '$lib/nav';
+	import BackBar from '$lib/BackBar.svelte';
 	import { money } from '$lib/format';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
-
-	// Only the fallback needs the browser; arriving from a person is known on
-	// the server, so that case renders right first time.
-	let libraryBack = $state('/');
-
-	$effect(() => {
-		libraryBack = libraryHref();
-	});
-
-	const backHref = $derived(data.back ?? libraryBack);
-	const backLabel = $derived(data.back ? 'Back' : 'Library');
 
 	const details = $derived(data.details);
 
@@ -38,7 +27,7 @@
 
 <svelte:head><title>{details.title} · Catalog</title></svelte:head>
 
-<a href={backHref} class="back faint">&larr; {backLabel}</a>
+<BackBar href={data.back} />
 
 <article>
 	<header>
@@ -110,15 +99,6 @@
 </article>
 
 <style>
-	.back {
-		font-size: 0.85rem;
-		display: inline-block;
-		margin-bottom: 14px;
-	}
-	.back:hover {
-		color: var(--accent);
-	}
-
 	article {
 		display: flex;
 		flex-direction: column;
