@@ -9,15 +9,55 @@
  * halfway leaves you with a working app rather than half of one.
  */
 import { spawn } from 'node:child_process';
-import { existsSync, renameSync, rmSync, writeFileSync, openSync, closeSync } from 'node:fs';
+import {
+	existsSync,
+	readdirSync,
+	renameSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+	openSync,
+	closeSync
+} from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const live = join(root, 'dist-app', 'win-unpacked');
-const staged = join(root, 'dist-staged', 'win-unpacked');
 const previous = join(root, 'dist-app', 'win-unpacked.previous');
+
+/**
+ * Which build to install.
+ *
+ * Staging folders are named per run, so the server passes the one it just
+ * made. The fallback — newest complete build under `dist-staged` — is what an
+ * older Catalog does, since it predates the argument and would otherwise close
+ * itself and never reopen.
+ */
+function findStaged() {
+	const given = process.argv[2];
+	if (given && existsSync(join(root, given, 'win-unpacked', 'Catalog.exe'))) {
+		return join(root, given, 'win-unpacked');
+	}
+
+	const base = join(root, 'dist-staged');
+	if (!existsSync(base)) return '';
+
+	const builds = readdirSync(base)
+		.map((name) => join(base, name, 'win-unpacked'))
+		.filter((path) => existsSync(join(path, 'Catalog.exe')))
+		.map((path) => ({ path, at: statSync(join(path, 'Catalog.exe')).mtimeMs }))
+		.sort((a, b) => b.at - a.at);
+
+	// The folder an older Catalog wrote to, before they were named per run.
+	const legacy = join(base, 'win-unpacked');
+	if (builds.length === 0 && existsSync(join(legacy, 'Catalog.exe'))) return legacy;
+
+	return builds[0]?.path ?? '';
+}
+
+const staged = findStaged();
 
 /** A note the app reads on next start, so a failure isn't silent. */
 const report = (text) => {
@@ -50,7 +90,7 @@ function locked() {
 	}
 }
 
-if (!existsSync(join(staged, 'Catalog.exe'))) {
+if (!staged || !existsSync(join(staged, 'Catalog.exe'))) {
 	report('Nothing was staged, so nothing changed.');
 	process.exit(1);
 }
