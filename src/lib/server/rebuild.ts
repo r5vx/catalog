@@ -22,6 +22,9 @@ export type RebuildState = {
 
 let state: RebuildState = { status: 'idle', percent: 0, label: '' };
 
+/** The folder this build produced, which the swap is handed. */
+let staged = '';
+
 export const rebuildState = (): RebuildState => state;
 
 export function startRebuild(): boolean {
@@ -35,6 +38,8 @@ export function startRebuild(): boolean {
 		label: 'Starting…',
 		startedAt: Date.now()
 	};
+
+	staged = '';
 
 	const child = spawn('node', [join(root, 'scripts', 'stage-update.mjs')], {
 		cwd: root,
@@ -104,7 +109,17 @@ function read(line: string) {
 		return;
 	}
 
+	if (line.startsWith('::staged ')) {
+		staged = line.slice(9).trim();
+		return;
+	}
+
 	if (line === '::ready') {
+		if (!staged) {
+			state = { status: 'failed', percent: 0, label: '', message: 'The build produced nothing.' };
+			return;
+		}
+
 		state = { ...state, status: 'swapping', percent: 100, label: 'Restarting Catalog' };
 		applyAndQuit();
 		return;
@@ -124,7 +139,7 @@ function read(line: string) {
 function applyAndQuit() {
 	const root = projectRoot();
 
-	const helper = spawn('node', [join(root, 'scripts', 'apply-update.mjs')], {
+	const helper = spawn('node', [join(root, 'scripts', 'apply-update.mjs'), staged], {
 		cwd: root,
 		detached: true,
 		stdio: 'ignore',

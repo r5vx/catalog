@@ -11,13 +11,22 @@
  * prints goes to stderr, where it stays out of the way unless something fails.
  */
 import { spawn } from 'node:child_process';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, rmSync, mkdirSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-export const STAGED = 'dist-staged';
+/**
+ * Each build gets its own folder under `dist-staged`.
+ *
+ * Reusing one name meant clearing it first, and Windows sometimes holds a
+ * freshly written `app.asar` for a long time with no process owning it — a
+ * lock that outlived every build tool and every visible process by twenty
+ * minutes. Nothing has to be deleted before a build now; old folders are
+ * tidied up afterwards if they will go, and left alone if they will not.
+ */
+const STAGED = ['dist-staged', String(Date.now())].join('/');
 const UNPACKED = join(root, STAGED, 'win-unpacked');
 
 const STEPS = ['Fetching the latest code', 'Building', 'Packaging', 'Finishing up'];
@@ -84,27 +93,8 @@ if (web.code !== 0) fail('The build failed. Nothing was changed.');
 
 step(STEPS[2]);
 
-/**
- * Clear the staging folder, retrying briefly.
- *
- * A stale one would leave the previous build's files behind after the swap.
- * Windows will refuse for a few seconds after a large exe is written while
- * something scans it, and that is worth waiting out rather than failing on.
- */
-if (existsSync(join(root, STAGED))) {
-	let cleared = false;
-
-	for (let attempt = 0; attempt < 6 && !cleared; attempt++) {
-		try {
-			rmSync(join(root, STAGED), { recursive: true, force: true });
-			cleared = true;
-		} catch {
-			await new Promise((resolve) => setTimeout(resolve, 1000));
-		}
-	}
-
-	if (!cleared) fail('Could not clear the last build. Try again in a moment.');
-}
+// A folder of its own, so nothing has to be deleted before building.
+mkdirSync(join(root, STAGED), { recursive: true });
 
 await run('npx', ['electron-builder', '--win', 'dir', `-c.directories.output=${STAGED}`]);
 
@@ -118,4 +108,18 @@ step(STEPS[3]);
 // goes on here — before the swap, or the installed app loses it.
 await run('node', ['scripts/set-exe-icon.mjs', `${STAGED}/win-unpacked`]);
 
+// Folders from previous updates, including any Windows is still holding on to.
+// Whatever will not go is skipped rather than failing the update over it.
+for (const name of readdirSync(join(root, 'dist-staged'))) {
+	if (`dist-staged/${name}` === STAGED) continue;
+
+	try {
+		rmSync(join(root, 'dist-staged', name), { recursive: true, force: true });
+	} catch {
+		// Still locked. It costs disk space and nothing else.
+	}
+}
+
+// Which folder the swap should take. The name changes every run.
+process.stdout.write(`::staged ${STAGED}\n`);
 process.stdout.write('::ready\n');
