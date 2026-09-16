@@ -142,6 +142,21 @@ record — **four people** for The Office. The real cast is
 `/tv/{id}/aggregate_credits`, which returns 689, with a `roles` array instead of
 a `character`. Films are fine with plain `credits`.
 
+**16. `--prepackaged` skips the step that writes `app-update.yml`.**
+electron-updater reads `resources/app-update.yml` to learn which repo to check.
+electron-builder injects it *while packaging* — but the release builds with
+`--win dir` and then wraps with `--prepackaged`, which skips that phase. The
+file was never written, so **every release from 1.0.0 to 1.2.1 could not update
+itself**, failing with `ENOENT: app-update.yml`. It went unnoticed because the
+local `dist-release` build runs in *source* mode (the batch file sits two
+folders up), so electron-updater is never exercised there.
+
+`release.mjs` writes the file itself now. **Testing a release build means
+installing it**: `Catalog-Setup-x.y.z.exe /S /D=<dir>`, run it with its own
+`--user-data-dir`, `CATALOG_PORT` and `CATALOG_DB`, then read
+`GET /api/update` — `"mode":"release"` with a real status proves the chain.
+Uninstall afterwards with `Uninstall Catalog.exe /S`.
+
 ---
 
 ## How the pieces work
