@@ -244,21 +244,34 @@ if (!app.requestSingleInstanceLock()) {
 		 * opens, the helper swaps, and Catalog comes back on the new version.
 		 */
 		const pending = pendingUpdate();
-		if (pending && startHelper(pending.staged)) {
-			// Counted before we step aside, so a swap that never works stops.
-			try {
-				fs.writeFileSync(
-					pending.marker,
-					`${pending.staged}\n${pending.version}\n${pending.attempts + 1}`,
-					'utf8'
-				);
-			} catch {
-				// Then it gets one more go than intended. Not worth failing over.
+
+		if (pending) {
+			/**
+			 * A helper already waiting is not a reason to start another.
+			 *
+			 * This is what broke the 1.6.0 update. The helper sat waiting for
+			 * Catalog to close; every launch spawned a rival that exited on the
+			 * lock within milliseconds, `startHelper` reported success because
+			 * spawning hadn't thrown, and the app quit anyway — burning an
+			 * attempt each time. Three launches in ten seconds spent the whole
+			 * budget without a single real swap, and the update declared itself
+			 * uninstallable while a perfectly good helper was still waiting.
+			 *
+			 * If someone is genuinely on the job, the useful thing to do is get
+			 * out of their way.
+			 */
+			if (helperWorking()) {
+				console.log('[app] an update is being installed — stepping aside');
+				showInstalling(pending.version);
+				return;
 			}
 
-			console.log(`[app] installing ${pending.version || 'an update'} before starting`);
-			app.quit();
-			return;
+			if (startHelper(pending.staged)) {
+				noteAttempt(pending);
+				console.log(`[app] installing ${pending.version || 'an update'} before starting`);
+				showInstalling(pending.version);
+				return;
+			}
 		}
 
 		startServer();
@@ -313,6 +326,49 @@ if (!app.requestSingleInstanceLock()) {
 	}
 
 	/**
+	 * Whether a helper is currently doing the work.
+	 *
+	 * `applying.txt` is rewritten every second while one waits, so a recent
+	 * timestamp means somebody is on the job and a stale one means they died
+	 * holding it. Telling those two apart is the whole point: one says step
+	 * aside, the other says take over.
+	 */
+	const LOCK_STALE_MS = 30_000;
+
+	function helperWorking() {
+		try {
+			const beat = Number(
+				fs.readFileSync(path.join(projectRoot(), 'dist-staged', 'applying.txt'), 'utf8')
+			);
+			return Number.isFinite(beat) && Date.now() - beat < LOCK_STALE_MS;
+		} catch {
+			return false;
+		}
+	}
+
+	/** Records that we have just handed the job to a helper of our own. */
+	function noteAttempt(pending) {
+		try {
+			fs.writeFileSync(
+				pending.marker,
+				`${pending.staged}\n${pending.version}\n${pending.attempts + 1}\n${pending.firstSeen}`,
+				'utf8'
+			);
+		} catch {
+			// Then it gets one more go than intended. Not worth failing over.
+		}
+	}
+
+	/**
+	 * How many times we'll hand the job to a fresh helper, and how long the
+	 * whole business gets before it's called off. Two limits because they catch
+	 * different failures: one for a swap that keeps going wrong, one for a
+	 * helper that hangs about achieving nothing.
+	 */
+	const MAX_ATTEMPTS = 3;
+	const GIVE_UP_AFTER_MS = 30 * 60_000;
+
+	/**
 	 * An update that has been built but not yet installed.
 	 *
 	 * Returns the folder and the version in it, or null. The version is what
@@ -326,7 +382,7 @@ if (!app.requestSingleInstanceLock()) {
 		if (!fs.existsSync(marker)) return null;
 
 		try {
-			const [staged, version, tries] = fs.readFileSync(marker, 'utf8').trim().split('\n');
+			const [staged, version, tries, since] = fs.readFileSync(marker, 'utf8').trim().split('\n');
 			if (!staged) return null;
 
 			const exe = path.join(projectRoot(), staged, 'win-unpacked', 'Catalog.exe');
@@ -346,12 +402,15 @@ if (!app.requestSingleInstanceLock()) {
 			 *
 			 * Restarting into an update that cannot be installed would mean the
 			 * window never opens at all, and an app you can't use is far worse
-			 * than an update you haven't got. After two goes it stays put, says
-			 * so, and Settings can still try again by hand.
+			 * than an update you haven't got. Only attempts we actually made
+			 * count — a launch that stepped aside for a working helper did not
+			 * try anything and must not be charged for one.
 			 */
 			const attempts = Number(tries ?? 0) || 0;
+			const firstSeen = Number(since ?? 0) || Date.now();
+			const tooLong = Date.now() - firstSeen > GIVE_UP_AFTER_MS;
 
-			if (attempts >= 2) {
+			if (attempts >= MAX_ATTEMPTS || tooLong) {
 				try {
 					fs.writeFileSync(
 						path.join(projectRoot(), 'dist-app', 'last-update.txt'),
@@ -367,10 +426,62 @@ if (!app.requestSingleInstanceLock()) {
 				return null;
 			}
 
-			return { staged, version: (version ?? '').trim(), attempts, marker };
+			return { staged, version: (version ?? '').trim(), attempts, firstSeen, marker };
 		} catch {
 			return null;
 		}
+	}
+
+	/**
+	 * Say what is happening, then get out of the way.
+	 *
+	 * The old version of this quit in silence, so installing an update looked
+	 * exactly like Catalog refusing to open — which is why it got clicked again
+	 * and again, each click landing in the middle of the swap. A window that
+	 * explains itself for a couple of seconds is the difference between waiting
+	 * and fighting it.
+	 */
+	function showInstalling(version) {
+		const message = version ? `Installing Catalog ${version}` : 'Installing an update';
+
+		const html = `<!doctype html><meta charset="utf-8">
+			<style>
+				html, body { margin: 0; height: 100%; }
+				body {
+					background: #111614; color: #e7ece9;
+					font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+					display: grid; place-items: center; text-align: center;
+					-webkit-user-select: none; user-select: none;
+				}
+				strong { display: block; font-size: 1.05rem; margin-bottom: 6px; }
+				span { color: #8fa39a; font-size: 0.88rem; }
+			</style>
+			<div>
+				<strong>${message}…</strong>
+				<span>It reopens by itself in a moment. No need to click anything.</span>
+			</div>`;
+
+		try {
+			const note = new BrowserWindow({
+				width: 420,
+				height: 190,
+				resizable: false,
+				minimizable: false,
+				maximizable: false,
+				frame: false,
+				show: false,
+				backgroundColor: '#111614',
+				webPreferences: { nodeIntegration: false, contextIsolation: true }
+			});
+
+			note.once('ready-to-show', () => note.show());
+			note.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+		} catch {
+			// No window, then. The update still happens.
+		}
+
+		// Long enough to read, short enough that the helper isn't kept waiting.
+		setTimeout(() => app.quit(), 2500);
 	}
 
 	function startHelper(staged) {
@@ -395,6 +506,10 @@ if (!app.requestSingleInstanceLock()) {
 	 * the check at startup below is what guarantees it eventually happens.
 	 */
 	function applyPendingUpdate() {
+		// Somebody is already waiting for us to close — which is precisely what
+		// we are doing. Another helper would only exit on their lock.
+		if (helperWorking()) return;
+
 		const pending = pendingUpdate();
 		if (pending) startHelper(pending.staged);
 	}

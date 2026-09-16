@@ -154,8 +154,14 @@ function applyAndQuit() {
 	 * than the build being wasted.
 	 */
 	try {
-		writeFileSync(join(root, 'dist-staged', 'pending.txt'), `${staged}
-${stagedVersion}`, 'utf8');
+		// Folder, version, attempts so far, and when the clock started — the
+		// last two are how the desktop app stops retrying a swap that is never
+		// going to work. See `pendingUpdate()` in electron/main.cjs.
+		writeFileSync(
+			join(root, 'dist-staged', 'pending.txt'),
+			[staged, stagedVersion, 0, Date.now()].join('\n'),
+			'utf8'
+		);
 	} catch {
 		// Without it the update still applies now; it just won't be retried.
 	}

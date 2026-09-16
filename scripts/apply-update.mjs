@@ -36,31 +36,57 @@ const lock = join(root, 'dist-staged', 'applying.txt');
  * those two raced: the first swapped successfully and relaunched the app, then
  * the second found the folder busy and overwrote "Updated." with an EPERM
  * failure. The update had worked; only the note said otherwise.
+ *
+ * The lock is a **heartbeat**, not a timestamp taken once. A helper spends most
+ * of its life waiting, and the app needs to be able to tell "someone is on it"
+ * from "someone died holding it" — the difference decides whether starting
+ * Catalog should step aside or take the job over. So the time is rewritten
+ * every second while waiting, and anything older than `LOCK_STALE_MS` is
+ * nobody's.
  */
-function claim() {
-	try {
-		const held = Number(readFileSync(lock, 'utf8'));
-		// A helper that died without tidying up shouldn't block forever.
-		if (Number.isFinite(held) && Date.now() - held < 10 * 60_000) return false;
-	} catch {
-		// No lock, or an unreadable one. Ours now.
-	}
+const LOCK_STALE_MS = 30_000;
 
+const beat = () => {
 	try {
 		writeFileSync(lock, String(Date.now()), 'utf8');
 		return true;
 	} catch {
 		return false;
 	}
+};
+
+function claim() {
+	try {
+		const held = Number(readFileSync(lock, 'utf8'));
+		if (Number.isFinite(held) && Date.now() - held < LOCK_STALE_MS) return false;
+	} catch {
+		// No lock, or an unreadable one. Ours now.
+	}
+
+	return beat();
 }
 
 const release = () => {
 	try {
 		rmSync(lock, { force: true });
 	} catch {
-		// It times out on its own.
+		// It goes stale on its own within the half minute.
 	}
 };
+
+/**
+ * Every way out of here releases the lock.
+ *
+ * Leaving it behind is what turned one slow update into a broken one: the
+ * helper gave up after five minutes without tidying up, and for the next ten
+ * minutes every helper the app started exited on sight of that lock — while
+ * the app quit each time believing one had gone to work.
+ */
+function give(text, code) {
+	report(text);
+	release();
+	process.exit(code);
+}
 
 /**
  * Which build to install.
@@ -126,6 +152,7 @@ function locked() {
 }
 
 if (!staged || !existsSync(join(staged, 'Catalog.exe'))) {
+	// No lock was taken yet, so there is nothing to release.
 	report('Nothing was staged, so nothing changed.');
 	process.exit(1);
 }
@@ -139,13 +166,22 @@ if (!claim()) process.exit(0);
  * Generous, because the common way this fails is someone reopening Catalog
  * while the swap is waiting — the window vanishes, they think it's finished or
  * broken, and click the icon again. Giving up would throw away a finished
- * build; the marker means it is applied the next time the app closes instead.
+ * build; the marker stays, so the next start applies it instead.
+ *
+ * The heartbeat is what makes waiting safe: starting Catalog can see that a
+ * helper is genuinely on the job and step aside for it, rather than spawning a
+ * rival that dies on the lock while the app quits for nothing.
  */
-for (let waited = 0; waited < 300 && locked(); waited++) await sleep(1000);
+const WAIT_SECONDS = 600;
+
+let waited = 0;
+for (; waited < WAIT_SECONDS && locked(); waited++) {
+	beat();
+	await sleep(1000);
+}
 
 if (locked()) {
-	report('Catalog was still open. The update is ready and will be applied when you close it.');
-	process.exit(1);
+	give('Catalog stayed open, so the update is still waiting. Close it and open it again.', 1);
 }
 
 // Windows sometimes holds the files for a moment after the process goes.
@@ -196,9 +232,7 @@ try {
 		}
 	}
 
-	report(`The swap failed: ${problem?.message ?? problem}`);
-	release();
-	process.exit(1);
+	give(`The swap failed: ${problem?.message ?? problem}`, 1);
 }
 
 /**
