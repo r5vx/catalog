@@ -7,6 +7,8 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 1.6.1 — 2026-09-16
+
 - **"An update is ready" now appears when you have a PIN.** It was asking from
   the login screen, getting the login page back instead of an answer, and never
   asking again — so with a PIN set you were never told an update was waiting.
