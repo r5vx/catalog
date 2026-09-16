@@ -234,6 +234,33 @@ if (!app.requestSingleInstanceLock()) {
 
 	app.whenReady().then(async () => {
 		Menu.setApplicationMenu(null);
+
+		/**
+		 * A finished update gets installed before anything else happens.
+		 *
+		 * Waiting for the app to close is fragile — it can be reopened, or never
+		 * closed at all, and a built update then sits unused for days. Catching
+		 * it here means the worst case is one extra restart: the window never
+		 * opens, the helper swaps, and Catalog comes back on the new version.
+		 */
+		const pending = pendingUpdate();
+		if (pending && startHelper(pending.staged)) {
+			// Counted before we step aside, so a swap that never works stops.
+			try {
+				fs.writeFileSync(
+					pending.marker,
+					`${pending.staged}\n${pending.version}\n${pending.attempts + 1}`,
+					'utf8'
+				);
+			} catch {
+				// Then it gets one more go than intended. Not worth failing over.
+			}
+
+			console.log(`[app] installing ${pending.version || 'an update'} before starting`);
+			app.quit();
+			return;
+		}
+
 		startServer();
 
 		try {
@@ -286,22 +313,68 @@ if (!app.requestSingleInstanceLock()) {
 	}
 
 	/**
-	 * Finish an update that never got its chance.
+	 * An update that has been built but not yet installed.
 	 *
-	 * The swap waits for this app to close. If someone reopens Catalog while it
-	 * is waiting, that build is finished but unused — so on any later quit, a
-	 * pending marker means we start the helper again rather than waste it.
+	 * Returns the folder and the version in it, or null. The version is what
+	 * stops a failed swap becoming a boot loop: if it matches what's already
+	 * running, the marker is stale and gets cleared.
 	 */
-	function applyPendingUpdate() {
-		if (!SOURCE_MODE) return;
+	function pendingUpdate() {
+		if (!SOURCE_MODE) return null;
 
 		const marker = path.join(projectRoot(), 'dist-staged', 'pending.txt');
-		if (!fs.existsSync(marker)) return;
+		if (!fs.existsSync(marker)) return null;
 
 		try {
-			const staged = fs.readFileSync(marker, 'utf8').trim();
-			if (!staged) return;
+			const [staged, version, tries] = fs.readFileSync(marker, 'utf8').trim().split('\n');
+			if (!staged) return null;
 
+			const exe = path.join(projectRoot(), staged, 'win-unpacked', 'Catalog.exe');
+			if (!fs.existsSync(exe)) {
+				fs.rmSync(marker, { force: true });
+				return null;
+			}
+
+			// Already running it. Nothing to do, and the marker can go.
+			if (version && version.trim() === app.getVersion()) {
+				fs.rmSync(marker, { force: true });
+				return null;
+			}
+
+			/**
+			 * Give up rather than loop.
+			 *
+			 * Restarting into an update that cannot be installed would mean the
+			 * window never opens at all, and an app you can't use is far worse
+			 * than an update you haven't got. After two goes it stays put, says
+			 * so, and Settings can still try again by hand.
+			 */
+			const attempts = Number(tries ?? 0) || 0;
+
+			if (attempts >= 2) {
+				try {
+					fs.writeFileSync(
+						path.join(projectRoot(), 'dist-app', 'last-update.txt'),
+						`Version ${version || 'the update'} was built but could not be installed. ` +
+							'Close Catalog completely, then open it again.',
+						'utf8'
+					);
+				} catch {
+					// The marker still goes, which is the part that matters.
+				}
+
+				fs.rmSync(marker, { force: true });
+				return null;
+			}
+
+			return { staged, version: (version ?? '').trim(), attempts, marker };
+		} catch {
+			return null;
+		}
+	}
+
+	function startHelper(staged) {
+		try {
 			const helper = require('node:child_process').spawn(
 				'node',
 				[path.join(projectRoot(), 'scripts', 'apply-update.mjs'), staged],
@@ -309,9 +382,21 @@ if (!app.requestSingleInstanceLock()) {
 			);
 
 			helper.unref();
+			return true;
 		} catch {
-			// Nothing to do on the way out. It stays pending for next time.
+			return false;
 		}
+	}
+
+	/**
+	 * Finish an update that never got its chance, on the way out.
+	 *
+	 * The swap needs this app closed. Doing it on quit covers the normal case;
+	 * the check at startup below is what guarantees it eventually happens.
+	 */
+	function applyPendingUpdate() {
+		const pending = pendingUpdate();
+		if (pending) startHelper(pending.staged);
 	}
 
 	app.on('before-quit', stopServer);

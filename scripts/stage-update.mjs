@@ -11,7 +11,7 @@
  * prints goes to stderr, where it stays out of the way unless something fails.
  */
 import { spawn } from 'node:child_process';
-import { existsSync, rmSync, mkdirSync, readdirSync } from 'node:fs';
+import { existsSync, rmSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -111,6 +111,9 @@ await run('node', ['scripts/set-exe-icon.mjs', `${STAGED}/win-unpacked`]);
 // Folders from previous updates, including any Windows is still holding on to.
 // Whatever will not go is skipped rather than failing the update over it.
 for (const name of readdirSync(join(root, 'dist-staged'))) {
+	// Only past build folders. `pending.txt` and the helper's lock live here
+	// too, and deleting those would throw away the update this is preparing.
+	if (!/^\d+$/.test(name)) continue;
 	if (`dist-staged/${name}` === STAGED) continue;
 
 	try {
@@ -120,6 +123,19 @@ for (const name of readdirSync(join(root, 'dist-staged'))) {
 	}
 }
 
-// Which folder the swap should take. The name changes every run.
-process.stdout.write(`::staged ${STAGED}\n`);
+/**
+ * Which folder the swap should take, and what version is in it.
+ *
+ * The version matters at startup: the app compares it against its own to
+ * decide whether a pending update is worth restarting for, which is what stops
+ * a failed swap turning into a boot loop.
+ */
+let built = '';
+try {
+	built = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version ?? '';
+} catch {
+	// Without it the update still applies; it just can't be compared.
+}
+
+process.stdout.write(`::staged ${STAGED} ${built}\n`);
 process.stdout.write('::ready\n');

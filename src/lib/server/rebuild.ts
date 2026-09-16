@@ -26,6 +26,9 @@ let state: RebuildState = { status: 'idle', percent: 0, label: '' };
 /** The folder this build produced, which the swap is handed. */
 let staged = '';
 
+/** The version inside it, so the app can tell a pending update from its own. */
+let stagedVersion = '';
+
 export const rebuildState = (): RebuildState => state;
 
 export function startRebuild(): boolean {
@@ -41,6 +44,7 @@ export function startRebuild(): boolean {
 	};
 
 	staged = '';
+	stagedVersion = '';
 
 	const child = spawn('node', [join(root, 'scripts', 'stage-update.mjs')], {
 		cwd: root,
@@ -111,7 +115,9 @@ function read(line: string) {
 	}
 
 	if (line.startsWith('::staged ')) {
-		staged = line.slice(9).trim();
+		const [path, version] = line.slice(9).trim().split(' ');
+		staged = path ?? '';
+		stagedVersion = version ?? '';
 		return;
 	}
 
@@ -148,7 +154,8 @@ function applyAndQuit() {
 	 * than the build being wasted.
 	 */
 	try {
-		writeFileSync(join(root, 'dist-staged', 'pending.txt'), staged, 'utf8');
+		writeFileSync(join(root, 'dist-staged', 'pending.txt'), `${staged}
+${stagedVersion}`, 'utf8');
 	} catch {
 		// Without it the update still applies now; it just won't be retried.
 	}

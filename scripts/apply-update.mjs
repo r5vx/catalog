@@ -12,6 +12,7 @@ import { spawn } from 'node:child_process';
 import {
 	existsSync,
 	readdirSync,
+	readFileSync,
 	renameSync,
 	rmSync,
 	statSync,
@@ -26,6 +27,40 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const live = join(root, 'dist-app', 'win-unpacked');
 const previous = join(root, 'dist-app', 'win-unpacked.previous');
+const lock = join(root, 'dist-staged', 'applying.txt');
+
+/**
+ * Only one helper at a time.
+ *
+ * The app starts one when you press Update and another when it quits, and
+ * those two raced: the first swapped successfully and relaunched the app, then
+ * the second found the folder busy and overwrote "Updated." with an EPERM
+ * failure. The update had worked; only the note said otherwise.
+ */
+function claim() {
+	try {
+		const held = Number(readFileSync(lock, 'utf8'));
+		// A helper that died without tidying up shouldn't block forever.
+		if (Number.isFinite(held) && Date.now() - held < 10 * 60_000) return false;
+	} catch {
+		// No lock, or an unreadable one. Ours now.
+	}
+
+	try {
+		writeFileSync(lock, String(Date.now()), 'utf8');
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+const release = () => {
+	try {
+		rmSync(lock, { force: true });
+	} catch {
+		// It times out on its own.
+	}
+};
 
 /**
  * Which build to install.
@@ -95,6 +130,9 @@ if (!staged || !existsSync(join(staged, 'Catalog.exe'))) {
 	process.exit(1);
 }
 
+// Another helper is already on it; say nothing and let it finish.
+if (!claim()) process.exit(0);
+
 /**
  * Wait for the app to let go.
  *
@@ -113,9 +151,26 @@ if (locked()) {
 // Windows sometimes holds the files for a moment after the process goes.
 await sleep(600);
 
+/**
+ * The rename can still fail if the app came back in the moment between the
+ * lock check and the move — someone reopening it, or the previous helper
+ * relaunching it. Worth a few goes before giving up on a finished build.
+ */
+async function moveAside() {
+	for (let attempt = 0; attempt < 5; attempt++) {
+		try {
+			if (existsSync(previous)) rmSync(previous, { recursive: true, force: true });
+			if (existsSync(live)) renameSync(live, previous);
+			return true;
+		} catch {
+			await sleep(1500);
+		}
+	}
+	return false;
+}
+
 try {
-	if (existsSync(previous)) rmSync(previous, { recursive: true, force: true });
-	if (existsSync(live)) renameSync(live, previous);
+	if (!(await moveAside())) throw new Error('the old version is still in use');
 
 	renameSync(staged, live);
 
@@ -130,6 +185,7 @@ try {
 	}
 
 	report('Updated.');
+	release();
 } catch (problem) {
 	// Put the old one back rather than leaving nothing behind.
 	if (!existsSync(live) && existsSync(previous)) {
@@ -141,6 +197,7 @@ try {
 	}
 
 	report(`The swap failed: ${problem?.message ?? problem}`);
+	release();
 	process.exit(1);
 }
 
