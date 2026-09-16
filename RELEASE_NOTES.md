@@ -7,6 +7,8 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 1.4.0 — 2026-09-16
+
 - Runtimes, box office and scores now fill themselves in shortly after Catalog
   opens. No button to find.
 - **Every actor is clickable now.** On a film you don't own, the cast used to be
