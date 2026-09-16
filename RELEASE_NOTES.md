@@ -7,6 +7,15 @@ and stamps it with the version number.
 
 ## Unreleased
 
+- **Sorting by "Longest" now works.** Nothing in the library had a runtime,
+  because searching for a title doesn't return one — so the sort had nothing to
+  work with and fell back to alphabetical. Settings → Library → **Missing
+  information** fills them in, along with box office and IMDb scores.
+- **The value you sorted by now shows on each card**, so sorting by box office
+  or Metacritic doesn't mean opening every title to see the number.
+- Catalog offers an update when one is waiting, with **Not now** and **Don't
+  ask again**. That can be turned back on in Settings → Updates.
+
 ## 1.2.2 — 2026-09-16
 
 - **Fixed automatic updates, which never worked.** Every version up to 1.2.1

@@ -34,6 +34,8 @@ export type Settings = {
 	accentColor?: string;
 	/** Set once the welcome screen has been answered, so it stops appearing. */
 	setupDone?: string;
+	/** Set when you ask not to be told about updates any more. */
+	updatePromptOff?: string;
 };
 
 export function readSettings(): Settings {

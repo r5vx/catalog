@@ -1,4 +1,4 @@
-import { insertEntry, categoryIdForSlug } from './db/queries';
+import { insertEntry, categoryIdForSlug, saveFacts } from './db/queries';
 import { setTags } from './db/tags';
 import { setCast } from './db/people';
 import { fetchDetails } from './metadata/details';
@@ -48,9 +48,14 @@ export function createFromResult(result: SearchResult, overrides: Overrides = {}
 	// Tags and cast, fetched in the background so adding stays instant.
 	if (result.sourceId) {
 		fetchDetails(result.source, result.sourceId)
-			.then(({ tags, cast }) => {
-				setTags(id, tags);
-				setCast(id, cast);
+			.then((details) => {
+				setTags(id, details.tags);
+				setCast(id, details.cast);
+				// Runtime only comes back from the detail endpoint, never search.
+				saveFacts(id, {
+					runtimeMinutes: details.runtimeMinutes,
+					episodesTotal: details.episodesTotal
+				});
 			})
 			.catch(() => {});
 	}

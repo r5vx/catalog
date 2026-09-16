@@ -48,3 +48,75 @@ export const SORT_GROUPS = [
 
 export const sortLabel = (value: string) =>
 	SORTS.find((one) => one.value === value)?.label ?? 'Sort';
+
+/* ------------------------------------------------------- showing the sort */
+
+/** Enough of a card to describe the value it was sorted on. */
+type Sortable = {
+	runtimeMinutes?: number | null;
+	boxOffice?: number | null;
+	imdbRating?: number | null;
+	rtScore?: number | null;
+	metascore?: number | null;
+	externalRating?: number | null;
+	externalVotes?: number | null;
+	createdAt?: string | null;
+	updatedAt?: string | null;
+	finishedOn?: string | null;
+};
+
+const shortDate = (value: string | null | undefined) => {
+	if (!value) return null;
+	const date = new Date(value);
+	return Number.isNaN(date.getTime())
+		? null
+		: date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+};
+
+/** "2h 46m" reads faster than "166 min" for anything over an hour. */
+const runtime = (minutes: number | null | undefined) => {
+	if (minutes == null || minutes <= 0) return null;
+	if (minutes < 60) return `${minutes}m`;
+	return `${Math.floor(minutes / 60)}h ${minutes % 60}m`.replace(' 0m', '');
+};
+
+const cash = (amount: number | null | undefined) => {
+	if (amount == null || amount <= 0) return null;
+	if (amount >= 1_000_000_000) return `$${(amount / 1_000_000_000).toFixed(2)}B`;
+	if (amount >= 1_000_000) return `$${Math.round(amount / 1_000_000)}M`;
+	return `$${Math.round(amount / 1_000)}K`;
+};
+
+/**
+ * What to show on a card for the order it's in.
+ *
+ * Sorting by box office and then having to open each title to see the figure
+ * is no use — the number you sorted on should be the number on the card.
+ * Returns null where the card already shows it (year, your rating) or where
+ * there's nothing to show.
+ */
+export function sortBadge(entry: Sortable, sort: string): string | null {
+	switch (sort) {
+		case 'runtime':
+			return runtime(entry.runtimeMinutes);
+		case 'box':
+			return cash(entry.boxOffice);
+		case 'imdb':
+			return entry.imdbRating == null ? null : `IMDb ${entry.imdbRating.toFixed(1)}`;
+		case 'rt':
+			return entry.rtScore == null ? null : `RT ${entry.rtScore}%`;
+		case 'metacritic':
+			return entry.metascore == null ? null : `MC ${entry.metascore}`;
+		case 'votes':
+			return entry.externalVotes ? `${entry.externalVotes.toLocaleString()} votes` : null;
+		case 'recent':
+			return shortDate(entry.createdAt);
+		case 'updated':
+			return shortDate(entry.updatedAt);
+		case 'finished':
+			return shortDate(entry.finishedOn);
+		default:
+			// Title, year and the rating sorts are already on the card.
+			return null;
+	}
+}

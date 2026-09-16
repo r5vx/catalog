@@ -65,12 +65,18 @@ export type Entry = {
 	updatedAt: string;
 };
 
-/** What a library card needs — deliberately less than a whole Entry. */
+/**
+ * What a library card needs — deliberately less than a whole Entry, but it
+ * does carry every value you can sort by, so the card can show the one you
+ * sorted on without opening the title.
+ */
 export type EntryCard = Pick<
 	Entry,
-	'id' | 'title' | 'year' | 'status' | 'rating' | 'rewatches' | 'favorite' | 'posterUrl'
-| 'externalRating' | 'lastSeason' | 'lastEpisode'
+	| 'id' | 'title' | 'year' | 'status' | 'rating' | 'rewatches' | 'favorite' | 'posterUrl'
+	| 'externalRating' | 'externalVotes' | 'lastSeason' | 'lastEpisode'
 	| 'episodesTotal' | 'showStatus' | 'seasonCounts' | 'nextAirDate'
+	| 'runtimeMinutes' | 'boxOffice' | 'imdbRating' | 'rtScore' | 'metascore'
+	| 'createdAt' | 'updatedAt' | 'finishedOn'
 > & {
 	categoryId: number;
 	categoryName: string;

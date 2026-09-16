@@ -289,6 +289,21 @@ On the person page the `+` button is a **sibling** of the card link, not inside
 it: a button nested in an anchor is invalid and swallows the click.
 
 ### Sorting
+**A sort that looks alphabetical means the column is all nulls.** Nulls sort
+last and ties break on title, so an empty column produces an A-Z list. That is
+how "Longest" appeared broken: `runtime_minutes` was **0 of 314**, because the
+TMDB *search* endpoint returns no runtime and only tags and cast were being
+saved from the detail fetch. Runtime and episode counts are now stored by
+`saveFacts()` wherever details are fetched — on add, on the entry page's
+enrichment, and on Refresh.
+
+`src/lib/server/backfill.ts` walks the whole library once for anything still
+missing, with a progress bar in Settings → Library. A button rather than
+automatic: it is hundreds of API calls.
+
+`sortBadge()` in `constants.ts` puts the sorted-on value on each card, and
+returns null where the card already shows it (title, year, your rating).
+
 `SORTS` in `constants.ts` carries a `group`, and `SortPicker.svelte` is a
 disclosure panel rather than a dropdown — fifteen orders is too many for a flat
 list. Every `column` must also appear in `SORT_COLUMNS` in `queries.ts`, which

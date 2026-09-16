@@ -172,12 +172,21 @@ export function listEntries(options: ListOptions = {}): EntryCard[] {
 			e.favorite,
 			e.poster_url AS posterUrl,
 			e.external_rating AS externalRating,
+			e.external_votes  AS externalVotes,
 			e.last_season AS lastSeason,
 			e.last_episode AS lastEpisode,
 			e.episodes_total AS episodesTotal,
 			e.show_status AS showStatus,
 			e.season_counts AS seasonCounts,
 			e.next_air_date AS nextAirDate,
+			e.runtime_minutes AS runtimeMinutes,
+			e.box_office      AS boxOffice,
+			e.imdb_rating     AS imdbRating,
+			e.rt_score        AS rtScore,
+			e.metascore,
+			e.created_at  AS createdAt,
+			e.updated_at  AS updatedAt,
+			e.finished_on AS finishedOn,
 			e.category_id AS categoryId,
 			c.name  AS categoryName,
 			c.emoji AS categoryEmoji
@@ -450,6 +459,25 @@ export function saveScores(
 /** Fills in a synopsis for an older entry that was added before we kept one. */
 export function saveOverview(id: number, overview: string): void {
 	db.prepare('UPDATE entries SET overview = ? WHERE id = ?').run(overview, id);
+}
+
+/**
+ * Runtime and episode counts, which the *search* endpoints don't return.
+ *
+ * TMDB gives a runtime only on the detail endpoint, so anything added by
+ * search arrives without one — which is why sorting by "Longest" had nothing
+ * to work with. Saved whenever details are fetched.
+ */
+export function saveFacts(
+	id: number,
+	facts: { runtimeMinutes: number | null; episodesTotal: number | null }
+): void {
+	db.prepare(
+		`UPDATE entries
+		 SET runtime_minutes = COALESCE(?, runtime_minutes),
+		     episodes_total  = COALESCE(?, episodes_total)
+		 WHERE id = ?`
+	).run(facts.runtimeMinutes, facts.episodesTotal, id);
 }
 
 /** Forget when the outside scores were last checked, so they're fetched again. */

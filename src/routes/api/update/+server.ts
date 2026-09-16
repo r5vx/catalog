@@ -4,19 +4,39 @@ import {
 	updateState,
 	requestUpdateCheck,
 	installUpdate,
-	appVersion
+	appVersion,
+	sourceIsStale
 } from '$lib/server/updater';
 import { startRebuild, rebuildState } from '$lib/server/rebuild';
+import { readSettings, updateSettings } from '$lib/server/settings';
 import type { RequestHandler } from './$types';
 
 /** Where the Settings page polls while an update is running. */
-export const GET: RequestHandler = async () =>
-	json({
-		mode: updateMode(),
-		version: appVersion(),
-		state: updateState(),
-		rebuild: rebuildState()
-	});
+export const GET: RequestHandler = async () => {
+	const mode = updateMode();
+	const state = updateState();
+	const rebuild = rebuildState();
+
+	/**
+	 * Whether to offer an update unprompted.
+	 *
+	 * Only when there is genuinely one waiting, and only if you haven't asked
+	 * to be left alone. A rebuild already running is not worth interrupting.
+	 */
+	const muted = Boolean(readSettings().updatePromptOff);
+	const busy = rebuild.status === 'working' || rebuild.status === 'swapping';
+
+	const offer =
+		muted || busy
+			? null
+			: mode === 'release' && state.status === 'ready'
+				? { kind: 'release' as const, version: state.version ?? null }
+				: mode === 'source' && sourceIsStale()
+					? { kind: 'source' as const, version: null }
+					: null;
+
+	return json({ mode, version: appVersion(), state, rebuild, offer, muted });
+};
 
 /**
  * Two kinds of update, picked by `?action=`.
@@ -41,6 +61,17 @@ export const POST: RequestHandler = async ({ url }) => {
 	if (action === 'install') {
 		if (!installUpdate()) error(400, 'Updating is only available in the desktop app.');
 		return json({ started: true });
+	}
+
+	// "Don't tell me again" — undone from Settings by updating once.
+	if (action === 'mute') {
+		updateSettings({ updatePromptOff: '1' });
+		return json({ muted: true });
+	}
+
+	if (action === 'unmute') {
+		updateSettings({ updatePromptOff: undefined });
+		return json({ muted: false });
 	}
 
 	if (updateMode() !== 'source') {

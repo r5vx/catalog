@@ -4,6 +4,7 @@ import {
 	updateEntry,
 	deleteEntry,
 	saveOverview,
+	saveFacts,
 	clearScoreStamp
 } from '$lib/server/db/queries';
 import { castForEntry, setCast } from '$lib/server/db/people';
@@ -63,6 +64,11 @@ export const actions: Actions = {
 		if (details.overview) saveOverview(entry.id, details.overview);
 		if (details.tags.length > 0) setTags(entry.id, details.tags);
 		if (details.cast.length > 0) setCast(entry.id, details.cast);
+
+		saveFacts(entry.id, {
+			runtimeMinutes: details.runtimeMinutes,
+			episodesTotal: details.episodesTotal
+		});
 
 		// The scores get looked up again when the page reloads.
 		clearScoreStamp(entry.id);

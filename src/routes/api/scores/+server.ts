@@ -1,5 +1,5 @@
 import { json, error } from '@sveltejs/kit';
-import { getEntry, saveScores, saveOverview } from '$lib/server/db/queries';
+import { getEntry, saveScores, saveOverview, saveFacts } from '$lib/server/db/queries';
 import { setTags, tagsForEntry } from '$lib/server/db/tags';
 import { setCast, castForEntry } from '$lib/server/db/people';
 import { fetchDetails } from '$lib/server/metadata/details';
@@ -25,9 +25,9 @@ export const POST: RequestHandler = async ({ request }) => {
 	const entry = getEntry(Number(id));
 	if (!entry) error(404, 'No such entry.');
 
-	// Older entries predate the synopsis, the tags and the cast list. If any of
-	// them is missing, this is the moment to go and get it.
-	const needsDetails = !entry.overview;
+	// Older entries predate the synopsis, the tags, the cast list and the
+	// runtime. If any of them is missing, this is the moment to go and get it.
+	const needsDetails = !entry.overview || entry.runtimeMinutes == null;
 
 	if (needsDetails && entry.sourceId) {
 		const details = await fetchDetails(entry.source, entry.sourceId);
@@ -35,6 +35,11 @@ export const POST: RequestHandler = async ({ request }) => {
 		if (details.overview) saveOverview(entry.id, details.overview);
 		if (details.tags.length > 0) setTags(entry.id, details.tags);
 		if (details.cast.length > 0) setCast(entry.id, details.cast);
+
+		saveFacts(entry.id, {
+			runtimeMinutes: details.runtimeMinutes,
+			episodesTotal: details.episodesTotal
+		});
 
 		// AniList has no IMDb id, so OMDb is asked by name instead.
 		if (!entry.imdbId && details.imdbId) entry.imdbId = details.imdbId;
