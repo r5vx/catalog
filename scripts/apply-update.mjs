@@ -95,11 +95,18 @@ if (!staged || !existsSync(join(staged, 'Catalog.exe'))) {
 	process.exit(1);
 }
 
-// Give it a minute. The app quits itself right after starting this.
-for (let waited = 0; waited < 60 && locked(); waited++) await sleep(1000);
+/**
+ * Wait for the app to let go.
+ *
+ * Generous, because the common way this fails is someone reopening Catalog
+ * while the swap is waiting — the window vanishes, they think it's finished or
+ * broken, and click the icon again. Giving up would throw away a finished
+ * build; the marker means it is applied the next time the app closes instead.
+ */
+for (let waited = 0; waited < 300 && locked(); waited++) await sleep(1000);
 
 if (locked()) {
-	report('Catalog was still running, so the update was left for next time.');
+	report('Catalog was still open. The update is ready and will be applied when you close it.');
 	process.exit(1);
 }
 
@@ -114,6 +121,13 @@ try {
 
 	// Only once the new one is definitely in place.
 	if (existsSync(previous)) rmSync(previous, { recursive: true, force: true });
+
+	// Applied, so the app should stop being told there's one waiting.
+	try {
+		rmSync(join(root, 'dist-staged', 'pending.txt'), { force: true });
+	} catch {
+		// It will be overwritten by the next update anyway.
+	}
 
 	report('Updated.');
 } catch (problem) {

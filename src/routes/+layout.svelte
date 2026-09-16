@@ -1,5 +1,6 @@
 <script lang="ts">
 	import '../app.css';
+	import UpdateBanner from '$lib/UpdateBanner.svelte';
 	import { inkFor, DEFAULT_ACCENT } from '$lib/accent';
 	import type { Snippet } from 'svelte';
 	import type { LayoutData } from './$types';
@@ -34,6 +35,7 @@
 </svelte:head>
 
 <div class="app" style={accentCss}>
+	<UpdateBanner />
 	{@render children()}
 </div>
 

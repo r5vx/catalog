@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { projectRoot } from './updater';
 
@@ -138,6 +139,19 @@ function read(line: string) {
  */
 function applyAndQuit() {
 	const root = projectRoot();
+
+	/**
+	 * A note of which build is waiting.
+	 *
+	 * If the swap doesn't get its chance — someone reopens Catalog while it's
+	 * waiting — this is what lets the next ordinary quit finish the job rather
+	 * than the build being wasted.
+	 */
+	try {
+		writeFileSync(join(root, 'dist-staged', 'pending.txt'), staged, 'utf8');
+	} catch {
+		// Without it the update still applies now; it just won't be retried.
+	}
 
 	const helper = spawn('node', [join(root, 'scripts', 'apply-update.mjs'), staged], {
 		cwd: root,

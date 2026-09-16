@@ -20,6 +20,13 @@
 		message?: string;
 	};
 
+	let muted = $state(false);
+
+	async function setMuted(next: boolean) {
+		muted = next;
+		await fetch(`/api/update?action=${next ? 'mute' : 'unmute'}`, { method: 'POST' });
+	}
+
 	let rebuild = $state<RebuildState>({ status: 'idle', percent: 0, label: '' });
 	let release = $state<ReleaseState>({ status: 'idle' });
 
@@ -43,6 +50,7 @@
 			const payload = await response.json();
 			release = payload.state;
 			rebuild = payload.rebuild;
+			muted = payload.muted ?? muted;
 		} catch {
 			// The app is closing for the swap. Leave the last state on screen.
 		}
@@ -193,6 +201,19 @@
 		{/if}
 	</section>
 
+	{#if data.updateMode !== 'none'}
+		<section>
+			<label class="toggle">
+				<input
+					type="checkbox"
+					checked={!muted}
+					onchange={(e) => setMuted(!e.currentTarget.checked)}
+				/>
+				Tell me when an update is ready
+			</label>
+		</section>
+	{/if}
+
 	{#if data.releases.length > 0}
 		<section class="changes">
 			<div class="head"><h2>What's new</h2></div>
@@ -260,6 +281,19 @@
 	.hint {
 		font-size: 0.8rem;
 		margin: 0;
+	}
+
+	.toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 0.9rem;
+		color: var(--ink-soft);
+		cursor: pointer;
+	}
+
+	.toggle input {
+		width: auto;
 	}
 
 	/* ------------------------------------------------------- the progress */

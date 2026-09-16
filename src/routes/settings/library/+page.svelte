@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { STATUSES, SORTS } from '$lib/constants';
 	import type { PageData } from './$types';
 
@@ -19,6 +20,60 @@
 	);
 
 	const fileHref = (format: string) => `/api/export?format=${format}&${exportQuery}`;
+
+	/* ------------------------------------------------------- filling it in */
+
+	type Backfill = {
+		status: 'idle' | 'working' | 'done' | 'failed';
+		done: number;
+		total: number;
+		label: string;
+		message?: string;
+	};
+
+	let fill = $state<Backfill>({ status: 'idle', done: 0, total: 0, label: '' });
+	// Seeded once; from then on the count comes from the job's own polling.
+	let missing = $state(untrack(() => data.missing));
+
+	const filling = $derived(fill.status === 'working');
+
+	const percent = $derived(fill.total > 0 ? Math.round((fill.done / fill.total) * 100) : 0);
+
+	async function read() {
+		try {
+			const response = await fetch('/api/backfill');
+			if (!response.ok) return;
+
+			const payload = await response.json();
+			fill = payload.state;
+			missing = payload.missing;
+		} catch {
+			// Offline. What's on screen stays.
+		}
+	}
+
+	let polling = false;
+
+	async function poll() {
+		if (polling) return;
+		polling = true;
+
+		try {
+			while (true) {
+				await new Promise((resolve) => setTimeout(resolve, 900));
+				await read();
+				if (fill.status !== 'working') break;
+			}
+		} finally {
+			polling = false;
+		}
+	}
+
+	async function startFilling() {
+		fill = { status: 'working', done: 0, total: missing, label: 'Starting…' };
+		await fetch('/api/backfill', { method: 'POST' });
+		poll();
+	}
 
 	/* ------------------------------------------------------------- sharing */
 
@@ -87,6 +142,35 @@
 			<span class="muted">Full backup</span>
 			<a class="btn" href="/api/export?format=json" download>Download</a>
 		</div>
+	</section>
+
+	<section>
+		<div class="head"><h2>Missing information</h2></div>
+
+		<p class="muted">
+			Searching for a title doesn't return its runtime, box office or IMDb score — those come
+			from a second lookup. Filling them in is what makes sorting by them work.
+		</p>
+
+		{#if filling}
+			<div class="progress" role="status" aria-live="polite">
+				<div class="bar"><div class="fill" style="width: {Math.max(3, percent)}%"></div></div>
+				<p class="step">
+					<span>{fill.label}</span>
+					<span class="faint tabular">{fill.done} of {fill.total}</span>
+				</p>
+			</div>
+		{:else if fill.status === 'done'}
+			<p class="msg good" role="status">{fill.message}</p>
+		{:else if missing === 0}
+			<p class="msg good" role="status">Everything is filled in.</p>
+		{:else}
+			<div class="saved-row">
+				<span class="muted tabular">{missing} titles are missing something.</span>
+				<button type="button" class="btn btn-primary" onclick={startFilling}>Fill them in</button>
+			</div>
+			<p class="faint hint">One lookup per title, so it takes a minute or two.</p>
+		{/if}
 	</section>
 
 	<section>
@@ -179,6 +263,58 @@
 
 	.toggle input {
 		width: auto;
+	}
+
+	/* ---------------------------------------------------------- progress */
+
+	.progress {
+		width: 100%;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.bar {
+		width: 100%;
+		height: 8px;
+		background: var(--sunk);
+		border-radius: 100px;
+		overflow: hidden;
+	}
+
+	.fill {
+		height: 100%;
+		background: var(--accent);
+		border-radius: 100px;
+		transition: width 0.4s ease;
+	}
+
+	.step {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 12px;
+		margin: 0;
+		font-size: 0.9rem;
+		font-weight: 600;
+	}
+
+	.msg {
+		border-radius: var(--radius-sm);
+		padding: 9px 13px;
+		margin: 0;
+		font-size: 0.89rem;
+	}
+
+	.good {
+		background: var(--good-bg);
+		border: 1px solid var(--good);
+		color: var(--good);
+	}
+
+	.hint {
+		font-size: 0.8rem;
+		margin: 0;
 	}
 
 	.saved-row {

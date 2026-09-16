@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { STATUSES, statusLabel } from '$lib/constants';
+	import { STATUSES, statusLabel, sortBadge } from '$lib/constants';
 	import SortPicker from '$lib/SortPicker.svelte';
 	import { episodesBehind } from '$lib/progress';
 	import { page } from '$app/state';
@@ -132,6 +132,10 @@
 							{entry.year ?? '—'} · {entry.categoryName}
 						</p>
 						<div class="badges">
+							<!-- Whatever you sorted on, shown without opening the title. -->
+							{#if sortBadge(entry, data.filters.sort)}
+								<span class="sorted tabular">{sortBadge(entry, data.filters.sort)}</span>
+							{/if}
 							<span class="pill {entry.status}">{statusLabel(entry.status)}</span>
 							{#if entry.rating !== null}
 								<span class="rating mine tabular" title="Your rating">{entry.rating.toFixed(1)}</span>
@@ -342,7 +346,8 @@
 	}
 
 	.rating,
-	.rewatch {
+	.rewatch,
+	.sorted {
 		font-size: 0.72rem;
 		font-weight: 600;
 		padding: 2px 6px;
@@ -350,6 +355,13 @@
 		background: var(--sunk);
 		color: var(--ink-soft);
 		border: 1px solid var(--rule);
+	}
+
+	/* The value you sorted on leads, so the column reads down the page. */
+	.sorted {
+		background: var(--accent-bg);
+		color: var(--accent);
+		border-color: color-mix(in srgb, var(--accent) 35%, transparent);
 	}
 
 	.empty {
