@@ -442,6 +442,41 @@ channel (it's how `quit-for-update` works), so update events travel over it and
 side-effect import — so the check made at launch isn't lost before anyone opens
 Settings.
 
+### Updating a source build
+**The button no longer opens a console.** `scripts/stage-update.mjs` builds into
+`dist-staged` **while Catalog is still open** — nothing it writes is locked —
+printing `::step n/total label` lines. `src/lib/server/rebuild.ts` reads those
+and `/api/update` serves the state, which the Settings page draws as a bar.
+
+Only the swap needs the app closed, and that's a folder move:
+`scripts/apply-update.mjs` runs detached with `windowsHide: true`, waits for the
+exe to unlock, renames the old folder aside, moves the new one in, deletes the
+old and reopens. If the move fails it puts the old folder back, and it writes
+`dist-app/last-update.txt` either way.
+
+It decides the app has closed by **trying to open the exe for writing**, not by
+looking for `Catalog.exe` in the task list — the server is forked with
+Electron's binary and carries the same name (lesson 11). Opening for write is
+the condition that actually matters and it's testable against a fake folder.
+
+The pull only happens when the working tree is clean. Uncommitted changes *are*
+the update in this project, and pulling over them would fight them.
+
+`Update Catalog.bat` still exists — it's what `updateMode()` checks to tell a
+source build from a release — but it's a manual fallback now.
+
+### Release notes
+`RELEASE_NOTES.md` is the source. Write bullets under `## Unreleased`;
+`npm run release` **refuses to run without them**, publishes them as the GitHub
+release description, and stamps the heading with the version and date. The file
+ships inside the app (it's in `build.files`), and Settings → Updates renders it
+— so "what's new" works offline and always describes the version installed
+rather than the newest one published.
+
+Bullets are Markdown for GitHub's sake, so `whatsNew()` splits `**bold**` into
+typed runs server-side. No HTML crosses to the browser and there's nothing to
+sanitise.
+
 ### Releasing
 
 `npm run release` (or **Release Catalog.bat**): bump → build → icon → installer

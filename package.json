@@ -48,7 +48,8 @@
 			"build/**/*",
 			"electron/**/*",
 			"node_modules/**/*",
-			"package.json"
+			"package.json",
+			"RELEASE_NOTES.md"
 		],
 		"publish": [
 			{

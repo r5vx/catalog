@@ -51,6 +51,8 @@ function startServer() {
 			CATALOG_DESKTOP: '1',
 			CATALOG_PROJECT: projectRoot(),
 			CATALOG_UPDATE_MODE: SOURCE_MODE ? 'source' : 'release',
+			// Packed alongside the app, so "what's new" works with no connection.
+			CATALOG_NOTES: path.join(__dirname, '..', 'RELEASE_NOTES.md'),
 			CATALOG_VERSION: app.getVersion(),
 			// The server picks its own stable location for library.db, the same
 			// one `npm run dev` uses — so there's only ever one library.
