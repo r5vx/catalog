@@ -3,6 +3,7 @@ import { pinIsSet, sessionToken, setupNeeded } from '$lib/server/settings';
 // Imported for its side effect: it starts listening for update progress from
 // the desktop app at boot, not the first time someone opens Settings.
 import '$lib/server/updater';
+import { consumePdfToken } from '$lib/server/pdf';
 
 /** Icons and the web manifest stay reachable so "Add to Home Screen" works. */
 const PUBLIC_PATHS = ['/manifest.webmanifest', '/favicon.ico', '/api/diagnostics'];
@@ -67,6 +68,14 @@ export const handle: Handle = async ({ event, resolve }) => {
 	) {
 		redirect(303, '/welcome');
 	}
+
+	/**
+	 * The hidden window that renders a PDF carries no cookies, so with a PIN
+	 * set it would be redirected to the login page and we'd produce a PDF of
+	 * that. Its one-time token gets it past the lock, once.
+	 */
+	const pdfToken = event.url.searchParams.get('pdfToken');
+	if (pdfToken && consumePdfToken(pdfToken)) return resolve(event);
 
 	if (pinIsSet() && !isPublic(event.url.pathname)) {
 		const onLoginPage = event.url.pathname === '/login';

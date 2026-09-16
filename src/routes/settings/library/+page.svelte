@@ -19,6 +19,22 @@
 	);
 
 	const fileHref = (format: string) => `/api/export?format=${format}&${exportQuery}`;
+
+	/* ------------------------------------------------------------- sharing */
+
+	let shareRatings = $state(true);
+	let shareNotes = $state(false);
+	let shareName = $state('');
+
+	const shareHref = $derived(
+		'/api/export?' +
+			new URLSearchParams({
+				format: 'share',
+				ratings: shareRatings ? '1' : '0',
+				notes: shareNotes ? '1' : '0',
+				...(shareName.trim() ? { from: shareName.trim() } : {})
+			}).toString()
+	);
 </script>
 
 <svelte:head><title>Library · Catalog</title></svelte:head>
@@ -59,7 +75,10 @@
 		</div>
 
 		<div class="export-actions">
-			<a class="btn btn-primary" href="/export?{exportQuery}">Printable / PDF</a>
+			{#if data.canMakePdf}
+				<a class="btn btn-primary" href={fileHref('pdf')} download>PDF</a>
+			{/if}
+			<a class="btn" href="/export?{exportQuery}">Printable page</a>
 			<a class="btn" href={fileHref('csv')} download>Spreadsheet</a>
 			<a class="btn" href={fileHref('txt')} download>Plain list</a>
 		</div>
@@ -67,6 +86,35 @@
 		<div class="saved-row">
 			<span class="muted">Full backup</span>
 			<a class="btn" href="/api/export?format=json" download>Download</a>
+		</div>
+	</section>
+
+	<section>
+		<div class="head"><h2>Share with someone</h2></div>
+
+		<p class="muted">
+			A copy of your list they can open in their own Catalog. No note pages, and nothing of
+			yours unless you tick it.
+		</p>
+
+		<label class="field">
+			<span>Your name, if you want it on there</span>
+			<input type="text" bind:value={shareName} placeholder="Optional" maxlength="40" />
+		</label>
+
+		<label class="toggle">
+			<input type="checkbox" bind:checked={shareRatings} />
+			Include my ratings
+		</label>
+
+		<label class="toggle">
+			<input type="checkbox" bind:checked={shareNotes} />
+			Include my reviews
+		</label>
+
+		<div class="export-actions">
+			<a class="btn btn-primary" href={shareHref} download>Make a share file</a>
+			<a class="btn" href="/shared">Open someone else's</a>
 		</div>
 	</section>
 
@@ -118,6 +166,19 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: 8px;
+	}
+
+	.toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 0.9rem;
+		color: var(--ink-soft);
+		cursor: pointer;
+	}
+
+	.toggle input {
+		width: auto;
 	}
 
 	.saved-row {

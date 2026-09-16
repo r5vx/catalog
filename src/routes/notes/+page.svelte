@@ -48,12 +48,17 @@
 	<ul class="pages">
 		{#each data.notes as note (note.id)}
 			<li>
-				<a href="/notes/{note.id}">
+				<a href="/notes/{note.id}" class:locked={note.locked}>
 					<span class="top">
-						<span class="name">{note.title}</span>
+						<span class="name">
+							{#if note.locked}<span class="padlock" aria-label="Locked">🔒</span>{/if}
+							{note.title}
+						</span>
 						<span class="when faint tabular">{when(note.updatedAt)}</span>
 					</span>
-					<span class="preview faint">{asText(note.preview) || 'Empty'}</span>
+					<span class="preview faint">
+						{note.locked ? 'Locked' : asText(note.preview) || 'Empty'}
+					</span>
 				</a>
 			</li>
 		{/each}
@@ -61,6 +66,15 @@
 {/if}
 
 <style>
+	.padlock {
+		font-size: 0.8em;
+		margin-right: 3px;
+	}
+
+	.locked .preview {
+		font-style: italic;
+	}
+
 	header {
 		display: flex;
 		flex-direction: column;

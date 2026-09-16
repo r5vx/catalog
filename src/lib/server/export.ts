@@ -188,3 +188,48 @@ export function fullExport() {
 		entryCast: allRows('SELECT * FROM entry_cast ORDER BY entry_id, ord')
 	};
 }
+
+/* -------------------------------------------------------------- sharing */
+
+/**
+ * A copy of your library made to hand to someone else.
+ *
+ * Deliberately not the full backup: no ids, no note pages, no settings, and
+ * your own ratings and reviews only if you say so. What's left is the list
+ * itself — what you watched and what the world scored it — which is the part
+ * worth comparing.
+ */
+export function shareExport(options: { ratings: boolean; notes: boolean; from?: string }) {
+	const rows = listForExport({ sortColumn: 'title', sortDir: 'asc' });
+
+	return {
+		catalogShare: 1,
+		sharedAt: new Date().toISOString(),
+		from: options.from?.trim() || null,
+		includes: { ratings: options.ratings, notes: options.notes },
+		titles: rows.map((row) => ({
+			title: row.title,
+			year: row.year,
+			category: row.category,
+			status: row.status,
+			posterUrl: row.posterUrl,
+			externalRating: row.externalRating,
+			imdbRating: row.imdbRating,
+			rtScore: row.rtScore,
+			metascore: row.metascore,
+			tags: row.tags ? row.tags.split(', ') : [],
+			...(options.ratings
+				? { rating: row.rating, favorite: Boolean(row.favorite), rewatches: row.rewatches }
+				: {}),
+			...(options.notes && row.notes ? { notes: row.notes } : {})
+		}))
+	};
+}
+
+/** Named so nobody confuses a share file with a restorable backup. */
+export function shareFilename(from: string | null): string {
+	const who = (from ?? '').trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '');
+	const date = new Date().toISOString().slice(0, 10);
+
+	return `${who ? `${who}-` : ''}catalog-share-${date}.json`;
+}

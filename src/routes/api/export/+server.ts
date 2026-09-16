@@ -1,4 +1,13 @@
-import { toCsv, toText, fullExport, exportFilename, rowsFor } from '$lib/server/export';
+import {
+	toCsv,
+	toText,
+	fullExport,
+	shareExport,
+	shareFilename,
+	exportFilename,
+	rowsFor
+} from '$lib/server/export';
+import { renderPdf, desktopAvailable } from '$lib/server/pdf';
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 
@@ -26,6 +35,50 @@ export const GET: RequestHandler = async ({ url }) => {
 	// would quietly delete everything it left out.
 	if (format === 'json') {
 		return send(JSON.stringify(fullExport(), null, 2) + '\n', 'application/json', 'json');
+	}
+
+	// A copy to hand to a friend: the list and the public scores, plus your own
+	// ratings and reviews only when you ask for them.
+	if (format === 'share') {
+		const share = shareExport({
+			ratings: url.searchParams.get('ratings') === '1',
+			notes: url.searchParams.get('notes') === '1',
+			from: url.searchParams.get('from') ?? undefined
+		});
+
+		// A distinct name, so a share file is never mistaken for a backup.
+		return new Response(JSON.stringify(share, null, 2) + '\n', {
+			headers: {
+				'Content-Type': 'application/json; charset=utf-8',
+				'Content-Disposition': `attachment; filename="${shareFilename(share.from)}"`,
+				'Cache-Control': 'no-store'
+			}
+		});
+	}
+
+	// Rendered by the desktop app from the printable page, so the PDF matches
+	// what you'd get by printing it — without the print dialog in the way.
+	if (format === 'pdf') {
+		if (!desktopAvailable()) {
+			error(400, 'Saving a PDF needs the desktop app. In a browser, use Print.');
+		}
+
+		const filters = new URLSearchParams(url.searchParams);
+		filters.delete('format');
+
+		try {
+			const pdf = await renderPdf(`/export?${filters.toString()}`);
+
+			return new Response(new Uint8Array(pdf), {
+				headers: {
+					'Content-Type': 'application/pdf',
+					'Content-Disposition': `attachment; filename="${exportFilename('pdf')}"`,
+					'Cache-Control': 'no-store'
+				}
+			});
+		} catch (problem) {
+			error(500, problem instanceof Error ? problem.message : 'Could not make the PDF.');
+		}
 	}
 
 	const { rows } = rowsFor(url);

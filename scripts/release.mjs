@@ -25,7 +25,7 @@
  *   npm run release -- 1.4.2     exactly that
  */
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -91,6 +91,21 @@ const abort = (message) => {
 
 /* -------------------------------------------------------------- the build */
 
+/**
+ * Clear out the last release's files first.
+ *
+ * They are named per version, so they don't overwrite each other — and an
+ * older installer sitting in the folder was picked up and published under the
+ * new version's tag, with a latest.yml pointing at a file that wasn't there.
+ */
+if (existsSync(join(root, OUT))) {
+	for (const name of readdirSync(join(root, OUT))) {
+		if (/^Catalog-Setup-.*\.exe(\.blockmap)?$/.test(name) || name === 'latest.yml') {
+			rmSync(join(root, OUT, name));
+		}
+	}
+}
+
 console.log('— Building the web app —');
 if (run('npm', ['run', 'build']).status !== 0) {
 	abort('The web build failed, so the version was put back. Nothing was released.');
@@ -124,11 +139,12 @@ run('npx', [
 ]);
 
 const outDir = join(root, OUT);
-const installerName = existsSync(outDir)
-	? readdirSync(outDir).find((name) => name.startsWith('Catalog-Setup-') && name.endsWith('.exe'))
-	: null;
 
-if (!installerName) abort('No installer was produced. See the errors above.');
+// By exact name, not "the first exe in the folder".
+const installerName = `Catalog-Setup-${next}.exe`;
+if (!existsSync(join(outDir, installerName))) {
+	abort(`No installer was produced at ${OUT}/${installerName}. See the errors above.`);
+}
 
 const manifestName = 'latest.yml';
 if (!existsSync(join(outDir, manifestName))) {
@@ -232,6 +248,16 @@ async function upload() {
 
 		if (!created.ok) throw new Error(explain(created.status, await created.text()));
 		release = await created.json();
+	}
+
+	// A release holds exactly this version's files. Anything else in there is
+	// left over from a failed attempt and would only confuse an updater.
+	const keeping = new Set(artefacts.map((file) => basename(file)));
+	for (const asset of release.assets ?? []) {
+		if (!keeping.has(asset.name)) {
+			console.log(`  removing stale ${asset.name}`);
+			await api(`/repos/${owner}/${repo}/releases/assets/${asset.id}`, { method: 'DELETE' });
+		}
 	}
 
 	for (const file of artefacts) {

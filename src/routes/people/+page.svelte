@@ -18,11 +18,11 @@
 	}
 </script>
 
-<svelte:head><title>People · Catalog</title></svelte:head>
+<svelte:head><title>Actors · Catalog</title></svelte:head>
 
 <header>
 	<a href="/" class="back faint">&larr; Library</a>
-	<h1>People</h1>
+	<h1>Actors</h1>
 	<p class="muted sub">Anyone who appears in something you've watched.</p>
 </header>
 

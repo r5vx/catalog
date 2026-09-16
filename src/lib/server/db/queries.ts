@@ -95,7 +95,13 @@ const SORT_COLUMNS: Record<string, string> = {
 	rewatches: 'e.rewatches',
 	finished_on: 'e.finished_on',
 	external_rating: 'e.external_rating',
-	external_votes: 'e.external_votes'
+	external_votes: 'e.external_votes',
+	runtime_minutes: 'e.runtime_minutes',
+	// Filled in from OMDb, so these are null until a title has been looked up.
+	imdb_rating: 'e.imdb_rating',
+	rt_score: 'e.rt_score',
+	metascore: 'e.metascore',
+	box_office: 'e.box_office'
 };
 
 export function listEntries(options: ListOptions = {}): EntryCard[] {
@@ -330,6 +336,10 @@ export type ExportRow = {
 	tags: string | null;
 	notes: string | null;
 	addedOn: string;
+	posterUrl: string | null;
+	imdbRating: number | null;
+	rtScore: number | null;
+	metascore: number | null;
 };
 
 export function listForExport(
@@ -381,7 +391,11 @@ export function listForExport(
 				WHERE et.entry_id = e.id
 			) AS tags,
 			e.notes,
-			e.created_at AS addedOn
+			e.created_at AS addedOn,
+			e.poster_url AS posterUrl,
+			e.imdb_rating AS imdbRating,
+			e.rt_score    AS rtScore,
+			e.metascore
 		FROM entries e
 		JOIN categories c ON c.id = e.category_id
 		${where.length ? `WHERE ${where.join(' AND ')}` : ''}
@@ -436,6 +450,11 @@ export function saveScores(
 /** Fills in a synopsis for an older entry that was added before we kept one. */
 export function saveOverview(id: number, overview: string): void {
 	db.prepare('UPDATE entries SET overview = ? WHERE id = ?').run(overview, id);
+}
+
+/** Forget when the outside scores were last checked, so they're fetched again. */
+export function clearScoreStamp(id: number): void {
+	db.prepare('UPDATE entries SET scores_checked_at = NULL WHERE id = ?').run(id);
 }
 
 /** Whether something is already in the library, and which entry it is. */
