@@ -7,6 +7,8 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 1.2.2 — 2026-09-16
+
 - **Fixed automatic updates, which never worked.** Every version up to 1.2.1
   shipped without the file that tells Catalog where to look, so checking for
   updates failed. Updating to this version has to be done by hand once; after
