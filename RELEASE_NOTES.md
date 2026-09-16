@@ -7,6 +7,8 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 1.5.0 — 2026-09-16
+
 - **Updates install themselves properly now.** A finished update used to wait
   for you to close Catalog, and sat unused if you didn't. It's installed when
   the app next starts instead — worst case, one extra restart.
