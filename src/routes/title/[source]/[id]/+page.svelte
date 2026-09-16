@@ -18,8 +18,8 @@
 		libraryBack = libraryHref();
 	});
 
-	const backHref = $derived(data.from ? `/person/${data.from}` : libraryBack);
-	const backLabel = $derived(data.from ? 'Back' : 'Library');
+	const backHref = $derived(data.back ?? libraryBack);
+	const backLabel = $derived(data.back ? 'Back' : 'Library');
 
 	const details = $derived(data.details);
 
@@ -94,7 +94,11 @@
 
 	<TagChips tags={details.tags} />
 
-	<CastRow cast={data.cast.map((person) => ({ ...person, id: person.entryPersonId }))} />
+	<!-- Everyone is clickable: ours by id, the rest by the provider's. -->
+	<CastRow
+		cast={data.cast.map((person) => ({ ...person, id: person.entryPersonId }))}
+		back="/title/{data.source}/{data.sourceId}"
+	/>
 
 	{#if details.homepage}
 		<p class="away">

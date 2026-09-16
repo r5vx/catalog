@@ -95,7 +95,11 @@
 		{/each}
 	</select>
 
-	<SortPicker value={data.filters.sort} onchange={(next) => setParam('sort', next)} />
+	<SortPicker
+		value={data.filters.sort}
+		hidden={data.hiddenSorts}
+		onchange={(next) => setParam('sort', next)}
+	/>
 </div>
 
 {#if data.entries.length === 0}

@@ -7,6 +7,16 @@ and stamps it with the version number.
 
 ## Unreleased
 
+- Runtimes, box office and scores now fill themselves in shortly after Catalog
+  opens. No button to find.
+- **Every actor is clickable now.** On a film you don't own, the cast used to be
+  plain faces — so film → actor → film stopped dead. It doesn't any more, and
+  the back arrow follows the whole chain.
+- **Appearance is now Personalization**, and you can turn off the sort options
+  you never use so they stop appearing in the list.
+- A dot appears beside **Services** or **Updates** when a key is missing or an
+  update is waiting.
+
 ## 1.3.0 — 2026-09-16
 
 - **Sorting by "Longest" now works.** Nothing in the library had a runtime,

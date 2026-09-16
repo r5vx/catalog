@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { ACCENT_PRESETS } from '$lib/accent';
+	import { SORTS, SORT_GROUPS } from '$lib/constants';
 	import type { PageData, ActionData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -25,9 +26,11 @@
 	}
 </script>
 
-<svelte:head><title>Appearance · Catalog</title></svelte:head>
+<svelte:head><title>Personalization · Catalog</title></svelte:head>
 
+<div class="sections">
 <section style="--accent: {accent}">
+	<div class="head"><h2>Colour</h2></div>
 	<p class="muted">Buttons, links and highlights.</p>
 
 	{#if form?.accentError}
@@ -87,12 +90,100 @@
 	</form>
 </section>
 
+<section>
+	<div class="head"><h2>Sorting</h2></div>
+	<p class="muted">Turn off the orders you never use and they stop appearing in the list.</p>
+
+	{#if form?.sortError}
+		<p class="msg bad" role="alert">{form.sortError}</p>
+	{:else if form?.sortOk}
+		<p class="msg good" role="status">{form.sortOk}</p>
+	{/if}
+
+	<form method="POST" action="?/saveSorts" class="sorts">
+		{#each SORT_GROUPS as group (group.key)}
+			<fieldset>
+				<legend>{group.label}</legend>
+				{#each SORTS.filter((one) => one.group === group.key) as option (option.value)}
+					<label class="toggle">
+						<input
+							type="checkbox"
+							name="sort"
+							value={option.value}
+							checked={!data.hiddenSorts.includes(option.value)}
+						/>
+						{option.label}
+					</label>
+				{/each}
+			</fieldset>
+		{/each}
+
+		<button type="submit" class="btn btn-primary">Save sorting</button>
+	</form>
+</section>
+</div>
+
 <style>
+	.sections {
+		display: flex;
+		flex-direction: column;
+		gap: 38px;
+	}
+
 	section {
 		display: flex;
 		flex-direction: column;
 		gap: 14px;
 		align-items: flex-start;
+	}
+
+	.head {
+		width: 100%;
+		border-bottom: 1px solid var(--rule);
+		padding-bottom: 8px;
+	}
+
+	h2 {
+		font-size: 1.1rem;
+	}
+
+	.sorts {
+		display: flex;
+		flex-direction: column;
+		gap: 18px;
+		align-items: flex-start;
+		width: 100%;
+	}
+
+	fieldset {
+		border: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 7px;
+	}
+
+	legend {
+		font-size: 0.72rem;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--ink-faint);
+		padding: 0 0 6px;
+	}
+
+	.toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 0.9rem;
+		color: var(--ink-soft);
+		cursor: pointer;
+	}
+
+	.toggle input {
+		width: auto;
 	}
 
 	.muted {

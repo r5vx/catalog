@@ -148,8 +148,8 @@
 		<div class="head"><h2>Missing information</h2></div>
 
 		<p class="muted">
-			Searching for a title doesn't return its runtime, box office or IMDb score — those come
-			from a second lookup. Filling them in is what makes sorting by them work.
+			Runtimes, box office and IMDb scores need a second lookup, which happens on its own
+			shortly after Catalog opens.
 		</p>
 
 		{#if filling}
@@ -166,10 +166,9 @@
 			<p class="msg good" role="status">Everything is filled in.</p>
 		{:else}
 			<div class="saved-row">
-				<span class="muted tabular">{missing} titles are missing something.</span>
-				<button type="button" class="btn btn-primary" onclick={startFilling}>Fill them in</button>
+				<span class="muted tabular">{missing} titles still to go.</span>
+				<button type="button" class="btn" onclick={startFilling}>Do it now</button>
 			</div>
-			<p class="faint hint">One lookup per title, so it takes a minute or two.</p>
 		{/if}
 	</section>
 
@@ -312,10 +311,6 @@
 		color: var(--good);
 	}
 
-	.hint {
-		font-size: 0.8rem;
-		margin: 0;
-	}
 
 	.saved-row {
 		display: flex;

@@ -14,8 +14,10 @@ import { fetchScores, omdbConfigured } from './metadata/omdb';
  * "Longest" had nothing to sort and sorting by a score covered whatever
  * handful of titles you happened to have opened.
  *
- * This walks the library once and asks for the rest. It's deliberately a
- * button rather than something automatic: it's hundreds of API calls.
+ * This walks the library once and asks for the rest. It starts on its own a
+ * few seconds after the app opens — it's hundreds of API calls, but they only
+ * happen once and nobody should have to know to press a button to make sorting
+ * by runtime work.
  */
 
 export type BackfillState = {
@@ -139,4 +141,32 @@ async function run(ids: number[]) {
 		label: '',
 		message: `Filled in ${filled} runtime${filled === 1 ? '' : 's'} across ${ids.length} titles.`
 	};
+}
+
+/* ------------------------------------------------------------- on its own */
+
+/** So a reload of this module in dev doesn't queue a second run. */
+let scheduled = false;
+
+/**
+ * Begins filling things in shortly after the app starts.
+ *
+ * Delayed rather than immediate so opening Catalog stays instant — the first
+ * seconds belong to the library rendering, not to three hundred lookups. It
+ * does nothing when there is nothing missing, which is the usual case.
+ */
+export function scheduleBackfill(delayMs = 8000): void {
+	if (scheduled) return;
+	scheduled = true;
+
+	const timer = setTimeout(() => {
+		try {
+			if (missingCount() > 0) startBackfill();
+		} catch {
+			// A library that will not open has bigger problems than runtimes.
+		}
+	}, delayMs);
+
+	// Never hold the process open for this.
+	timer.unref?.();
 }

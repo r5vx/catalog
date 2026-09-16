@@ -4,6 +4,11 @@ import { pinIsSet, sessionToken, setupNeeded } from '$lib/server/settings';
 // the desktop app at boot, not the first time someone opens Settings.
 import '$lib/server/updater';
 import { consumePdfToken } from '$lib/server/pdf';
+import { scheduleBackfill } from '$lib/server/backfill';
+
+// Runtimes, synopses and outside scores that the search results never carried
+// get filled in shortly after the app opens, without anyone asking.
+scheduleBackfill();
 
 /** Icons and the web manifest stay reachable so "Add to Home Screen" works. */
 const PUBLIC_PATHS = ['/manifest.webmanifest', '/favicon.ico', '/api/diagnostics'];

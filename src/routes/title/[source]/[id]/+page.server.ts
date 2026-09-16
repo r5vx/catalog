@@ -3,6 +3,7 @@ import { fetchScores, omdbConfigured } from '$lib/server/metadata/omdb';
 import { entryIdForSource, categoryIdForSlug } from '$lib/server/db/queries';
 import { knownPeople } from '$lib/server/db/people';
 import { createFromResult } from '$lib/server/entries';
+import { safeBack } from '$lib/back';
 import { error, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 
@@ -47,8 +48,8 @@ export const load: PageServerLoad = async ({ params, url }) => {
 		details: { ...details, cast: [] },
 		cast,
 		scores,
-		// Set when you arrived from an actor's page, so "back" returns there.
-		from: Number(url.searchParams.get('from')) || null
+		// Set when you arrived from somewhere in the app, so "back" returns there.
+		back: safeBack(url.searchParams.get('back'))
 	};
 };
 

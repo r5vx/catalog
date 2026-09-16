@@ -270,6 +270,18 @@ settings — the index is the list, and picking one replaces it. That's the
 Adding a section means a folder and an entry in `SECTIONS`. Updates hides
 itself when `updateMode` is `none`.
 
+### Linking between people and titles
+**Every cast member is clickable, owned or not.** `/person/[id]` takes either
+our numeric id **or the provider's** (`tmdb:588`); the second form resolves
+through `getPersonBySourceId()` and falls back to `fetchPerson()`. Before this,
+the cast of a title you didn't own had no row here, so they rendered as plain
+faces and the chain film → actor → film → actor died on the third hop — which
+is exactly how the user hit it.
+
+Navigation carries `?back=<path>` (`src/lib/back.ts`), not an entry id, because
+each hop is a different kind of page. `safeBack()` rejects anything that isn't
+one of our own paths.
+
 ### Reading about a title
 Every title has a page worth landing on, not just a form.
 
