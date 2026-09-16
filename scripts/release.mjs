@@ -183,7 +183,8 @@ function takeNotes() {
 		notesFile,
 		text.replace(/^## Unreleased\s*$/m, `## Unreleased
 
-## ${next} — ${today}`),
+## ${next} — ${today}
+`),
 		'utf8'
 	);
 

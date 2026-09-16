@@ -8,6 +8,7 @@ and stamps it with the version number.
 ## Unreleased
 
 ## 1.2.0 — 2026-09-16
+
 - Updating now shows a progress bar in the app instead of a console window. The
   build happens while Catalog is still open, so you can keep using it.
 - Settings → Updates lists what changed in each version.
