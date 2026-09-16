@@ -126,6 +126,29 @@ if (run('node', ['scripts/set-exe-icon.mjs', UNPACKED]).status !== 0) {
 	abort('Could not set the icon.');
 }
 
+/**
+ * Write the file that tells an installed Catalog where to look for updates.
+ *
+ * electron-builder normally injects this while packaging, but we package with
+ * `--win dir` and then wrap with `--prepackaged`, which skips that phase — so
+ * it never appeared, and every installed copy failed its update check with
+ * "ENOENT: app-update.yml". Writing it here keeps the icon fix, which needs
+ * --prepackaged, without losing the updater.
+ */
+const publish = manifest.build.publish[0];
+
+writeFileSync(
+	join(root, UNPACKED, 'resources', 'app-update.yml'),
+	[
+		`provider: ${publish.provider}`,
+		`owner: ${publish.owner}`,
+		`repo: ${publish.repo}`,
+		`updaterCacheDirName: ${manifest.name}-updater`,
+		''
+	].join('\n'),
+	'utf8'
+);
+
 console.log('\n— Building the installer —');
 run('npx', [
 	'electron-builder',
@@ -154,7 +177,16 @@ if (!existsSync(join(outDir, manifestName))) {
 	);
 }
 
+/**
+ * The blockmap lets an update download only the parts that changed, instead
+ * of the whole 92 MB installer. It needs to be present for both the installed
+ * version and the new one, so it only starts paying off once two releases in
+ * a row have carried it.
+ */
+const blockmapName = `${installerName}.blockmap`;
+
 const artefacts = [join(outDir, installerName), join(outDir, manifestName)];
+if (existsSync(join(outDir, blockmapName))) artefacts.push(join(outDir, blockmapName));
 
 /* ----------------------------------------------------------------- the notes */
 
