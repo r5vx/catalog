@@ -285,8 +285,40 @@ if (!app.requestSingleInstanceLock()) {
 		child.once('exit', () => clearTimeout(insist));
 	}
 
+	/**
+	 * Finish an update that never got its chance.
+	 *
+	 * The swap waits for this app to close. If someone reopens Catalog while it
+	 * is waiting, that build is finished but unused — so on any later quit, a
+	 * pending marker means we start the helper again rather than waste it.
+	 */
+	function applyPendingUpdate() {
+		if (!SOURCE_MODE) return;
+
+		const marker = path.join(projectRoot(), 'dist-staged', 'pending.txt');
+		if (!fs.existsSync(marker)) return;
+
+		try {
+			const staged = fs.readFileSync(marker, 'utf8').trim();
+			if (!staged) return;
+
+			const helper = require('node:child_process').spawn(
+				'node',
+				[path.join(projectRoot(), 'scripts', 'apply-update.mjs'), staged],
+				{ cwd: projectRoot(), detached: true, stdio: 'ignore', windowsHide: true }
+			);
+
+			helper.unref();
+		} catch {
+			// Nothing to do on the way out. It stays pending for next time.
+		}
+	}
+
 	app.on('before-quit', stopServer);
-	app.on('quit', stopServer);
+	app.on('quit', () => {
+		stopServer();
+		applyPendingUpdate();
+	});
 	// A crash or a force-close of the main process would otherwise orphan it.
 	process.on('exit', () => server?.kill('SIGKILL'));
 }
