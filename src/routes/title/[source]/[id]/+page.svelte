@@ -3,6 +3,7 @@
 	import Synopsis from '$lib/Synopsis.svelte';
 	import TagChips from '$lib/TagChips.svelte';
 	import CastRow from '$lib/CastRow.svelte';
+	import WhereToWatch from '$lib/WhereToWatch.svelte';
 	import { STATUSES } from '$lib/constants';
 	import BackBar from '$lib/BackBar.svelte';
 	import { money } from '$lib/format';
@@ -73,6 +74,13 @@
 	</header>
 
 	<Synopsis text={details.overview} tagline={details.tagline} />
+
+	<WhereToWatch
+		source={data.source}
+		sourceId={data.sourceId}
+		title={details.title}
+		year={details.year}
+	/>
 
 	{#if data.scores?.awards}
 		<section class="awards">

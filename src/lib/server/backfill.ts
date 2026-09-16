@@ -32,18 +32,32 @@ let state: BackfillState = { status: 'idle', done: 0, total: 0, label: '' };
 
 export const backfillState = (): BackfillState => state;
 
+/**
+ * What still needs asking about.
+ *
+ * "Missing a runtime" is not the same as "nobody has looked". A short film, a
+ * series TMDB has no episode length for, anything OMDb has never heard of —
+ * those come back empty however many times you ask, and counting them as
+ * outstanding meant the number never reached zero. Once a lookup has happened
+ * the stamp says so, and the title is left alone.
+ */
+const OUTSTANDING = `
+	source_id IS NOT NULL
+	AND (
+		(details_checked_at IS NULL
+			AND (runtime_minutes IS NULL OR overview IS NULL OR overview = ''))
+		%SCORES%
+	)
+`;
+
+/** The same condition, with the scores half included only when OMDb can answer. */
+const outstanding = () =>
+	OUTSTANDING.replace('%SCORES%', omdbConfigured() ? 'OR scores_checked_at IS NULL' : '');
+
 /** How many entries are still missing something worth having. */
 export function missingCount(): number {
-	const scores = omdbConfigured() ? ' OR scores_checked_at IS NULL' : '';
-
 	return (
-		db
-			.prepare(
-				`SELECT COUNT(*) AS n FROM entries
-				 WHERE source_id IS NOT NULL
-				   AND (runtime_minutes IS NULL OR overview IS NULL OR overview = ''${scores})`
-			)
-			.get() as { n: number }
+		db.prepare(`SELECT COUNT(*) AS n FROM entries WHERE ${outstanding()}`).get() as { n: number }
 	).n;
 }
 
@@ -55,17 +69,10 @@ const BETWEEN_CALLS = 120;
 export function startBackfill(): boolean {
 	if (state.status === 'working') return true;
 
-	const scores = omdbConfigured() ? ' OR scores_checked_at IS NULL' : '';
-
 	const ids = (
-		db
-			.prepare(
-				`SELECT id FROM entries
-				 WHERE source_id IS NOT NULL
-				   AND (runtime_minutes IS NULL OR overview IS NULL OR overview = ''${scores})
-				 ORDER BY id`
-			)
-			.all() as { id: number }[]
+		db.prepare(`SELECT id FROM entries WHERE ${outstanding()} ORDER BY id`).all() as {
+			id: number;
+		}[]
 	).map((row) => row.id);
 
 	state = { status: 'working', done: 0, total: ids.length, label: 'Starting…' };
@@ -81,7 +88,12 @@ export function startBackfill(): boolean {
 }
 
 async function run(ids: number[]) {
-	let filled = 0;
+	// Titles that gained something, and titles the databases simply had
+	// nothing more for. The second number is the interesting one: it's why
+	// the count used to sit at 44 no matter how many times you pressed go.
+	let gained = 0;
+	let empty = 0;
+	let unreachable = 0;
 
 	for (const [index, id] of ids.entries()) {
 		if (state.status !== 'working') return;
@@ -94,21 +106,33 @@ async function run(ids: number[]) {
 
 		state = { ...state, done: index, label: entry.title };
 
+		let better = false;
+		// A title nobody could reach is not a title with nothing to give, and
+		// the finishing message shouldn't claim otherwise after an offline run.
+		let reached = true;
+
 		try {
-			if (entry.runtimeMinutes == null || !entry.overview) {
+			if (entry.detailsCheckedAt == null && (entry.runtimeMinutes == null || !entry.overview)) {
 				const details = await fetchDetails(entry.source, entry.sourceId);
 
 				if (details.title) {
-					if (details.overview && !entry.overview) saveOverview(id, details.overview);
+					if (details.overview && !entry.overview) {
+						saveOverview(id, details.overview);
+						better = true;
+					}
 					if (details.tags.length > 0) setTags(id, details.tags);
 					if (details.cast.length > 0) setCast(id, details.cast);
 
 					saveFacts(id, {
 						runtimeMinutes: details.runtimeMinutes,
-						episodesTotal: details.episodesTotal
+						episodesTotal: details.episodesTotal,
+						// Asked and answered — even an answer with no runtime in it.
+						checked: true
 					});
 
-					if (details.runtimeMinutes != null) filled += 1;
+					if (entry.runtimeMinutes == null && details.runtimeMinutes != null) better = true;
+				} else {
+					reached = false;
 				}
 
 				await pause(BETWEEN_CALLS);
@@ -123,13 +147,25 @@ async function run(ids: number[]) {
 				});
 
 				// null means we couldn't ask — don't record that as checked.
-				if (fresh) saveScores(id, fresh);
+				if (fresh) {
+					saveScores(id, fresh);
+					if (fresh.imdbRating != null || fresh.rtScore != null || fresh.metascore != null) {
+						better = true;
+					}
+				} else {
+					reached = false;
+				}
 
 				await pause(BETWEEN_CALLS);
 			}
 		} catch {
 			// One title failing shouldn't stop the other three hundred.
+			reached = false;
 		}
+
+		if (better) gained += 1;
+		else if (reached) empty += 1;
+		else unreachable += 1;
 
 		state = { ...state, done: index + 1 };
 	}
@@ -139,8 +175,36 @@ async function run(ids: number[]) {
 		done: ids.length,
 		total: ids.length,
 		label: '',
-		message: `Filled in ${filled} runtime${filled === 1 ? '' : 's'} across ${ids.length} titles.`
+		message: summarise(gained, empty, unreachable)
 	};
+}
+
+/**
+ * What to say when it finishes.
+ *
+ * "Filled in 0 runtimes" reads like a failure when it usually isn't — the
+ * databases have nothing for some titles and never will. Saying so, once,
+ * is better than a zero that looks broken.
+ */
+function summarise(gained: number, empty: number, unreachable: number): string {
+	const titles = (n: number) => `${n} title${n === 1 ? '' : 's'}`;
+
+	const parts: string[] = [];
+
+	if (gained > 0) parts.push(`Filled in ${titles(gained)}.`);
+
+	if (empty > 0) {
+		parts.push(
+			gained > 0
+				? `The other ${empty} had nothing more to give, so they won't be asked about again.`
+				: `Checked ${titles(empty)} — the databases had nothing more for them, so they won't be asked about again.`
+		);
+	}
+
+	// Worth saying plainly: these will be tried again, and nothing was lost.
+	if (unreachable > 0) parts.push(`${titles(unreachable)} couldn't be reached, and will be retried.`);
+
+	return parts.join(' ') || 'Nothing was missing.';
 }
 
 /* ------------------------------------------------------------- on its own */

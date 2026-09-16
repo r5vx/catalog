@@ -120,3 +120,20 @@ export function sortBadge(entry: Sortable, sort: string): string | null {
 			return null;
 	}
 }
+
+/* ------------------------------------------------------- where to watch */
+
+/**
+ * Countries "where to watch" can answer for.
+ *
+ * Streaming rights are sold country by country, so the answer is different in
+ * each one and there's no worldwide version of it. These are the regions
+ * JustWatch covers well; the names are left to the browser so they arrive in
+ * whatever language it's set to.
+ */
+export const WATCH_REGIONS = [
+	'AE', 'AR', 'AT', 'AU', 'BE', 'BR', 'CA', 'CH', 'CL', 'CO', 'CZ', 'DE',
+	'DK', 'EE', 'EG', 'ES', 'FI', 'FR', 'GB', 'GR', 'HK', 'HU', 'ID', 'IE',
+	'IL', 'IN', 'IT', 'JP', 'KR', 'MX', 'MY', 'NL', 'NO', 'NZ', 'PH', 'PL',
+	'PT', 'RO', 'RU', 'SA', 'SE', 'SG', 'TH', 'TR', 'TW', 'US', 'VN', 'ZA'
+] as const;

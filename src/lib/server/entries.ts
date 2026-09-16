@@ -1,4 +1,4 @@
-import { insertEntry, categoryIdForSlug, saveFacts } from './db/queries';
+import { insertEntry, categoryIdForSlug, saveFacts, entryIdForSource } from './db/queries';
 import { setTags } from './db/tags';
 import { setCast } from './db/people';
 import { fetchDetails } from './metadata/details';
@@ -54,11 +54,69 @@ export function createFromResult(result: SearchResult, overrides: Overrides = {}
 				// Runtime only comes back from the detail endpoint, never search.
 				saveFacts(id, {
 					runtimeMinutes: details.runtimeMinutes,
-					episodesTotal: details.episodesTotal
+					episodesTotal: details.episodesTotal,
+					// A title in the reply means the lookup worked, even if it
+					// carried no runtime. A failed one must not count as asked.
+					checked: Boolean(details.title)
 				});
 			})
 			.catch(() => {});
 	}
 
 	return id;
+}
+
+/**
+ * Add something by its provider id alone.
+ *
+ * Used wherever you're looking at a title rather than a search result — the
+ * browse page, someone else's shared list — so those can put it straight in
+ * your library without sending you off to search for what's already in front
+ * of you.
+ *
+ * Adding the same thing twice returns the entry you already have rather than
+ * making a duplicate.
+ */
+export async function addFromSource(
+	source: string,
+	sourceId: string,
+	status = 'planned'
+): Promise<{ id: number; already: boolean } | null> {
+	if (source !== 'tmdb' && source !== 'anilist') return null;
+
+	const existing = entryIdForSource(source, sourceId);
+	if (existing) return { id: existing, already: true };
+
+	const details = await fetchDetails(source, sourceId);
+	if (!details.title) return null;
+
+	const id = createFromResult(
+		{
+			key: `${source}:${sourceId}`,
+			source,
+			sourceId,
+			title: details.title,
+			altTitle: details.altTitle,
+			year: details.year,
+			posterUrl: details.posterUrl,
+			overview: details.overview,
+			categorySlug: details.categorySlug,
+			confident: true,
+			kind: details.kind,
+			episodesTotal: details.episodesTotal,
+			runtimeMinutes: details.runtimeMinutes,
+			externalRating: details.externalRating,
+			externalVotes: details.externalVotes,
+			popularity: 0
+		},
+		{
+			categoryId: categoryIdForSlug(details.categorySlug),
+			status,
+			// Something you've just found goes on the list, not into history —
+			// unless you say you've already seen it.
+			markWatchedToday: status === 'completed'
+		}
+	);
+
+	return { id, already: false };
 }

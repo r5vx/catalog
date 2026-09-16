@@ -272,7 +272,20 @@ async function fromTmdb(sourceId: string): Promise<TitleDetails> {
 		backdropUrl: data.backdrop_path
 			? `https://image.tmdb.org/t/p/w1280${data.backdrop_path}`
 			: null,
-		runtimeMinutes: data.runtime ?? data.episode_run_time?.[0] ?? null,
+		/**
+		 * A film carries `runtime`. A series used to carry `episode_run_time`,
+		 * and for most of them TMDB now returns an empty array there — which is
+		 * why 44 series in a 382-title library had no runtime at all and
+		 * sorting by "Longest" skipped every one of them. The length of an
+		 * episode that actually aired is the same answer from a field they
+		 * still fill in.
+		 */
+		runtimeMinutes:
+			data.runtime ??
+			data.episode_run_time?.[0] ??
+			data.last_episode_to_air?.runtime ??
+			data.next_episode_to_air?.runtime ??
+			null,
 		episodesTotal: data.number_of_episodes ?? null,
 		seasons: data.number_of_seasons ?? null,
 		externalRating: data.vote_average || null,

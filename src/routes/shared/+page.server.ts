@@ -1,4 +1,5 @@
 import { allTitleKeys } from '$lib/server/db/people';
+import { existingSourceKeys } from '$lib/server/db/queries';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -6,8 +7,12 @@ import type { PageServerLoad } from './$types';
  *
  * The file is never uploaded — the page reads it in the browser. All the
  * server contributes is a list of what *you* have, so the page can mark the
- * overlap and, more usefully, show what they've seen that you haven't.
+ * overlap, show what they've seen that you haven't, and show what you've both
+ * seen.
  */
 export const load: PageServerLoad = async () => ({
-	yours: [...allTitleKeys()]
+	yours: [...allTitleKeys()],
+	// Matching on the database's own id is exact, where matching on the title
+	// is a guess. Newer share files carry ids; older ones fall back to names.
+	yourKeys: [...existingSourceKeys()]
 });

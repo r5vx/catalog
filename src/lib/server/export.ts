@@ -194,16 +194,21 @@ export function fullExport() {
 /**
  * A copy of your library made to hand to someone else.
  *
- * Deliberately not the full backup: no ids, no note pages, no settings, and
- * your own ratings and reviews only if you say so. What's left is the list
- * itself — what you watched and what the world scored it — which is the part
- * worth comparing.
+ * Deliberately not the full backup: no ids of ours, no note pages, no
+ * settings, and your own ratings and reviews only if you say so. What's left
+ * is the list itself — what you watched and what the world scored it — which
+ * is the part worth comparing.
+ *
+ * The provider ids *are* included, and they matter: they're what lets whoever
+ * opens this read a synopsis, look at the cast, or put something straight in
+ * their own library. Without them a shared list is a wall of text you can't
+ * do anything with. They're public catalogue numbers, nothing personal.
  */
 export function shareExport(options: { ratings: boolean; notes: boolean; from?: string }) {
 	const rows = listForExport({ sortColumn: 'title', sortDir: 'asc' });
 
 	return {
-		catalogShare: 1,
+		catalogShare: 2,
 		sharedAt: new Date().toISOString(),
 		from: options.from?.trim() || null,
 		includes: { ratings: options.ratings, notes: options.notes },
@@ -214,9 +219,15 @@ export function shareExport(options: { ratings: boolean; notes: boolean; from?: 
 			status: row.status,
 			posterUrl: row.posterUrl,
 			externalRating: row.externalRating,
+			externalVotes: row.externalVotes,
 			imdbRating: row.imdbRating,
 			rtScore: row.rtScore,
 			metascore: row.metascore,
+			runtimeMinutes: row.runtimeMinutes,
+			boxOffice: row.boxOffice,
+			// Only where it came from a database — things typed in by hand have
+			// nothing to link to.
+			...(row.sourceId ? { source: row.source, sourceId: row.sourceId } : {}),
 			tags: row.tags ? row.tags.split(', ') : [],
 			...(options.ratings
 				? { rating: row.rating, favorite: Boolean(row.favorite), rewatches: row.rewatches }

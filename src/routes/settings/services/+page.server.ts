@@ -1,6 +1,7 @@
 import { readSettings, updateSettings } from '$lib/server/settings';
 import { verifyTmdbKey } from '$lib/server/metadata/tmdb';
 import { verifyOmdbKey } from '$lib/server/metadata/omdb';
+import { watchRegion } from '$lib/server/metadata/providers';
 import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 
@@ -10,7 +11,11 @@ export const load: PageServerLoad = async () => {
 	// Never send the keys themselves to the browser — only whether one is saved.
 	return {
 		tmdbKeySaved: Boolean(settings.tmdbApiKey),
-		omdbKeySaved: Boolean(settings.omdbApiKey)
+		omdbKeySaved: Boolean(settings.omdbApiKey),
+		/** Blank when it's following this PC rather than a country you picked. */
+		region: settings.watchRegion ?? '',
+		/** What it's using either way, so the page can say so. */
+		regionInUse: watchRegion()
 	};
 };
 
@@ -47,5 +52,22 @@ export const actions: Actions = {
 	removeOmdb: async () => {
 		updateSettings({ omdbApiKey: undefined });
 		return { omdbOk: 'Key removed. TMDB scores still show.' };
+	},
+
+	/**
+	 * Which country "where to watch" answers for. Blank follows this PC, which
+	 * is right until you're using someone else's, or travelling.
+	 */
+	saveRegion: async ({ request }) => {
+		const value = String((await request.formData()).get('watchRegion') ?? '')
+			.trim()
+			.toUpperCase();
+
+		if (value && !/^[A-Z]{2}$/.test(value)) {
+			return fail(400, { regionError: 'That is not a country code.' });
+		}
+
+		updateSettings({ watchRegion: value || undefined });
+		return { regionOk: true };
 	}
 };

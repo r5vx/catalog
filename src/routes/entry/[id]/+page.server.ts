@@ -67,7 +67,8 @@ export const actions: Actions = {
 
 		saveFacts(entry.id, {
 			runtimeMinutes: details.runtimeMinutes,
-			episodesTotal: details.episodesTotal
+			episodesTotal: details.episodesTotal,
+			checked: true
 		});
 
 		// The scores get looked up again when the page reloads.

@@ -46,6 +46,9 @@ const ENTRY_COLUMNS = `
 	awards,
 	box_office       AS boxOffice,
 	scores_checked_at AS scoresCheckedAt,
+	details_checked_at AS detailsCheckedAt,
+	providers,
+	providers_checked_at AS providersCheckedAt,
 	created_at       AS createdAt,
 	updated_at       AS updatedAt
 `;
@@ -349,6 +352,18 @@ export type ExportRow = {
 	imdbRating: number | null;
 	rtScore: number | null;
 	metascore: number | null;
+	/**
+	 * Which database it came from, and its id there.
+	 *
+	 * Not for the spreadsheet — for the share file. Without them a shared list
+	 * is only text, and nothing in it can be opened, read about or added; with
+	 * them every title someone sends you is a title you can look into.
+	 */
+	source: string;
+	sourceId: string | null;
+	runtimeMinutes: number | null;
+	boxOffice: number | null;
+	externalVotes: number | null;
 };
 
 export function listForExport(
@@ -404,7 +419,12 @@ export function listForExport(
 			e.poster_url AS posterUrl,
 			e.imdb_rating AS imdbRating,
 			e.rt_score    AS rtScore,
-			e.metascore
+			e.metascore,
+			e.source,
+			e.source_id       AS sourceId,
+			e.runtime_minutes AS runtimeMinutes,
+			e.box_office      AS boxOffice,
+			e.external_votes  AS externalVotes
 		FROM entries e
 		JOIN categories c ON c.id = e.category_id
 		${where.length ? `WHERE ${where.join(' AND ')}` : ''}
@@ -467,17 +487,37 @@ export function saveOverview(id: number, overview: string): void {
  * TMDB gives a runtime only on the detail endpoint, so anything added by
  * search arrives without one — which is why sorting by "Longest" had nothing
  * to work with. Saved whenever details are fetched.
+ *
+ * `checked` says the database answered, which is not the same as it having
+ * something to say. Plenty of titles have no runtime at all — a series TMDB
+ * has no episode length for, a short nobody timed. Recording the *asking*
+ * is what stops those being counted as missing for the rest of time.
  */
 export function saveFacts(
 	id: number,
-	facts: { runtimeMinutes: number | null; episodesTotal: number | null }
+	facts: { runtimeMinutes: number | null; episodesTotal: number | null; checked?: boolean }
 ): void {
 	db.prepare(
 		`UPDATE entries
-		 SET runtime_minutes = COALESCE(?, runtime_minutes),
-		     episodes_total  = COALESCE(?, episodes_total)
+		 SET runtime_minutes    = COALESCE(?, runtime_minutes),
+		     episodes_total     = COALESCE(?, episodes_total),
+		     details_checked_at = COALESCE(?, details_checked_at)
 		 WHERE id = ?`
-	).run(facts.runtimeMinutes, facts.episodesTotal, id);
+	).run(
+		facts.runtimeMinutes,
+		facts.episodesTotal,
+		facts.checked ? new Date().toISOString() : null,
+		id
+	);
+}
+
+/** Where to stream something, kept so the page doesn't ask on every view. */
+export function saveProviders(id: number, providers: string | null): void {
+	db.prepare('UPDATE entries SET providers = ?, providers_checked_at = ? WHERE id = ?').run(
+		providers,
+		new Date().toISOString(),
+		id
+	);
 }
 
 /** Forget when the outside scores were last checked, so they're fetched again. */

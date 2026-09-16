@@ -1,8 +1,8 @@
 import { fetchDetails } from '$lib/server/metadata/details';
 import { fetchScores, omdbConfigured } from '$lib/server/metadata/omdb';
-import { entryIdForSource, categoryIdForSlug } from '$lib/server/db/queries';
+import { entryIdForSource } from '$lib/server/db/queries';
 import { knownPeople } from '$lib/server/db/people';
-import { createFromResult } from '$lib/server/entries';
+import { addFromSource } from '$lib/server/entries';
 import { safeBack } from '$lib/back';
 import { error, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
@@ -56,45 +56,12 @@ export const load: PageServerLoad = async ({ params, url }) => {
 export const actions: Actions = {
 	add: async ({ params, request }) => {
 		const { source, id } = params;
-		if (source !== 'tmdb' && source !== 'anilist') error(400, 'Unknown source.');
-
-		const existing = entryIdForSource(source, id);
-		if (existing) redirect(303, `/entry/${existing}`);
 
 		const form = await request.formData();
-		const details = await fetchDetails(source, id);
-		if (!details.title) error(404, 'Nothing found for that.');
+		const added = await addFromSource(source, id, String(form.get('status') ?? 'planned'));
 
-		const status = String(form.get('status') ?? 'planned');
+		if (!added) error(404, 'Nothing found for that.');
 
-		const entryId = createFromResult(
-			{
-				key: `${source}:${id}`,
-				source,
-				sourceId: id,
-				title: details.title,
-				altTitle: details.altTitle,
-				year: details.year,
-				posterUrl: details.posterUrl,
-				overview: details.overview,
-				categorySlug: details.categorySlug,
-				confident: true,
-				kind: details.kind,
-				episodesTotal: details.episodesTotal,
-				runtimeMinutes: details.runtimeMinutes,
-				externalRating: details.externalRating,
-				externalVotes: details.externalVotes,
-				popularity: 0
-			},
-			{
-				categoryId: categoryIdForSlug(details.categorySlug),
-				status,
-				// Something you've just discovered goes on the list, not into
-				// history — unless you say you've already seen it.
-				markWatchedToday: status === 'completed'
-			}
-		);
-
-		redirect(303, `/entry/${entryId}`);
+		redirect(303, `/entry/${added.id}`);
 	}
 };

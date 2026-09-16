@@ -6,6 +6,7 @@
 	import Synopsis from '$lib/Synopsis.svelte';
 	import TagChips from '$lib/TagChips.svelte';
 	import CastRow from '$lib/CastRow.svelte';
+	import WhereToWatch from '$lib/WhereToWatch.svelte';
 	import { progressSummary } from '$lib/progress';
 	import { statusLabel } from '$lib/constants';
 	import { money } from '$lib/format';
@@ -200,6 +201,10 @@
 	</header>
 
 	<Synopsis text={overview} pending={looking} />
+
+	{#if entry.sourceId}
+		<WhereToWatch entryId={entry.id} />
+	{/if}
 
 	{#if scores?.awards}
 		<section>
