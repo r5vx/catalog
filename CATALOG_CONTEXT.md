@@ -128,6 +128,20 @@ is found by exact name, and foreign assets are deleted from the release before
 upload. **Verify a release by fetching `latest.yml` and downloading the file it
 names** — that is the only check that proves the update path.
 
+**14. A keyed `{#each}` dies on a duplicate key, and takes the page with it.**
+`/person/[id]` keyed credits on title+year. TMDB credits the same title twice
+(a guest spot *and* a hosting slot on one talk show), and the first duplicate
+sits at index 40 — exactly what the **second** "Show more" click reveals. So it
+worked once and then froze, with no visible error. Credits are deduplicated by
+provider id and keyed on that. **When a list comes from an API, never key it on
+anything but an id.**
+
+**15. TMDB's `credits` for a series is not the cast.**
+`/tv/{id}?append_to_response=credits` returns whoever is billed on the show
+record — **four people** for The Office. The real cast is
+`/tv/{id}/aggregate_credits`, which returns 689, with a `roles` array instead of
+a `character`. Films are fine with plain `credits`.
+
 ---
 
 ## How the pieces work
@@ -258,6 +272,49 @@ links.
 
 On the person page the `+` button is a **sibling** of the card link, not inside
 it: a button nested in an anchor is invalid and swallows the click.
+
+### Sorting
+`SORTS` in `constants.ts` carries a `group`, and `SortPicker.svelte` is a
+disclosure panel rather than a dropdown — fifteen orders is too many for a flat
+list. Every `column` must also appear in `SORT_COLUMNS` in `queries.ts`, which
+is the allow-list that stops a sort value reaching SQL.
+
+Score sorts (IMDb, Rotten Tomatoes, Metacritic, box office) are null until OMDb
+has been asked, and nulls sort last — so with no key those views look
+alphabetical, which is correct rather than broken.
+
+### PDFs
+The print dialog produced files that wouldn't open. `src/lib/server/pdf.ts`
+asks the desktop app over IPC to render `/export` with
+`webContents.printToPDF()` and sends the bytes back; `/api/export?format=pdf`
+streams them. Browser-only installs don't get the button.
+
+The render window has **no cookies**, so with a PIN set it would be redirected
+to the login page and produce a PDF of that. `renderPdf` mints a one-time token
+that `hooks.server.ts` honours once, within a minute.
+
+Verified by page count scaling with the data: 314 titles → 11 pages, 62 → 3,
+0 → 1, every one a valid `%PDF`. Text extraction does **not** work on these —
+Chromium embeds subset fonts, so the words aren't ASCII in the file.
+
+### Sharing a library
+`/api/export?format=share` writes a file with the list, the public scores and
+tags — and your own ratings and reviews only when asked. It is **not** a
+backup: no ids, no note pages, and a different filename so the two are never
+confused.
+
+`/shared` reads a file the browser picks, with `FileReader`. **Nothing is
+uploaded and nothing is stored** — the server only supplies `allTitleKeys()` so
+the page can mark the overlap and filter to "only what I haven't seen", which
+is the point of looking at someone else's list.
+
+### Locked note pages
+`notes.locked`, gated on the same PIN. The body is withheld **in SQL**
+(`CASE WHEN locked = 1 THEN ''`), not hidden in the template — hiding it in
+markup still ships it to the browser. `/api/notes` refuses to write or delete a
+locked page too: saving over one is as good as destroying it. The unlock cookie
+is a separate token from the login one, so signing in on a phone doesn't open
+locked pages.
 
 ### Scores from elsewhere
 TMDB carries its own rating and nothing else. **OMDb** (`omdbApiKey`, free,
