@@ -185,7 +185,26 @@ busy and **overwrote "Updated." with an EPERM failure**, so a working update
 reported itself broken. `dist-staged/applying.txt` is the lock; the loser exits
 quietly. **When diagnosing an update, read the timestamps, not just the note.**
 
-**18. "Did it work?" is not the same question as "did I start it?"**
+**18. The owner's copy is an installed release build now, not a source build.**
+It ran the source-mode updater — rebuild, stage, swap — and that path failed on
+four consecutive versions, each time differently (lessons 17, 19, 20). The
+friend's copy, which updates from GitHub Releases through electron-updater,
+never failed once. The owner was the only person running that mechanism, so it
+was also the only one being tested in anger, on the machine with real data on
+it.
+
+So the owner now installs `Catalog-Setup-x.y.z.exe` like everyone else:
+`%LOCALAPPDATA%\Programs\Catalog`, `app-update.yml` inside, registered in
+Add/Remove Programs. The library is untouched by this — both builds read
+`%APPDATA%\Catalog\library.db`, so switching cost nothing.
+
+`dist-app` and the `Update Catalog.bat` path still exist for development
+builds, and `SOURCE_MODE` still keys off that batch file two folders up. **But
+nothing anyone uses depends on it any more.** If a dev build is packed for
+testing, delete `dist-app` afterwards: a second Catalog on the machine is how
+the library got corrupted (lesson 21).
+
+**19. "Did it work?" is not the same question as "did I start it?"**
 The 1.6.0 update failed on the owner's own machine, and the reason is worth
 keeping. The helper was waiting for Catalog to close, as designed. Every launch
 during that wait ran the startup-install path, which spawned *another* helper —
@@ -213,7 +232,7 @@ Verified against a fake project tree: heartbeat moves, a rival helper exits 0
 without touching the note, the swap completes when the exe unlocks, and a
 timed-out helper releases the lock while keeping the marker for the next start.
 
-**19. Test with the lock on.**
+**20. Test with the lock on.**
 The update banner never appeared for the owner, and the reason it was missed is
 more instructive than the bug. `UpdateBanner` lives in the root layout, which
 the **login page shares**. With a PIN set, Catalog opens on `/login`, the
@@ -229,7 +248,46 @@ made easier to test with, check what the removal was load-bearing for.** The
 fix re-runs the check on navigation, skips `/login`, and treats a non-JSON
 reply as "no answer yet" rather than "no update".
 
-**20. A missing value is not an unanswered question.**
+**21. The library got corrupted, and how it was put back.**
+Between two snapshots an hour apart the live `library.db` went from
+`integrity_check: ok` to a damaged B-tree: rowids out of order, a page
+referenced twice, an invalid page number, and two broken indexes on
+`entry_cast`. `entry_tags` threw *database disk image is malformed* partway
+through a scan.
+
+What was happening in that hour: the update machinery quitting and relaunching
+the app repeatedly, with orphaned instances left alive — at one point a
+windowless, server-less husk holding the exe — while the backfill wrote cast
+and tag rows. The damage is in exactly the tables the backfill writes. SQLite
+survives a process being killed; what it is not built for is two copies of the
+app writing to one library, which the relaunch cycle kept producing. **That is
+the strongest argument for the release build: it never kills and relaunches
+itself to update.**
+
+Recovering it, in case it happens again:
+
+- **A damaged tree is not a lost table.** A plain `SELECT *` throws at the
+  broken page, but `SELECT * ORDER BY <column>` takes a different path through
+  the file and walks past it — 3,314 rows one way, 4,200 the other, from the
+  same table. Read both ways and merge.
+- **Rebuild rather than repair.** There is no fixing a B-tree in place: create a
+  new file from the schema (which lives apart from the data and usually reads
+  fine), insert everything readable, and the trees and indexes are built again
+  from scratch.
+- **`node:sqlite` has `foreign_keys` ON by default.** Loading tables
+  alphabetically put `entry_tags` before `tags`, so every row was silently
+  rejected and the table came out empty. Load with foreign keys off, parents
+  first, then `PRAGMA foreign_key_check`.
+- **Delete `-wal` and `-shm` with the old file.** Dropping a rebuilt
+  `library.db` next to the *old* journal makes SQLite replay the corrupted WAL
+  onto it, and the fresh file reads as malformed. That happened here and looked
+  briefly like the repair had failed.
+
+Result: all 382 entries byte-identical to the last clean snapshot, both API
+keys and the PIN intact, `entry_cast` ending up with *more* rows than either
+source alone. The damaged file is kept as `library.corrupted-<date>.db`.
+
+**22. A missing value is not an unanswered question.**
 "Missing information" sat at 44 titles no matter how many times it ran, and
 reported "filled in 0". The query asked `WHERE runtime_minutes IS NULL`, which
 cannot tell *nobody has looked* from *there is nothing to find* — so the same
@@ -412,7 +470,7 @@ missing. It starts by itself a few seconds after the app opens
 (`scheduleBackfill`), shows a thin line on the library page while it runs
 (`FillingIn.svelte`) and a progress bar in Settings → Library. What counts as
 missing is one shared `OUTSTANDING` condition, and it turns on the *stamps*
-rather than the values — see lesson 20, which is the whole reason the count
+rather than the values — see lesson 22, which is the whole reason the count
 used to be stuck at 44.
 
 `sortBadge()` in `constants.ts` puts the sorted-on value on each card, and
