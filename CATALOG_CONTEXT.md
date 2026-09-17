@@ -768,6 +768,15 @@ as it uploads, so a failed upload left an installer with no way to publish it
 by hand — and **a release without `latest.yml` updates nobody**. Built this way
 both files always exist and a failed upload can just be rerun.
 
+**Order matters: the notes are stamped before the build, not after.**
+`RELEASE_NOTES.md` is packaged into the app and the Updates page reads the copy
+*inside* it. Stamping the `## Unreleased` heading after packaging meant every
+release from 1.0.0 to 1.7.0 shipped a file still describing its own changes as
+unreleased — so the app listed the version it was running as not yet released.
+`abort()` puts the notes back as well as the version, so a failed build leaves
+nothing half-stamped. **Anything the app reads from its own files has to be
+correct before `electron-builder` runs, not before the upload.**
+
 `GH_TOKEN` comes from `.env` (gitignored, parsed by hand — no dotenv). A
 fine-grained token needs **Contents: Read and write** on the repo; without it
 GitHub returns a 403 whose message doesn't say which permission is missing, so

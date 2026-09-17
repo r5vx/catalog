@@ -7,6 +7,11 @@ and stamps it with the version number.
 
 ## Unreleased
 
+- **Settings → Updates no longer calls the version you're running
+  "Unreleased".** The notes are stamped with the version number before the app
+  is packaged now, rather than after it, so the copy inside the app is the
+  right one.
+
 ## 1.7.0 — 2026-09-17
 
 - **Browse keeps going.** Every shelf has a **Show more** button now, as many
