@@ -775,6 +775,35 @@ GitHub returns a 403 whose message doesn't say which permission is missing, so
 
 **v1.0.0 shipped 2026-09-15** to `github.com/r5vx/catalog/releases`.
 
+### Two repos: private source, public downloads
+
+`r5vx/catalog` is **private**. Installers go to **`r5vx/catalog-releases`**,
+which is public and holds nothing but releases — no code, no history.
+
+This exists because **electron-updater cannot authenticate**. It has no login
+flow: to read a private repo it needs an access token sitting on the machine at
+runtime, and the only way to ship one is to bake it into the installer, where
+anyone who has the installer can read it straight back out. Adding someone as a
+**collaborator does not help** — that is access for a person signed into
+GitHub, not for their copy of the app. So the downloads live somewhere public
+and the source does not.
+
+Everything keys off `build.publish[0]` in `package.json`: `release.mjs` writes
+`app-update.yml` from it *and* uploads to it, so the two can never disagree.
+Git pushes still go to `origin`, which is the private source repo.
+
+Two things to remember:
+
+- **The token must reach both repos.** It is fine-grained, so
+  `catalog-releases` has to be added to its repository access explicitly or the
+  upload 403s. Creating a repo needs account-level Administration, which a
+  scoped token does not have — that part is done by hand.
+- **Changing which repo the app checks needs one manual install.** An installed
+  copy asks whatever repo its own `app-update.yml` names. A build that points
+  somewhere new cannot be delivered by the old pointer if the old pointer is
+  already private, so whoever is on an older build installs once by hand and is
+  automatic from then on.
+
 ### First run
 
 `setupNeeded()` in `settings.ts` gates a `/welcome` screen (redirect lives in

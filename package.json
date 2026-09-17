@@ -55,7 +55,7 @@
 			{
 				"provider": "github",
 				"owner": "r5vx",
-				"repo": "catalog"
+				"repo": "catalog-releases"
 			}
 		],
 		"win": {

@@ -5,7 +5,7 @@ A personal library of everything you've watched. Runs on your own PC.
 ## Installing it
 
 Download **Catalog-Setup.exe** from the
-[latest release](https://github.com/r5vx/catalog/releases/latest) and run it.
+[latest release](https://github.com/r5vx/catalog-releases/releases/latest) and run it.
 
 Windows will say the publisher is unknown, because the installer isn't signed —
 a certificate costs a few hundred a year and this is a personal project. Click
