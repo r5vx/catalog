@@ -7,6 +7,8 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 1.7.0 — 2026-09-17
+
 - **Browse keeps going.** Every shelf has a **Show more** button now, as many
   times as you like, rather than stopping at the first twenty.
 - **Trending now / All time**, so you can look at what's big this week or at
