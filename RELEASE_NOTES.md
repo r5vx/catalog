@@ -7,6 +7,13 @@ and stamps it with the version number.
 
 ## Unreleased
 
+- **Browse keeps going.** Every shelf has a **Show more** button now, as many
+  times as you like, rather than stopping at the first twenty.
+- **Trending now / All time**, so you can look at what's big this week or at
+  the most-rated films, series and anime ever made.
+- **Bulk add** has gone from the top of the library — it was already on the Add
+  page, which is where you end up anyway when you have a list to paste.
+
 ## 1.6.1 — 2026-09-16
 
 - **"An update is ready" now appears when you have a PIN.** It was asking from

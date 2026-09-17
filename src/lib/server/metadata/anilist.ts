@@ -119,9 +119,9 @@ function toResult(item: AniListMedia): SearchResult {
 }
 
 const TRENDING = `
-query ($perPage: Int, $page: Int) {
+query ($perPage: Int, $page: Int, $sort: [MediaSort]) {
   Page(perPage: $perPage, page: $page) {
-    media(type: ANIME, sort: TRENDING_DESC, isAdult: false) {
+    media(type: ANIME, sort: $sort, isAdult: false) {
       id
       title { romaji english }
       startDate { year }
@@ -136,13 +136,24 @@ query ($perPage: Int, $page: Int) {
   }
 }`;
 
-/** What's being watched right now — the anime half of the browse page. */
-export async function trendingAniList(perPage = 24, page = 1): Promise<SearchResult[]> {
+/**
+ * The anime half of the browse page.
+ *
+ * `trending` is what's being watched this season; `popular` is how many people
+ * have it on a list at all, which is the closest thing AniList has to all-time.
+ */
+export async function trendingAniList(
+	perPage = 24,
+	page = 1,
+	mode: 'trending' | 'popular' = 'trending'
+): Promise<SearchResult[]> {
 	try {
+		const sort = mode === 'popular' ? ['POPULARITY_DESC'] : ['TRENDING_DESC'];
+
 		const response = await fetch(ENDPOINT, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-			body: JSON.stringify({ query: TRENDING, variables: { perPage, page } })
+			body: JSON.stringify({ query: TRENDING, variables: { perPage, page, sort } })
 		});
 
 		if (!response.ok) return [];

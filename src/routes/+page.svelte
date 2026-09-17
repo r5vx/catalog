@@ -52,9 +52,9 @@
 		<div class="header-actions">
 			<a href="/settings" class="btn" title="Settings" aria-label="Settings">⚙</a>
 			<a href="/people" class="btn">Actors</a>
-			<a href="/import" class="btn">Bulk add</a>
 			<!-- Add is for something you know the name of; Browse is for when
-			     you don't. -->
+			     you don't. Bulk add lives on the Add page, where you end up
+			     anyway if you have a list to paste. -->
 			<a href="/browse" class="btn">Browse</a>
 			<a href="/entry/new" class="btn btn-primary">+ Add</a>
 		</div>
