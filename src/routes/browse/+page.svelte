@@ -14,6 +14,11 @@
 		{ value: 'anime', label: 'Anime' }
 	];
 
+	const MODES = [
+		{ value: 'trending', label: 'Trending now' },
+		{ value: 'popular', label: 'All time' }
+	];
+
 	/** Filters live in the URL, so a search you liked is a link you can keep. */
 	function setParam(key: string, value: string) {
 		const params = new URLSearchParams(window.location.search);
@@ -66,6 +71,73 @@
 		}
 	}
 
+	/* ------------------------------------------------------- show me more */
+
+	/**
+	 * Pages loaded on top of the first, per shelf.
+	 *
+	 * The server sends page one so the page renders with something on it; every
+	 * "Show more" after that appends rather than reloading, because the whole
+	 * point is to keep going without losing what you were already looking at.
+	 */
+	let extra = $state<Record<string, SearchResult[]>>({});
+	let at = $state<Record<string, number>>({});
+	let loading = $state<string | null>(null);
+	let ended = $state<Record<string, boolean>>({});
+
+	// A change of category or trending/all-time replaces the shelves entirely,
+	// so anything loaded on top of the old ones has to go with them.
+	let showing = $state('');
+
+	$effect(() => {
+		const signature = `${data.cat}:${data.mode}`;
+		if (showing === signature) return;
+
+		showing = signature;
+		extra = {};
+		at = {};
+		ended = {};
+	});
+
+	const shelfResults = (shelf: { key: string; results: SearchResult[] }) => [
+		...shelf.results,
+		...(extra[shelf.key] ?? [])
+	];
+
+	async function more(shelf: { key: string; results: SearchResult[]; page: number }) {
+		loading = shelf.key;
+
+		try {
+			const next = (at[shelf.key] ?? shelf.page) + 1;
+			const response = await fetch(`/api/browse?cat=${shelf.key}&mode=${data.mode}&page=${next}`);
+
+			if (!response.ok) {
+				ended = { ...ended, [shelf.key]: true };
+				return;
+			}
+
+			const payload = await response.json();
+			const results: SearchResult[] = payload.results ?? [];
+
+			// Pages overlap now and then, and a duplicate key would take the
+			// list down with it.
+			const already = new Set(shelfResults(shelf).map((one) => one.key));
+			const fresh = results.filter((one) => !already.has(one.key));
+
+			if (fresh.length === 0) {
+				ended = { ...ended, [shelf.key]: true };
+				return;
+			}
+
+			extra = { ...extra, [shelf.key]: [...(extra[shelf.key] ?? []), ...fresh] };
+			at = { ...at, [shelf.key]: next };
+		} catch {
+			ended = { ...ended, [shelf.key]: true };
+		} finally {
+			loading = null;
+		}
+	}
+
 	/** Where "back" should return to, including whatever you searched for. */
 	const here = $derived(`/browse${page.url.search}`);
 
@@ -104,6 +176,22 @@
 			{tab.label}
 		</button>
 	{/each}
+
+	<!-- Only meaningful for the shelves; a search is a search either way. -->
+	{#if !data.q}
+		<span class="modes">
+			{#each MODES as option (option.value)}
+				<button
+					type="button"
+					class="mode"
+					class:active={data.mode === option.value}
+					onclick={() => setParam('mode', option.value === 'trending' ? '' : option.value)}
+				>
+					{option.label}
+				</button>
+			{/each}
+		</span>
+	{/if}
 </nav>
 
 {#if !data.tmdbEnabled}
@@ -184,10 +272,23 @@
 		<section class="shelf">
 			<h2>{shelf.label}</h2>
 			<ul class="grid">
-				{#each shelf.results as result (result.key)}
+				{#each shelfResults(shelf) as result (result.key)}
 					{@render card(result)}
 				{/each}
 			</ul>
+
+			{#if ended[shelf.key]}
+				<p class="faint end">That's everything {shelf.key === 'anime' ? 'AniList' : 'TMDB'} has here.</p>
+			{:else}
+				<button
+					type="button"
+					class="btn more"
+					disabled={loading === shelf.key}
+					onclick={() => more(shelf)}
+				>
+					{loading === shelf.key ? 'Finding more…' : 'Show more'}
+				</button>
+			{/if}
 		</section>
 	{/each}
 {/if}
@@ -238,6 +339,36 @@
 		border-color: var(--accent);
 		color: var(--accent);
 		font-weight: 600;
+	}
+
+	/* Pushed to the far end: a different question from which category. */
+	.modes {
+		margin-left: auto;
+		display: inline-flex;
+		gap: 2px;
+		border: 1px solid var(--rule);
+		border-radius: 100px;
+		padding: 2px;
+	}
+
+	.mode {
+		padding: 4px 12px;
+		font-size: 0.82rem;
+	}
+
+	.tabs .mode.active {
+		background: var(--accent);
+		border-color: transparent;
+		color: var(--accent-ink);
+	}
+
+	.shelf .more {
+		margin-top: 16px;
+	}
+
+	.end {
+		font-size: 0.8rem;
+		margin: 16px 0 0;
 	}
 
 	.msg {

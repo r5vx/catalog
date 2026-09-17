@@ -239,15 +239,35 @@ function toResult(item: TmdbItem): SearchResult {
  * searching only helps when you already know what you're looking for, and the
  * point of that page is finding something you don't.
  */
+export type BrowseMode = 'trending' | 'popular';
+
 export async function trendingTmdb(
 	kind: 'movie' | 'tv',
-	page = 1
+	page = 1,
+	mode: BrowseMode = 'trending'
 ): Promise<SearchResult[]> {
 	const key = tmdbKey();
 	if (!key) return [];
 
 	try {
-		const url = new URL(`${BASE}/trending/${kind}/week`);
+		/**
+		 * "This week" and "of all time" are different endpoints, not a sort.
+		 *
+		 * All-time orders by `vote_count`, not by TMDB's `popularity` — the
+		 * same choice the search ranking makes, and for the same reason:
+		 * popularity is a rolling this-week score, so sorting by it would just
+		 * hand back trending again in a different order.
+		 */
+		const url =
+			mode === 'popular'
+				? new URL(`${BASE}/discover/${kind}`)
+				: new URL(`${BASE}/trending/${kind}/week`);
+
+		if (mode === 'popular') {
+			url.searchParams.set('sort_by', 'vote_count.desc');
+			url.searchParams.set('include_adult', 'false');
+		}
+
 		url.searchParams.set('page', String(page));
 
 		const response = await fetch(url, authorize(url, key));
@@ -256,7 +276,7 @@ export async function trendingTmdb(
 		const payload = (await response.json()) as { results?: TmdbItem[] };
 
 		return (payload.results ?? [])
-			// Trending rows don't always carry the field the mapping reads.
+			// Neither endpoint reliably carries the field the mapping reads.
 			.map((item) => ({ ...item, media_type: item.media_type ?? kind }))
 			.filter((item) => !isPlaceholder(item))
 			.map(toResult);
