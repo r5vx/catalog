@@ -7,6 +7,11 @@ and stamps it with the version number.
 
 ## Unreleased
 
+- **Watch fix (for real this time).** Video requests to febbox now run inside a
+  real browser context with full cookies and auth, matching what the site sees
+  when you use it directly. Previous versions tried a shortcut that febbox
+  rejected.
+
 ## 1.7.7 — 2026-09-18
 
 - **Watch actually plays now.** Requests to febbox go through Electron's own
