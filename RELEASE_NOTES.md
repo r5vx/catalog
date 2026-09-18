@@ -7,6 +7,16 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 1.7.5 — 2026-09-18
+
+- **Quality picker.** Movies and TV shows now show all available quality options
+  (720p, 1080p, 2160p, etc.) as buttons in the player bar. Defaults to 1080p.
+  For TV, picking a quality sticks for the rest of the episodes.
+- **Copy your key.** Settings → Services now has a "Copy key" button so you can
+  share your Watch key with friends.
+- **Better stream resolution.** Tries multiple approaches to get a playable link,
+  and shows details when it fails so you can tell what went wrong.
+
 ## 1.7.4 — 2026-09-18
 
 - **Log in from Settings.** The Watch section in Settings → Services now has a

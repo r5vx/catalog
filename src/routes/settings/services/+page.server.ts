@@ -12,6 +12,7 @@ export const load: PageServerLoad = async () => {
 		tmdbKeySaved: Boolean(settings.tmdbApiKey),
 		omdbKeySaved: Boolean(settings.omdbApiKey),
 		febboxKeySaved: Boolean(settings.febboxToken),
+		febboxToken: settings.febboxToken ?? '',
 		region: settings.watchRegion ?? '',
 		regionInUse: watchRegion()
 	};

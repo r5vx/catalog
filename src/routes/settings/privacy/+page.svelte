@@ -12,7 +12,7 @@
 		<span class="pill" class:completed={data.pinSet}>{data.pinSet ? 'On' : 'Off'}</span>
 	</div>
 
-	<p class="muted">Asks for a PIN before opening Catalog on another device.</p>
+	<p class="muted">Only matters if you use Tailscale or similar to reach your library from your phone. Asks for a PIN before anyone on your network can open it.</p>
 
 	{#if form?.pinError}
 		<p class="msg bad" role="alert">{form.pinError}</p>

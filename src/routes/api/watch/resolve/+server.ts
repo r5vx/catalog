@@ -4,7 +4,7 @@ import {
 	getFebboxLink,
 	extractShareKey,
 	listEpisodes,
-	findMovieFile,
+	listMovieFiles,
 	getStreamUrl,
 	bestMatch
 } from '$lib/server/showbox';
@@ -35,10 +35,14 @@ export const GET: RequestHandler = async ({ url }) => {
 	if (match.type === 'tv') {
 		const episodeData = await listEpisodes(link);
 		const firstEp = episodeData.episodes[0];
+		const firstFile = firstEp?.files[0];
 		let streamUrl = '';
+		let streamDebug: string | undefined;
 
-		if (firstEp && febboxToken) {
-			streamUrl = (await getStreamUrl(shareKey, firstEp.fid, febboxToken)) ?? '';
+		if (firstFile && febboxToken) {
+			const result = await getStreamUrl(shareKey, firstFile.fid, febboxToken);
+			streamUrl = result.url ?? '';
+			streamDebug = result.debug;
 		}
 
 		return json({
@@ -47,18 +51,27 @@ export const GET: RequestHandler = async ({ url }) => {
 			type: match.type,
 			shareKey,
 			streamUrl,
-			fid: firstEp?.fid ?? 0,
+			fid: firstFile?.fid ?? 0,
 			hasToken: Boolean(febboxToken),
-			episodes: episodeData
+			episodes: episodeData,
+			debug: streamDebug
 		});
 	}
 
-	const file = await findMovieFile(link);
-	if (!file) return json({ error: 'no_file' });
+	const files = await listMovieFiles(link);
+	if (!files.length) return json({ error: 'no_file' });
+
+	const defaultFile =
+		files.find((f) => f.quality === '1080p') ??
+		files.find((f) => f.quality === '720p') ??
+		files[0];
 
 	let streamUrl = '';
+	let streamDebug: string | undefined;
 	if (febboxToken) {
-		streamUrl = (await getStreamUrl(shareKey, file.fid, febboxToken)) ?? '';
+		const result = await getStreamUrl(shareKey, defaultFile.fid, febboxToken);
+		streamUrl = result.url ?? '';
+		streamDebug = result.debug;
 	}
 
 	return json({
@@ -67,7 +80,9 @@ export const GET: RequestHandler = async ({ url }) => {
 		type: match.type,
 		shareKey,
 		streamUrl,
-		fid: file.fid,
-		hasToken: Boolean(febboxToken)
+		fid: defaultFile.fid,
+		hasToken: Boolean(febboxToken),
+		files,
+		debug: streamDebug
 	});
 };

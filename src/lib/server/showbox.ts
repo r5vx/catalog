@@ -115,21 +115,26 @@ export async function listFebboxFiles(
 	}));
 }
 
+export interface FileOption {
+	fid: number;
+	quality: string;
+	name: string;
+	size: string;
+}
+
 export interface EpisodeInfo {
 	season: number;
 	episode: number;
-	fid: number;
-	name: string;
-	size: string;
-	quality: string;
+	files: FileOption[];
 }
 
 const EP_PATTERN = /[Ss](\d{1,2})[Ee](\d{1,3})/;
 const QUALITY_PATTERN = /(\d{3,4}p)/i;
+const VIDEO_EXTS = /\.(mp4|mkv|avi|m4v|webm)$/i;
 
 export async function listEpisodes(
 	shareUrl: string
-): Promise<{ seasons: number[]; episodes: EpisodeInfo[] }> {
+): Promise<{ seasons: number[]; episodes: EpisodeInfo[]; qualities: string[] }> {
 	const folders = await listFebboxFiles(shareUrl);
 	const seasonFolders = folders
 		.filter((f) => f.isDir && /season\s*\d+/i.test(f.name))
@@ -139,89 +144,82 @@ export async function listEpisodes(
 			return aNum - bNum;
 		});
 
-	if (!seasonFolders.length) return { seasons: [], episodes: [] };
+	if (!seasonFolders.length) return { seasons: [], episodes: [], qualities: [] };
 
 	const episodes: EpisodeInfo[] = [];
 	const seasons: number[] = [];
+	const allQualities = new Set<string>();
 
 	for (const folder of seasonFolders) {
 		const seasonNum = Number(folder.name.match(/\d+/)?.[0] ?? 0);
 		seasons.push(seasonNum);
 
 		const files = await listFebboxFiles(shareUrl, folder.fid);
-		const seen = new Map<string, EpisodeInfo>();
+		const epFiles = new Map<string, FileOption[]>();
 
 		for (const file of files) {
-			if (file.isDir) continue;
+			if (file.isDir || !VIDEO_EXTS.test(file.name)) continue;
 			const epMatch = file.name.match(EP_PATTERN);
 			if (!epMatch) continue;
 
 			const ep = Number(epMatch[2]);
 			const quality = file.name.match(QUALITY_PATTERN)?.[1] ?? '';
+			if (quality) allQualities.add(quality);
 			const key = `${seasonNum}-${ep}`;
 
-			const existing = seen.get(key);
-			if (!existing || preferQuality(quality, existing.quality)) {
-				seen.set(key, {
-					season: seasonNum,
-					episode: ep,
-					fid: file.fid,
-					name: file.name,
-					size: file.size,
-					quality
-				});
-			}
+			const list = epFiles.get(key) ?? [];
+			list.push({ fid: file.fid, quality, name: file.name, size: file.size });
+			epFiles.set(key, list);
 		}
 
-		episodes.push(...seen.values());
+		for (const [key, fileList] of epFiles) {
+			const [s, e] = key.split('-').map(Number);
+			fileList.sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0));
+			episodes.push({ season: s, episode: e, files: fileList });
+		}
 	}
 
 	episodes.sort((a, b) => a.season - b.season || a.episode - b.episode);
-	return { seasons, episodes };
-}
-
-function preferQuality(candidate: string, current: string): boolean {
-	const rank = (q: string) => {
-		const n = parseInt(q);
-		if (n >= 2160) return 3;
-		if (n >= 1080) return 2;
-		if (n >= 720) return 1;
-		return 0;
-	};
-	return rank(candidate) > rank(current);
+	const qualities = [...allQualities].sort((a, b) => parseInt(b) - parseInt(a));
+	return { seasons, episodes, qualities };
 }
 
 /* -------------------------------------------------------- stream resolution */
 
-const VIDEO_EXTS = /\.(mp4|mkv|avi|m4v|webm)$/i;
-const PREFER_EXTS = /\.(mp4|m4v|webm)$/i;
+export async function listMovieFiles(shareUrl: string): Promise<FileOption[]> {
+	const root = await listFebboxFiles(shareUrl);
+	let videos = root.filter((f) => !f.isDir && VIDEO_EXTS.test(f.name));
 
-export function pickBestFile(files: FebboxFile[]): FebboxFile | null {
-	const videos = files.filter((f) => !f.isDir && VIDEO_EXTS.test(f.name));
-	if (!videos.length) return null;
+	if (!videos.length) {
+		for (const dir of root.filter((f) => f.isDir)) {
+			const contents = await listFebboxFiles(shareUrl, dir.fid);
+			videos.push(...contents.filter((f) => !f.isDir && VIDEO_EXTS.test(f.name)));
+		}
+	}
 
-	const playable = videos.filter((f) => PREFER_EXTS.test(f.name));
-	const pool = playable.length ? playable : videos;
-
-	return (
-		pool.sort((a, b) => {
-			const aq = parseInt(a.name.match(QUALITY_PATTERN)?.[1] ?? '0');
-			const bq = parseInt(b.name.match(QUALITY_PATTERN)?.[1] ?? '0');
-			return bq - aq;
-		})[0] ?? null
-	);
+	return videos
+		.map((f) => ({
+			fid: f.fid,
+			quality: f.name.match(QUALITY_PATTERN)?.[1] ?? '',
+			name: f.name,
+			size: f.size
+		}))
+		.sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0));
 }
 
-export async function findMovieFile(shareUrl: string): Promise<FebboxFile | null> {
-	const root = await listFebboxFiles(shareUrl);
-	const direct = pickBestFile(root);
-	if (direct) return direct;
+function extractVideoUrl(html: string): string | null {
+	const source = html.match(/<source[^>]+src=["']([^"']+)["']/i);
+	if (source) return source[1];
 
-	for (const dir of root.filter((f) => f.isDir)) {
-		const contents = await listFebboxFiles(shareUrl, dir.fid);
-		const found = pickBestFile(contents);
-		if (found) return found;
-	}
+	const videoSrc = html.match(/<video[^>]+src=["']([^"']+)["']/i);
+	if (videoSrc) return videoSrc[1];
+
+	const m3u8 = html.match(/(https?:\/\/[^\s"'<>\\]+\.m3u8[^\s"'<>\\]*)/i);
+	if (m3u8) return m3u8[1];
+
+	const mp4 = html.match(/(https?:\/\/[^\s"'<>\\]+\.mp4[^\s"'<>\\]*)/i);
+	if (mp4) return mp4[1];
+
 	return null;
 }
 
@@ -229,21 +227,100 @@ export async function getStreamUrl(
 	shareKey: string,
 	fid: number,
 	token: string
-): Promise<string | null> {
+): Promise<{ url: string | null; debug?: string }> {
+	const debug: string[] = [];
+	const headers = {
+		Cookie: token,
+		'User-Agent':
+			'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+	};
+
+	// 1. POST /file/player
+	try {
+		const resp = await fetch('https://www.febbox.com/file/player', {
+			method: 'POST',
+			headers: { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: `fid=${fid}&share_key=${shareKey}`,
+			signal: AbortSignal.timeout(15000)
+		});
+		debug.push(`player ${resp.status}`);
+		if (resp.ok) {
+			const html = await resp.text();
+			const url = extractVideoUrl(html);
+			if (url) return { url };
+			debug.push(`no url in ${html.length}ch`);
+		}
+	} catch (e: unknown) {
+		debug.push(`player err: ${(e as Error)?.message ?? e}`);
+	}
+
+	// 2. POST /file/share_download (form encoded)
+	try {
+		const resp = await fetch('https://www.febbox.com/file/share_download', {
+			method: 'POST',
+			headers: { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: `share_key=${shareKey}&fid=${fid}`,
+			signal: AbortSignal.timeout(15000)
+		});
+		debug.push(`post-dl ${resp.status}`);
+		if (resp.ok) {
+			const text = await resp.text();
+			const url = tryParseDownloadUrl(text);
+			if (url) return { url };
+			debug.push(`post-dl: ${text.slice(0, 200)}`);
+		}
+	} catch (e: unknown) {
+		debug.push(`post-dl err: ${(e as Error)?.message ?? e}`);
+	}
+
+	// 3. GET /file/share_download
 	try {
 		const resp = await fetch(
 			`https://www.febbox.com/file/share_download?share_key=${shareKey}&fid=${fid}`,
-			{
-				headers: { Cookie: token },
-				signal: AbortSignal.timeout(15000)
-			}
+			{ headers, signal: AbortSignal.timeout(15000) }
 		);
-		if (!resp.ok) return null;
-		const data = (await resp.json()) as { data?: { download_url?: string } };
-		return data?.data?.download_url ?? null;
-	} catch {
-		return null;
+		debug.push(`get-dl ${resp.status}`);
+		if (resp.ok) {
+			const text = await resp.text();
+			const url = tryParseDownloadUrl(text);
+			if (url) return { url };
+			debug.push(`get-dl: ${text.slice(0, 200)}`);
+		}
+	} catch (e: unknown) {
+		debug.push(`get-dl err: ${(e as Error)?.message ?? e}`);
 	}
+
+	// 4. GET /file/download_address
+	try {
+		const resp = await fetch(
+			`https://www.febbox.com/console/download_address?fid=${fid}&share_key=${shareKey}`,
+			{ headers, signal: AbortSignal.timeout(15000) }
+		);
+		debug.push(`addr ${resp.status}`);
+		if (resp.ok) {
+			const text = await resp.text();
+			const url = tryParseDownloadUrl(text);
+			if (url) return { url };
+			debug.push(`addr: ${text.slice(0, 200)}`);
+		}
+	} catch (e: unknown) {
+		debug.push(`addr err: ${(e as Error)?.message ?? e}`);
+	}
+
+	return { url: null, debug: debug.join(' | ') };
+}
+
+function tryParseDownloadUrl(text: string): string | null {
+	try {
+		const data = JSON.parse(text);
+		if (data?.data?.download_url) return data.data.download_url;
+		if (data?.data?.url) return data.data.url;
+		if (data?.data?.link) return data.data.link;
+		if (typeof data?.data === 'string' && data.data.startsWith('http')) return data.data;
+	} catch {
+		return extractVideoUrl(text);
+	}
+	return null;
 }
 
 export function bestMatch(

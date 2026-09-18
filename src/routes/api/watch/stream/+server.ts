@@ -12,6 +12,6 @@ export const GET: RequestHandler = async ({ url }) => {
 	const { febboxToken } = readSettings();
 	if (!febboxToken) return json({ url: '' });
 
-	const streamUrl = await getStreamUrl(shareKey, fid, febboxToken);
-	return json({ url: streamUrl ?? '' });
+	const result = await getStreamUrl(shareKey, fid, febboxToken);
+	return json({ url: result.url ?? '', debug: result.debug });
 };
