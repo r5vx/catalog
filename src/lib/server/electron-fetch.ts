@@ -4,21 +4,35 @@ interface FetchResult {
 	error?: string;
 }
 
-const pending = new Map<string, (result: FetchResult) => void>();
+interface VideoUrlResult {
+	playerHtml: string;
+	dlText: string;
+	error?: string;
+}
+
+const pending = new Map<string, (result: FetchResult | VideoUrlResult) => void>();
 
 try {
 	if (typeof process.send === 'function') {
 		process.on('message', (msg: unknown) => {
-			const m = msg as {
-				type?: string;
-				id?: string;
-				status?: number;
-				body?: string;
-				error?: string;
-			};
-			if (m?.type === 'fetch-febbox-result' && m.id && pending.has(m.id)) {
-				pending.get(m.id)!({ status: m.status ?? 0, body: m.body ?? '', error: m.error });
-				pending.delete(m.id);
+			const m = msg as Record<string, unknown>;
+			if (m?.id && typeof m.id === 'string' && pending.has(m.id)) {
+				if (m.type === 'fetch-febbox-result') {
+					pending.get(m.id)!({
+						status: (m.status as number) ?? 0,
+						body: (m.body as string) ?? '',
+						error: m.error as string | undefined
+					});
+					pending.delete(m.id);
+				}
+				if (m.type === 'get-video-url-result') {
+					pending.get(m.id)!({
+						playerHtml: (m.playerHtml as string) ?? '',
+						dlText: (m.dlText as string) ?? '',
+						error: m.error as string | undefined
+					});
+					pending.delete(m.id);
+				}
 			}
 		});
 	}
@@ -37,7 +51,7 @@ export function electronFetch(
 	const id = String(++counter);
 
 	return new Promise<FetchResult>((resolve) => {
-		pending.set(id, resolve);
+		pending.set(id, resolve as (r: FetchResult | VideoUrlResult) => void);
 		process.send!({ type: 'fetch-febbox', id, url, options });
 
 		setTimeout(() => {
@@ -46,5 +60,28 @@ export function electronFetch(
 				resolve({ status: 0, body: '', error: 'timeout' });
 			}
 		}, 15000);
+	});
+}
+
+export function electronGetVideoUrl(
+	shareKey: string,
+	fid: number
+): Promise<VideoUrlResult> {
+	if (typeof process.send !== 'function') {
+		return Promise.resolve({ playerHtml: '', dlText: '', error: 'not in Electron' });
+	}
+
+	const id = String(++counter);
+
+	return new Promise<VideoUrlResult>((resolve) => {
+		pending.set(id, resolve as (r: FetchResult | VideoUrlResult) => void);
+		process.send!({ type: 'get-video-url', id, shareKey, fid });
+
+		setTimeout(() => {
+			if (pending.has(id)) {
+				pending.delete(id);
+				resolve({ playerHtml: '', dlText: '', error: 'timeout' });
+			}
+		}, 20000);
 	});
 }
