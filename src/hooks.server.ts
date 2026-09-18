@@ -1,5 +1,5 @@
 import { error, redirect, type Handle, type RequestEvent } from '@sveltejs/kit';
-import { pinIsSet, sessionToken, setupNeeded } from '$lib/server/settings';
+import { pinIsSet, sessionToken, setupNeeded, readSettings } from '$lib/server/settings';
 // Imported for its side effect: it starts listening for update progress from
 // the desktop app at boot, not the first time someone opens Settings.
 import '$lib/server/updater';
@@ -63,6 +63,15 @@ function checkSameOrigin(event: RequestEvent): void {
 export const handle: Handle = async ({ event, resolve }) => {
 	checkSameOrigin(event);
 
+	const theme = readSettings().theme;
+	const resolveWith = (e: typeof event) =>
+		resolve(e, {
+			transformPageChunk: ({ html }) =>
+				theme
+					? html.replace('<html lang="en">', `<html lang="en" data-theme="${theme}">`)
+					: html
+		});
+
 	// A brand-new copy of Catalog says hello before it shows an empty library.
 	// Answering the welcome screen is what turns this off, permanently.
 	if (
@@ -80,7 +89,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 	 * that. Its one-time token gets it past the lock, once.
 	 */
 	const pdfToken = event.url.searchParams.get('pdfToken');
-	if (pdfToken && consumePdfToken(pdfToken)) return resolve(event);
+	if (pdfToken && consumePdfToken(pdfToken)) return resolveWith(event);
 
 	if (pinIsSet() && !isPublic(event.url.pathname)) {
 		const onLoginPage = event.url.pathname === '/login';
@@ -94,5 +103,5 @@ export const handle: Handle = async ({ event, resolve }) => {
 		if (signedIn && onLoginPage) redirect(303, '/');
 	}
 
-	return resolve(event);
+	return resolveWith(event);
 };

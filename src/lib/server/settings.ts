@@ -40,6 +40,8 @@ export type Settings = {
 	hiddenSorts?: string;
 	/** Two-letter country for "where to watch". Blank means use this PC's. */
 	watchRegion?: string;
+	/** Theme override: light, dark, black. Empty means follow the OS. */
+	theme?: string;
 };
 
 export function readSettings(): Settings {

@@ -11,6 +11,15 @@
 		info: string;
 	}
 
+	interface Episode {
+		season: number;
+		episode: number;
+		fid: number;
+		name: string;
+		size: string;
+		quality: string;
+	}
+
 	let query = $state('');
 	let results = $state<Result[]>([]);
 	let searching = $state(false);
@@ -19,13 +28,28 @@
 
 	let febboxUrl = $state('');
 	let activeTitle = $state('');
+	let activeResult = $state<Result | null>(null);
 	let loadingLink = $state<number | null>(null);
 	let iframeLoading = $state(false);
+
+	let episodes = $state<Episode[]>([]);
+	let seasons = $state<number[]>([]);
+	let activeSeason = $state(1);
+	let loadingEpisodes = $state(false);
+	let activeEpisode = $state<Episode | null>(null);
+	let sidebarOpen = $state(true);
+
+	let autoMatch = false;
+	let autoType = '';
+	let autoYear = '';
 
 	let searchTimer: ReturnType<typeof setTimeout>;
 
 	onMount(() => {
 		const title = page.url.searchParams.get('title');
+		autoMatch = page.url.searchParams.get('auto') === '1';
+		autoType = page.url.searchParams.get('type') ?? '';
+		autoYear = page.url.searchParams.get('year') ?? '';
 		if (title && title.trim()) {
 			query = title;
 			doSearch(title);
@@ -37,6 +61,32 @@
 		const value = (event.target as HTMLInputElement).value;
 		query = value;
 		searchTimer = setTimeout(() => doSearch(value), 350);
+	}
+
+	function bestMatch(items: Result[]): Result | null {
+		if (!items.length) return null;
+
+		const want = query.toLowerCase().trim();
+
+		for (const r of items) {
+			const t = r.title.toLowerCase();
+			const typeOk = !autoType || r.type === autoType;
+			const yearOk = !autoYear || r.info.includes(autoYear);
+			if (t === want && typeOk && yearOk) return r;
+		}
+
+		for (const r of items) {
+			const t = r.title.toLowerCase();
+			const typeOk = !autoType || r.type === autoType;
+			if (t === want && typeOk) return r;
+		}
+
+		if (autoType) {
+			const typed = items.filter((r) => r.type === autoType);
+			if (typed.length) return typed[0];
+		}
+
+		return items[0];
 	}
 
 	async function doSearch(q: string) {
@@ -55,6 +105,12 @@
 			if (!resp.ok) throw new Error();
 			results = await resp.json();
 			searched = true;
+
+			if (autoMatch && results.length) {
+				autoMatch = false;
+				const pick = bestMatch(results);
+				if (pick) watch(pick);
+			}
 		} catch {
 			problem = 'Search failed. Try again in a moment.';
 		} finally {
@@ -74,7 +130,10 @@
 			if (data.link) {
 				febboxUrl = data.link;
 				activeTitle = result.title;
+				activeResult = result;
 				iframeLoading = true;
+
+				if (result.type === 'tv') fetchEpisodes(result.id);
 			} else {
 				problem = 'No link available for that title.';
 			}
@@ -85,35 +144,130 @@
 		}
 	}
 
+	async function fetchEpisodes(showboxId: number) {
+		loadingEpisodes = true;
+		try {
+			const resp = await fetch(`/api/watch/episodes?id=${showboxId}&type=tv`);
+			if (!resp.ok) throw new Error();
+			const data = await resp.json();
+			seasons = data.seasons;
+			episodes = data.episodes;
+			if (seasons.length) activeSeason = seasons[0];
+		} catch {
+			episodes = [];
+			seasons = [];
+		} finally {
+			loadingEpisodes = false;
+		}
+	}
+
+	const seasonEpisodes = $derived(
+		episodes.filter((ep) => ep.season === activeSeason)
+	);
+
+	function playEpisode(ep: Episode) {
+		activeEpisode = ep;
+		activeTitle = `${activeResult?.title ?? ''} S${ep.season}E${ep.episode}`;
+	}
+
 	function backToResults() {
 		febboxUrl = '';
 		activeTitle = '';
+		activeResult = null;
+		episodes = [];
+		seasons = [];
+		activeEpisode = null;
+	}
+
+	function loginToFebbox() {
+		const popup = window.open('https://www.febbox.com/login', '_blank');
+		if (!popup) return;
+		const poll = setInterval(() => {
+			if (popup.closed) {
+				clearInterval(poll);
+				reloadPlayer();
+			}
+		}, 500);
+	}
+
+	function reloadPlayer() {
+		const url = febboxUrl;
+		febboxUrl = '';
+		iframeLoading = true;
+		setTimeout(() => { febboxUrl = url; }, 100);
 	}
 </script>
 
 <svelte:head><title>{activeTitle ? `${activeTitle} · ` : ''}Watch · Catalog</title></svelte:head>
 
 {#if febboxUrl}
-	<div class="player-page">
+	<div class="player-page" class:has-sidebar={activeResult?.type === 'tv' && seasons.length > 0 && sidebarOpen}>
 		<div class="player-bar">
 			<button type="button" class="bar-btn" onclick={backToResults}>&larr; Back</button>
 			<h1 class="player-title">{activeTitle}</h1>
+			{#if activeResult?.type === 'tv' && seasons.length > 0}
+				<button
+					type="button"
+					class="bar-btn episodes-btn"
+					onclick={() => sidebarOpen = !sidebarOpen}
+				>{sidebarOpen ? 'Hide episodes' : 'Episodes'}</button>
+			{/if}
+			<button type="button" class="bar-btn login-btn" onclick={loginToFebbox}>Log in</button>
 			<a
-				href="/entry/new?q={encodeURIComponent(activeTitle)}"
+				href="/entry/new?q={encodeURIComponent(activeResult?.title ?? activeTitle)}"
 				class="bar-btn add-btn"
 			>+ Add to library</a>
 		</div>
 
-		<div class="player" class:buffering={iframeLoading}>
-			{#if iframeLoading}
-				<p class="player-status">Loading…</p>
+		<div class="player-body">
+			{#if activeResult?.type === 'tv' && seasons.length > 0 && sidebarOpen}
+				<aside class="sidebar">
+					<div class="season-tabs">
+						{#each seasons as s (s)}
+							<button
+								type="button"
+								class="season-tab"
+								class:active={activeSeason === s}
+								onclick={() => activeSeason = s}
+							>S{s}</button>
+						{/each}
+					</div>
+					<ul class="episode-list">
+						{#if loadingEpisodes}
+							<li class="ep-loading">Loading episodes…</li>
+						{:else}
+							{#each seasonEpisodes as ep (ep.fid)}
+								<li>
+									<button
+										type="button"
+										class="ep-btn"
+										class:playing={activeEpisode?.fid === ep.fid}
+										onclick={() => playEpisode(ep)}
+									>
+										<span class="ep-num">E{ep.episode}</span>
+										<span class="ep-meta">
+											<span class="ep-quality">{ep.quality || 'SD'}</span>
+											<span class="ep-size">{ep.size}</span>
+										</span>
+									</button>
+								</li>
+							{/each}
+						{/if}
+					</ul>
+				</aside>
 			{/if}
-			<iframe
-				src={febboxUrl}
-				title={activeTitle}
-				allowfullscreen
-				onload={() => { iframeLoading = false; }}
-			></iframe>
+
+			<div class="player" class:buffering={iframeLoading}>
+				{#if iframeLoading}
+					<p class="player-status">Loading…</p>
+				{/if}
+				<iframe
+					src={febboxUrl}
+					title={activeTitle}
+					allowfullscreen
+					onload={() => { iframeLoading = false; }}
+				></iframe>
+			</div>
 		</div>
 	</div>
 {:else}
@@ -359,6 +513,17 @@
 		color: var(--accent);
 	}
 
+	.login-btn {
+		color: var(--ink-soft);
+		font-size: 0.78rem;
+	}
+
+	.episodes-btn {
+		color: var(--accent);
+		border-color: var(--accent);
+		font-size: 0.78rem;
+	}
+
 	.add-btn {
 		margin-left: auto;
 		background: var(--good);
@@ -379,6 +544,111 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
+
+	.player-body {
+		display: flex;
+		flex: 1;
+		min-height: 0;
+	}
+
+	/* --------------------------------------------------------- sidebar */
+
+	.sidebar {
+		width: 240px;
+		flex: none;
+		display: flex;
+		flex-direction: column;
+		background: var(--sunk);
+		border-right: 1px solid var(--rule);
+		overflow: hidden;
+	}
+
+	.season-tabs {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 2px;
+		padding: 8px 10px;
+		border-bottom: 1px solid var(--rule);
+	}
+
+	.season-tab {
+		padding: 4px 10px;
+		font-size: 0.76rem;
+		font-weight: 600;
+		border: 1px solid var(--rule);
+		border-radius: var(--radius-sm);
+		background: var(--surface);
+		color: var(--ink-soft);
+		cursor: pointer;
+	}
+
+	.season-tab.active {
+		background: var(--accent);
+		color: var(--accent-ink);
+		border-color: var(--accent);
+	}
+
+	.season-tab:hover:not(.active) {
+		border-color: var(--ink-faint);
+	}
+
+	.episode-list {
+		list-style: none;
+		margin: 0;
+		padding: 4px 0;
+		overflow-y: auto;
+		flex: 1;
+	}
+
+	.ep-loading {
+		padding: 16px;
+		text-align: center;
+		color: var(--ink-faint);
+		font-size: 0.82rem;
+	}
+
+	.ep-btn {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		width: 100%;
+		padding: 9px 14px;
+		border: none;
+		background: none;
+		color: var(--ink);
+		cursor: pointer;
+		text-align: left;
+		font-size: 0.84rem;
+	}
+
+	.ep-btn:hover {
+		background: var(--surface);
+	}
+
+	.ep-btn.playing {
+		background: var(--accent-bg);
+		color: var(--accent);
+	}
+
+	.ep-num {
+		font-weight: 700;
+		min-width: 2.2em;
+	}
+
+	.ep-meta {
+		display: flex;
+		gap: 8px;
+		margin-left: auto;
+		font-size: 0.72rem;
+		color: var(--ink-faint);
+	}
+
+	.ep-quality {
+		text-transform: uppercase;
+		font-weight: 600;
+	}
+
+	/* --------------------------------------------------------- player */
 
 	.player {
 		position: relative;
@@ -408,6 +678,12 @@
 		opacity: 0.3;
 	}
 
+	@media (max-width: 700px) {
+		.sidebar {
+			width: 180px;
+		}
+	}
+
 	@media (max-width: 560px) {
 		.player-bar {
 			flex-wrap: wrap;
@@ -424,6 +700,17 @@
 			margin-left: 0;
 			flex: 1;
 			text-align: center;
+		}
+
+		.player-body {
+			flex-direction: column;
+		}
+
+		.sidebar {
+			width: 100%;
+			max-height: 200px;
+			border-right: none;
+			border-bottom: 1px solid var(--rule);
 		}
 	}
 </style>

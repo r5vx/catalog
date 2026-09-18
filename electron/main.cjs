@@ -215,8 +215,20 @@ function createWindow() {
 	window.once('ready-to-show', () => window.show());
 	window.loadURL(ORIGIN);
 
-	// Anything that isn't our own app opens in the real browser.
+	// Febbox login needs its own window — Google OAuth blocks iframes.
+	// The child window shares the default session, so cookies carry over.
 	window.webContents.setWindowOpenHandler(({ url }) => {
+		if (url.includes('febbox.com')) {
+			return {
+				action: 'allow',
+				overrideBrowserWindowOptions: {
+					width: 500,
+					height: 700,
+					autoHideMenuBar: true,
+					icon: path.join(__dirname, '..', 'build', 'client', 'icon.ico')
+				}
+			};
+		}
 		if (!url.startsWith(ORIGIN)) shell.openExternal(url);
 		return { action: 'deny' };
 	});

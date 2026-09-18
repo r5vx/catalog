@@ -211,7 +211,7 @@
 						{busy === result.key ? 'Adding…' : 'Add'}
 					</button>
 					<a
-						href="/watch?title={encodeURIComponent(result.title)}"
+						href="/watch?title={encodeURIComponent(result.title)}&type={result.categorySlug === 'movies' ? 'movie' : 'tv'}{result.year ? `&year=${result.year}` : ''}&auto=1"
 						class="btn btn-watch"
 						class:disabled={!showbox.up}
 						title={showbox.up ? 'Watch now' : 'showbox.media is down'}
