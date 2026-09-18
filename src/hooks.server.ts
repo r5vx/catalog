@@ -11,7 +11,7 @@ import { scheduleBackfill } from '$lib/server/backfill';
 scheduleBackfill();
 
 /** Icons and the web manifest stay reachable so "Add to Home Screen" works. */
-const PUBLIC_PATHS = ['/manifest.webmanifest', '/favicon.ico', '/api/diagnostics'];
+const PUBLIC_PATHS = ['/manifest.webmanifest', '/favicon.ico', '/api/diagnostics', '/api/watch/save-token'];
 const isPublic = (path: string) => PUBLIC_PATHS.includes(path) || path.startsWith('/icon');
 
 const FORM_TYPES = ['application/x-www-form-urlencoded', 'multipart/form-data', 'text/plain'];

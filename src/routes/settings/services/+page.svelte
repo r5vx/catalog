@@ -134,6 +134,57 @@
 
 	<section>
 		<div class="head">
+			<h2>Watch</h2>
+			<span class="pill" class:completed={data.febboxKeySaved} class:planned={!data.febboxKeySaved}>
+				{data.febboxKeySaved ? 'On' : 'Off'}
+			</span>
+		</div>
+
+		<p class="muted">
+			Lets you watch movies and shows inside Catalog. On the desktop app, log in once and the key
+			saves itself. To share with a friend, copy your key and have them paste it here.
+		</p>
+
+		{#if form?.febboxError}
+			<p class="msg bad" role="alert">{form.febboxError}</p>
+		{:else if form?.febboxOk}
+			<p class="msg good" role="status">{form.febboxOk}</p>
+		{/if}
+
+		{#if data.febboxKeySaved}
+			<div class="saved-row">
+				<span class="muted">A key is saved.</span>
+				<form method="POST" action="?/removeFebbox">
+					<button type="submit" class="btn btn-danger">Remove</button>
+				</form>
+			</div>
+			<details>
+				<summary>Replace it</summary>
+				<form method="POST" action="?/saveFebbox" class="inline-form">
+					<input
+						type="password"
+						name="febboxKey"
+						placeholder="Paste a new key"
+						autocomplete="off"
+					/>
+					<button type="submit" class="btn btn-primary">Save</button>
+				</form>
+			</details>
+		{:else}
+			<form method="POST" action="?/saveFebbox" class="inline-form">
+				<input
+					type="password"
+					name="febboxKey"
+					placeholder="Paste a key here"
+					autocomplete="off"
+				/>
+				<button type="submit" class="btn btn-primary">Save</button>
+			</form>
+		{/if}
+	</section>
+
+	<section>
+		<div class="head">
 			<h2>Where to watch</h2>
 			<span class="pill completed">{data.regionInUse}</span>
 		</div>

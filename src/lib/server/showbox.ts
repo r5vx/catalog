@@ -85,7 +85,7 @@ export interface FebboxFile {
 	parentId: number;
 }
 
-function extractShareKey(url: string): string | null {
+export function extractShareKey(url: string): string | null {
 	const m = url.match(/\/share\/([A-Za-z0-9]+)/);
 	return m?.[1] ?? null;
 }
@@ -189,4 +189,86 @@ function preferQuality(candidate: string, current: string): boolean {
 		return 0;
 	};
 	return rank(candidate) > rank(current);
+}
+
+/* -------------------------------------------------------- stream resolution */
+
+const VIDEO_EXTS = /\.(mp4|mkv|avi|m4v|webm)$/i;
+const PREFER_EXTS = /\.(mp4|m4v|webm)$/i;
+
+export function pickBestFile(files: FebboxFile[]): FebboxFile | null {
+	const videos = files.filter((f) => !f.isDir && VIDEO_EXTS.test(f.name));
+	if (!videos.length) return null;
+
+	const playable = videos.filter((f) => PREFER_EXTS.test(f.name));
+	const pool = playable.length ? playable : videos;
+
+	return (
+		pool.sort((a, b) => {
+			const aq = parseInt(a.name.match(QUALITY_PATTERN)?.[1] ?? '0');
+			const bq = parseInt(b.name.match(QUALITY_PATTERN)?.[1] ?? '0');
+			return bq - aq;
+		})[0] ?? null
+	);
+}
+
+export async function findMovieFile(shareUrl: string): Promise<FebboxFile | null> {
+	const root = await listFebboxFiles(shareUrl);
+	const direct = pickBestFile(root);
+	if (direct) return direct;
+
+	for (const dir of root.filter((f) => f.isDir)) {
+		const contents = await listFebboxFiles(shareUrl, dir.fid);
+		const found = pickBestFile(contents);
+		if (found) return found;
+	}
+	return null;
+}
+
+export async function getStreamUrl(
+	shareKey: string,
+	fid: number,
+	token: string
+): Promise<string | null> {
+	try {
+		const resp = await fetch(
+			`https://www.febbox.com/file/share_download?share_key=${shareKey}&fid=${fid}`,
+			{
+				headers: { Cookie: token },
+				signal: AbortSignal.timeout(15000)
+			}
+		);
+		if (!resp.ok) return null;
+		const data = (await resp.json()) as { data?: { download_url?: string } };
+		return data?.data?.download_url ?? null;
+	} catch {
+		return null;
+	}
+}
+
+export function bestMatch(
+	items: ShowboxResult[],
+	query: string,
+	wantType: string,
+	wantYear: string
+): ShowboxResult | null {
+	if (!items.length) return null;
+	const want = query.toLowerCase().trim();
+
+	for (const r of items) {
+		const t = r.title.toLowerCase();
+		if (t === want && (!wantType || r.type === wantType) && (!wantYear || r.info.includes(wantYear)))
+			return r;
+	}
+
+	for (const r of items) {
+		if (r.title.toLowerCase() === want && (!wantType || r.type === wantType)) return r;
+	}
+
+	if (wantType) {
+		const typed = items.filter((r) => r.type === wantType);
+		if (typed.length) return typed[0];
+	}
+
+	return items[0];
 }

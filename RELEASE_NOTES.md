@@ -7,6 +7,18 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 1.7.3 — 2026-09-18
+
+- **Watch plays the video directly.** Clicking Watch now opens the movie or
+  episode in a built-in player instead of loading an external site. No branding,
+  no extra UI — just the video.
+- **No more search flash.** Watch goes straight from the button to the player
+  with a loading spinner, instead of briefly showing a search page.
+- **Episode clicks work.** Picking an episode in the sidebar actually switches
+  the video now.
+- **Febbox key in Settings → Services.** Log in once on the desktop app and the
+  key saves itself. Share it with a friend so they can watch without logging in.
+
 ## 1.7.2 — 2026-09-18
 
 - **Theme picker in Personalization.** Choose between System (follows your

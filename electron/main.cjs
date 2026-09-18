@@ -232,6 +232,32 @@ function createWindow() {
 		if (!url.startsWith(ORIGIN)) shell.openExternal(url);
 		return { action: 'deny' };
 	});
+
+	// After a febbox login window closes, capture the session cookies and
+	// send them to the server so it can make authenticated requests.
+	window.webContents.on('did-create-window', (childWindow) => {
+		childWindow.on('closed', async () => {
+			try {
+				const cookies = await session.defaultSession.cookies.get({
+					url: 'https://www.febbox.com'
+				});
+				if (!cookies.length) return;
+
+				const cookieStr = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
+				const body = JSON.stringify({ token: cookieStr });
+
+				const req = http.request(`${ORIGIN}/api/watch/save-token`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+				});
+				req.on('error', () => {});
+				req.write(body);
+				req.end();
+			} catch (e) {
+				console.error('[app] cookie capture failed:', e?.message || e);
+			}
+		});
+	});
 }
 
 // One window only — launching again focuses the one already open.
