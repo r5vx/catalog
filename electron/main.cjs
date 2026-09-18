@@ -62,7 +62,7 @@ function startServer() {
 		stdio: ['ignore', 'pipe', 'pipe', 'ipc']
 	});
 
-	server.on('message', (message) => {
+	server.on('message', async (message) => {
 		// The updater can't overwrite Catalog.exe while it's running, so the
 		// Settings page asks us to step aside once it has launched the helper.
 		if (message?.type === 'quit-for-update') {
@@ -78,6 +78,39 @@ function startServer() {
 			// Silent, and start back up afterwards — the person clicked a button
 			// in Settings, they don't need to click through an installer too.
 			autoUpdater().quitAndInstall(true, true);
+		}
+
+		// Proxy authenticated requests to febbox through Electron's network
+		// stack, which sends real browser cookies — unlike the server-side
+		// Node.js fetch that has to replay a saved cookie string.
+		if (message?.type === 'fetch-febbox') {
+			try {
+				const { net } = require('electron');
+				const resp = await net.fetch(message.url, {
+					method: message.options?.method ?? 'GET',
+					headers: message.options?.headers,
+					body: message.options?.body
+				});
+				const body = await resp.text();
+				try {
+					server.send({
+						type: 'fetch-febbox-result',
+						id: message.id,
+						status: resp.status,
+						body
+					});
+				} catch {}
+			} catch (e) {
+				try {
+					server.send({
+						type: 'fetch-febbox-result',
+						id: message.id,
+						status: 0,
+						body: '',
+						error: e?.message || String(e)
+					});
+				} catch {}
+			}
 		}
 	});
 
@@ -233,10 +266,9 @@ function createWindow() {
 		return { action: 'deny' };
 	});
 
-	// After a febbox login window closes, capture the session cookies and
-	// send them to the server so it can make authenticated requests.
+	// After a febbox login window finishes OAuth, capture cookies and close it.
 	window.webContents.on('did-create-window', (childWindow) => {
-		childWindow.on('closed', async () => {
+		async function captureCookies() {
 			try {
 				const cookies = await session.defaultSession.cookies.get({
 					url: 'https://www.febbox.com'
@@ -256,6 +288,23 @@ function createWindow() {
 			} catch (e) {
 				console.error('[app] cookie capture failed:', e?.message || e);
 			}
+		}
+
+		// Auto-close: once OAuth redirects back to febbox (not /login), grab
+		// cookies and shut the popup so the user doesn't see the home page.
+		let captured = false;
+		childWindow.webContents.on('did-navigate', async (_event, url) => {
+			if (captured) return;
+			if (url.includes('febbox.com') && !url.includes('/login')) {
+				captured = true;
+				await captureCookies();
+				childWindow.close();
+			}
+		});
+
+		// Also capture on manual close, in case they close before redirect.
+		childWindow.on('closed', () => {
+			if (!captured) captureCookies();
 		});
 	});
 }

@@ -382,7 +382,7 @@
 		</div>
 	{/if}
 
-	{#if !needsToken}
+	{#if !needsToken && !problem}
 		<header class="masthead">
 			<h1>Watch</h1>
 		</header>

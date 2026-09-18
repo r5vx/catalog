@@ -1,3 +1,5 @@
+import { electronFetch } from './electron-fetch';
+
 const BASE = 'https://showbox.media';
 
 let cachedUp: boolean | null = null;
@@ -229,13 +231,20 @@ export async function getStreamUrl(
 	token: string
 ): Promise<{ url: string | null; debug?: string }> {
 	const debug: string[] = [];
+
+	// Electron's net.fetch sends real browser cookies — try it first
+	const electronUrl = await tryElectronStream(shareKey, fid, debug);
+	if (electronUrl) return { url: electronUrl };
+
+	// Fallback: server-side fetch with saved cookie string (for phone access)
 	const headers = {
 		Cookie: token,
 		'User-Agent':
-			'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+			'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+		Referer: 'https://www.febbox.com/',
+		Origin: 'https://www.febbox.com'
 	};
 
-	// 1. POST /file/player
 	try {
 		const resp = await fetch('https://www.febbox.com/file/player', {
 			method: 'POST',
@@ -254,60 +263,57 @@ export async function getStreamUrl(
 		debug.push(`player err: ${(e as Error)?.message ?? e}`);
 	}
 
-	// 2. POST /file/share_download (form encoded)
-	try {
-		const resp = await fetch('https://www.febbox.com/file/share_download', {
-			method: 'POST',
-			headers: { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' },
-			body: `share_key=${shareKey}&fid=${fid}`,
-			signal: AbortSignal.timeout(15000)
-		});
-		debug.push(`post-dl ${resp.status}`);
-		if (resp.ok) {
-			const text = await resp.text();
-			const url = tryParseDownloadUrl(text);
-			if (url) return { url };
-			debug.push(`post-dl: ${text.slice(0, 200)}`);
-		}
-	} catch (e: unknown) {
-		debug.push(`post-dl err: ${(e as Error)?.message ?? e}`);
-	}
-
-	// 3. GET /file/share_download
 	try {
 		const resp = await fetch(
 			`https://www.febbox.com/file/share_download?share_key=${shareKey}&fid=${fid}`,
 			{ headers, signal: AbortSignal.timeout(15000) }
 		);
-		debug.push(`get-dl ${resp.status}`);
+		debug.push(`dl ${resp.status}`);
 		if (resp.ok) {
 			const text = await resp.text();
 			const url = tryParseDownloadUrl(text);
 			if (url) return { url };
-			debug.push(`get-dl: ${text.slice(0, 200)}`);
+			debug.push(`dl: ${text.slice(0, 200)}`);
 		}
 	} catch (e: unknown) {
-		debug.push(`get-dl err: ${(e as Error)?.message ?? e}`);
-	}
-
-	// 4. GET /file/download_address
-	try {
-		const resp = await fetch(
-			`https://www.febbox.com/console/download_address?fid=${fid}&share_key=${shareKey}`,
-			{ headers, signal: AbortSignal.timeout(15000) }
-		);
-		debug.push(`addr ${resp.status}`);
-		if (resp.ok) {
-			const text = await resp.text();
-			const url = tryParseDownloadUrl(text);
-			if (url) return { url };
-			debug.push(`addr: ${text.slice(0, 200)}`);
-		}
-	} catch (e: unknown) {
-		debug.push(`addr err: ${(e as Error)?.message ?? e}`);
+		debug.push(`dl err: ${(e as Error)?.message ?? e}`);
 	}
 
 	return { url: null, debug: debug.join(' | ') };
+}
+
+async function tryElectronStream(
+	shareKey: string,
+	fid: number,
+	debug: string[]
+): Promise<string | null> {
+	const r1 = await electronFetch('https://www.febbox.com/file/player', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+		body: `fid=${fid}&share_key=${shareKey}`
+	});
+	if (r1.error) {
+		debug.push(`electron: ${r1.error}`);
+		return null;
+	}
+	debug.push(`e-player ${r1.status}`);
+	if (r1.status === 200) {
+		const url = extractVideoUrl(r1.body);
+		if (url) return url;
+		debug.push(`e-player no url in ${r1.body.length}ch`);
+	}
+
+	const r2 = await electronFetch(
+		`https://www.febbox.com/file/share_download?share_key=${shareKey}&fid=${fid}`
+	);
+	debug.push(`e-dl ${r2.status}`);
+	if (r2.status === 200) {
+		const url = tryParseDownloadUrl(r2.body);
+		if (url) return url;
+		debug.push(`e-dl: ${r2.body.slice(0, 200)}`);
+	}
+
+	return null;
 }
 
 function tryParseDownloadUrl(text: string): string | null {
