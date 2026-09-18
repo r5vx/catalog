@@ -1,13 +1,11 @@
 <script lang="ts">
+	import { invalidateAll } from '$app/navigation';
 	import { WATCH_REGIONS } from '$lib/constants';
 	import type { PageData, ActionData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
+	let loggingIn = $state(false);
 
-	/**
-	 * The country names come from the browser rather than a list we maintain,
-	 * so they arrive in the language it's set to and never go out of date.
-	 */
 	const countries = (() => {
 		let name: (code: string) => string;
 
@@ -22,6 +20,22 @@
 			a.name.localeCompare(b.name)
 		);
 	})();
+
+	function loginToFebbox() {
+		loggingIn = true;
+		const popup = window.open('https://www.febbox.com/login', '_blank');
+		if (!popup) {
+			loggingIn = false;
+			return;
+		}
+		const poll = setInterval(() => {
+			if (popup.closed) {
+				clearInterval(poll);
+				loggingIn = false;
+				invalidateAll();
+			}
+		}, 500);
+	}
 </script>
 
 <svelte:head><title>Services · Catalog</title></svelte:head>
@@ -141,8 +155,8 @@
 		</div>
 
 		<p class="muted">
-			Lets you watch movies and shows inside Catalog. On the desktop app, log in once and the key
-			saves itself. To share with a friend, copy your key and have them paste it here.
+			Lets you watch movies and shows inside Catalog. Log in once and the key saves itself.
+			To share with a friend, have them paste your key below.
 		</p>
 
 		{#if form?.febboxError}
@@ -153,33 +167,44 @@
 
 		{#if data.febboxKeySaved}
 			<div class="saved-row">
-				<span class="muted">A key is saved.</span>
-				<form method="POST" action="?/removeFebbox">
-					<button type="submit" class="btn btn-danger">Remove</button>
-				</form>
+				<span class="muted">Logged in.</span>
+				<div class="saved-actions">
+					<button type="button" class="btn" onclick={loginToFebbox} disabled={loggingIn}>
+						{loggingIn ? 'Logging in…' : 'Log in again'}
+					</button>
+					<form method="POST" action="?/removeFebbox">
+						<button type="submit" class="btn btn-danger">Remove</button>
+					</form>
+				</div>
 			</div>
 			<details>
-				<summary>Replace it</summary>
+				<summary>Paste a key instead</summary>
 				<form method="POST" action="?/saveFebbox" class="inline-form">
 					<input
 						type="password"
 						name="febboxKey"
-						placeholder="Paste a new key"
+						placeholder="Paste a key"
 						autocomplete="off"
 					/>
 					<button type="submit" class="btn btn-primary">Save</button>
 				</form>
 			</details>
 		{:else}
-			<form method="POST" action="?/saveFebbox" class="inline-form">
-				<input
-					type="password"
-					name="febboxKey"
-					placeholder="Paste a key here"
-					autocomplete="off"
-				/>
-				<button type="submit" class="btn btn-primary">Save</button>
-			</form>
+			<button type="button" class="btn btn-primary login-btn" onclick={loginToFebbox} disabled={loggingIn}>
+				{loggingIn ? 'Logging in…' : 'Log in with Google'}
+			</button>
+			<details>
+				<summary>Paste a key instead</summary>
+				<form method="POST" action="?/saveFebbox" class="inline-form">
+					<input
+						type="password"
+						name="febboxKey"
+						placeholder="Paste a key"
+						autocomplete="off"
+					/>
+					<button type="submit" class="btn btn-primary">Save</button>
+				</form>
+			</details>
 		{/if}
 	</section>
 
@@ -274,6 +299,15 @@
 
 	.saved-row .muted {
 		font-size: 0.9rem;
+	}
+
+	.saved-actions {
+		display: flex;
+		gap: 8px;
+	}
+
+	.login-btn {
+		align-self: flex-start;
 	}
 
 	details summary {

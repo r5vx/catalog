@@ -7,6 +7,12 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 1.7.4 — 2026-09-18
+
+- **Log in from Settings.** The Watch section in Settings → Services now has a
+  "Log in with Google" button instead of requiring the desktop popup. The token
+  saves when you close the login window.
+
 ## 1.7.3 — 2026-09-18
 
 - **Watch plays the video directly.** Clicking Watch now opens the movie or
