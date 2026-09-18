@@ -1,4 +1,7 @@
 <script lang="ts">
+	import { page } from '$app/state';
+	import { onMount } from 'svelte';
+	import { showbox } from '$lib/showboxHealth.svelte';
 	import type { SearchResult } from '$lib/server/metadata/types';
 	import type { PageData } from './$types';
 
@@ -18,6 +21,16 @@
 
 	let timer: ReturnType<typeof setTimeout>;
 	let sequence = 0;
+
+	onMount(() => {
+		showbox.check();
+		const q = page.url.searchParams.get('q');
+		if (q && q.trim().length >= 2) {
+			query = q;
+			loading = true;
+			runSearch();
+		}
+	});
 
 	function onInput(event: Event) {
 		query = (event.target as HTMLInputElement).value;
@@ -116,6 +129,7 @@
 	placeholder="Start typing a title…"
 	autocomplete="off"
 	autofocus
+	value={query}
 	oninput={onInput}
 	aria-label="Search for something to add"
 />
@@ -196,6 +210,12 @@
 					>
 						{busy === result.key ? 'Adding…' : 'Add'}
 					</button>
+					<a
+						href="/watch?title={encodeURIComponent(result.title)}"
+						class="btn btn-watch"
+						class:disabled={!showbox.up}
+						title={showbox.up ? 'Watch now' : 'showbox.media is down'}
+					>▶</a>
 				{/if}
 			</div>
 		</li>
@@ -386,6 +406,24 @@
 	.footnote {
 		font-size: 0.82rem;
 		margin-top: 18px;
+	}
+
+	.btn-watch {
+		background: var(--good);
+		color: var(--paper);
+		border-color: var(--good);
+		padding: 6px 10px;
+		font-size: 0.85rem;
+		line-height: 1;
+	}
+
+	.btn-watch:hover {
+		filter: brightness(1.12);
+	}
+
+	.btn-watch.disabled {
+		opacity: 0.35;
+		pointer-events: none;
 	}
 
 	@media (max-width: 620px) {

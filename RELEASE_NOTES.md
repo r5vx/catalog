@@ -7,6 +7,19 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 1.7.1 — 2026-09-18
+
+- **Watch inside Catalog.** Search results and the detail page now have a ▶
+  Watch button that finds the title on febbox and plays it in an integrated
+  player — no separate window, with febbox's own captions, speed and quality
+  controls. An "Add to library" button in the player bar lets you save what
+  you are watching without leaving. The button greys out automatically if
+  showbox.media is unreachable.
+- **Settings → Updates no longer calls the version you're running
+  "Unreleased".** The notes are stamped with the version number before the app
+  is packaged now, rather than after it, so the copy inside the app is the
+  right one.
+
 ## 1.7.0 — 2026-09-17
 
 - **Browse keeps going.** Every shelf has a **Show more** button now, as many
