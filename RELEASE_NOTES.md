@@ -7,6 +7,8 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 1.7.2 — 2026-09-18
+
 - **Theme picker in Personalization.** Choose between System (follows your
   device), Light, Dark or Black (OLED-friendly). The preview updates live as
   you pick, and your choice sticks across sessions.
