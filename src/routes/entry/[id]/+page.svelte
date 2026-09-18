@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import BackBar from '$lib/BackBar.svelte';
 	import EntryForm from '$lib/EntryForm.svelte';
 	import TitleSearch from '$lib/TitleSearch.svelte';
@@ -7,6 +8,7 @@
 	import TagChips from '$lib/TagChips.svelte';
 	import CastRow from '$lib/CastRow.svelte';
 	import WhereToWatch from '$lib/WhereToWatch.svelte';
+	import { showbox } from '$lib/showboxHealth.svelte';
 	import { progressSummary } from '$lib/progress';
 	import { statusLabel } from '$lib/constants';
 	import { money } from '$lib/format';
@@ -16,6 +18,8 @@
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	let busyKey = $state<string | null>(null);
+
+	onMount(() => showbox.check());
 
 	const entry = $derived(data.entry);
 
@@ -172,6 +176,12 @@
 			<div class="pills">
 				<span class="pill {entry.status}">{statusLabel(entry.status)}</span>
 				{#if entry.favorite}<span class="pill fav">★ Favourite</span>{/if}
+				<a
+					href="/watch?title={encodeURIComponent(entry.title)}"
+					class="pill watch"
+					class:disabled={!showbox.up}
+					title={showbox.up ? 'Watch now' : 'showbox.media is down'}
+				>▶ Watch</a>
 			</div>
 
 			<h1>{entry.title}</h1>
@@ -353,6 +363,23 @@
 		background: var(--accent-bg);
 		color: var(--accent);
 		border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+	}
+
+	.pill.watch {
+		background: var(--good);
+		color: var(--paper);
+		border-color: var(--good);
+		cursor: pointer;
+		text-decoration: none;
+	}
+
+	.pill.watch:hover {
+		filter: brightness(1.12);
+	}
+
+	.pill.watch.disabled {
+		opacity: 0.35;
+		pointer-events: none;
 	}
 
 	h1 {

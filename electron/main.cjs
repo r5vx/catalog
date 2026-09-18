@@ -5,7 +5,7 @@
  * file starts the server quietly in the background, waits for it to answer,
  * and shows the window — so from your side it opens like any other program.
  */
-const { app, BrowserWindow, shell, Menu } = require('electron');
+const { app, BrowserWindow, shell, Menu, session } = require('electron');
 const { fork } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -234,6 +234,19 @@ if (!app.requestSingleInstanceLock()) {
 
 	app.whenReady().then(async () => {
 		Menu.setApplicationMenu(null);
+
+		// Let febbox load inside an iframe in the Watch page.
+		session.defaultSession.webRequest.onHeadersReceived(
+			{ urls: ['*://*.febbox.com/*'] },
+			(details, callback) => {
+				const headers = { ...details.responseHeaders };
+				delete headers['x-frame-options'];
+				delete headers['X-Frame-Options'];
+				delete headers['content-security-policy'];
+				delete headers['Content-Security-Policy'];
+				callback({ responseHeaders: headers });
+			}
+		);
 
 		/**
 		 * A finished update gets installed before anything else happens.
