@@ -7,6 +7,8 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 1.7.8 — 2026-09-18
+
 - **Watch fix (for real this time).** Video requests to febbox now run inside a
   real browser context with full cookies and auth, matching what the site sees
   when you use it directly. Previous versions tried a shortcut that febbox
