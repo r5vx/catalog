@@ -11,17 +11,22 @@
 		info: string;
 	}
 
+	interface FileOption {
+		fid: number;
+		quality: string;
+		name: string;
+		size: string;
+	}
+
 	interface Episode {
 		season: number;
 		episode: number;
-		fid: number;
-		name: string;
-		size: string;
-		quality: string;
+		files: FileOption[];
 	}
 
 	let loading = $state(true);
 	let problem = $state('');
+	let debugInfo = $state('');
 	let streamUrl = $state('');
 	let videoTitle = $state('');
 	let showType = $state<'movie' | 'tv'>('movie');
@@ -29,12 +34,17 @@
 	let hasToken = $state(false);
 	let needsToken = $state(false);
 
+	let movieFiles = $state<FileOption[]>([]);
 	let episodes = $state<Episode[]>([]);
 	let seasons = $state<number[]>([]);
+	let allQualities = $state<string[]>([]);
 	let activeSeason = $state(1);
 	let activeEpisode = $state<Episode | null>(null);
+	let activeQuality = $state('');
+	let preferredQuality = $state('1080p');
 	let sidebarOpen = $state(true);
 	let loadingEpisode = $state(false);
+	let changingQuality = $state(false);
 
 	let query = $state('');
 	let results = $state<Result[]>([]);
@@ -47,6 +57,16 @@
 	let videoEl: HTMLVideoElement | undefined = $state();
 
 	const seasonEpisodes = $derived(episodes.filter((ep) => ep.season === activeSeason));
+
+	const currentFiles = $derived(
+		showType === 'tv' && activeEpisode ? activeEpisode.files : movieFiles
+	);
+
+	const availableQualities = $derived(
+		[...new Set(currentFiles.map((f) => f.quality).filter(Boolean))].sort(
+			(a, b) => parseInt(b) - parseInt(a)
+		)
+	);
 
 	onMount(async () => {
 		const title = page.url.searchParams.get('title');
@@ -66,9 +86,23 @@
 		}
 	});
 
+	function pickFile(files: FileOption[], wanted: string): FileOption | null {
+		if (!files.length) return null;
+		const exact = files.find((f) => f.quality === wanted);
+		if (exact) return exact;
+
+		const target = parseInt(wanted) || 1080;
+		return files.reduce((best, f) => {
+			const bestDiff = Math.abs((parseInt(best.quality) || 0) - target);
+			const fDiff = Math.abs((parseInt(f.quality) || 0) - target);
+			return fDiff < bestDiff ? f : best;
+		});
+	}
+
 	async function resolve(title: string, type: string, year: string) {
 		loading = true;
 		problem = '';
+		debugInfo = '';
 
 		try {
 			const params = new URLSearchParams({ title });
@@ -93,20 +127,28 @@
 			shareKey = data.shareKey;
 			hasToken = data.hasToken;
 
+			if (data.files) {
+				movieFiles = data.files;
+			}
+
 			if (data.episodes) {
 				episodes = data.episodes.episodes;
 				seasons = data.episodes.seasons;
+				allQualities = data.episodes.qualities ?? [];
 				if (seasons.length) activeSeason = seasons[0];
 				if (episodes.length) activeEpisode = episodes[0];
 			}
 
 			if (data.streamUrl) {
 				streamUrl = data.streamUrl;
+				const activeFile = currentFiles.find((f) => f.fid === data.fid);
+				activeQuality = activeFile?.quality ?? currentFiles[0]?.quality ?? '';
 			} else if (!data.hasToken) {
 				needsToken = true;
-				problem = 'Add your Febbox key in Settings → Services to start watching.';
+				problem = 'Add your key in Settings → Services to start watching.';
 			} else {
 				problem = 'Could not get a playable link for this title.';
+				if (data.debug) debugInfo = data.debug;
 			}
 		} catch {
 			problem = 'Could not load that title. Try again in a moment.';
@@ -115,24 +157,59 @@
 		}
 	}
 
+	async function changeQuality(quality: string) {
+		const file = pickFile(currentFiles, quality);
+		if (!file || file.fid === (currentFiles.find((f) => f.quality === activeQuality)?.fid)) return;
+
+		changingQuality = true;
+		preferredQuality = quality;
+
+		try {
+			const resp = await fetch(`/api/watch/stream?share_key=${shareKey}&fid=${file.fid}`);
+			if (!resp.ok) throw new Error();
+			const data = await resp.json();
+
+			if (data.url) {
+				streamUrl = data.url;
+				activeQuality = quality;
+			} else {
+				problem = 'Could not get that quality.';
+				if (data.debug) debugInfo = data.debug;
+			}
+		} catch {
+			problem = 'Failed to switch quality.';
+		} finally {
+			changingQuality = false;
+		}
+	}
+
 	async function playEpisode(ep: Episode) {
-		if (loadingEpisode || ep.fid === activeEpisode?.fid) return;
+		if (loadingEpisode || ep === activeEpisode) return;
 		loadingEpisode = true;
 		activeEpisode = ep;
 		problem = '';
 
 		const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
+		const file = pickFile(ep.files, preferredQuality);
+
+		if (!file) {
+			problem = 'No video file for that episode.';
+			loadingEpisode = false;
+			return;
+		}
 
 		try {
-			const resp = await fetch(`/api/watch/stream?share_key=${shareKey}&fid=${ep.fid}`);
+			const resp = await fetch(`/api/watch/stream?share_key=${shareKey}&fid=${file.fid}`);
 			if (!resp.ok) throw new Error();
 			const data = await resp.json();
 
 			if (data.url) {
 				streamUrl = data.url;
 				videoTitle = `${baseTitle} S${ep.season}E${ep.episode}`;
+				activeQuality = file.quality;
 			} else {
 				problem = 'Could not get a link for that episode.';
+				if (data.debug) debugInfo = data.debug;
 			}
 		} catch {
 			problem = 'Failed to load episode.';
@@ -182,8 +259,10 @@
 		streamUrl = '';
 		videoTitle = '';
 		problem = '';
+		debugInfo = '';
 		episodes = [];
 		seasons = [];
+		movieFiles = [];
 		activeEpisode = null;
 		loading = false;
 	}
@@ -196,6 +275,19 @@
 		<div class="player-bar">
 			<button type="button" class="bar-btn" onclick={backToSearch}>&larr; Back</button>
 			<h1 class="player-title">{videoTitle}</h1>
+			{#if availableQualities.length > 1}
+				<div class="quality-picker">
+					{#each availableQualities as q (q)}
+						<button
+							type="button"
+							class="q-btn"
+							class:active={activeQuality === q}
+							disabled={changingQuality}
+							onclick={() => changeQuality(q)}
+						>{q}</button>
+					{/each}
+				</div>
+			{/if}
 			{#if showType === 'tv' && seasons.length > 0}
 				<button
 					type="button"
@@ -208,6 +300,10 @@
 				class="bar-btn add-btn"
 			>+ Add to library</a>
 		</div>
+
+		{#if problem}
+			<p class="player-error">{problem}</p>
+		{/if}
 
 		<div class="player-body">
 			{#if showType === 'tv' && seasons.length > 0 && sidebarOpen}
@@ -223,19 +319,20 @@
 						{/each}
 					</div>
 					<ul class="episode-list">
-						{#each seasonEpisodes as ep (ep.fid)}
+						{#each seasonEpisodes as ep (`${ep.season}-${ep.episode}`)}
 							<li>
 								<button
 									type="button"
 									class="ep-btn"
-									class:playing={activeEpisode?.fid === ep.fid}
+									class:playing={activeEpisode === ep}
 									disabled={loadingEpisode}
 									onclick={() => playEpisode(ep)}
 								>
 									<span class="ep-num">E{ep.episode}</span>
 									<span class="ep-meta">
-										<span class="ep-quality">{ep.quality || 'SD'}</span>
-										<span class="ep-size">{ep.size}</span>
+										{#each ep.files as f (f.fid)}
+											<span class="ep-quality">{f.quality || 'SD'}</span>
+										{/each}
 									</span>
 								</button>
 							</li>
@@ -245,8 +342,8 @@
 			{/if}
 
 			<div class="player">
-				{#if loadingEpisode}
-					<p class="player-status">Loading episode…</p>
+				{#if loadingEpisode || changingQuality}
+					<p class="player-status">{changingQuality ? 'Switching quality…' : 'Loading episode…'}</p>
 				{/if}
 				<!-- svelte-ignore a11y_media_has_caption -->
 				<video
@@ -254,7 +351,7 @@
 					src={streamUrl}
 					controls
 					autoplay
-					class:buffering={loadingEpisode}
+					class:buffering={loadingEpisode || changingQuality}
 				>
 					Your browser doesn't support video playback.
 				</video>
@@ -273,6 +370,12 @@
 	{#if problem}
 		<div class="problem-page">
 			<p class="msg bad" role="alert">{problem}</p>
+			{#if debugInfo}
+				<details class="debug-details">
+					<summary>Details</summary>
+					<pre class="debug-pre">{debugInfo}</pre>
+				</details>
+			{/if}
 			{#if needsToken}
 				<a href="/settings/services" class="btn btn-primary">Go to Settings</a>
 			{/if}
@@ -365,6 +468,30 @@
 		gap: 14px;
 		padding: 60px 20px 30px;
 		text-align: center;
+	}
+
+	.debug-details {
+		max-width: 520px;
+		width: 100%;
+		text-align: left;
+	}
+
+	.debug-details summary {
+		font-size: 0.82rem;
+		color: var(--ink-faint);
+		cursor: pointer;
+	}
+
+	.debug-pre {
+		font-size: 0.76rem;
+		color: var(--ink-faint);
+		background: var(--sunk);
+		border: 1px solid var(--rule);
+		border-radius: var(--radius-sm);
+		padding: 10px 12px;
+		white-space: pre-wrap;
+		word-break: break-all;
+		margin-top: 6px;
 	}
 
 	/* --------------------------------------------------------- search view */
@@ -518,7 +645,7 @@
 	.player-bar {
 		display: flex;
 		align-items: center;
-		gap: 14px;
+		gap: 10px;
 		padding: 10px 16px;
 		background: var(--sunk);
 		border-bottom: 1px solid var(--rule);
@@ -570,6 +697,53 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
+
+	.player-error {
+		margin: 0;
+		padding: 6px 16px;
+		font-size: 0.82rem;
+		color: var(--accent);
+		background: var(--accent-bg);
+		border-bottom: 1px solid var(--rule);
+	}
+
+	/* --------------------------------------------------------- quality picker */
+
+	.quality-picker {
+		display: flex;
+		gap: 3px;
+		flex: none;
+	}
+
+	.q-btn {
+		font-size: 0.72rem;
+		font-weight: 700;
+		padding: 3px 8px;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--rule);
+		background: var(--surface);
+		color: var(--ink-soft);
+		cursor: pointer;
+		text-transform: uppercase;
+	}
+
+	.q-btn:hover:not(.active) {
+		border-color: var(--ink-faint);
+		color: var(--ink);
+	}
+
+	.q-btn.active {
+		background: var(--accent);
+		color: var(--accent-ink);
+		border-color: var(--accent);
+	}
+
+	.q-btn:disabled {
+		opacity: 0.5;
+		cursor: wait;
+	}
+
+	/* --------------------------------------------------------- player body */
 
 	.player-body {
 		display: flex;
@@ -661,15 +835,19 @@
 
 	.ep-meta {
 		display: flex;
-		gap: 8px;
+		gap: 4px;
 		margin-left: auto;
-		font-size: 0.72rem;
+		font-size: 0.68rem;
 		color: var(--ink-faint);
 	}
 
 	.ep-quality {
 		text-transform: uppercase;
 		font-weight: 600;
+		padding: 1px 4px;
+		border-radius: 3px;
+		background: var(--surface);
+		border: 1px solid var(--rule);
 	}
 
 	/* --------------------------------------------------------- player */
@@ -722,6 +900,10 @@
 			order: -1;
 			width: 100%;
 			font-size: 0.9rem;
+		}
+
+		.quality-picker {
+			order: 1;
 		}
 
 		.add-btn {

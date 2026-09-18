@@ -5,6 +5,13 @@
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	let loggingIn = $state(false);
+	let copied = $state(false);
+
+	function copyKey() {
+		navigator.clipboard.writeText(data.febboxToken);
+		copied = true;
+		setTimeout(() => (copied = false), 2000);
+	}
 
 	const countries = (() => {
 		let name: (code: string) => string;
@@ -169,6 +176,9 @@
 			<div class="saved-row">
 				<span class="muted">Logged in.</span>
 				<div class="saved-actions">
+					<button type="button" class="btn" onclick={copyKey}>
+						{copied ? 'Copied' : 'Copy key'}
+					</button>
 					<button type="button" class="btn" onclick={loginToFebbox} disabled={loggingIn}>
 						{loggingIn ? 'Logging in…' : 'Log in again'}
 					</button>
