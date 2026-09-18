@@ -7,6 +7,15 @@ and stamps it with the version number.
 
 ## Unreleased
 
+- **Watch actually plays now.** Requests to febbox go through Electron's own
+  network stack with real browser cookies — fixes the "Please log in first"
+  error that appeared after adding the key system.
+- **Login popup closes itself.** After signing in with Google, the popup shuts
+  automatically instead of dumping you on febbox's home page. It waits for you
+  to finish with Google first.
+- **No more search bar on error pages.** When a title can't play, you see only
+  the error — not the search UI underneath it.
+
 ## 1.7.6 — 2026-09-18
 
 - **Watch actually plays now.** Requests to febbox go through Electron's own
