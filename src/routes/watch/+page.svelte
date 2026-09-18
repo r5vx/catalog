@@ -20,73 +20,132 @@
 		quality: string;
 	}
 
-	let query = $state('');
-	let results = $state<Result[]>([]);
-	let searching = $state(false);
-	let searched = $state(false);
+	let loading = $state(true);
 	let problem = $state('');
-
-	let febboxUrl = $state('');
-	let activeTitle = $state('');
-	let activeResult = $state<Result | null>(null);
-	let loadingLink = $state<number | null>(null);
-	let iframeLoading = $state(false);
+	let streamUrl = $state('');
+	let videoTitle = $state('');
+	let showType = $state<'movie' | 'tv'>('movie');
+	let shareKey = $state('');
+	let hasToken = $state(false);
+	let needsToken = $state(false);
 
 	let episodes = $state<Episode[]>([]);
 	let seasons = $state<number[]>([]);
 	let activeSeason = $state(1);
-	let loadingEpisodes = $state(false);
 	let activeEpisode = $state<Episode | null>(null);
 	let sidebarOpen = $state(true);
+	let loadingEpisode = $state(false);
 
-	let autoMatch = false;
-	let autoType = '';
-	let autoYear = '';
+	let query = $state('');
+	let results = $state<Result[]>([]);
+	let searching = $state(false);
+	let searched = $state(false);
+	let resolving = $state(false);
+	let isAuto = false;
 
 	let searchTimer: ReturnType<typeof setTimeout>;
+	let videoEl: HTMLVideoElement | undefined = $state();
 
-	onMount(() => {
+	const seasonEpisodes = $derived(episodes.filter((ep) => ep.season === activeSeason));
+
+	onMount(async () => {
 		const title = page.url.searchParams.get('title');
-		autoMatch = page.url.searchParams.get('auto') === '1';
-		autoType = page.url.searchParams.get('type') ?? '';
-		autoYear = page.url.searchParams.get('year') ?? '';
-		if (title && title.trim()) {
+		isAuto = page.url.searchParams.get('auto') === '1';
+		const type = page.url.searchParams.get('type') ?? '';
+		const year = page.url.searchParams.get('year') ?? '';
+
+		if (title && isAuto) {
+			videoTitle = title;
+			await resolve(title, type, year);
+		} else if (title) {
 			query = title;
+			loading = false;
 			doSearch(title);
+		} else {
+			loading = false;
 		}
 	});
+
+	async function resolve(title: string, type: string, year: string) {
+		loading = true;
+		problem = '';
+
+		try {
+			const params = new URLSearchParams({ title });
+			if (type) params.set('type', type);
+			if (year) params.set('year', year);
+
+			const resp = await fetch(`/api/watch/resolve?${params}`);
+			if (!resp.ok) throw new Error();
+			const data = await resp.json();
+
+			if (data.error) {
+				if (data.error === 'not_found') problem = 'Nothing found for that title.';
+				else if (data.error === 'no_link') problem = 'No link available for that title.';
+				else if (data.error === 'no_file') problem = 'No video file found.';
+				else problem = 'Something went wrong.';
+				loading = false;
+				return;
+			}
+
+			videoTitle = data.title;
+			showType = data.type;
+			shareKey = data.shareKey;
+			hasToken = data.hasToken;
+
+			if (data.episodes) {
+				episodes = data.episodes.episodes;
+				seasons = data.episodes.seasons;
+				if (seasons.length) activeSeason = seasons[0];
+				if (episodes.length) activeEpisode = episodes[0];
+			}
+
+			if (data.streamUrl) {
+				streamUrl = data.streamUrl;
+			} else if (!data.hasToken) {
+				needsToken = true;
+				problem = 'Add your Febbox key in Settings → Services to start watching.';
+			} else {
+				problem = 'Could not get a playable link for this title.';
+			}
+		} catch {
+			problem = 'Could not load that title. Try again in a moment.';
+		} finally {
+			loading = false;
+		}
+	}
+
+	async function playEpisode(ep: Episode) {
+		if (loadingEpisode || ep.fid === activeEpisode?.fid) return;
+		loadingEpisode = true;
+		activeEpisode = ep;
+		problem = '';
+
+		const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
+
+		try {
+			const resp = await fetch(`/api/watch/stream?share_key=${shareKey}&fid=${ep.fid}`);
+			if (!resp.ok) throw new Error();
+			const data = await resp.json();
+
+			if (data.url) {
+				streamUrl = data.url;
+				videoTitle = `${baseTitle} S${ep.season}E${ep.episode}`;
+			} else {
+				problem = 'Could not get a link for that episode.';
+			}
+		} catch {
+			problem = 'Failed to load episode.';
+		} finally {
+			loadingEpisode = false;
+		}
+	}
 
 	function onSearch(event: Event) {
 		clearTimeout(searchTimer);
 		const value = (event.target as HTMLInputElement).value;
 		query = value;
 		searchTimer = setTimeout(() => doSearch(value), 350);
-	}
-
-	function bestMatch(items: Result[]): Result | null {
-		if (!items.length) return null;
-
-		const want = query.toLowerCase().trim();
-
-		for (const r of items) {
-			const t = r.title.toLowerCase();
-			const typeOk = !autoType || r.type === autoType;
-			const yearOk = !autoYear || r.info.includes(autoYear);
-			if (t === want && typeOk && yearOk) return r;
-		}
-
-		for (const r of items) {
-			const t = r.title.toLowerCase();
-			const typeOk = !autoType || r.type === autoType;
-			if (t === want && typeOk) return r;
-		}
-
-		if (autoType) {
-			const typed = items.filter((r) => r.type === autoType);
-			if (typed.length) return typed[0];
-		}
-
-		return items[0];
 	}
 
 	async function doSearch(q: string) {
@@ -105,12 +164,6 @@
 			if (!resp.ok) throw new Error();
 			results = await resp.json();
 			searched = true;
-
-			if (autoMatch && results.length) {
-				autoMatch = false;
-				const pick = bestMatch(results);
-				if (pick) watch(pick);
-			}
 		} catch {
 			problem = 'Search failed. Try again in a moment.';
 		} finally {
@@ -118,109 +171,46 @@
 		}
 	}
 
-	async function watch(result: Result) {
-		loadingLink = result.id;
+	async function watchResult(result: Result) {
+		resolving = true;
+		videoTitle = result.title;
+		await resolve(result.title, result.type, '');
+		resolving = false;
+	}
+
+	function backToSearch() {
+		streamUrl = '';
+		videoTitle = '';
 		problem = '';
-
-		try {
-			const resp = await fetch(`/api/watch/link?id=${result.id}&type=${result.type}`);
-			if (!resp.ok) throw new Error();
-			const data = await resp.json();
-
-			if (data.link) {
-				febboxUrl = data.link;
-				activeTitle = result.title;
-				activeResult = result;
-				iframeLoading = true;
-
-				if (result.type === 'tv') fetchEpisodes(result.id);
-			} else {
-				problem = 'No link available for that title.';
-			}
-		} catch {
-			problem = 'Could not get the link. Try again in a moment.';
-		} finally {
-			loadingLink = null;
-		}
-	}
-
-	async function fetchEpisodes(showboxId: number) {
-		loadingEpisodes = true;
-		try {
-			const resp = await fetch(`/api/watch/episodes?id=${showboxId}&type=tv`);
-			if (!resp.ok) throw new Error();
-			const data = await resp.json();
-			seasons = data.seasons;
-			episodes = data.episodes;
-			if (seasons.length) activeSeason = seasons[0];
-		} catch {
-			episodes = [];
-			seasons = [];
-		} finally {
-			loadingEpisodes = false;
-		}
-	}
-
-	const seasonEpisodes = $derived(
-		episodes.filter((ep) => ep.season === activeSeason)
-	);
-
-	function playEpisode(ep: Episode) {
-		activeEpisode = ep;
-		activeTitle = `${activeResult?.title ?? ''} S${ep.season}E${ep.episode}`;
-	}
-
-	function backToResults() {
-		febboxUrl = '';
-		activeTitle = '';
-		activeResult = null;
 		episodes = [];
 		seasons = [];
 		activeEpisode = null;
-	}
-
-	function loginToFebbox() {
-		const popup = window.open('https://www.febbox.com/login', '_blank');
-		if (!popup) return;
-		const poll = setInterval(() => {
-			if (popup.closed) {
-				clearInterval(poll);
-				reloadPlayer();
-			}
-		}, 500);
-	}
-
-	function reloadPlayer() {
-		const url = febboxUrl;
-		febboxUrl = '';
-		iframeLoading = true;
-		setTimeout(() => { febboxUrl = url; }, 100);
+		loading = false;
 	}
 </script>
 
-<svelte:head><title>{activeTitle ? `${activeTitle} · ` : ''}Watch · Catalog</title></svelte:head>
+<svelte:head><title>{videoTitle ? `${videoTitle} · ` : ''}Watch · Catalog</title></svelte:head>
 
-{#if febboxUrl}
-	<div class="player-page" class:has-sidebar={activeResult?.type === 'tv' && seasons.length > 0 && sidebarOpen}>
+{#if streamUrl}
+	<div class="player-page" class:has-sidebar={showType === 'tv' && seasons.length > 0 && sidebarOpen}>
 		<div class="player-bar">
-			<button type="button" class="bar-btn" onclick={backToResults}>&larr; Back</button>
-			<h1 class="player-title">{activeTitle}</h1>
-			{#if activeResult?.type === 'tv' && seasons.length > 0}
+			<button type="button" class="bar-btn" onclick={backToSearch}>&larr; Back</button>
+			<h1 class="player-title">{videoTitle}</h1>
+			{#if showType === 'tv' && seasons.length > 0}
 				<button
 					type="button"
 					class="bar-btn episodes-btn"
-					onclick={() => sidebarOpen = !sidebarOpen}
+					onclick={() => (sidebarOpen = !sidebarOpen)}
 				>{sidebarOpen ? 'Hide episodes' : 'Episodes'}</button>
 			{/if}
-			<button type="button" class="bar-btn login-btn" onclick={loginToFebbox}>Log in</button>
 			<a
-				href="/entry/new?q={encodeURIComponent(activeResult?.title ?? activeTitle)}"
+				href="/entry/new?q={encodeURIComponent(videoTitle.replace(/ S\d+E\d+$/, ''))}"
 				class="bar-btn add-btn"
 			>+ Add to library</a>
 		</div>
 
 		<div class="player-body">
-			{#if activeResult?.type === 'tv' && seasons.length > 0 && sidebarOpen}
+			{#if showType === 'tv' && seasons.length > 0 && sidebarOpen}
 				<aside class="sidebar">
 					<div class="season-tabs">
 						{#each seasons as s (s)}
@@ -228,109 +218,155 @@
 								type="button"
 								class="season-tab"
 								class:active={activeSeason === s}
-								onclick={() => activeSeason = s}
+								onclick={() => (activeSeason = s)}
 							>S{s}</button>
 						{/each}
 					</div>
 					<ul class="episode-list">
-						{#if loadingEpisodes}
-							<li class="ep-loading">Loading episodes…</li>
-						{:else}
-							{#each seasonEpisodes as ep (ep.fid)}
-								<li>
-									<button
-										type="button"
-										class="ep-btn"
-										class:playing={activeEpisode?.fid === ep.fid}
-										onclick={() => playEpisode(ep)}
-									>
-										<span class="ep-num">E{ep.episode}</span>
-										<span class="ep-meta">
-											<span class="ep-quality">{ep.quality || 'SD'}</span>
-											<span class="ep-size">{ep.size}</span>
-										</span>
-									</button>
-								</li>
-							{/each}
-						{/if}
+						{#each seasonEpisodes as ep (ep.fid)}
+							<li>
+								<button
+									type="button"
+									class="ep-btn"
+									class:playing={activeEpisode?.fid === ep.fid}
+									disabled={loadingEpisode}
+									onclick={() => playEpisode(ep)}
+								>
+									<span class="ep-num">E{ep.episode}</span>
+									<span class="ep-meta">
+										<span class="ep-quality">{ep.quality || 'SD'}</span>
+										<span class="ep-size">{ep.size}</span>
+									</span>
+								</button>
+							</li>
+						{/each}
 					</ul>
 				</aside>
 			{/if}
 
-			<div class="player" class:buffering={iframeLoading}>
-				{#if iframeLoading}
-					<p class="player-status">Loading…</p>
+			<div class="player">
+				{#if loadingEpisode}
+					<p class="player-status">Loading episode…</p>
 				{/if}
-				<iframe
-					src={febboxUrl}
-					title={activeTitle}
-					allowfullscreen
-					onload={() => { iframeLoading = false; }}
-				></iframe>
+				<!-- svelte-ignore a11y_media_has_caption -->
+				<video
+					bind:this={videoEl}
+					src={streamUrl}
+					controls
+					autoplay
+					class:buffering={loadingEpisode}
+				>
+					Your browser doesn't support video playback.
+				</video>
 			</div>
 		</div>
+	</div>
+{:else if loading || resolving}
+	<BackBar />
+	<div class="loading-page">
+		<div class="spinner"></div>
+		<p>Loading {videoTitle || 'video'}…</p>
 	</div>
 {:else}
 	<BackBar />
 
-	<header class="masthead">
-		<h1>Watch</h1>
-	</header>
-
-	<div class="toolbar">
-		<input
-			type="search"
-			placeholder="Search for a movie or show…"
-			value={query}
-			oninput={onSearch}
-			aria-label="Search for media"
-		/>
-	</div>
-
 	{#if problem}
-		<p class="msg bad" role="alert">{problem}</p>
+		<div class="problem-page">
+			<p class="msg bad" role="alert">{problem}</p>
+			{#if needsToken}
+				<a href="/settings/services" class="btn btn-primary">Go to Settings</a>
+			{/if}
+		</div>
 	{/if}
 
-	{#if searching}
-		<p class="muted searching">Searching…</p>
-	{:else if results.length > 0}
-		<ul class="grid">
-			{#each results as result (result.id + result.type)}
-				<li>
-					<button
-						type="button"
-						class="card"
-						disabled={loadingLink === result.id}
-						onclick={() => watch(result)}
-					>
-						<div class="poster">
-							{#if result.posterUrl}
-								<img src={result.posterUrl} alt="" loading="lazy" />
-							{:else}
-								<span class="fallback" aria-hidden="true">?</span>
-							{/if}
-							<span class="kind">{result.type === 'tv' ? 'TV' : 'Film'}</span>
-						</div>
-						<h3 class="name">{result.title}</h3>
-						<p class="sub faint">{result.info}</p>
-						{#if loadingLink === result.id}
-							<span class="loading-label">Opening…</span>
-						{/if}
-					</button>
-				</li>
-			{/each}
-		</ul>
-	{:else if searched}
-		<p class="empty-msg muted">Nothing found for that.</p>
-	{:else if !page.url.searchParams.get('title')}
-		<div class="empty">
-			<h2>Search for something to watch</h2>
-			<p class="muted">Find a movie or show, then watch it right here.</p>
+	{#if !needsToken}
+		<header class="masthead">
+			<h1>Watch</h1>
+		</header>
+
+		<div class="toolbar">
+			<input
+				type="search"
+				placeholder="Search for a movie or show…"
+				value={query}
+				oninput={onSearch}
+				aria-label="Search for media"
+			/>
 		</div>
+
+		{#if searching}
+			<p class="muted searching">Searching…</p>
+		{:else if results.length > 0}
+			<ul class="grid">
+				{#each results as result (result.id + result.type)}
+					<li>
+						<button
+							type="button"
+							class="card"
+							disabled={resolving}
+							onclick={() => watchResult(result)}
+						>
+							<div class="poster">
+								{#if result.posterUrl}
+									<img src={result.posterUrl} alt="" loading="lazy" />
+								{:else}
+									<span class="fallback" aria-hidden="true">?</span>
+								{/if}
+								<span class="kind">{result.type === 'tv' ? 'TV' : 'Film'}</span>
+							</div>
+							<h3 class="name">{result.title}</h3>
+							<p class="sub faint">{result.info}</p>
+						</button>
+					</li>
+				{/each}
+			</ul>
+		{:else if searched}
+			<p class="empty-msg muted">Nothing found for that.</p>
+		{:else if !page.url.searchParams.get('title')}
+			<div class="empty">
+				<h2>Search for something to watch</h2>
+				<p class="muted">Find a movie or show, then watch it right here.</p>
+			</div>
+		{/if}
 	{/if}
 {/if}
 
 <style>
+	/* --------------------------------------------------------- loading */
+
+	.loading-page {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 18px;
+		padding: 120px 20px;
+		text-align: center;
+		color: var(--ink-soft);
+	}
+
+	.spinner {
+		width: 36px;
+		height: 36px;
+		border: 3px solid var(--rule);
+		border-top-color: var(--accent);
+		border-radius: 50%;
+		animation: spin 0.8s linear infinite;
+	}
+
+	@keyframes spin {
+		to { transform: rotate(360deg); }
+	}
+
+	.problem-page {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 14px;
+		padding: 60px 20px 30px;
+		text-align: center;
+	}
+
 	/* --------------------------------------------------------- search view */
 
 	.masthead {
@@ -357,6 +393,7 @@
 		font-size: 0.88rem;
 		color: var(--accent);
 		background: var(--surface);
+		max-width: 480px;
 	}
 
 	.searching {
@@ -448,12 +485,6 @@
 		margin: 0;
 	}
 
-	.loading-label {
-		font-size: 0.76rem;
-		color: var(--accent);
-		font-weight: 600;
-	}
-
 	.empty {
 		display: flex;
 		flex-direction: column;
@@ -511,11 +542,6 @@
 	.bar-btn:hover {
 		border-color: var(--accent);
 		color: var(--accent);
-	}
-
-	.login-btn {
-		color: var(--ink-soft);
-		font-size: 0.78rem;
 	}
 
 	.episodes-btn {
@@ -600,13 +626,6 @@
 		flex: 1;
 	}
 
-	.ep-loading {
-		padding: 16px;
-		text-align: center;
-		color: var(--ink-faint);
-		font-size: 0.82rem;
-	}
-
 	.ep-btn {
 		display: flex;
 		align-items: center;
@@ -628,6 +647,11 @@
 	.ep-btn.playing {
 		background: var(--accent-bg);
 		color: var(--accent);
+	}
+
+	.ep-btn:disabled {
+		opacity: 0.5;
+		cursor: wait;
 	}
 
 	.ep-num {
@@ -653,15 +677,22 @@
 	.player {
 		position: relative;
 		flex: 1;
-		background: #111;
+		background: #000;
 		min-height: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 	}
 
-	.player iframe {
-		display: block;
+	.player video {
 		width: 100%;
 		height: 100%;
-		border: none;
+		display: block;
+		outline: none;
+	}
+
+	.player video.buffering {
+		opacity: 0.3;
 	}
 
 	.player-status {
@@ -672,10 +703,7 @@
 		margin: 0;
 		font-size: 0.9rem;
 		color: #888;
-	}
-
-	.buffering iframe {
-		opacity: 0.3;
+		z-index: 1;
 	}
 
 	@media (max-width: 700px) {

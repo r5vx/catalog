@@ -8,13 +8,11 @@ import type { PageServerLoad, Actions } from './$types';
 export const load: PageServerLoad = async () => {
 	const settings = readSettings();
 
-	// Never send the keys themselves to the browser — only whether one is saved.
 	return {
 		tmdbKeySaved: Boolean(settings.tmdbApiKey),
 		omdbKeySaved: Boolean(settings.omdbApiKey),
-		/** Blank when it's following this PC rather than a country you picked. */
+		febboxKeySaved: Boolean(settings.febboxToken),
 		region: settings.watchRegion ?? '',
-		/** What it's using either way, so the page can say so. */
 		regionInUse: watchRegion()
 	};
 };
@@ -54,10 +52,6 @@ export const actions: Actions = {
 		return { omdbOk: 'Key removed. TMDB scores still show.' };
 	},
 
-	/**
-	 * Which country "where to watch" answers for. Blank follows this PC, which
-	 * is right until you're using someone else's, or travelling.
-	 */
 	saveRegion: async ({ request }) => {
 		const value = String((await request.formData()).get('watchRegion') ?? '')
 			.trim()
@@ -69,5 +63,18 @@ export const actions: Actions = {
 
 		updateSettings({ watchRegion: value || undefined });
 		return { regionOk: true };
+	},
+
+	saveFebbox: async ({ request }) => {
+		const key = String((await request.formData()).get('febboxKey') ?? '').trim();
+		if (!key) return fail(400, { febboxError: 'Paste a key first.' });
+
+		updateSettings({ febboxToken: key });
+		return { febboxOk: 'Key saved.' };
+	},
+
+	removeFebbox: async () => {
+		updateSettings({ febboxToken: undefined });
+		return { febboxOk: 'Key removed.' };
 	}
 };

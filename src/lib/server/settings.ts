@@ -42,6 +42,8 @@ export type Settings = {
 	watchRegion?: string;
 	/** Theme override: light, dark, black. Empty means follow the OS. */
 	theme?: string;
+	/** Serialised febbox cookies — stored after login, or pasted by a friend. */
+	febboxToken?: string;
 };
 
 export function readSettings(): Settings {
