@@ -7,6 +7,8 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 1.7.1 — 2026-09-18
+
 - **Watch inside Catalog.** Search results and the detail page now have a ▶
   Watch button that finds the title on febbox and plays it in an integrated
   player — no separate window, with febbox's own captions, speed and quality
