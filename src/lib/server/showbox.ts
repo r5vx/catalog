@@ -1,4 +1,4 @@
-import { electronFetch } from './electron-fetch';
+import { electronFetch, electronGetVideoUrl } from './electron-fetch';
 
 const BASE = 'https://showbox.media';
 
@@ -288,13 +288,33 @@ async function tryElectronStream(
 	fid: number,
 	debug: string[]
 ): Promise<string | null> {
+	// Primary: hidden BrowserWindow fetches from inside the page context,
+	// so it has the same cookies + localStorage + headers as the real site.
+	const bw = await electronGetVideoUrl(shareKey, fid);
+	if (bw.error) {
+		debug.push(`bw: ${bw.error}`);
+	} else {
+		if (bw.playerHtml) {
+			const url = extractVideoUrl(bw.playerHtml);
+			if (url) return url;
+			const preview = bw.playerHtml.length < 300 ? bw.playerHtml : `${bw.playerHtml.length}ch`;
+			debug.push(`bw-player: ${preview}`);
+		}
+		if (bw.dlText) {
+			const url = tryParseDownloadUrl(bw.dlText);
+			if (url) return url;
+			debug.push(`bw-dl: ${bw.dlText.slice(0, 200)}`);
+		}
+	}
+
+	// Fallback: net.fetch with credentials: include
 	const r1 = await electronFetch('https://www.febbox.com/file/player', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
 		body: `fid=${fid}&share_key=${shareKey}`
 	});
 	if (r1.error) {
-		debug.push(`electron: ${r1.error}`);
+		debug.push(`net: ${r1.error}`);
 		return null;
 	}
 	debug.push(`e-player ${r1.status}`);
@@ -303,16 +323,6 @@ async function tryElectronStream(
 		if (url) return url;
 		const preview = r1.body.length < 300 ? r1.body : `${r1.body.length}ch`;
 		debug.push(`e-player: ${preview}`);
-	}
-
-	const r2 = await electronFetch(
-		`https://www.febbox.com/file/share_download?share_key=${shareKey}&fid=${fid}`
-	);
-	debug.push(`e-dl ${r2.status}`);
-	if (r2.status === 200) {
-		const url = tryParseDownloadUrl(r2.body);
-		if (url) return url;
-		debug.push(`e-dl: ${r2.body.slice(0, 200)}`);
 	}
 
 	return null;

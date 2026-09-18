@@ -80,9 +80,60 @@ function startServer() {
 			autoUpdater().quitAndInstall(true, true);
 		}
 
-		// Proxy authenticated requests to febbox through Electron's network
-		// stack, which sends real browser cookies — unlike the server-side
-		// Node.js fetch that has to replay a saved cookie string.
+		// Load a hidden BrowserWindow on febbox.com and make the request from
+		// inside the page's JS context — same cookies, localStorage, headers
+		// the real site uses.  Falls back to net.fetch if the window fails.
+		if (message?.type === 'get-video-url') {
+			let hidden;
+			try {
+				hidden = new BrowserWindow({
+					show: false,
+					width: 400,
+					height: 300,
+					webPreferences: { nodeIntegration: false, contextIsolation: true }
+				});
+
+				const ready = new Promise((resolve) => {
+					hidden.webContents.on('dom-ready', resolve);
+					setTimeout(resolve, 10000);
+				});
+				hidden.loadURL('https://www.febbox.com');
+				await ready;
+
+				const fid = Number(message.fid);
+				const shareKey = String(message.shareKey);
+				const body = `fid=${fid}&share_key=${shareKey}`;
+
+				const playerHtml = await hidden.webContents.executeJavaScript(
+					`fetch('/file/player',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:${JSON.stringify(body)},credentials:'include'}).then(r=>r.text()).catch(e=>'fetch-error:'+e.message)`
+				);
+
+				let dlText = '';
+				if (!playerHtml.includes('.m3u8') && !playerHtml.includes('.mp4')) {
+					dlText = await hidden.webContents.executeJavaScript(
+						`fetch('/file/share_download?share_key=${shareKey}&fid=${fid}',{credentials:'include'}).then(r=>r.text()).catch(e=>'fetch-error:'+e.message)`
+					);
+				}
+
+				hidden.close();
+				hidden = null;
+				try {
+					server.send({ type: 'get-video-url-result', id: message.id, playerHtml, dlText });
+				} catch {}
+			} catch (e) {
+				if (hidden) try { hidden.close(); } catch {}
+				try {
+					server.send({
+						type: 'get-video-url-result',
+						id: message.id,
+						playerHtml: '',
+						dlText: '',
+						error: e?.message || String(e)
+					});
+				} catch {}
+			}
+		}
+
 		if (message?.type === 'fetch-febbox') {
 			try {
 				const { net } = require('electron');
