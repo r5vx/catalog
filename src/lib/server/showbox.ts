@@ -257,7 +257,8 @@ export async function getStreamUrl(
 			const html = await resp.text();
 			const url = extractVideoUrl(html);
 			if (url) return { url };
-			debug.push(`no url in ${html.length}ch`);
+			const preview = html.length < 300 ? html : `${html.length}ch`;
+			debug.push(`player: ${preview}`);
 		}
 	} catch (e: unknown) {
 		debug.push(`player err: ${(e as Error)?.message ?? e}`);
@@ -300,7 +301,8 @@ async function tryElectronStream(
 	if (r1.status === 200) {
 		const url = extractVideoUrl(r1.body);
 		if (url) return url;
-		debug.push(`e-player no url in ${r1.body.length}ch`);
+		const preview = r1.body.length < 300 ? r1.body : `${r1.body.length}ch`;
+		debug.push(`e-player: ${preview}`);
 	}
 
 	const r2 = await electronFetch(

@@ -89,7 +89,8 @@ function startServer() {
 				const resp = await net.fetch(message.url, {
 					method: message.options?.method ?? 'GET',
 					headers: message.options?.headers,
-					body: message.options?.body
+					body: message.options?.body,
+					credentials: 'include'
 				});
 				const body = await resp.text();
 				try {
@@ -290,12 +291,18 @@ function createWindow() {
 			}
 		}
 
-		// Auto-close: once OAuth redirects back to febbox (not /login), grab
-		// cookies and shut the popup so the user doesn't see the home page.
+		// Only auto-close after the user has been through an external auth
+		// provider (Google) and landed back on febbox — not if the login page
+		// just redirects because of existing cookies.
 		let captured = false;
+		let visitedExternal = false;
 		childWindow.webContents.on('did-navigate', async (_event, url) => {
 			if (captured) return;
-			if (url.includes('febbox.com') && !url.includes('/login')) {
+			if (!url.includes('febbox.com')) {
+				visitedExternal = true;
+				return;
+			}
+			if (visitedExternal && !url.includes('/login')) {
 				captured = true;
 				await captureCookies();
 				childWindow.close();
