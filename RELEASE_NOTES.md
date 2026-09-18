@@ -7,6 +7,18 @@ and stamps it with the version number.
 
 ## Unreleased
 
+- **Theme picker in Personalization.** Choose between System (follows your
+  device), Light, Dark or Black (OLED-friendly). The preview updates live as
+  you pick, and your choice sticks across sessions.
+- **Watch goes straight to the movie.** Clicking ▶ Watch now auto-matches the
+  title on showbox instead of dropping you into a search page.
+- **Log in to febbox from the player bar.** Google sign-in opens in its own
+  window (where Google actually allows it), and your session carries over to
+  the player. Stays logged in across restarts.
+- **Episode sidebar for TV shows.** The player now shows a season/episode list
+  on the side so you can see what's available without navigating febbox's
+  folders. Toggle it with the Episodes button.
+
 ## 1.7.1 — 2026-09-18
 
 - **Watch inside Catalog.** Search results and the detail page now have a ▶

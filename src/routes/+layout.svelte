@@ -9,6 +9,12 @@
 
 	const accent = $derived(data?.accent ?? DEFAULT_ACCENT);
 
+	$effect(() => {
+		const t = data?.theme;
+		if (t) document.documentElement.dataset.theme = t;
+		else delete document.documentElement.dataset.theme;
+	});
+
 	/**
 	 * Only the accent is stored; the shades around it are derived so one colour
 	 * choice stays coherent in both themes. color-mix keeps the tint relative to

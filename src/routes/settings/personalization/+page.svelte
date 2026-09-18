@@ -11,6 +11,21 @@
 	/** What's in the text box, which can be half-typed while you paste. */
 	let typed = $state(untrack(() => data.accent));
 
+	let theme = $state(untrack(() => data.theme));
+
+	const THEMES = [
+		{ value: '', label: 'System', desc: 'Follows your device', bg: '' },
+		{ value: 'light', label: 'Light', desc: 'Bright background', bg: '#f1f3f1' },
+		{ value: 'dark', label: 'Dark', desc: 'Easy on the eyes', bg: '#111614' },
+		{ value: 'black', label: 'Black', desc: 'OLED-friendly', bg: '#000000' }
+	];
+
+	function pickTheme(value: string) {
+		theme = value;
+		if (value) document.documentElement.dataset.theme = value;
+		else delete document.documentElement.dataset.theme;
+	}
+
 	const isHex = (v: string) => /^#[0-9a-f]{6}$/i.test(v.trim());
 
 	function pick(value: string) {
@@ -29,6 +44,40 @@
 <svelte:head><title>Personalization · Catalog</title></svelte:head>
 
 <div class="sections">
+<section>
+	<div class="head"><h2>Theme</h2></div>
+	<p class="muted">Pick the background style.</p>
+
+	{#if form?.themeError}
+		<p class="msg bad" role="alert">{form.themeError}</p>
+	{:else if form?.themeOk}
+		<p class="msg good" role="status">{form.themeOk}</p>
+	{/if}
+
+	<form method="POST" action="?/saveTheme">
+		<input type="hidden" name="theme" value={theme} />
+		<div class="theme-options">
+			{#each THEMES as t (t.value)}
+				<button
+					type="button"
+					class="theme-card"
+					class:picked={theme === t.value}
+					onclick={() => pickTheme(t.value)}
+				>
+					<span
+						class="theme-swatch"
+						class:system={!t.bg}
+						style={t.bg ? `background: ${t.bg}` : ''}
+					></span>
+					<span class="theme-label">{t.label}</span>
+					<span class="theme-desc faint">{t.desc}</span>
+				</button>
+			{/each}
+		</div>
+		<button type="submit" class="btn btn-primary">Save theme</button>
+	</form>
+</section>
+
 <section style="--accent: {accent}">
 	<div class="head"><h2>Colour</h2></div>
 	<p class="muted">Buttons, links and highlights.</p>
@@ -270,5 +319,53 @@
 	.hint code {
 		font-family: var(--mono);
 		font-size: 0.85em;
+	}
+
+	.theme-options {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 10px;
+		margin-bottom: 14px;
+	}
+
+	.theme-card {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 6px;
+		padding: 12px 16px;
+		border: 2px solid var(--rule);
+		border-radius: var(--radius);
+		background: var(--surface);
+		cursor: pointer;
+		min-width: 90px;
+	}
+
+	.theme-card.picked {
+		border-color: var(--accent);
+	}
+
+	.theme-card:hover {
+		border-color: var(--ink-faint);
+	}
+
+	.theme-swatch {
+		width: 44px;
+		height: 30px;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--rule-firm);
+	}
+
+	.theme-swatch.system {
+		background: linear-gradient(135deg, #f1f3f1 50%, #111614 50%);
+	}
+
+	.theme-label {
+		font-size: 0.88rem;
+		font-weight: 600;
+	}
+
+	.theme-desc {
+		font-size: 0.72rem;
 	}
 </style>

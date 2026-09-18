@@ -4,6 +4,8 @@ import { SORTS } from '$lib/constants';
 import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 
+const VALID_THEMES = ['', 'light', 'dark', 'black'];
+
 export const load: PageServerLoad = async () => {
 	const settings = readSettings();
 
@@ -12,7 +14,8 @@ export const load: PageServerLoad = async () => {
 			const saved = settings.accentColor ?? '';
 			return isHexColour(saved) ? saved : DEFAULT_ACCENT;
 		})(),
-		hiddenSorts: (settings.hiddenSorts ?? '').split(',').filter(Boolean)
+		hiddenSorts: (settings.hiddenSorts ?? '').split(',').filter(Boolean),
+		theme: settings.theme ?? ''
 	};
 };
 
@@ -31,6 +34,15 @@ export const actions: Actions = {
 	resetAccent: async () => {
 		updateSettings({ accentColor: DEFAULT_ACCENT });
 		return { accentOk: 'Back to the original colour.' };
+	},
+
+	saveTheme: async ({ request }) => {
+		const theme = String((await request.formData()).get('theme') ?? '');
+		if (!VALID_THEMES.includes(theme)) {
+			return fail(400, { themeError: 'Unknown theme.' });
+		}
+		updateSettings({ theme: theme || undefined });
+		return { themeOk: 'Theme updated.' };
 	},
 
 	/**
