@@ -7,6 +7,8 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 1.7.6 — 2026-09-18
+
 - **Watch actually plays now.** Requests to febbox go through Electron's own
   network stack, which sends real browser cookies — fixes the "Please log in
   first" error that appeared after adding the key system.
