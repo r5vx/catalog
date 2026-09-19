@@ -31,8 +31,6 @@
 	let videoTitle = $state('');
 	let showType = $state<'movie' | 'tv'>('movie');
 	let shareKey = $state('');
-	let hasToken = $state(false);
-	let needsToken = $state(false);
 	let useIframe = $state(false);
 	let iframeFid = $state(0);
 
@@ -138,7 +136,6 @@
 			videoTitle = data.title;
 			showType = data.type;
 			shareKey = data.shareKey;
-			hasToken = data.hasToken;
 
 			if (data.files) {
 				movieFiles = data.files;
@@ -156,12 +153,7 @@
 				streamUrl = data.streamUrl;
 				const activeFile = currentFiles.find((f) => f.fid === data.fid);
 				activeQuality = activeFile?.quality ?? currentFiles[0]?.quality ?? '';
-			} else if (!data.hasToken) {
-				needsToken = true;
-				problem = 'Add your key in Settings → Services to start watching.';
 			} else {
-				// Direct URL failed — fall back to iframe player, which loads
-				// febbox's own page with full browser auth.
 				const defaultFile = pickFile(currentFiles, preferredQuality);
 				if (defaultFile) {
 					useIframe = true;
@@ -296,6 +288,10 @@
 		if (iframeForm) iframeForm.submit();
 	}
 
+	function loginToFebbox() {
+		window.open('https://www.febbox.com/login', '_blank');
+	}
+
 	function backToSearch() {
 		streamUrl = '';
 		videoTitle = '';
@@ -339,6 +335,7 @@
 					onclick={() => (sidebarOpen = !sidebarOpen)}
 				>{sidebarOpen ? 'Hide episodes' : 'Episodes'}</button>
 			{/if}
+			<button type="button" class="bar-btn login-btn" onclick={loginToFebbox}>Log in</button>
 			<a
 				href="/entry/new?q={encodeURIComponent(videoTitle.replace(/ S\d+E\d+$/, ''))}"
 				class="bar-btn add-btn"
@@ -439,13 +436,10 @@
 					<pre class="debug-pre">{debugInfo}</pre>
 				</details>
 			{/if}
-			{#if needsToken}
-				<a href="/settings/services" class="btn btn-primary">Go to Settings</a>
-			{/if}
 		</div>
 	{/if}
 
-	{#if !needsToken && !problem}
+	{#if !problem}
 		<header class="masthead">
 			<h1>Watch</h1>
 		</header>
@@ -740,8 +734,14 @@
 		font-size: 0.78rem;
 	}
 
-	.add-btn {
+	.login-btn {
 		margin-left: auto;
+		color: var(--accent);
+		border-color: var(--accent);
+		font-size: 0.78rem;
+	}
+
+	.add-btn {
 		background: var(--good);
 		color: var(--paper);
 		border-color: var(--good);

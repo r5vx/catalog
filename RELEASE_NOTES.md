@@ -7,15 +7,16 @@ and stamps it with the version number.
 
 ## Unreleased
 
-- **Watch plays through febbox's own player.** When the direct stream URL can't
-  be extracted, Watch loads febbox's player page in an embedded frame — same
-  auth and controls as the real site, with the quality picker and episode
-  sidebar still working around it.
-- **Login popup stays open.** The popup no longer closes before you've finished
-  with Google. It waits for the full OAuth flow, then captures your login and
-  closes.
-- **No search bar on error pages.** When a title can't play, the search UI is
-  hidden.
+## 1.7.9 — 2026-09-19
+
+- **Febbox login actually works now.** Google Sign-In was broken in the desktop
+  app because the credential never made it back from the popup. Catalog now
+  intercepts it and forwards it to febbox's login, so the full flow completes.
+- **Log in from the player bar.** A "Log in" button sits right in the player
+  bar so you don't have to go through Settings first.
+- **Player loads without a saved key.** Watch falls back to the embedded player
+  even before you've logged in — the login button is right there when you
+  need it.
 
 ## 1.7.8 — 2026-09-18
 

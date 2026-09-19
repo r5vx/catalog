@@ -294,7 +294,7 @@ function createWindow() {
 		// A multi-size .ico so Windows picks the right one instead of
 		// squashing a 512px image down to taskbar size.
 		icon: path.join(__dirname, '..', 'build', 'client', 'icon.ico'),
-		webPreferences: { nodeIntegration: false, contextIsolation: true }
+		webPreferences: { nodeIntegration: false, contextIsolation: true, webviewTag: true }
 	});
 
 	window.once('ready-to-show', () => window.show());
@@ -318,7 +318,6 @@ function createWindow() {
 		return { action: 'deny' };
 	});
 
-	// After a febbox login window finishes OAuth, capture cookies and close it.
 	window.webContents.on('did-create-window', (childWindow) => {
 		async function captureCookies() {
 			try {
@@ -342,9 +341,70 @@ function createWindow() {
 			}
 		}
 
-		// Only auto-close after the user has been through an external auth
-		// provider (Google) and landed back on febbox — not if the login page
-		// just redirects because of existing cookies.
+		// Google's Sign-In library sends the credential back to the opener
+		// via window.opener.postMessage(), which Electron doesn't relay
+		// between separate BrowserWindows. To fix this: allow Google popups
+		// from the login window, intercept the credential, and forward it
+		// to febbox's own callback function.
+		childWindow.webContents.setWindowOpenHandler(({ url }) => {
+			if (url.includes('accounts.google.com') || url.includes('google.com/gsi')) {
+				return { action: 'allow' };
+			}
+			return { action: 'deny' };
+		});
+
+		childWindow.webContents.on('did-create-window', (googlePopup) => {
+			function patchOpener() {
+				googlePopup.webContents.executeJavaScript(`
+					if (!window.__cpatch) {
+						window.__cpatch = 1;
+						try {
+							var _real = window.opener;
+							Object.defineProperty(window, 'opener', {
+								get: function() {
+									return {
+										postMessage: function(data, origin) {
+											window.__gcred = JSON.stringify(data);
+											try { if (_real && _real.postMessage) _real.postMessage(data, origin); } catch(e) {}
+										},
+										closed: false,
+										location: { href: 'https://www.febbox.com' }
+									};
+								},
+								configurable: true
+							});
+						} catch(e) {}
+					}
+				`).catch(() => {});
+			}
+
+			googlePopup.webContents.on('did-navigate', patchOpener);
+			googlePopup.webContents.on('did-finish-load', patchOpener);
+
+			const poll = setInterval(async () => {
+				try {
+					const raw = await googlePopup.webContents.executeJavaScript('window.__gcred');
+					if (raw) {
+						clearInterval(poll);
+						const cred = JSON.parse(raw);
+						try {
+							await childWindow.webContents.executeJavaScript(
+								'handleCredentialResponse(' + JSON.stringify(cred) + ')'
+							);
+						} catch (e) {
+							console.error('[app] credential forward failed:', e?.message);
+						}
+						try { googlePopup.close(); } catch {}
+					}
+				} catch {
+					clearInterval(poll);
+				}
+			}, 500);
+
+			setTimeout(() => clearInterval(poll), 120000);
+			googlePopup.on('closed', () => clearInterval(poll));
+		});
+
 		let captured = false;
 		let visitedExternal = false;
 		childWindow.webContents.on('did-navigate', async (_event, url) => {
@@ -360,7 +420,6 @@ function createWindow() {
 			}
 		});
 
-		// Also capture on manual close, in case they close before redirect.
 		childWindow.on('closed', () => {
 			if (!captured) captureCookies();
 		});
@@ -390,6 +449,26 @@ if (!app.requestSingleInstanceLock()) {
 				delete headers['content-security-policy'];
 				delete headers['Content-Security-Policy'];
 				callback({ responseHeaders: headers });
+			}
+		);
+
+		// Inject cookies into febbox requests — the iframe is cross-origin
+		// (parent is http://127.0.0.1), so SameSite policy drops them.
+		session.defaultSession.webRequest.onBeforeSendHeaders(
+			{ urls: ['*://*.febbox.com/*'] },
+			async (details, callback) => {
+				const headers = { ...details.requestHeaders };
+				try {
+					if (!headers['Cookie'] && !headers['cookie']) {
+						const cookies = await session.defaultSession.cookies.get({
+							url: 'https://www.febbox.com'
+						});
+						if (cookies.length) {
+							headers['Cookie'] = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
+						}
+					}
+				} catch {}
+				callback({ requestHeaders: headers });
 			}
 		);
 
