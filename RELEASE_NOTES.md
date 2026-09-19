@@ -7,6 +7,17 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 1.7.9 — 2026-09-19
+
+- **Febbox login actually works now.** Google Sign-In was broken in the desktop
+  app because the credential never made it back from the popup. Catalog now
+  intercepts it and forwards it to febbox's login, so the full flow completes.
+- **Log in from the player bar.** A "Log in" button sits right in the player
+  bar so you don't have to go through Settings first.
+- **Player loads without a saved key.** Watch falls back to the embedded player
+  even before you've logged in — the login button is right there when you
+  need it.
+
 ## 1.7.8 — 2026-09-18
 
 - **Watch fix (for real this time).** Video requests to febbox now run inside a

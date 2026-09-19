@@ -31,8 +31,8 @@
 	let videoTitle = $state('');
 	let showType = $state<'movie' | 'tv'>('movie');
 	let shareKey = $state('');
-	let hasToken = $state(false);
-	let needsToken = $state(false);
+	let useIframe = $state(false);
+	let iframeFid = $state(0);
 
 	let movieFiles = $state<FileOption[]>([]);
 	let episodes = $state<Episode[]>([]);
@@ -55,6 +55,7 @@
 
 	let searchTimer: ReturnType<typeof setTimeout>;
 	let videoEl: HTMLVideoElement | undefined = $state();
+	let iframeForm: HTMLFormElement | undefined = $state();
 
 	const seasonEpisodes = $derived(episodes.filter((ep) => ep.season === activeSeason));
 
@@ -67,6 +68,16 @@
 			(a, b) => parseInt(b) - parseInt(a)
 		)
 	);
+
+	let iframeReady = $state(false);
+
+	$effect(() => {
+		if (useIframe && iframeForm && iframeFid && !iframeReady) {
+			iframeReady = true;
+			// Tick delay so the iframe element is in the DOM
+			setTimeout(() => iframeForm?.submit(), 0);
+		}
+	});
 
 	onMount(async () => {
 		const title = page.url.searchParams.get('title');
@@ -125,7 +136,6 @@
 			videoTitle = data.title;
 			showType = data.type;
 			shareKey = data.shareKey;
-			hasToken = data.hasToken;
 
 			if (data.files) {
 				movieFiles = data.files;
@@ -143,12 +153,15 @@
 				streamUrl = data.streamUrl;
 				const activeFile = currentFiles.find((f) => f.fid === data.fid);
 				activeQuality = activeFile?.quality ?? currentFiles[0]?.quality ?? '';
-			} else if (!data.hasToken) {
-				needsToken = true;
-				problem = 'Add your key in Settings → Services to start watching.';
 			} else {
-				problem = 'Could not get a playable link for this title.';
-				if (data.debug) debugInfo = data.debug;
+				const defaultFile = pickFile(currentFiles, preferredQuality);
+				if (defaultFile) {
+					useIframe = true;
+					iframeFid = defaultFile.fid;
+					activeQuality = defaultFile.quality;
+				} else {
+					problem = 'No video file found for this title.';
+				}
 			}
 		} catch {
 			problem = 'Could not load that title. Try again in a moment.';
@@ -161,8 +174,16 @@
 		const file = pickFile(currentFiles, quality);
 		if (!file || file.fid === (currentFiles.find((f) => f.quality === activeQuality)?.fid)) return;
 
-		changingQuality = true;
 		preferredQuality = quality;
+
+		if (useIframe) {
+			iframeFid = file.fid;
+			activeQuality = quality;
+			submitIframe();
+			return;
+		}
+
+		changingQuality = true;
 
 		try {
 			const resp = await fetch(`/api/watch/stream?share_key=${shareKey}&fid=${file.fid}`);
@@ -185,7 +206,6 @@
 
 	async function playEpisode(ep: Episode) {
 		if (loadingEpisode || ep === activeEpisode) return;
-		loadingEpisode = true;
 		activeEpisode = ep;
 		problem = '';
 
@@ -194,9 +214,18 @@
 
 		if (!file) {
 			problem = 'No video file for that episode.';
-			loadingEpisode = false;
 			return;
 		}
+
+		if (useIframe) {
+			iframeFid = file.fid;
+			activeQuality = file.quality;
+			videoTitle = `${baseTitle} S${ep.season}E${ep.episode}`;
+			submitIframe();
+			return;
+		}
+
+		loadingEpisode = true;
 
 		try {
 			const resp = await fetch(`/api/watch/stream?share_key=${shareKey}&fid=${file.fid}`);
@@ -255,6 +284,14 @@
 		resolving = false;
 	}
 
+	function submitIframe() {
+		if (iframeForm) iframeForm.submit();
+	}
+
+	function loginToFebbox() {
+		window.open('https://www.febbox.com/login', '_blank');
+	}
+
 	function backToSearch() {
 		streamUrl = '';
 		videoTitle = '';
@@ -264,13 +301,16 @@
 		seasons = [];
 		movieFiles = [];
 		activeEpisode = null;
+		useIframe = false;
+		iframeFid = 0;
+		iframeReady = false;
 		loading = false;
 	}
 </script>
 
 <svelte:head><title>{videoTitle ? `${videoTitle} · ` : ''}Watch · Catalog</title></svelte:head>
 
-{#if streamUrl}
+{#if streamUrl || useIframe}
 	<div class="player-page" class:has-sidebar={showType === 'tv' && seasons.length > 0 && sidebarOpen}>
 		<div class="player-bar">
 			<button type="button" class="bar-btn" onclick={backToSearch}>&larr; Back</button>
@@ -295,6 +335,7 @@
 					onclick={() => (sidebarOpen = !sidebarOpen)}
 				>{sidebarOpen ? 'Hide episodes' : 'Episodes'}</button>
 			{/if}
+			<button type="button" class="bar-btn login-btn" onclick={loginToFebbox}>Log in</button>
 			<a
 				href="/entry/new?q={encodeURIComponent(videoTitle.replace(/ S\d+E\d+$/, ''))}"
 				class="bar-btn add-btn"
@@ -342,19 +383,38 @@
 			{/if}
 
 			<div class="player">
-				{#if loadingEpisode || changingQuality}
-					<p class="player-status">{changingQuality ? 'Switching quality…' : 'Loading episode…'}</p>
+				{#if useIframe}
+					<iframe
+						name="player-frame"
+						title="Video player"
+						class="player-iframe"
+						sandbox="allow-scripts allow-same-origin allow-forms"
+					></iframe>
+					<form
+						bind:this={iframeForm}
+						method="POST"
+						action="https://www.febbox.com/file/player"
+						target="player-frame"
+						class="hidden-form"
+					>
+						<input type="hidden" name="fid" value={iframeFid} />
+						<input type="hidden" name="share_key" value={shareKey} />
+					</form>
+				{:else}
+					{#if loadingEpisode || changingQuality}
+						<p class="player-status">{changingQuality ? 'Switching quality…' : 'Loading episode…'}</p>
+					{/if}
+					<!-- svelte-ignore a11y_media_has_caption -->
+					<video
+						bind:this={videoEl}
+						src={streamUrl}
+						controls
+						autoplay
+						class:buffering={loadingEpisode || changingQuality}
+					>
+						Your browser doesn't support video playback.
+					</video>
 				{/if}
-				<!-- svelte-ignore a11y_media_has_caption -->
-				<video
-					bind:this={videoEl}
-					src={streamUrl}
-					controls
-					autoplay
-					class:buffering={loadingEpisode || changingQuality}
-				>
-					Your browser doesn't support video playback.
-				</video>
 			</div>
 		</div>
 	</div>
@@ -376,13 +436,10 @@
 					<pre class="debug-pre">{debugInfo}</pre>
 				</details>
 			{/if}
-			{#if needsToken}
-				<a href="/settings/services" class="btn btn-primary">Go to Settings</a>
-			{/if}
 		</div>
 	{/if}
 
-	{#if !needsToken && !problem}
+	{#if !problem}
 		<header class="masthead">
 			<h1>Watch</h1>
 		</header>
@@ -677,8 +734,14 @@
 		font-size: 0.78rem;
 	}
 
-	.add-btn {
+	.login-btn {
 		margin-left: auto;
+		color: var(--accent);
+		border-color: var(--accent);
+		font-size: 0.78rem;
+	}
+
+	.add-btn {
 		background: var(--good);
 		color: var(--paper);
 		border-color: var(--good);
@@ -862,11 +925,17 @@
 		justify-content: center;
 	}
 
-	.player video {
+	.player video,
+	.player-iframe {
 		width: 100%;
 		height: 100%;
 		display: block;
 		outline: none;
+		border: none;
+	}
+
+	.hidden-form {
+		display: none;
 	}
 
 	.player video.buffering {
