@@ -9,7 +9,16 @@ import {
 	bestMatch
 } from '$lib/server/showbox';
 import { readSettings } from '$lib/server/settings';
+import { findEntryByTitle } from '$lib/server/db/queries';
+import { fetchAlternativeTitles } from '$lib/server/metadata/tmdb';
+import { fetchRomajiTitle } from '$lib/server/metadata/anilist';
 import type { RequestHandler } from './$types';
+
+async function findOnShowbox(title: string, type: string, year: string) {
+	const results = await searchShowbox(title);
+	if (!results.length) return null;
+	return bestMatch(results, title, type, year);
+}
 
 export const GET: RequestHandler = async ({ url }) => {
 	const title = url.searchParams.get('title')?.trim();
@@ -18,10 +27,23 @@ export const GET: RequestHandler = async ({ url }) => {
 
 	if (!title) return error(400, 'Missing title');
 
-	const results = await searchShowbox(title);
-	if (!results.length) return json({ error: 'not_found' });
+	let match = await findOnShowbox(title, type, year);
 
-	const match = bestMatch(results, title, type, year);
+	if (!match) {
+		const altTitles: string[] = [];
+		const tmdbType = type === 'movie' ? 'movie' as const : 'tv' as const;
+		const tmdbAlts = await fetchAlternativeTitles(title, tmdbType);
+		altTitles.push(...tmdbAlts);
+		if (type === 'tv' || !type) {
+			const romaji = await fetchRomajiTitle(title);
+			if (romaji && !altTitles.includes(romaji)) altTitles.push(romaji);
+		}
+		for (const alt of altTitles) {
+			match = await findOnShowbox(alt, type, year);
+			if (match) break;
+		}
+	}
+
 	if (!match) return json({ error: 'not_found' });
 
 	const link = await getFebboxLink(match.id, match.type);
@@ -31,6 +53,8 @@ export const GET: RequestHandler = async ({ url }) => {
 	if (!shareKey) return json({ error: 'no_link' });
 
 	const { febboxToken } = readSettings();
+
+	const libraryEntry = findEntryByTitle(match.title);
 
 	if (match.type === 'tv') {
 		const episodeData = await listEpisodes(link);
@@ -54,7 +78,8 @@ export const GET: RequestHandler = async ({ url }) => {
 			fid: firstFile?.fid ?? 0,
 			hasToken: Boolean(febboxToken),
 			episodes: episodeData,
-			debug: streamDebug
+			debug: streamDebug,
+			libraryEntry
 		});
 	}
 
@@ -83,6 +108,7 @@ export const GET: RequestHandler = async ({ url }) => {
 		fid: defaultFile.fid,
 		hasToken: Boolean(febboxToken),
 		files,
-		debug: streamDebug
+		debug: streamDebug,
+		libraryEntry
 	});
 };

@@ -135,6 +135,32 @@
 	});
 
 	const downloading = $derived(release.status === 'downloading');
+
+	let expandedVersions = $state<Set<string>>(new Set());
+
+	function toggleVersion(version: string) {
+		const next = new Set(expandedVersions);
+		if (next.has(version)) next.delete(version);
+		else next.add(version);
+		expandedVersions = next;
+	}
+
+	function isOpen(version: string, index: number): boolean {
+		if (expandedVersions.has(version)) return true;
+		return index < 3 && !expandedVersions.has(version + '__closed');
+	}
+
+	function toggle(version: string, index: number) {
+		const next = new Set(expandedVersions);
+		if (isOpen(version, index)) {
+			next.delete(version);
+			if (index < 3) next.add(version + '__closed');
+		} else {
+			next.add(version);
+			next.delete(version + '__closed');
+		}
+		expandedVersions = next;
+	}
 </script>
 
 <svelte:head><title>Updates · Catalog</title></svelte:head>
@@ -218,22 +244,28 @@
 		<section class="changes">
 			<div class="head"><h2>What's new</h2></div>
 
-			{#each data.releases.slice(0, 6) as release (release.version)}
-				<article>
-					<h3>
-						{release.version}
-						{#if release.version === data.appVersion}<span class="pill completed">Yours</span>{/if}
-						{#if release.date}<span class="when faint tabular">{release.date}</span>{/if}
-					</h3>
-					<ul>
-						{#each release.bullets as bullet, index (index)}
-							<li>
-								{#each bullet as run, part (part)}
-									{#if run.bold}<strong>{run.text}</strong>{:else}{run.text}{/if}
-								{/each}
-							</li>
-						{/each}
-					</ul>
+			{#each data.releases as rel, i (rel.version)}
+				{@const open = isOpen(rel.version, i)}
+				<article class="release" class:collapsed={!open}>
+					<button class="release-toggle" onclick={() => toggle(rel.version, i)}>
+						<svg class="chevron" class:open viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>
+						<span class="release-title">
+							{rel.version}
+							{#if rel.version === data.appVersion}<span class="pill completed">Yours</span>{/if}
+						</span>
+						{#if rel.date}<span class="when faint tabular">{rel.date}</span>{/if}
+					</button>
+					{#if open}
+						<ul>
+							{#each rel.bullets as bullet, index (index)}
+								<li>
+									{#each bullet as run, part (part)}
+										{#if run.bold}<strong>{run.text}</strong>{:else}{run.text}{/if}
+									{/each}
+								</li>
+							{/each}
+						</ul>
+					{/if}
 				</article>
 			{/each}
 		</section>
@@ -352,30 +384,56 @@
 		font-size: 1.1rem;
 	}
 
-	.changes article {
+	.release {
 		width: 100%;
-		padding: 16px 0;
 		border-bottom: 1px solid var(--rule);
 	}
 
-	.changes article:last-child {
+	.release:last-child {
 		border-bottom: none;
 	}
 
-	h3 {
-		font-family: var(--body);
-		font-size: 0.95rem;
-		font-weight: 700;
-		margin: 0 0 6px;
+	.release-toggle {
+		width: 100%;
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		flex-wrap: wrap;
+		padding: 14px 0;
+		background: none;
+		border: none;
+		cursor: pointer;
+		color: inherit;
+		font: inherit;
+		text-align: left;
+	}
+
+	.release-toggle:hover {
+		opacity: 0.8;
+	}
+
+	.chevron {
+		flex: none;
+		transition: transform 0.2s ease;
+		transform: rotate(-90deg);
+		opacity: 0.5;
+	}
+
+	.chevron.open {
+		transform: rotate(0deg);
+	}
+
+	.release-title {
+		font-size: 0.95rem;
+		font-weight: 700;
+		display: flex;
+		align-items: center;
+		gap: 8px;
 	}
 
 	.when {
 		font-size: 0.78rem;
 		font-weight: 400;
+		margin-left: auto;
 	}
 
 	.changes ul {

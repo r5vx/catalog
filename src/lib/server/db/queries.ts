@@ -533,3 +533,76 @@ export function entryIdForSource(source: string, sourceId: string): number | nul
 
 	return row?.id ?? null;
 }
+
+export function findEntryByTitle(title: string): { id: number; status: string } | null {
+	const row = db
+		.prepare('SELECT id, status FROM entries WHERE title = ? COLLATE NOCASE LIMIT 1')
+		.get(title) as { id: number; status: string } | undefined;
+	return row ? { ...row } : null;
+}
+
+export interface WatchProgress {
+	title: string;
+	type: string;
+	season: number;
+	episode: number;
+	currentTime: number;
+	duration: number;
+	subUrl: string;
+	subDelay: number;
+	subFileName: string;
+}
+
+export function saveWatchProgress(
+	title: string,
+	type: string,
+	season: number,
+	episode: number,
+	currentTime: number,
+	duration: number,
+	subUrl?: string,
+	subDelay?: number,
+	subFileName?: string
+): void {
+	db.prepare(`
+		INSERT INTO watch_progress (title, type, season, episode, current_time, duration, sub_url, sub_delay, sub_file_name, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		ON CONFLICT (title, type, season, episode)
+		DO UPDATE SET current_time = excluded.current_time, duration = excluded.duration,
+			sub_url = excluded.sub_url, sub_delay = excluded.sub_delay, sub_file_name = excluded.sub_file_name,
+			updated_at = excluded.updated_at
+	`).run(title, type, season, episode, currentTime, duration, subUrl ?? '', subDelay ?? 0, subFileName ?? '');
+}
+
+export function getWatchProgress(
+	title: string,
+	type: string,
+	season: number,
+	episode: number
+): WatchProgress | null {
+	const row = db
+		.prepare('SELECT title, type, season, episode, "current_time" AS currentTime, duration, sub_url AS subUrl, sub_delay AS subDelay, sub_file_name AS subFileName FROM watch_progress WHERE title = ? AND type = ? AND season = ? AND episode = ?')
+		.get(title, type, season, episode) as WatchProgress | undefined;
+	return row ? { ...row } : null;
+}
+
+export function listAllWatchProgress(): (WatchProgress & { updatedAt: string })[] {
+	return db
+		.prepare('SELECT title, type, season, episode, "current_time" AS currentTime, duration, updated_at AS updatedAt FROM watch_progress ORDER BY updated_at DESC LIMIT 50')
+		.all() as unknown as (WatchProgress & { updatedAt: string })[];
+}
+
+export function clearAllWatchProgress(): void {
+	db.prepare('DELETE FROM watch_progress').run();
+}
+
+export function deleteWatchProgress(title: string, type: string, season: number, episode: number): void {
+	db.prepare('DELETE FROM watch_progress WHERE title = ? AND type = ? AND season = ? AND episode = ?')
+		.run(title, type, season, episode);
+}
+
+export function listAllWatchProgressFull(): (WatchProgress & { updatedAt: string })[] {
+	return db
+		.prepare('SELECT title, type, season, episode, "current_time" AS currentTime, duration, sub_url AS subUrl, sub_delay AS subDelay, sub_file_name AS subFileName, updated_at AS updatedAt FROM watch_progress ORDER BY updated_at DESC')
+		.all() as unknown as (WatchProgress & { updatedAt: string })[];
+}

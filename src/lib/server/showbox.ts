@@ -1,4 +1,4 @@
-import { electronFetch, electronGetVideoUrl } from './electron-fetch';
+import { electronFetch, electronGetVideoUrl, electronGetSubtitles } from './electron-fetch';
 
 const BASE = 'https://showbox.media';
 
@@ -28,45 +28,92 @@ export interface ShowboxResult {
 	info: string;
 }
 
-export async function searchShowbox(query: string): Promise<ShowboxResult[]> {
-	const resp = await fetch(`${BASE}/search/autocomplate2`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-		body: `keyword=${encodeURIComponent(query)}`
-	});
-
-	if (!resp.ok) return [];
-
-	const html = await resp.text();
-	const results: ShowboxResult[] = [];
-	const linkPattern = /<a\s+href="\/(?<kind>tv|movie)\/detail\/(?<id>\d+)"[\s\S]*?<\/a>/g;
-
-	for (const match of html.matchAll(linkPattern)) {
-		const kind = match.groups!.kind as 'tv' | 'movie';
-		const id = Number(match.groups!.id);
-		const block = match[0];
-
-		const titleMatch = block.match(/class="film-name"[^>]*>([^<]+)/);
-		const posterMatch = block.match(/src="([^"]+)"/);
-		const infoMatch = block.match(/class="film-infor"[^>]*>([\s\S]*?)<\/div>/);
-
-		const infoText = infoMatch
-			? infoMatch[1]
-					.replace(/<[^>]+>/g, ' ')
-					.replace(/\s+/g, ' ')
-					.trim()
-			: '';
-
-		results.push({
-			id,
-			type: kind,
-			title: titleMatch?.[1]?.trim() ?? '',
-			posterUrl: posterMatch?.[1] ?? '',
-			info: infoText
+async function rawSearch(keyword: string): Promise<ShowboxResult[]> {
+	try {
+		const resp = await fetch(`${BASE}/search/autocomplate2`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: `keyword=${encodeURIComponent(keyword)}`,
+			signal: AbortSignal.timeout(10000)
 		});
+
+		if (!resp.ok) return [];
+
+		const html = await resp.text();
+		const results: ShowboxResult[] = [];
+		const linkPattern = /<a\s+href="\/(?<kind>tv|movie)\/detail\/(?<id>\d+)"[\s\S]*?<\/a>/g;
+
+		for (const match of html.matchAll(linkPattern)) {
+			const kind = match.groups!.kind as 'tv' | 'movie';
+			const id = Number(match.groups!.id);
+			const block = match[0];
+
+			const titleMatch = block.match(/class="film-name"[^>]*>([^<]+)/);
+			const posterMatch = block.match(/src="([^"]+)"/);
+			const infoMatch = block.match(/class="film-infor"[^>]*>([\s\S]*?)<\/div>/);
+
+			const infoText = infoMatch
+				? infoMatch[1]
+						.replace(/<[^>]+>/g, ' ')
+						.replace(/\s+/g, ' ')
+						.trim()
+				: '';
+
+			results.push({
+				id,
+				type: kind,
+				title: titleMatch?.[1]?.trim() ?? '',
+				posterUrl: posterMatch?.[1] ?? '',
+				info: infoText
+			});
+		}
+
+		return results;
+	} catch {
+		return [];
+	}
+}
+
+export async function searchShowbox(query: string): Promise<ShowboxResult[]> {
+	const results = await rawSearch(query);
+	if (results.length > 0) return results;
+
+	const seen = new Set<number>();
+	const merged: ShowboxResult[] = [];
+	const addResults = (rs: ShowboxResult[]) => {
+		for (const r of rs) {
+			if (seen.has(r.id)) continue;
+			seen.add(r.id);
+			merged.push(r);
+		}
+	};
+
+	if (query.includes(':') || query.includes(' - ')) {
+		const parts = query.split(/[:–—]\s*/).map((s) => s.trim()).filter(Boolean);
+		for (const part of parts) {
+			addResults(await rawSearch(part));
+			if (merged.length > 0) return merged;
+		}
 	}
 
-	return results;
+	const words = query.split(/\s+/).filter((w) => w.length > 0);
+	if (words.length <= 1) return merged.length > 0 ? merged : [];
+
+	const tries: string[] = [];
+	if (words.length > 2) {
+		tries.push(words.slice(1).join(' '));
+		tries.push(words.slice(0, -1).join(' '));
+	}
+	if (words.length > 3) tries.push(words.slice(0, 3).join(' '));
+	tries.push(words.slice(0, 2).join(' '));
+	if (words.length > 2) tries.push(words.slice(-2).join(' '));
+
+	for (const t of tries) {
+		addResults(await rawSearch(t));
+		if (merged.length > 0) return merged;
+	}
+
+	return [];
 }
 
 export async function getFebboxLink(id: number, type: 'movie' | 'tv'): Promise<string | null> {
@@ -88,7 +135,7 @@ export interface FebboxFile {
 }
 
 export function extractShareKey(url: string): string | null {
-	const m = url.match(/\/share\/([A-Za-z0-9]+)/);
+	const m = url.match(/\/share\/([A-Za-z0-9_\-]+)/);
 	return m?.[1] ?? null;
 }
 
@@ -341,6 +388,175 @@ function tryParseDownloadUrl(text: string): string | null {
 	return null;
 }
 
+/* -------------------------------------------------------- subtitles */
+
+const SUBTITLE_EXTS = /\.(srt|ass|sub|vtt|ssa)$/i;
+
+export interface SubtitleOption {
+	fid: number;
+	name: string;
+	language: string;
+}
+
+const LANG_MAP: Record<string, string> = {
+	eng: 'English', en: 'English', english: 'English',
+	spa: 'Spanish', es: 'Spanish', spanish: 'Spanish',
+	fre: 'French', fr: 'French', french: 'French',
+	ger: 'German', de: 'German', german: 'German',
+	ita: 'Italian', it: 'Italian', italian: 'Italian',
+	por: 'Portuguese', pt: 'Portuguese', portuguese: 'Portuguese',
+	jpn: 'Japanese', ja: 'Japanese', japanese: 'Japanese',
+	kor: 'Korean', ko: 'Korean', korean: 'Korean',
+	chi: 'Chinese', zh: 'Chinese', chinese: 'Chinese',
+	ara: 'Arabic', ar: 'Arabic', arabic: 'Arabic',
+	rus: 'Russian', ru: 'Russian', russian: 'Russian',
+	hin: 'Hindi', hi: 'Hindi', hindi: 'Hindi',
+	dut: 'Dutch', nl: 'Dutch', dutch: 'Dutch',
+	pol: 'Polish', pl: 'Polish', polish: 'Polish',
+	tur: 'Turkish', tr: 'Turkish', turkish: 'Turkish',
+	swe: 'Swedish', sv: 'Swedish', swedish: 'Swedish',
+	nor: 'Norwegian', no: 'Norwegian', norwegian: 'Norwegian',
+	dan: 'Danish', da: 'Danish', danish: 'Danish',
+	fin: 'Finnish', fi: 'Finnish', finnish: 'Finnish',
+	gre: 'Greek', el: 'Greek', greek: 'Greek',
+	heb: 'Hebrew', he: 'Hebrew', hebrew: 'Hebrew',
+	hun: 'Hungarian', hu: 'Hungarian', hungarian: 'Hungarian',
+	cze: 'Czech', cs: 'Czech', czech: 'Czech',
+	rum: 'Romanian', ro: 'Romanian', romanian: 'Romanian',
+};
+
+function detectLanguage(filename: string): string {
+	const base = filename.replace(SUBTITLE_EXTS, '');
+	const parts = base.split(/[.\-_\s]/);
+	for (let i = parts.length - 1; i >= 0; i--) {
+		const lower = parts[i].toLowerCase();
+		if (LANG_MAP[lower]) return LANG_MAP[lower];
+	}
+	return 'Unknown';
+}
+
+export async function findSubtitles(
+	shareUrl: string,
+	parentId = 0
+): Promise<SubtitleOption[]> {
+	const files = await listFebboxFiles(shareUrl, parentId);
+	const subs: SubtitleOption[] = [];
+
+	for (const f of files) {
+		if (!f.isDir && SUBTITLE_EXTS.test(f.name)) {
+			subs.push({ fid: f.fid, name: f.name, language: detectLanguage(f.name) });
+		}
+	}
+
+	if (!subs.length) {
+		const subDirs = files.filter(
+			(f) => f.isDir && /^(subs?|subtitles?)$/i.test(f.name)
+		);
+		for (const dir of subDirs) {
+			const inner = await listFebboxFiles(shareUrl, dir.fid);
+			for (const f of inner) {
+				if (!f.isDir && SUBTITLE_EXTS.test(f.name)) {
+					subs.push({ fid: f.fid, name: f.name, language: detectLanguage(f.name) });
+				}
+			}
+		}
+	}
+
+	return subs;
+}
+
+export async function fetchFebboxSubtitles(
+	shareKey: string,
+	fid: number
+): Promise<SubtitleOption[]> {
+	const result = await electronGetSubtitles(shareKey, fid);
+	if (result.error || !result.data) return [];
+
+	try {
+		const data = JSON.parse(result.data);
+		const list = data?.data?.list ?? data?.data ?? [];
+		if (!Array.isArray(list) || !list.length) return [];
+
+		return list
+			.map((s: Record<string, unknown>) => ({
+				fid: Number(s.sid ?? s.id ?? s.fid ?? 0),
+				name: String(s.file_name ?? s.name ?? s.title ?? ''),
+				language: String(
+					s.language ?? s.lang ?? detectLanguage(String(s.file_name ?? s.name ?? ''))
+				)
+			}))
+			.filter((s: SubtitleOption) => s.name);
+	} catch {
+		return [];
+	}
+}
+
+export async function downloadSubtitleContent(
+	shareKey: string,
+	fid: number,
+	token: string
+): Promise<string> {
+	let downloadUrl = '';
+
+	const eResp = await electronFetch(
+		`https://www.febbox.com/file/share_download?share_key=${shareKey}&fid=${fid}`
+	);
+	if (!eResp.error && eResp.status === 200) {
+		try {
+			const data = JSON.parse(eResp.body);
+			downloadUrl = data?.data?.download_url ?? data?.data?.url ?? data?.data?.link ?? '';
+		} catch {}
+	}
+
+	if (!downloadUrl && token) {
+		try {
+			const resp = await fetch(
+				`https://www.febbox.com/file/share_download?share_key=${shareKey}&fid=${fid}`,
+				{
+					headers: {
+						Cookie: token,
+						'User-Agent':
+							'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+						Referer: 'https://www.febbox.com/'
+					},
+					signal: AbortSignal.timeout(10000)
+				}
+			);
+			if (resp.ok) {
+				const data = await resp.json();
+				downloadUrl = data?.data?.download_url ?? data?.data?.url ?? data?.data?.link ?? '';
+			}
+		} catch {}
+	}
+
+	if (!downloadUrl) return '';
+
+	try {
+		const resp = await fetch(downloadUrl, {
+			headers: { Referer: 'https://www.febbox.com/' },
+			signal: AbortSignal.timeout(10000)
+		});
+		if (!resp.ok) return '';
+		return await resp.text();
+	} catch {
+		return '';
+	}
+}
+
+function titleWords(s: string): string[] {
+	return s.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter((w) => w.length > 1);
+}
+
+function wordOverlap(a: string[], b: string[]): number {
+	const setB = new Set(b);
+	return a.filter((w) => setB.has(w)).length;
+}
+
+function extractYear(info: string): string | null {
+	const m = info.match(/\b(19|20)\d{2}\b/);
+	return m ? m[0] : null;
+}
+
 export function bestMatch(
 	items: ShowboxResult[],
 	query: string,
@@ -349,6 +565,7 @@ export function bestMatch(
 ): ShowboxResult | null {
 	if (!items.length) return null;
 	const want = query.toLowerCase().trim();
+	const wantWords = titleWords(query);
 
 	for (const r of items) {
 		const t = r.title.toLowerCase();
@@ -356,14 +573,39 @@ export function bestMatch(
 			return r;
 	}
 
+	if (!wantYear) {
+		for (const r of items) {
+			if (r.title.toLowerCase() === want && (!wantType || r.type === wantType)) return r;
+		}
+	}
+
+	let best: ShowboxResult | null = null;
+	let bestScore = 0;
 	for (const r of items) {
-		if (r.title.toLowerCase() === want && (!wantType || r.type === wantType)) return r;
+		if (wantType && r.type !== wantType) continue;
+		const t = r.title.toLowerCase();
+		const rWords = titleWords(r.title);
+		const overlap = wordOverlap(wantWords, rWords);
+		const coverage = wantWords.length > 0 ? overlap / wantWords.length : 0;
+		const reverseCoverage = rWords.length > 0 ? overlap / rWords.length : 0;
+		let score = Math.min(coverage, reverseCoverage + 0.2);
+		if (t.includes(want) || want.includes(t)) score = Math.max(score, 0.9);
+		if (wantYear) {
+			const resultYear = extractYear(r.info);
+			if (r.info.includes(wantYear)) {
+				score += 0.15;
+			} else if (resultYear && resultYear !== wantYear) {
+				score -= 0.4;
+			} else if (!resultYear) {
+				score -= 0.2;
+			}
+		}
+		if (score > bestScore) {
+			bestScore = score;
+			best = r;
+		}
 	}
 
-	if (wantType) {
-		const typed = items.filter((r) => r.type === wantType);
-		if (typed.length) return typed[0];
-	}
-
-	return items[0];
+	if (best && bestScore >= 0.6) return best;
+	return null;
 }

@@ -134,6 +134,118 @@ function startServer() {
 			}
 		}
 
+		if (message?.type === 'get-subtitles') {
+			let hidden;
+			try {
+				hidden = new BrowserWindow({
+					show: false,
+					width: 400,
+					height: 300,
+					webPreferences: { nodeIntegration: false, contextIsolation: true }
+				});
+
+				const ready = new Promise((resolve) => {
+					hidden.webContents.on('dom-ready', resolve);
+					setTimeout(resolve, 10000);
+				});
+				hidden.loadURL('https://www.febbox.com');
+				await ready;
+
+				const fid = Number(message.fid);
+				const shareKey = String(message.shareKey);
+
+				const raw = await hidden.webContents.executeJavaScript(`
+					(async function() {
+						var endpoints = [
+							{ url: '/file/subtitle_list', method: 'POST', body: 'fid=${fid}&share_key=${shareKey}' },
+							{ url: '/file/subtitle/list', method: 'POST', body: 'fid=${fid}&share_key=${shareKey}' },
+							{ url: '/file/subtitle?fid=${fid}&share_key=${shareKey}', method: 'GET' }
+						];
+						for (var i = 0; i < endpoints.length; i++) {
+							try {
+								var ep = endpoints[i];
+								var opts = { method: ep.method, credentials: 'include' };
+								if (ep.body) {
+									opts.headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
+									opts.body = ep.body;
+								}
+								var resp = await fetch(ep.url, opts);
+								if (resp.ok) {
+									var text = await resp.text();
+									if (text && text.length > 2 && text[0] === '{') return text;
+								}
+							} catch(e) {}
+						}
+						return '';
+					})()
+				`);
+
+				hidden.close();
+				hidden = null;
+				try {
+					server.send({ type: 'get-subtitles-result', id: message.id, data: raw || '' });
+				} catch {}
+			} catch (e) {
+				if (hidden) try { hidden.close(); } catch {}
+				try {
+					server.send({
+						type: 'get-subtitles-result',
+						id: message.id,
+						data: '',
+						error: e?.message || String(e)
+					});
+				} catch {}
+			}
+		}
+
+		if (message?.type === 'debug-cookies') {
+			try {
+				const allCookies = await session.defaultSession.cookies.get({});
+				const febCookies = allCookies
+					.filter((c) => c.domain && c.domain.includes('febbox'))
+					.map((c) => ({
+						name: c.name,
+						domain: c.domain,
+						path: c.path,
+						secure: c.secure,
+						httpOnly: c.httpOnly,
+						sameSite: c.sameSite,
+						valueLen: c.value?.length ?? 0
+					}));
+				try {
+					server.send({ type: 'debug-cookies-result', id: message.id, cookies: febCookies });
+				} catch {}
+			} catch (e) {
+				try {
+					server.send({ type: 'debug-cookies-result', id: message.id, cookies: [], error: e?.message || String(e) });
+				} catch {}
+			}
+		}
+
+		if (message?.type === 'sync-cookies') {
+			try {
+				const allCookies = await session.defaultSession.cookies.get({});
+				const febCookies = allCookies.filter(
+					(c) => c.domain && c.domain.includes('febbox')
+				);
+				const token = febCookies.length
+					? febCookies.map((c) => `${c.name}=${c.value}`).join('; ')
+					: '';
+				try {
+					server.send({ type: 'sync-cookies-result', id: message.id, token });
+				} catch {}
+			} catch (e) {
+				try {
+					server.send({
+						type: 'sync-cookies-result',
+						id: message.id,
+						token: '',
+						error: e?.message || String(e)
+					});
+				} catch {}
+			}
+		}
+
 		if (message?.type === 'fetch-febbox') {
 			try {
 				const { net } = require('electron');
@@ -318,12 +430,55 @@ function createWindow() {
 		return { action: 'deny' };
 	});
 
-	window.webContents.on('did-create-window', (childWindow) => {
+	window.webContents.on('did-create-window', async (childWindow) => {
+		// Use a regular Chrome User-Agent — Electron's default UA contains
+		// "Electron/38" which some sites (including Google OAuth) reject.
+		const chromeUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36';
+		childWindow.webContents.setUserAgent(chromeUA);
+
+		// Clear stale febbox cookies so the OAuth flow starts clean.
+		try {
+			const stale = await session.defaultSession.cookies.get({});
+			for (const c of stale) {
+				if (c.domain && c.domain.includes('febbox')) {
+					const scheme = c.secure ? 'https' : 'http';
+					const dom = c.domain.startsWith('.') ? c.domain.slice(1) : c.domain;
+					await session.defaultSession.cookies.remove(`${scheme}://${dom}${c.path}`, c.name).catch(() => {});
+				}
+			}
+			console.log('[login] cleared stale febbox cookies');
+		} catch {}
+
+		// Diagnostic logging — every navigation and cookie change is
+		// recorded so we can see exactly where the OAuth flow breaks.
+		const navLog = [];
+		const cookieChanges = [];
+
+		childWindow.webContents.on('did-navigate', (_e, url, httpCode) => {
+			navLog.push({ url: url.substring(0, 120), status: httpCode });
+			console.log(`[login] nav ${httpCode}: ${url.substring(0, 120)}`);
+		});
+
+		childWindow.webContents.on('did-redirect-navigation', (_e, url, _isInPlace, _isMainFrame, _frameProcessId, _frameRoutingId, isMainFrame) => {
+			if (!isMainFrame) return;
+			navLog.push({ url: url.substring(0, 120), status: 'redirect' });
+			console.log(`[login] redirect → ${url.substring(0, 120)}`);
+		});
+
+		const cookieListener = (_e, cookie, cause, removed) => {
+			if (cookie.domain && cookie.domain.includes('febbox')) {
+				cookieChanges.push({ name: cookie.name, domain: cookie.domain, cause, removed });
+				console.log(`[login] cookie ${removed ? 'DEL' : 'SET'}: ${cookie.name} @ ${cookie.domain} (${cause})`);
+			}
+		};
+		session.defaultSession.cookies.on('changed', cookieListener);
+
 		async function captureCookies() {
 			try {
-				const cookies = await session.defaultSession.cookies.get({
-					url: 'https://www.febbox.com'
-				});
+				const allCookies = await session.defaultSession.cookies.get({});
+				const cookies = allCookies.filter(
+					(c) => c.domain && c.domain.includes('febbox')
+				);
 				if (!cookies.length) return;
 
 				const cookieStr = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
@@ -341,86 +496,79 @@ function createWindow() {
 			}
 		}
 
-		// Google's Sign-In library sends the credential back to the opener
-		// via window.opener.postMessage(), which Electron doesn't relay
-		// between separate BrowserWindows. To fix this: allow Google popups
-		// from the login window, intercept the credential, and forward it
-		// to febbox's own callback function.
-		childWindow.webContents.setWindowOpenHandler(({ url }) => {
-			if (url.includes('accounts.google.com') || url.includes('google.com/gsi')) {
-				return { action: 'allow' };
-			}
-			return { action: 'deny' };
-		});
+		// Show diagnostic overlay in the login window if session check fails
+		async function showDiagnostics() {
+			try {
+				const allCookies = await session.defaultSession.cookies.get({});
+				const febCookies = allCookies
+					.filter((c) => c.domain && c.domain.includes('febbox'))
+					.map((c) => ({ name: c.name, domain: c.domain, path: c.path, secure: c.secure, httpOnly: c.httpOnly, sameSite: c.sameSite }));
 
-		childWindow.webContents.on('did-create-window', (googlePopup) => {
-			function patchOpener() {
-				googlePopup.webContents.executeJavaScript(`
-					if (!window.__cpatch) {
-						window.__cpatch = 1;
-						try {
-							var _real = window.opener;
-							Object.defineProperty(window, 'opener', {
-								get: function() {
-									return {
-										postMessage: function(data, origin) {
-											window.__gcred = JSON.stringify(data);
-											try { if (_real && _real.postMessage) _real.postMessage(data, origin); } catch(e) {}
-										},
-										closed: false,
-										location: { href: 'https://www.febbox.com' }
-									};
-								},
-								configurable: true
-							});
-						} catch(e) {}
-					}
-				`).catch(() => {});
-			}
+				const diag = {
+					navigations: navLog,
+					cookieChanges,
+					currentCookies: febCookies,
+					userAgent: chromeUA
+				};
+				await childWindow.webContents.executeJavaScript(`
+					(function() {
+						var d = document.createElement('div');
+						d.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.9);color:#0f0;font:12px monospace;padding:20px;z-index:99999;overflow:auto;white-space:pre-wrap';
+						d.textContent = 'LOGIN DIAGNOSTICS\\n' + '='.repeat(50) + '\\n' + ${JSON.stringify(JSON.stringify(diag, null, 2))};
+						document.body.appendChild(d);
+					})()
+				`);
+			} catch {}
+		}
 
-			googlePopup.webContents.on('did-navigate', patchOpener);
-			googlePopup.webContents.on('did-finish-load', patchOpener);
-
-			const poll = setInterval(async () => {
-				try {
-					const raw = await googlePopup.webContents.executeJavaScript('window.__gcred');
-					if (raw) {
-						clearInterval(poll);
-						const cred = JSON.parse(raw);
-						try {
-							await childWindow.webContents.executeJavaScript(
-								'handleCredentialResponse(' + JSON.stringify(cred) + ')'
-							);
-						} catch (e) {
-							console.error('[app] credential forward failed:', e?.message);
-						}
-						try { googlePopup.close(); } catch {}
-					}
-				} catch {
-					clearInterval(poll);
-				}
-			}, 500);
-
-			setTimeout(() => clearInterval(poll), 120000);
-			googlePopup.on('closed', () => clearInterval(poll));
-		});
-
+		// Poll for valid session — auto-close on success, show diagnostics
+		// after several failures so we can see what went wrong.
 		let captured = false;
-		let visitedExternal = false;
-		childWindow.webContents.on('did-navigate', async (_event, url) => {
-			if (captured) return;
-			if (!url.includes('febbox.com')) {
-				visitedExternal = true;
+		let pollCount = 0;
+		const loginPoll = setInterval(async () => {
+			if (captured || childWindow.isDestroyed()) {
+				clearInterval(loginPoll);
 				return;
 			}
-			if (visitedExternal && !url.includes('/login')) {
-				captured = true;
-				await captureCookies();
-				childWindow.close();
+			try {
+				const url = await childWindow.webContents.executeJavaScript('window.location.href');
+				if (!url.includes('febbox.com')) return;
+
+				pollCount++;
+				const result = await childWindow.webContents.executeJavaScript(`
+					fetch('/console/user_info', { credentials: 'include' })
+						.then(function(r) { return r.text(); })
+						.then(function(t) {
+							try { var d = JSON.parse(t); return d.code === 1 ? 'ok' : 'no:' + d.code; }
+							catch(e) { return 'html'; }
+						})
+						.catch(function(e) { return 'err:' + e.message; })
+				`);
+				console.log(`[login] poll #${pollCount}: ${result}`);
+				if (result === 'ok') {
+					captured = true;
+					clearInterval(loginPoll);
+					console.log('[login] session confirmed — capturing cookies');
+					await captureCookies();
+					childWindow.close();
+				} else if (pollCount >= 5 && !url.includes('/login') && !url.includes('accounts.google')) {
+					clearInterval(loginPoll);
+					console.log('[login] session NOT valid after OAuth — showing diagnostics');
+					await showDiagnostics();
+				}
+			} catch {
+				// Window navigating or destroyed
 			}
-		});
+		}, 2000);
+
+		setTimeout(() => {
+			clearInterval(loginPoll);
+			session.defaultSession.cookies.removeListener('changed', cookieListener);
+		}, 300000);
 
 		childWindow.on('closed', () => {
+			clearInterval(loginPoll);
+			session.defaultSession.cookies.removeListener('changed', cookieListener);
 			if (!captured) captureCookies();
 		});
 	});
@@ -439,10 +587,17 @@ if (!app.requestSingleInstanceLock()) {
 	app.whenReady().then(async () => {
 		Menu.setApplicationMenu(null);
 
-		// Let febbox load inside an iframe in the Watch page.
+		// Strip framing restrictions so febbox loads inside webviews.
+		// Only touch subFrame responses — leave top-level navigation
+		// (the login window) completely alone so Set-Cookie headers
+		// are processed normally by Chromium's cookie jar.
 		session.defaultSession.webRequest.onHeadersReceived(
-			{ urls: ['*://*.febbox.com/*'] },
+			{ urls: ['*://*.febbox.com/*', '*://febbox.com/*'] },
 			(details, callback) => {
+				if (details.resourceType !== 'subFrame') {
+					callback({});
+					return;
+				}
 				const headers = { ...details.responseHeaders };
 				delete headers['x-frame-options'];
 				delete headers['X-Frame-Options'];
@@ -452,22 +607,39 @@ if (!app.requestSingleInstanceLock()) {
 			}
 		);
 
-		// Inject cookies into febbox requests — the iframe is cross-origin
-		// (parent is http://127.0.0.1), so SameSite policy drops them.
+		// Spoof Referer/Origin only for subframe/XHR requests from
+		// webviews.  Leave mainFrame navigation untouched.
 		session.defaultSession.webRequest.onBeforeSendHeaders(
-			{ urls: ['*://*.febbox.com/*'] },
-			async (details, callback) => {
+			{ urls: ['*://*.febbox.com/*', '*://febbox.com/*'] },
+			(details, callback) => {
+				if (details.resourceType === 'mainFrame') {
+					callback({});
+					return;
+				}
 				const headers = { ...details.requestHeaders };
-				try {
-					if (!headers['Cookie'] && !headers['cookie']) {
-						const cookies = await session.defaultSession.cookies.get({
-							url: 'https://www.febbox.com'
-						});
-						if (cookies.length) {
-							headers['Cookie'] = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
-						}
-					}
-				} catch {}
+
+				const ref = headers['Referer'] || headers['referer'] || '';
+				if (ref && !ref.includes('febbox.com') && !ref.includes('google.com')) {
+					headers['Referer'] = 'https://www.febbox.com/';
+					headers['Origin'] = 'https://www.febbox.com';
+				}
+
+				callback({ requestHeaders: headers });
+			}
+		);
+
+		// Video CDNs may check Referer.  Spoof it for media requests so
+		// the native <video>/hls.js can load streams extracted from febbox.
+		session.defaultSession.webRequest.onBeforeSendHeaders(
+			{ urls: ['*://*.cloudfront.net/*', '*://*.r2.cloudflarestorage.com/*', '*://*.cloudflare.com/*', '*://*.febbox.com/file/*'] },
+			(details, callback) => {
+				if (details.resourceType !== 'media' && details.resourceType !== 'xmlhttprequest' && details.resourceType !== 'other') {
+					callback({});
+					return;
+				}
+				const headers = { ...details.requestHeaders };
+				headers['Referer'] = 'https://www.febbox.com/';
+				headers['Origin'] = 'https://www.febbox.com';
 				callback({ requestHeaders: headers });
 			}
 		);

@@ -35,9 +35,10 @@
 			loggingIn = false;
 			return;
 		}
-		const poll = setInterval(() => {
+		const poll = setInterval(async () => {
 			if (popup.closed) {
 				clearInterval(poll);
+				await fetch('/api/watch/sync-cookies', { method: 'POST' });
 				loggingIn = false;
 				invalidateAll();
 			}

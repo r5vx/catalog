@@ -244,7 +244,8 @@ export type BrowseMode = 'trending' | 'popular';
 export async function trendingTmdb(
 	kind: 'movie' | 'tv',
 	page = 1,
-	mode: BrowseMode = 'trending'
+	mode: BrowseMode = 'trending',
+	region?: string
 ): Promise<SearchResult[]> {
 	const key = tmdbKey();
 	if (!key) return [];
@@ -268,6 +269,11 @@ export async function trendingTmdb(
 			url.searchParams.set('include_adult', 'false');
 		}
 
+		if (region) {
+			url.searchParams.set('region', region);
+			if (mode === 'popular') url.searchParams.set('watch_region', region);
+		}
+
 		url.searchParams.set('page', String(page));
 
 		const response = await fetch(url, authorize(url, key));
@@ -282,5 +288,226 @@ export async function trendingTmdb(
 			.map(toResult);
 	} catch {
 		return [];
+	}
+}
+
+export interface TrendingPerson {
+	id: number;
+	name: string;
+	photo: string | null;
+	knownFor: string;
+}
+
+export async function trendingPeopleTmdb(): Promise<TrendingPerson[]> {
+	const key = tmdbKey();
+	if (!key) return [];
+
+	try {
+		const url = new URL(`${BASE}/trending/person/week`);
+
+		const response = await fetch(url, authorize(url, key));
+		if (!response.ok) return [];
+
+		const payload = (await response.json()) as {
+			results?: {
+				id: number;
+				name: string;
+				profile_path?: string | null;
+				known_for?: { title?: string; name?: string; media_type?: string }[];
+			}[];
+		};
+
+		return (payload.results ?? [])
+			.filter((p) => p.profile_path)
+			.slice(0, 12)
+			.map((p) => ({
+				id: p.id,
+				name: p.name,
+				photo: `${IMAGE}${p.profile_path}`,
+				knownFor: (p.known_for ?? [])
+					.map((k) => k.title ?? k.name)
+					.filter(Boolean)
+					.slice(0, 2)
+					.join(', ')
+			}));
+	} catch {
+		return [];
+	}
+}
+
+export async function fetchImdbId(
+	title: string,
+	type: 'movie' | 'tv'
+): Promise<string | null> {
+	const key = tmdbKey();
+	if (!key) return null;
+
+	try {
+		const searchUrl = new URL(`${BASE}/search/${type}`);
+		searchUrl.searchParams.set('query', title);
+		const searchResp = await fetch(searchUrl, authorize(searchUrl, key));
+		if (!searchResp.ok) return null;
+
+		const searchData = (await searchResp.json()) as { results?: { id: number }[] };
+		const item = searchData.results?.[0];
+		if (!item) return null;
+
+		if (type === 'movie') {
+			const detailUrl = new URL(`${BASE}/movie/${item.id}`);
+			const detailResp = await fetch(detailUrl, authorize(detailUrl, key));
+			if (!detailResp.ok) return null;
+			const detail = (await detailResp.json()) as { imdb_id?: string };
+			return detail.imdb_id ?? null;
+		}
+
+		const extUrl = new URL(`${BASE}/tv/${item.id}/external_ids`);
+		const extResp = await fetch(extUrl, authorize(extUrl, key));
+		if (!extResp.ok) return null;
+		const ext = (await extResp.json()) as { imdb_id?: string };
+		return ext.imdb_id ?? null;
+	} catch {
+		return null;
+	}
+}
+
+export async function fetchEnglishTitle(
+	title: string,
+	type: 'movie' | 'tv'
+): Promise<string | null> {
+	const key = tmdbKey();
+	if (!key) return null;
+
+	try {
+		const searchUrl = new URL(`${BASE}/search/${type}`);
+		searchUrl.searchParams.set('query', title);
+		const searchResp = await fetch(searchUrl, authorize(searchUrl, key));
+		if (!searchResp.ok) return null;
+
+		const data = (await searchResp.json()) as {
+			results?: { name?: string; title?: string; original_name?: string; original_title?: string }[];
+		};
+		const item = data.results?.[0];
+		if (!item) return null;
+
+		const eng = type === 'tv' ? item.name : item.title;
+		if (eng && eng.toLowerCase() !== title.toLowerCase()) return eng;
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+export async function fetchAlternativeTitles(
+	title: string,
+	type: 'movie' | 'tv'
+): Promise<string[]> {
+	const key = tmdbKey();
+	if (!key) return [];
+
+	try {
+		const searchUrl = new URL(`${BASE}/search/${type}`);
+		searchUrl.searchParams.set('query', title);
+		const searchResp = await fetch(searchUrl, authorize(searchUrl, key));
+		if (!searchResp.ok) return [];
+
+		const data = (await searchResp.json()) as {
+			results?: { name?: string; title?: string; original_name?: string; original_title?: string }[];
+		};
+		const item = data.results?.[0];
+		if (!item) return [];
+
+		const titles: string[] = [];
+		const eng = type === 'tv' ? item.name : item.title;
+		const orig = type === 'tv' ? item.original_name : item.original_title;
+		if (eng && eng.toLowerCase() !== title.toLowerCase()) titles.push(eng);
+		if (orig && orig.toLowerCase() !== title.toLowerCase() && orig !== eng) titles.push(orig);
+		return titles;
+	} catch {
+		return [];
+	}
+}
+
+export interface CastMember {
+	id: number;
+	name: string;
+	character: string;
+	photo: string | null;
+}
+
+export async function fetchCast(
+	title: string,
+	type: 'movie' | 'tv'
+): Promise<CastMember[]> {
+	const key = tmdbKey();
+	if (!key) return [];
+
+	try {
+		const searchUrl = new URL(`${BASE}/search/${type}`);
+		searchUrl.searchParams.set('query', title);
+		const searchResp = await fetch(searchUrl, authorize(searchUrl, key));
+		if (!searchResp.ok) return [];
+
+		const searchData = (await searchResp.json()) as { results?: { id: number }[] };
+		const item = searchData.results?.[0];
+		if (!item) return [];
+
+		const creditsUrl = new URL(`${BASE}/${type}/${item.id}/credits`);
+		const creditsResp = await fetch(creditsUrl, authorize(creditsUrl, key));
+		if (!creditsResp.ok) return [];
+
+		const credits = (await creditsResp.json()) as {
+			cast?: { id: number; name: string; character: string; profile_path?: string | null; order?: number }[];
+		};
+
+		return (credits.cast ?? [])
+			.sort((a, b) => (a.order ?? 999) - (b.order ?? 999))
+			.slice(0, 30)
+			.map((c) => ({
+				id: c.id,
+				name: c.name,
+				character: c.character,
+				photo: c.profile_path ? `https://image.tmdb.org/t/p/w185${c.profile_path}` : null
+			}));
+	} catch {
+		return [];
+	}
+}
+
+export async function fetchEpisodeNames(
+	showTitle: string,
+	seasonNumber: number
+): Promise<Record<number, string>> {
+	const key = tmdbKey();
+	if (!key) return {};
+
+	try {
+		const searchUrl = new URL(`${BASE}/search/tv`);
+		searchUrl.searchParams.set('query', showTitle);
+		const searchResp = await fetch(searchUrl, authorize(searchUrl, key));
+		if (!searchResp.ok) return {};
+
+		const searchData = (await searchResp.json()) as {
+			results?: { id: number; name?: string }[];
+		};
+		const show = searchData.results?.[0];
+		if (!show) return {};
+
+		const seasonUrl = new URL(`${BASE}/tv/${show.id}/season/${seasonNumber}`);
+		const seasonResp = await fetch(seasonUrl, authorize(seasonUrl, key));
+		if (!seasonResp.ok) return {};
+
+		const seasonData = (await seasonResp.json()) as {
+			episodes?: { episode_number: number; name: string }[];
+		};
+
+		const names: Record<number, string> = {};
+		for (const ep of seasonData.episodes ?? []) {
+			if (ep.episode_number != null && ep.name) {
+				names[ep.episode_number] = ep.name;
+			}
+		}
+		return names;
+	} catch {
+		return {};
 	}
 }

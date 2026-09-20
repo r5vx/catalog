@@ -18,6 +18,7 @@
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	let busyKey = $state<string | null>(null);
+	let showWatchElsewhere = $state(false);
 
 	onMount(() => showbox.check());
 
@@ -26,6 +27,9 @@
 	const category = $derived(
 		data.categories.find((one) => one.id === entry.categoryId) ?? null
 	);
+
+	const isAnime = $derived(category?.slug === 'anime' || entry.source === 'anilist');
+	const isMovie = $derived(category?.slug === 'movies');
 
 	const added = $derived(
 		new Date(entry.createdAt).toLocaleDateString(undefined, {
@@ -182,6 +186,37 @@
 					class:disabled={!showbox.up}
 					title={showbox.up ? 'Watch now' : 'showbox.media is down'}
 				>▶ Watch</a>
+				<span class="watch-elsewhere-wrap">
+					<button class="pill watch-elsewhere" onclick={() => showWatchElsewhere = !showWatchElsewhere}>
+						Watch elsewhere ▾
+					</button>
+					{#if showWatchElsewhere}
+						<div class="watch-elsewhere-menu">
+							<a
+								class="watch-elsewhere-item"
+								class:disabled={isMovie}
+								href={isMovie ? undefined : `https://www.miruro.tv/search?query=${encodeURIComponent(entry.title)}`}
+								target="_blank"
+								rel="noopener"
+								onclick={() => showWatchElsewhere = false}
+							>
+								Miruro
+								<span class="watch-elsewhere-note">{isMovie ? 'Anime only' : 'Anime'}</span>
+							</a>
+							<a
+								class="watch-elsewhere-item"
+								class:disabled={isAnime}
+								href={isAnime ? undefined : `https://cinejoy.pk/search/${encodeURIComponent(entry.title)}`}
+								target="_blank"
+								rel="noopener"
+								onclick={() => showWatchElsewhere = false}
+							>
+								CineJoy
+								<span class="watch-elsewhere-note">{isAnime ? 'Movies & TV only' : 'Movies & TV'}</span>
+							</a>
+						</div>
+					{/if}
+				</span>
 			</div>
 
 			<h1>{entry.title}</h1>
@@ -380,6 +415,63 @@
 	.pill.watch.disabled {
 		opacity: 0.35;
 		pointer-events: none;
+	}
+
+	.watch-elsewhere-wrap {
+		position: relative;
+		display: inline-block;
+	}
+
+	.pill.watch-elsewhere {
+		background: var(--sunk);
+		color: var(--ink-soft);
+		border: 1px solid var(--rule);
+		cursor: pointer;
+		font: inherit;
+		font-size: inherit;
+	}
+
+	.pill.watch-elsewhere:hover {
+		background: var(--hover);
+	}
+
+	.watch-elsewhere-menu {
+		position: absolute;
+		top: calc(100% + 6px);
+		left: 0;
+		z-index: 20;
+		min-width: 180px;
+		background: var(--paper);
+		border: 1px solid var(--rule);
+		border-radius: var(--radius-sm);
+		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+		padding: 4px 0;
+	}
+
+	.watch-elsewhere-item {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 8px 14px;
+		text-decoration: none;
+		color: var(--ink);
+		font-size: 0.88rem;
+		cursor: pointer;
+	}
+
+	.watch-elsewhere-item:hover:not(.disabled) {
+		background: var(--hover);
+	}
+
+	.watch-elsewhere-item.disabled {
+		opacity: 0.35;
+		pointer-events: none;
+	}
+
+	.watch-elsewhere-note {
+		font-size: 0.74rem;
+		color: var(--ink-soft);
 	}
 
 	h1 {

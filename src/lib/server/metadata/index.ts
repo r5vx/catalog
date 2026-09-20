@@ -1,24 +1,33 @@
 import { searchAniList, trendingAniList } from './anilist';
-import { searchTmdb, trendingTmdb, hasTmdbKey } from './tmdb';
+import { searchTmdb, trendingTmdb, trendingPeopleTmdb, hasTmdbKey } from './tmdb';
+export { trendingPeopleTmdb };
 import { normalizeTitle, type SearchResult } from './types';
 
 export { hasTmdbKey };
 export type { SearchResult };
 
+const ARTICLES = /^(the|a|an)\s+/;
+
+function stripArticle(s: string): string {
+	return s.replace(ARTICLES, '');
+}
+
 /** 3 = exact title, 2 = starts with, 1 = contains, 0 = neither. */
 function matchScore(result: SearchResult, query: string): number {
 	const q = normalizeTitle(query);
 	if (!q) return 0;
+	const qNoArticle = stripArticle(q);
 
 	const candidates = [result.title, result.altTitle].filter(Boolean).map((t) => normalizeTitle(t!));
 
 	let best = 0;
 	for (const candidate of candidates) {
-		if (candidate === q) best = Math.max(best, 3);
-		// "Marvel's Daredevil" ends with "daredevil" — a studio prefix shouldn't
-		// push the series far below the film of the same name.
-		else if (candidate.startsWith(q) || candidate.endsWith(q)) best = Math.max(best, 2);
-		else if (candidate.includes(q)) best = Math.max(best, 1);
+		const cNoArticle = stripArticle(candidate);
+		if (candidate === q || cNoArticle === qNoArticle) best = Math.max(best, 3);
+		else if (candidate.startsWith(q) || candidate.endsWith(q)
+			|| cNoArticle.startsWith(qNoArticle) || cNoArticle.endsWith(qNoArticle))
+			best = Math.max(best, 2);
+		else if (candidate.includes(q) || cNoArticle.includes(qNoArticle)) best = Math.max(best, 1);
 	}
 	return best;
 }
@@ -135,11 +144,12 @@ const LABELS: Record<string, Record<BrowseMode, string>> = {
 export async function browsePage(
 	category: string,
 	mode: BrowseMode,
-	page: number
+	page: number,
+	region?: string
 ): Promise<SearchResult[]> {
 	if (category === 'anime') return trendingAniList(24, page, mode);
-	if (category === 'movies') return trendingTmdb('movie', page, mode);
-	if (category === 'tv') return trendingTmdb('tv', page, mode);
+	if (category === 'movies') return trendingTmdb('movie', page, mode, region);
+	if (category === 'tv') return trendingTmdb('tv', page, mode, region);
 	return [];
 }
 
@@ -151,7 +161,7 @@ export async function browsePage(
  * never heard of — so the page opens on whole shelves of it, and each one
  * keeps going for as long as you keep asking.
  */
-export async function browseShelves(only?: string, mode: BrowseMode = 'trending'): Promise<Shelf[]> {
+export async function browseShelves(only?: string, mode: BrowseMode = 'trending', region?: string): Promise<Shelf[]> {
 	const wanted = only
 		? BROWSE_CATEGORIES.filter((one) => one === only)
 		: [...BROWSE_CATEGORIES];
@@ -160,7 +170,7 @@ export async function browseShelves(only?: string, mode: BrowseMode = 'trending'
 		wanted.map(async (key) => ({
 			key,
 			label: LABELS[key][mode],
-			results: await browsePage(key, mode, 1),
+			results: await browsePage(key, mode, 1, region),
 			page: 1
 		}))
 	);

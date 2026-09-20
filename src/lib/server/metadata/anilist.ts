@@ -167,3 +167,26 @@ export async function trendingAniList(
 		return [];
 	}
 }
+
+export async function fetchRomajiTitle(title: string): Promise<string | null> {
+	try {
+		const response = await fetch(ENDPOINT, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+			body: JSON.stringify({ query: QUERY, variables: { search: title, perPage: 1 } })
+		});
+		if (!response.ok) return null;
+		const payload = (await response.json()) as {
+			data?: { Page?: { media?: AniListMedia[] } };
+		};
+		const media = payload.data?.Page?.media?.[0];
+		if (!media) return null;
+		const romaji = media.title.romaji;
+		if (romaji && romaji.toLowerCase() !== title.toLowerCase()) return romaji;
+		const english = media.title.english;
+		if (english && english.toLowerCase() !== title.toLowerCase()) return english;
+		return null;
+	} catch {
+		return null;
+	}
+}

@@ -22,6 +22,7 @@
 			hint: 'Where titles and scores come from',
 			flag: 'services'
 		},
+		{ href: '/settings/watch-progress', label: 'Watch Progress', hint: 'Saved positions and history' },
 		{ href: '/settings/privacy', label: 'Privacy', hint: 'PIN lock' },
 		{ href: '/settings/updates', label: 'Updates', hint: 'Keep Catalog current', flag: 'updates' }
 	];

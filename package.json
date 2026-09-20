@@ -1,7 +1,7 @@
 {
 	"name": "catalog",
 	"private": true,
-	"version": "1.7.9",
+	"version": "2.0.0",
 	"type": "module",
 	"description": "Your personal library of everything you've watched.",
 	"main": "electron/main.cjs",
@@ -24,7 +24,8 @@
 		"tag": "node scripts/tag-library.mjs"
 	},
 	"dependencies": {
-		"electron-updater": "^6.8.9"
+		"electron-updater": "^6.8.9",
+		"hls.js": "^1.7.3"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-node": "^5.2.12",
