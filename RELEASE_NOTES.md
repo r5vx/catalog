@@ -7,99 +7,65 @@ and stamps it with the version number.
 
 ## Unreleased
 
-## 1.7.9 — 2026-09-19
+## 2.0.0 — 2026-09-20
 
-- **Febbox login actually works now.** Google Sign-In was broken in the desktop
-  app because the credential never made it back from the popup. Catalog now
-  intercepts it and forwards it to febbox's login, so the full flow completes.
-- **Log in from the player bar.** A "Log in" button sits right in the player
-  bar so you don't have to go through Settings first.
-- **Player loads without a saved key.** Watch falls back to the embedded player
-  even before you've logged in — the login button is right there when you
-  need it.
-
-## 1.7.8 — 2026-09-18
-
-- **Watch fix (for real this time).** Video requests to febbox now run inside a
-  real browser context with full cookies and auth, matching what the site sees
-  when you use it directly. Previous versions tried a shortcut that febbox
-  rejected.
-
-## 1.7.7 — 2026-09-18
-
-- **Watch actually plays now.** Requests to febbox go through Electron's own
-  network stack with real browser cookies — fixes the "Please log in first"
-  error that appeared after adding the key system.
-- **Login popup closes itself.** After signing in with Google, the popup shuts
-  automatically instead of dumping you on febbox's home page. It waits for you
-  to finish with Google first.
-- **No more search bar on error pages.** When a title can't play, you see only
-  the error — not the search UI underneath it.
-
-## 1.7.6 — 2026-09-18
-
-- **Watch actually plays now.** Requests to febbox go through Electron's own
-  network stack, which sends real browser cookies — fixes the "Please log in
-  first" error that appeared after adding the key system.
-- **Login popup closes itself.** After signing in with Google, the popup shuts
-  automatically instead of dumping you on febbox's home page.
-- **No more search bar on error pages.** When a title can't play, you see only
-  the error — not the search UI underneath it.
-
-## 1.7.5 — 2026-09-18
-
-- **Quality picker.** Movies and TV shows now show all available quality options
-  (720p, 1080p, 2160p, etc.) as buttons in the player bar. Defaults to 1080p.
-  For TV, picking a quality sticks for the rest of the episodes.
-- **Copy your key.** Settings → Services now has a "Copy key" button so you can
-  share your Watch key with friends.
-- **Better stream resolution.** Tries multiple approaches to get a playable link,
-  and shows details when it fails so you can tell what went wrong.
-
-## 1.7.4 — 2026-09-18
-
-- **Log in from Settings.** The Watch section in Settings → Services now has a
-  "Log in with Google" button instead of requiring the desktop popup. The token
-  saves when you close the login window.
-
-## 1.7.3 — 2026-09-18
-
-- **Watch plays the video directly.** Clicking Watch now opens the movie or
-  episode in a built-in player instead of loading an external site. No branding,
-  no extra UI — just the video.
-- **No more search flash.** Watch goes straight from the button to the player
-  with a loading spinner, instead of briefly showing a search page.
-- **Episode clicks work.** Picking an episode in the sidebar actually switches
-  the video now.
-- **Febbox key in Settings → Services.** Log in once on the desktop app and the
-  key saves itself. Share it with a friend so they can watch without logging in.
-
-## 1.7.2 — 2026-09-18
-
-- **Theme picker in Personalization.** Choose between System (follows your
-  device), Light, Dark or Black (OLED-friendly). The preview updates live as
-  you pick, and your choice sticks across sessions.
-- **Watch goes straight to the movie.** Clicking ▶ Watch now auto-matches the
-  title on showbox instead of dropping you into a search page.
-- **Log in to febbox from the player bar.** Google sign-in opens in its own
-  window (where Google actually allows it), and your session carries over to
-  the player. Stays logged in across restarts.
-- **Episode sidebar for TV shows.** The player now shows a season/episode list
-  on the side so you can see what's available without navigating febbox's
-  folders. Toggle it with the Episodes button.
-
-## 1.7.1 — 2026-09-18
-
-- **Watch inside Catalog.** Search results and the detail page now have a ▶
-  Watch button that finds the title on febbox and plays it in an integrated
-  player — no separate window, with febbox's own captions, speed and quality
-  controls. An "Add to library" button in the player bar lets you save what
-  you are watching without leaving. The button greys out automatically if
-  showbox.media is unreachable.
-- **Settings → Updates no longer calls the version you're running
-  "Unreleased".** The notes are stamped with the version number before the app
-  is packaged now, rather than after it, so the copy inside the app is the
-  right one.
+- **Watch inside Catalog.** Browse results and the detail page have a
+  ▶ Watch button that finds the title on febbox and plays it in a built-in
+  player — no separate window, just the video. Click "Add to library" in
+  the player bar to save what you're watching without leaving.
+- **Custom video player.** Play/pause, skip ±10s, volume (with boost up to
+  200%), drag-to-seek progress bar with live time preview, picture in
+  picture, and fullscreen. Controls auto-hide during playback. Keyboard
+  shortcuts: Space/K play, arrows seek/volume, F fullscreen, M mute.
+- **Quality picker.** Movies and TV shows show all available quality options
+  (720p, 1080p, 2160p, etc.) in the player bar. Defaults to 1080p.
+- **Episode sidebar for TV shows.** A season/episode list on the side with
+  episode titles from TMDB. Toggle it with the Episodes button.
+- **Subtitles.** Captions are searched automatically from OpenSubtitles,
+  grouped by language with English first. Supports SRT and ASS/SSA formats
+  (anime subtitles work). Adjust timing with the delay button, or upload
+  your own subtitle file.
+- **"Wrong show?" button.** If auto-resolve picks the wrong title, click
+  "Wrong show?" in the player bar to go back to the search results and
+  pick the correct one manually.
+- **Watch progress saved automatically.** The player remembers where you
+  left off. Close a movie or episode and come back later — it picks up
+  where you stopped. Progress saves every 15 seconds, on pause, and when
+  you close the page.
+- **Settings → Watch Progress.** View all saved positions, delete
+  individual entries or clear everything at once.
+- **Smarter anime title matching.** When the English title isn't found,
+  Catalog looks up alternative titles from TMDB and romaji titles from
+  AniList. Year mismatches are penalised so the wrong show with a similar
+  name doesn't get picked. Long subtitle-style titles (colon-separated)
+  are split and tried individually.
+- **Browse search ranks popular results first.** Searching "seven deadly
+  sins" now ranks the popular anime above obscure shows from 1966. Leading
+  articles (The, A, An) are ignored when matching.
+- **Regional trending.** Browse shelves use the country set in
+  Settings → Services (Where to watch) for TMDB results.
+- **Trending actors.** The Actors page now shows trending actors of the
+  week below the search bar, with photos and what they're known for.
+- **Watch elsewhere.** A dropdown next to the Watch button lets you open
+  the title on Miruro (anime) or CineJoy (movies & TV) in your browser.
+- **Log in to febbox from the player bar.** Google sign-in opens in its
+  own window. After logging in, the video loads automatically.
+- **File info button.** Click "File" in the player bar to see the name and
+  size of the video file.
+- **Settings panel.** Gear icon opens quality, playback speed (0.25x–2x)
+  and audio track selection. Audio track icon changed to a language symbol.
+- **Cast sidebar.** A "Cast" button in the player bar opens a scrollable
+  sidebar showing actors and their characters.
+- **Audio track sticks across episodes.** Switch to the dubbed or subbed
+  audio track once and it stays that way for every episode.
+- **Buffering indicator.** A spinning loader appears over the video when
+  it's buffering.
+- **Theme picker in Personalization.** Choose between System, Light, Dark
+  or Black (OLED-friendly).
+- **Collapsible update history.** Settings → Updates shows all past
+  releases in collapsible sections, with the latest three open by default.
+- **Fixed Vinland Saga and other titles with dashes in their share key
+  returning "No video file found."**
 
 ## 1.7.0 — 2026-09-17
 

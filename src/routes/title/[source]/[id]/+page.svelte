@@ -60,16 +60,23 @@
 				contentRating={data.scores?.contentRating ?? null}
 			/>
 
-			<form method="POST" action="?/add" class="add">
-				<select name="status" aria-label="Add it as">
-					{#each STATUSES as option (option.value)}
-						<option value={option.value} selected={option.value === 'planned'}>
-							{option.label}
-						</option>
-					{/each}
-				</select>
-				<button type="submit" class="btn btn-primary">Add to library</button>
-			</form>
+			<div class="title-actions">
+				<a
+					href="/watch?title={encodeURIComponent(details.title ?? '')}&type={details.categorySlug === 'movies' ? 'movie' : 'tv'}{details.year ? `&year=${details.year}` : ''}&auto=1"
+					class="btn btn-watch"
+				>▶ Watch</a>
+
+				<form method="POST" action="?/add" class="add">
+					<select name="status" aria-label="Add it as">
+						{#each STATUSES as option (option.value)}
+							<option value={option.value} selected={option.value === 'planned'}>
+								{option.label}
+							</option>
+						{/each}
+					</select>
+					<button type="submit" class="btn btn-primary">Add to library</button>
+				</form>
+			</div>
 		</div>
 	</header>
 
@@ -169,11 +176,37 @@
 		font-size: 0.87rem;
 	}
 
-	.add {
+	.title-actions {
 		display: flex;
+		flex-direction: column;
 		gap: 8px;
 		margin-top: 4px;
 		max-width: 360px;
+	}
+
+	.btn-watch {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		padding: 8px 20px;
+		background: var(--good);
+		color: var(--paper);
+		border: none;
+		border-radius: var(--radius);
+		font-size: 0.9rem;
+		font-weight: 600;
+		text-decoration: none;
+		cursor: pointer;
+	}
+
+	.btn-watch:hover {
+		filter: brightness(1.12);
+	}
+
+	.add {
+		display: flex;
+		gap: 8px;
 	}
 
 	.add select {

@@ -232,25 +232,6 @@
 			<a class="added" href="/entry/{justAdded[keyOf(result)]}">Added &rarr;</a>
 		{:else if have(result)}
 			<span class="added">In your library</span>
-		{:else}
-			<div class="actions">
-				<button
-					type="button"
-					class="btn tiny"
-					disabled={busy === keyOf(result)}
-					onclick={() => add(result, 'planned')}
-				>
-					Watchlist
-				</button>
-				<button
-					type="button"
-					class="btn tiny"
-					disabled={busy === keyOf(result)}
-					onclick={() => add(result, 'completed')}
-				>
-					Seen it
-				</button>
-			</div>
 		{/if}
 	</li>
 {/snippet}
@@ -483,18 +464,7 @@
 		overflow: hidden;
 	}
 
-	.actions {
-		display: flex;
-		gap: 6px;
-		margin-top: 8px;
-	}
-
-	.tiny {
-		font-size: 0.74rem;
-		padding: 4px 9px;
-	}
-
-	.added {
+.added {
 		display: inline-block;
 		margin-top: 8px;
 		font-size: 0.76rem;

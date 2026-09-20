@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { browsePage, BROWSE_CATEGORIES, type BrowseMode } from '$lib/server/metadata';
 import { existingSourceKeys } from '$lib/server/db/queries';
+import { watchRegion } from '$lib/server/metadata/providers';
 import type { RequestHandler } from './$types';
 
 /**
@@ -20,7 +21,7 @@ export const GET: RequestHandler = async ({ url }) => {
 	}
 
 	return json({
-		results: await browsePage(category, mode, page),
+		results: await browsePage(category, mode, page, watchRegion()),
 		page,
 		// Sent with each page so newly loaded cards know what's already yours.
 		owned: [...existingSourceKeys()]

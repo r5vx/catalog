@@ -1,6 +1,7 @@
 import { searchAll, browseShelves, hasTmdbKey, type BrowseMode } from '$lib/server/metadata';
 import { existingSourceKeys } from '$lib/server/db/queries';
 import { parseTitle } from '$lib/parseTitle';
+import { watchRegion } from '$lib/server/metadata/providers';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -22,6 +23,8 @@ export const load: PageServerLoad = async ({ url }) => {
 	// and which one you want depends on whether you've already seen this year.
 	const mode: BrowseMode = url.searchParams.get('mode') === 'popular' ? 'popular' : 'trending';
 
+	const region = watchRegion();
+
 	// "Fantastic Four (2005)" should work here exactly as it does in the
 	// importer and the add box.
 	const { title, year } = parseTitle(q);
@@ -39,7 +42,7 @@ export const load: PageServerLoad = async ({ url }) => {
 		results,
 		// Only asked for when there's nothing to search, so a search doesn't
 		// wait on three lists it won't show.
-		shelves: q ? [] : await browseShelves(category || undefined, mode),
+		shelves: q ? [] : await browseShelves(category || undefined, mode, region),
 		// Marks what's already yours, so browsing doesn't offer you your own
 		// library back.
 		owned: [...existingSourceKeys()],

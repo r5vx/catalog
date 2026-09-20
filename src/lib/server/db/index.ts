@@ -190,6 +190,23 @@ if (!tagColumns.has('kind')) {
 	db.exec("ALTER TABLE tags ADD COLUMN kind TEXT NOT NULL DEFAULT 'other'");
 }
 
+db.exec(`
+	CREATE TABLE IF NOT EXISTS watch_progress (
+		title TEXT NOT NULL,
+		type TEXT NOT NULL DEFAULT 'movie',
+		season INTEGER NOT NULL DEFAULT 0,
+		episode INTEGER NOT NULL DEFAULT 0,
+		current_time REAL NOT NULL DEFAULT 0,
+		duration REAL NOT NULL DEFAULT 0,
+		updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+		PRIMARY KEY (title, type, season, episode)
+	)
+`);
+
+try { db.exec("ALTER TABLE watch_progress ADD COLUMN sub_url TEXT NOT NULL DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE watch_progress ADD COLUMN sub_delay REAL NOT NULL DEFAULT 0"); } catch {}
+try { db.exec("ALTER TABLE watch_progress ADD COLUMN sub_file_name TEXT NOT NULL DEFAULT ''"); } catch {}
+
 /**
  * node:sqlite hands back null-prototype objects. SvelteKit needs plain ones to
  * send them to the browser, so every query result goes through here.

@@ -64,6 +64,27 @@
 	{/each}
 </ul>
 
+{#if !data.q && data.trending.length > 0}
+	<section class="trending">
+		<h2 class="label">Trending this week</h2>
+		<ul class="trend-grid">
+			{#each data.trending as person (person.id)}
+				<li>
+					<a href="https://www.themoviedb.org/person/{person.id}" target="_blank" rel="noopener">
+						<div class="trend-photo">
+							<img src={person.photo} alt="" loading="lazy" />
+						</div>
+						<span class="trend-name">{person.name}</span>
+						{#if person.knownFor}
+							<span class="trend-known faint">{person.knownFor}</span>
+						{/if}
+					</a>
+				</li>
+			{/each}
+		</ul>
+	</section>
+{/if}
+
 <style>
 	header {
 		display: flex;
@@ -152,5 +173,72 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.trending {
+		margin-top: 32px;
+	}
+
+	.trend-grid {
+		list-style: none;
+		margin: 14px 0 0;
+		padding: 0;
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+		gap: 18px 14px;
+	}
+
+	.trend-grid a {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 6px;
+		text-align: center;
+		border-radius: var(--radius);
+		padding: 8px 4px;
+	}
+
+	.trend-grid a:hover {
+		background: var(--surface);
+	}
+
+	.trend-photo {
+		width: 90px;
+		height: 90px;
+		border-radius: 50%;
+		overflow: hidden;
+		border: 2px solid var(--rule);
+	}
+
+	.trend-photo img {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		display: block;
+	}
+
+	.trend-name {
+		font-weight: 600;
+		font-size: 0.88rem;
+	}
+
+	.trend-known {
+		font-size: 0.74rem;
+		line-height: 1.3;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
+
+	.label {
+		font-family: var(--body);
+		font-size: 0.72rem;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--ink-faint);
+		margin: 0;
 	}
 </style>
