@@ -69,7 +69,7 @@
 				<form method="POST" action="?/add" class="add">
 					<select name="status" aria-label="Add it as">
 						{#each STATUSES as option (option.value)}
-							<option value={option.value} selected={option.value === 'planned'}>
+							<option value={option.value} selected={option.value === 'completed'}>
 								{option.label}
 							</option>
 						{/each}

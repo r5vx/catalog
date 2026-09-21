@@ -75,7 +75,6 @@
 	let loadingCast = $state(false);
 	let preferredAudioName = $state('');
 	let libraryEntryId = $state<number | null>(null);
-
 	let query = $state('');
 	let results = $state<Result[]>([]);
 	let searching = $state(false);
@@ -1209,7 +1208,7 @@
 		class:has-sidebar={castOpen || (showType === 'tv' && seasons.length > 0 && sidebarOpen)}
 		bind:this={playerPageEl}
 	>
-		<div class="player-bar">
+		<div class="player-bar" class:bar-hidden={isFullscreen && !showControls}>
 			<button type="button" class="bar-btn" onclick={goBack}>&larr; Back</button>
 			<h1 class="player-title">{videoTitle}</h1>
 
@@ -1265,7 +1264,7 @@
 				<button type="button" class="bar-btn login-btn" onclick={loginToFebbox}>Log in</button>
 			{/if}
 
-			<button type="button" class="bar-btn wrong-btn" onclick={wrongShow}>Wrong show?</button>
+			<button type="button" class="bar-btn wrong-btn" onclick={wrongShow}>Wrong one?</button>
 
 			{#if libraryEntryId}
 				<a href="/entry/{libraryEntryId}" class="bar-btn in-library-btn">In library</a>
@@ -1769,7 +1768,8 @@
 	.player-page { position: fixed; inset: 0; display: flex; flex-direction: column; z-index: 100; background: #000; }
 
 	/* --------------------------------------------------------- top bar */
-	.player-bar { display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(8px); border-bottom: 1px solid rgba(255, 255, 255, 0.08); flex: none; z-index: 20; }
+	.player-bar { display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(8px); border-bottom: 1px solid rgba(255, 255, 255, 0.08); flex: none; z-index: 20; transition: opacity 0.3s ease, transform 0.3s ease; }
+	.player-bar.bar-hidden { opacity: 0; pointer-events: none; transform: translateY(-100%); }
 	.bar-btn { flex: none; font-size: 0.82rem; font-weight: 600; padding: 5px 12px; border-radius: var(--radius-sm); border: 1px solid rgba(255, 255, 255, 0.15); background: rgba(255, 255, 255, 0.06); color: #e0e0e0; cursor: pointer; text-decoration: none; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
 	.bar-btn:hover { border-color: rgba(255, 255, 255, 0.3); color: #fff; }
 	.player-title { font-size: 1rem; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #fff; }

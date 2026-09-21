@@ -6,7 +6,8 @@ import {
 	listEpisodes,
 	listMovieFiles,
 	getStreamUrl,
-	bestMatch
+	bestMatch,
+	resolveSlugId
 } from '$lib/server/showbox';
 import { readSettings } from '$lib/server/settings';
 import { findEntryByTitle } from '$lib/server/db/queries';
@@ -38,13 +39,23 @@ export const GET: RequestHandler = async ({ url }) => {
 			const romaji = await fetchRomajiTitle(title);
 			if (romaji && !altTitles.includes(romaji)) altTitles.push(romaji);
 		}
+		const origWords = new Set(title.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(w => w.length > 1));
 		for (const alt of altTitles) {
-			match = await findOnShowbox(alt, type, year);
-			if (match) break;
+			const candidate = await findOnShowbox(alt, type, year);
+			if (!candidate) continue;
+			const matchWords = candidate.title.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(w => w.length > 1);
+			const altWords = alt.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(w => w.length > 1);
+			const related = matchWords.some(w => origWords.has(w)) || altWords.some(w => origWords.has(w));
+			if (related) { match = candidate; break; }
 		}
 	}
 
 	if (!match) return json({ error: 'not_found' });
+
+	if (match.id === 0 && match.slug) {
+		match.id = await resolveSlugId(match.slug, match.type);
+		if (match.id === 0) return json({ error: 'no_link' });
+	}
 
 	const link = await getFebboxLink(match.id, match.type);
 	if (!link) return json({ error: 'no_link' });

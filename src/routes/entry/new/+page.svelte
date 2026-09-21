@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
-	import { showbox } from '$lib/showboxHealth.svelte';
 	import type { SearchResult } from '$lib/server/metadata/types';
 	import type { PageData } from './$types';
 
@@ -23,7 +22,6 @@
 	let sequence = 0;
 
 	onMount(() => {
-		showbox.check();
 		const q = page.url.searchParams.get('q');
 		if (q && q.trim().length >= 2) {
 			query = q;
@@ -210,12 +208,6 @@
 					>
 						{busy === result.key ? 'Adding…' : 'Add'}
 					</button>
-					<a
-						href="/watch?title={encodeURIComponent(result.title)}&type={result.categorySlug === 'movies' ? 'movie' : 'tv'}{result.year ? `&year=${result.year}` : ''}&auto=1"
-						class="btn btn-watch"
-						class:disabled={!showbox.up}
-						title={showbox.up ? 'Watch now' : 'showbox.media is down'}
-					>▶</a>
 				{/if}
 			</div>
 		</li>
@@ -315,7 +307,7 @@
 
 	.result {
 		display: grid;
-		grid-template-columns: 52px 1fr auto;
+		grid-template-columns: 80px 1fr auto;
 		gap: 16px;
 		align-items: center;
 		padding: 13px 0;
@@ -408,27 +400,9 @@
 		margin-top: 18px;
 	}
 
-	.btn-watch {
-		background: var(--good);
-		color: var(--paper);
-		border-color: var(--good);
-		padding: 6px 10px;
-		font-size: 0.85rem;
-		line-height: 1;
-	}
-
-	.btn-watch:hover {
-		filter: brightness(1.12);
-	}
-
-	.btn-watch.disabled {
-		opacity: 0.35;
-		pointer-events: none;
-	}
-
 	@media (max-width: 620px) {
 		.result {
-			grid-template-columns: 46px 1fr;
+			grid-template-columns: 66px 1fr;
 			row-gap: 10px;
 		}
 		.controls {

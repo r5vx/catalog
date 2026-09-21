@@ -12,6 +12,7 @@
 	let typed = $state(untrack(() => data.accent));
 
 	let theme = $state(untrack(() => data.theme));
+	let wideLayout = $state(untrack(() => data.wideLayout));
 
 	const THEMES = [
 		{ value: '', label: 'System', desc: 'Follows your device', bg: '' },
@@ -75,6 +76,52 @@
 			{/each}
 		</div>
 		<button type="submit" class="btn btn-primary">Save theme</button>
+	</form>
+</section>
+
+<section>
+	<div class="head"><h2>Layout</h2></div>
+	<p class="muted">How content fills the screen when the window is wide.</p>
+
+	{#if form?.layoutOk}
+		<p class="msg good" role="status">{form.layoutOk}</p>
+	{/if}
+
+	<form method="POST" action="?/saveLayout">
+		<input type="hidden" name="wideLayout" value={wideLayout ? '1' : '0'} />
+		<div class="layout-options">
+			<button
+				type="button"
+				class="layout-card"
+				class:picked={!wideLayout}
+				onclick={() => (wideLayout = false)}
+			>
+				<span class="layout-preview centered-preview">
+					<span class="layout-bar"></span>
+					<span class="layout-grid">
+						<span></span><span></span><span></span>
+					</span>
+				</span>
+				<span class="layout-label">Centered</span>
+				<span class="layout-desc faint">Content stays in the middle</span>
+			</button>
+			<button
+				type="button"
+				class="layout-card"
+				class:picked={wideLayout}
+				onclick={() => (wideLayout = true)}
+			>
+				<span class="layout-preview wide-preview">
+					<span class="layout-bar"></span>
+					<span class="layout-grid">
+						<span></span><span></span><span></span><span></span><span></span>
+					</span>
+				</span>
+				<span class="layout-label">Wide</span>
+				<span class="layout-desc faint">Uses the full window width</span>
+			</button>
+		</div>
+		<button type="submit" class="btn btn-primary">Save layout</button>
 	</form>
 </section>
 
@@ -366,6 +413,94 @@
 	}
 
 	.theme-desc {
+		font-size: 0.72rem;
+	}
+
+	.layout-options {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 10px;
+		margin-bottom: 14px;
+	}
+
+	.layout-card {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 6px;
+		padding: 12px 16px;
+		border: 2px solid var(--rule);
+		border-radius: var(--radius);
+		background: var(--surface);
+		cursor: pointer;
+		min-width: 120px;
+	}
+
+	.layout-card.picked {
+		border-color: var(--accent);
+	}
+
+	.layout-card:hover {
+		border-color: var(--ink-faint);
+	}
+
+	.layout-preview {
+		width: 100px;
+		height: 60px;
+		background: var(--sunk);
+		border: 1px solid var(--rule-firm);
+		border-radius: var(--radius-sm);
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		padding: 6px;
+		overflow: hidden;
+	}
+
+	.centered-preview {
+		align-items: center;
+	}
+
+	.wide-preview {
+		align-items: stretch;
+	}
+
+	.layout-bar {
+		height: 6px;
+		border-radius: 2px;
+		background: var(--rule-firm);
+	}
+
+	.centered-preview .layout-bar {
+		width: 50%;
+	}
+
+	.wide-preview .layout-bar {
+		width: 30%;
+	}
+
+	.layout-grid {
+		display: flex;
+		gap: 3px;
+		flex: 1;
+	}
+
+	.centered-preview .layout-grid {
+		width: 70%;
+	}
+
+	.layout-grid span {
+		flex: 1;
+		background: var(--rule);
+		border-radius: 2px;
+	}
+
+	.layout-label {
+		font-size: 0.88rem;
+		font-weight: 600;
+	}
+
+	.layout-desc {
 		font-size: 0.72rem;
 	}
 </style>

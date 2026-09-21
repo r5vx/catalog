@@ -302,24 +302,26 @@ export async function trendingPeopleTmdb(): Promise<TrendingPerson[]> {
 	const key = tmdbKey();
 	if (!key) return [];
 
+	type RawPerson = {
+		id: number;
+		name: string;
+		profile_path?: string | null;
+		known_for?: { title?: string; name?: string; media_type?: string }[];
+	};
+
 	try {
-		const url = new URL(`${BASE}/trending/person/week`);
+		const all: RawPerson[] = [];
+		for (let page = 1; page <= 3; page++) {
+			const url = new URL(`${BASE}/trending/person/week`);
+			url.searchParams.set('page', String(page));
+			const response = await fetch(url, authorize(url, key));
+			if (!response.ok) break;
+			const payload = (await response.json()) as { results?: RawPerson[] };
+			all.push(...(payload.results ?? []));
+		}
 
-		const response = await fetch(url, authorize(url, key));
-		if (!response.ok) return [];
-
-		const payload = (await response.json()) as {
-			results?: {
-				id: number;
-				name: string;
-				profile_path?: string | null;
-				known_for?: { title?: string; name?: string; media_type?: string }[];
-			}[];
-		};
-
-		return (payload.results ?? [])
+		return all
 			.filter((p) => p.profile_path)
-			.slice(0, 12)
 			.map((p) => ({
 				id: p.id,
 				name: p.name,

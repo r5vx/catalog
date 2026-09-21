@@ -44,6 +44,8 @@ export type Settings = {
 	theme?: string;
 	/** Serialised febbox cookies — stored after login, or pasted by a friend. */
 	febboxToken?: string;
+	/** When '1', the layout stretches edge-to-edge instead of centering. */
+	wideLayout?: string;
 };
 
 export function readSettings(): Settings {

@@ -10,6 +10,7 @@ export const load: LayoutServerLoad = async () => {
 	return {
 		accent: isHexColour(saved) ? saved : DEFAULT_ACCENT,
 		hiddenSorts: (settings.hiddenSorts ?? '').split(',').filter(Boolean),
-		theme: settings.theme ?? ''
+		theme: settings.theme ?? '',
+		wideLayout: settings.wideLayout === '1'
 	};
 };

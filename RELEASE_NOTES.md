@@ -7,6 +7,38 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 2.1.0 — 2026-09-21
+
+- **Wide layout option.** In Settings > Personalization, switch between
+  centered and wide layout. Wide mode uses the full window width and
+  shows more titles per row.
+- **Renamed "Wrong show?" to "Wrong one?"** since it applies to movies and
+  anime as well.
+- **Fullscreen hides Catalog UI.** The player bar and controls disappear in
+  fullscreen and reappear when you move the mouse.
+- **More trending actors.** The actors page now shows around 60 trending
+  people instead of 12.
+- **Actors page links stay in Catalog.** Clicking an actor on the trending
+  actors page now opens their page inside the app instead of going to a
+  website.
+- **Add to library defaults to "completed".** Adding something from the
+  browse or detail page now sets it as completed instead of want to watch.
+- **Bigger thumbnails in the add menu.** Movie and show posters in search
+  results are larger and easier to see.
+- **Watch Now button removed from add menu.** The watch button on the title
+  detail page is the way to watch.
+- **Better showbox search.** Search now checks both the autocomplete and the
+  full search page, finding anime and titles the autocomplete alone missed.
+- **Smarter title matching.** Exact title matches are always preferred
+  regardless of year differences. Alternative title lookups verify the
+  result is actually the same show.
+- **Fixed episode listing for many titles.** Shows that returned
+  "no files found" (like The 100, The Pitt, and others) now load
+  correctly.
+- **Browse search bar typing fix.** The search input no longer resets while
+  you type.
+- **Simpler README.** The GitHub page is brief and to the point.
+
 ## 2.0.0 — 2026-09-20
 
 - **Watch inside Catalog.** Browse results and the detail page have a
