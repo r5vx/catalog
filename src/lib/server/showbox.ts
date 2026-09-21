@@ -26,6 +26,7 @@ export interface ShowboxResult {
 	title: string;
 	posterUrl: string;
 	info: string;
+	slug?: string;
 }
 
 async function rawSearch(keyword: string): Promise<ShowboxResult[]> {
@@ -74,19 +75,98 @@ async function rawSearch(keyword: string): Promise<ShowboxResult[]> {
 	}
 }
 
-export async function searchShowbox(query: string): Promise<ShowboxResult[]> {
-	const results = await rawSearch(query);
-	if (results.length > 0) return results;
+async function rawSearchPage(keyword: string): Promise<ShowboxResult[]> {
+	try {
+		const resp = await fetch(`${BASE}/search?keyword=${encodeURIComponent(keyword)}`, {
+			headers: {
+				'User-Agent':
+					'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+				Accept: 'text/html'
+			},
+			signal: AbortSignal.timeout(10000)
+		});
+		if (!resp.ok) return [];
 
-	const seen = new Set<number>();
+		const html = await resp.text();
+		const results: ShowboxResult[] = [];
+		const itemPattern = /<div class="flw-item">([\s\S]*?)<div class="clearfix"><\/div>/g;
+
+		for (const match of html.matchAll(itemPattern)) {
+			const block = match[1];
+			const linkMatch = block.match(/href="\/(movie|tv)\/(m|t)-([^"]+)"/);
+			if (!linkMatch) continue;
+
+			const kind = linkMatch[1] as 'movie' | 'tv';
+			const slug = `${linkMatch[2]}-${linkMatch[3]}`;
+
+			const titleMatch = block.match(/class="film-name"[^>]*>\s*<a[^>]*>([^<]+)<\/a>/);
+			const posterMatch = block.match(/class="film-poster-img"[^>]*\bsrc="([^"]+)"/);
+			const infoItems: string[] = [];
+			for (const m of block.matchAll(/class="fdi-item"[^>]*>([^<]+)<\/span>/g)) {
+				infoItems.push(m[1].trim());
+			}
+
+			results.push({
+				id: 0,
+				type: kind,
+				title: titleMatch?.[1]?.trim() ?? '',
+				posterUrl: posterMatch?.[1] ?? '',
+				info: infoItems.join(' '),
+				slug
+			});
+		}
+
+		return results;
+	} catch {
+		return [];
+	}
+}
+
+export async function resolveSlugId(slug: string, type: 'movie' | 'tv'): Promise<number> {
+	try {
+		const resp = await fetch(`${BASE}/${type}/${slug}`, {
+			headers: {
+				'User-Agent':
+					'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+				Accept: 'text/html'
+			},
+			signal: AbortSignal.timeout(10000)
+		});
+		if (!resp.ok) return 0;
+
+		const html = await resp.text();
+		const detailMatch = html.match(/\/(movie|tv)\/detail\/(\d+)/);
+		if (detailMatch) return Number(detailMatch[2]);
+
+		const dataIdMatch = html.match(/data-id="(\d+)"[^>]*data-type="/);
+		if (dataIdMatch) return Number(dataIdMatch[1]);
+
+		return 0;
+	} catch {
+		return 0;
+	}
+}
+
+export async function searchShowbox(query: string): Promise<ShowboxResult[]> {
+	const seenTitles = new Set<string>();
 	const merged: ShowboxResult[] = [];
 	const addResults = (rs: ShowboxResult[]) => {
 		for (const r of rs) {
-			if (seen.has(r.id)) continue;
-			seen.add(r.id);
+			const key = r.title.toLowerCase();
+			if (seenTitles.has(key)) continue;
+			seenTitles.add(key);
 			merged.push(r);
 		}
 	};
+
+	const [autocomplete, page] = await Promise.all([
+		rawSearch(query),
+		rawSearchPage(query)
+	]);
+	addResults(autocomplete);
+	addResults(page);
+
+	if (merged.length > 0) return merged;
 
 	if (query.includes(':') || query.includes(' - ')) {
 		const parts = query.split(/[:–—]\s*/).map((s) => s.trim()).filter(Boolean);
@@ -97,7 +177,7 @@ export async function searchShowbox(query: string): Promise<ShowboxResult[]> {
 	}
 
 	const words = query.split(/\s+/).filter((w) => w.length > 0);
-	if (words.length <= 1) return merged.length > 0 ? merged : [];
+	if (words.length <= 1) return merged;
 
 	const tries: string[] = [];
 	if (words.length > 2) {
@@ -147,7 +227,14 @@ export async function listFebboxFiles(
 	if (!key) return [];
 
 	const resp = await fetch(
-		`https://www.febbox.com/file/file_share_list?share_key=${key}&pwd=&parent_id=${parentId}`
+		`https://www.febbox.com/file/file_share_list?share_key=${key}&pwd=&parent_id=${parentId}`,
+		{
+			headers: {
+				'User-Agent':
+					'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+				Referer: 'https://www.febbox.com/'
+			}
+		}
 	);
 	if (!resp.ok) return [];
 
@@ -567,17 +654,17 @@ export function bestMatch(
 	const want = query.toLowerCase().trim();
 	const wantWords = titleWords(query);
 
+	let exactWithYear: ShowboxResult | null = null;
+	let exactNoYear: ShowboxResult | null = null;
 	for (const r of items) {
 		const t = r.title.toLowerCase();
-		if (t === want && (!wantType || r.type === wantType) && (!wantYear || r.info.includes(wantYear)))
-			return r;
+		if (t !== want) continue;
+		if (wantType && r.type !== wantType) continue;
+		if (wantYear && r.info.includes(wantYear)) { exactWithYear = r; break; }
+		if (!exactNoYear) exactNoYear = r;
 	}
-
-	if (!wantYear) {
-		for (const r of items) {
-			if (r.title.toLowerCase() === want && (!wantType || r.type === wantType)) return r;
-		}
-	}
+	if (exactWithYear) return exactWithYear;
+	if (exactNoYear) return exactNoYear;
 
 	let best: ShowboxResult | null = null;
 	let bestScore = 0;

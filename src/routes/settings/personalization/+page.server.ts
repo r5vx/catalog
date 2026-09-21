@@ -15,7 +15,8 @@ export const load: PageServerLoad = async () => {
 			return isHexColour(saved) ? saved : DEFAULT_ACCENT;
 		})(),
 		hiddenSorts: (settings.hiddenSorts ?? '').split(',').filter(Boolean),
-		theme: settings.theme ?? ''
+		theme: settings.theme ?? '',
+		wideLayout: settings.wideLayout === '1'
 	};
 };
 
@@ -51,6 +52,13 @@ export const actions: Actions = {
 	 * Stored as the ones you turned *off*, so a sort added in a later version
 	 * shows up rather than being silently missing.
 	 */
+	saveLayout: async ({ request }) => {
+		const form = await request.formData();
+		const wide = form.get('wideLayout') === '1';
+		updateSettings({ wideLayout: wide ? '1' : undefined });
+		return { layoutOk: wide ? 'Wide layout enabled.' : 'Centered layout restored.' };
+	},
+
 	saveSorts: async ({ request }) => {
 		const form = await request.formData();
 		const keep = new Set(form.getAll('sort').map(String));

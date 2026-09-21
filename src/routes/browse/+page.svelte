@@ -27,11 +27,13 @@
 		goto(`?${params.toString()}`, { keepFocus: true, noScroll: true });
 	}
 
+	// eslint-disable-next-line svelte/valid-compile -- intentionally captures initial data.q only
+	let searchText = $state(data.q ?? '');
 	let typing: ReturnType<typeof setTimeout>;
 	function onSearch(event: Event) {
 		clearTimeout(typing);
-		const value = (event.target as HTMLInputElement).value;
-		typing = setTimeout(() => setParam('q', value), 350);
+		searchText = (event.target as HTMLInputElement).value;
+		typing = setTimeout(() => setParam('q', searchText), 350);
 	}
 
 	/* ------------------------------------------------- what you already have */
@@ -160,7 +162,7 @@
 	<input
 		type="search"
 		placeholder="Search for anything…"
-		value={data.q}
+		bind:value={searchText}
 		oninput={onSearch}
 		aria-label="Search every title"
 	/>

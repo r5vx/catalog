@@ -40,7 +40,7 @@
 	<meta name="theme-color" content={accent} />
 </svelte:head>
 
-<div class="app" style={accentCss}>
+<div class="app" class:wide={data?.wideLayout} style={accentCss}>
 	<UpdateBanner />
 	{@render children()}
 </div>
@@ -53,10 +53,19 @@
 		padding-block: 28px 80px;
 	}
 
+	.app.wide {
+		max-width: none;
+		padding-inline: 40px;
+	}
+
 	@media (max-width: 520px) {
 		.app {
 			padding-inline: 14px;
 			padding-block: 18px 60px;
+		}
+
+		.app.wide {
+			padding-inline: 14px;
 		}
 	}
 </style>

@@ -70,7 +70,7 @@
 		<ul class="trend-grid">
 			{#each data.trending as person (person.id)}
 				<li>
-					<a href="https://www.themoviedb.org/person/{person.id}" target="_blank" rel="noopener">
+					<a href="/person/{person.id}">
 						<div class="trend-photo">
 							<img src={person.photo} alt="" loading="lazy" />
 						</div>
