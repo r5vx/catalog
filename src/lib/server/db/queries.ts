@@ -320,6 +320,21 @@ export function updateEntry(id: number, input: EntryInput): void {
 	);
 }
 
+export function markEntryCompleted(id: number): void {
+	db.prepare('UPDATE entries SET status = ?, finished_on = ?, updated_at = ? WHERE id = ?')
+		.run('completed', new Date().toISOString().slice(0, 10), new Date().toISOString(), id);
+}
+
+export function incrementRewatches(id: number): void {
+	db.prepare('UPDATE entries SET rewatches = rewatches + 1, updated_at = ? WHERE id = ?')
+		.run(new Date().toISOString(), id);
+}
+
+export function updateEntrySource(id: number, source: string, sourceId: string): void {
+	db.prepare('UPDATE entries SET source = ?, source_id = ?, updated_at = ? WHERE id = ?')
+		.run(source, sourceId, new Date().toISOString(), id);
+}
+
 export function deleteEntry(id: number): void {
 	db.prepare('DELETE FROM entries WHERE id = ?').run(id);
 }
@@ -601,7 +616,47 @@ export function deleteWatchProgress(title: string, type: string, season: number,
 		.run(title, type, season, episode);
 }
 
+export function continueWatchingList(): (WatchProgress & { updatedAt: string; posterUrl: string | null; entryId: number | null; entryStatus: string | null })[] {
+	return db
+		.prepare(`
+			SELECT w.title, w.type, w.season, w.episode, w."current_time" AS currentTime, w.duration, w.updated_at AS updatedAt,
+				(SELECT e.poster_url FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1) AS posterUrl,
+				(SELECT e.id FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1) AS entryId,
+				(SELECT e.status FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1) AS entryStatus
+			FROM watch_progress w
+			WHERE w.updated_at = (
+				SELECT MAX(w2.updated_at) FROM watch_progress w2 WHERE w2.title = w.title AND w2.type = w.type
+			)
+			AND w."current_time" > 120
+			AND (CAST(w."current_time" AS REAL) / w.duration) < 0.90
+			ORDER BY w.updated_at DESC
+			LIMIT 20
+		`)
+		.all() as unknown as (WatchProgress & { updatedAt: string; posterUrl: string | null; entryId: number | null; entryStatus: string | null })[];
+}
+
+export function deleteTitleProgress(title: string, type: string): void {
+	db.prepare('DELETE FROM watch_progress WHERE title = ? AND type = ?').run(title, type);
+}
+
+export function watchedEpisodesForTitle(title: string): { season: number; episode: number; pct: number }[] {
+	return db
+		.prepare(`SELECT season, episode, CAST("current_time" AS REAL) / duration AS pct
+			FROM watch_progress WHERE title = ? AND type = 'tv' AND duration > 0`)
+		.all(title) as { season: number; episode: number; pct: number }[];
+}
+
+export function updateSeasonEpisodeReached(id: number, season: number, episode: number): void {
+	db.prepare('UPDATE entries SET last_season = ?, last_episode = ?, updated_at = ? WHERE id = ?')
+		.run(season, episode, new Date().toISOString(), id);
+}
+
+export function cleanupCompletedProgress(): void {
+	db.prepare('DELETE FROM watch_progress WHERE duration > 0 AND (CAST("current_time" AS REAL) / duration) >= 0.93').run();
+}
+
 export function listAllWatchProgressFull(): (WatchProgress & { updatedAt: string })[] {
+	cleanupCompletedProgress();
 	return db
 		.prepare('SELECT title, type, season, episode, "current_time" AS currentTime, duration, sub_url AS subUrl, sub_delay AS subDelay, sub_file_name AS subFileName, updated_at AS updatedAt FROM watch_progress ORDER BY updated_at DESC')
 		.all() as unknown as (WatchProgress & { updatedAt: string })[];

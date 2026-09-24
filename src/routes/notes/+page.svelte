@@ -1,8 +1,11 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import CategoryTabs from '$lib/CategoryTabs.svelte';
+	import { p } from '$lib/altText';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
+	const pm = $derived(page.data.altMode);
 
 	const asText = (html: string) => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 
@@ -10,11 +13,11 @@
 		new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 </script>
 
-<svelte:head><title>Notes · Catalog</title></svelte:head>
+<svelte:head><title>{pm ? 'Notes' : 'Notes'} · {pm ? 'Catalog' : 'Catalog'}</title></svelte:head>
 
 <header>
 	<div class="row">
-		<h1>Notes</h1>
+		<h1>{pm ? p('Notes') : 'Notes'}</h1>
 		<div class="actions">
 			<a href="/settings" class="btn" title="Settings" aria-label="Settings">⚙</a>
 			<form method="POST" action="?/create">
@@ -34,6 +37,7 @@
 	total={data.total}
 	noteCount={data.noteCount}
 	active="notes"
+	altMode={pm}
 />
 
 {#if data.notes.length === 0}

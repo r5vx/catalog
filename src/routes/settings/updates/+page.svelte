@@ -251,6 +251,7 @@
 						<svg class="chevron" class:open viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>
 						<span class="release-title">
 							{rel.version}
+							{#if rel.title}<span class="release-subtitle">{rel.title}</span>{/if}
 							{#if rel.version === data.appVersion}<span class="pill completed">Yours</span>{/if}
 						</span>
 						{#if rel.date}<span class="when faint tabular">{rel.date}</span>{/if}
@@ -428,6 +429,16 @@
 		display: flex;
 		align-items: center;
 		gap: 8px;
+	}
+
+	.release-subtitle {
+		font-weight: 600;
+		color: var(--ink);
+		font-size: 0.95rem;
+	}
+
+	.release-subtitle::before {
+		content: '— ';
 	}
 
 	.when {

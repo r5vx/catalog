@@ -16,7 +16,8 @@ export const load: PageServerLoad = async () => {
 		})(),
 		hiddenSorts: (settings.hiddenSorts ?? '').split(',').filter(Boolean),
 		theme: settings.theme ?? '',
-		wideLayout: settings.wideLayout === '1'
+		wideLayout: settings.wideLayout === '1',
+		altMode: settings.altMode === '1'
 	};
 };
 
@@ -57,6 +58,12 @@ export const actions: Actions = {
 		const wide = form.get('wideLayout') === '1';
 		updateSettings({ wideLayout: wide ? '1' : undefined });
 		return { layoutOk: wide ? 'Wide layout enabled.' : 'Centered layout restored.' };
+	},
+
+	saveAlt: async ({ request }) => {
+		const on = String((await request.formData()).get('altMode')) === '1';
+		updateSettings({ altMode: on ? '1' : undefined });
+		return { altOk: on ? 'Alternate wording on.' : 'Back to normal.' };
 	},
 
 	saveSorts: async ({ request }) => {

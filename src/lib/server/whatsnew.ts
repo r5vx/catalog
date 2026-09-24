@@ -22,6 +22,7 @@ export type ReleaseNote = {
 	/** "1.1.0", or "Unreleased" for changes built but not yet published. */
 	version: string;
 	date: string | null;
+	title: string | null;
 	bullets: Run[][];
 };
 
@@ -66,7 +67,10 @@ export function whatsNew(): ReleaseNote[] {
 	for (const chunk of text.split(/^## /m).slice(1)) {
 		const [heading, ...rest] = chunk.split('\n');
 
-		const [version, date] = heading.split('—').map((part) => part.trim());
+		const parts = heading.split('—').map((part) => part.trim());
+		const version = parts[0];
+		const date = parts[1] || null;
+		const title = parts[2] || null;
 		if (!version) continue;
 
 		const bullets = rest
@@ -77,7 +81,7 @@ export function whatsNew(): ReleaseNote[] {
 			.filter(Boolean)
 			.map(runs);
 
-		if (bullets.length > 0) notes.push({ version, date: date || null, bullets });
+		if (bullets.length > 0) notes.push({ version, date, title, bullets });
 	}
 
 	return (cached = notes);

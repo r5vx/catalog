@@ -1,5 +1,5 @@
 import { json, error, type RequestHandler } from '@sveltejs/kit';
-import { saveWatchProgress, getWatchProgress, listAllWatchProgress, listAllWatchProgressFull, clearAllWatchProgress, deleteWatchProgress } from '$lib/server/db/queries';
+import { saveWatchProgress, getWatchProgress, listAllWatchProgress, listAllWatchProgressFull, clearAllWatchProgress, deleteWatchProgress, deleteTitleProgress, watchedEpisodesForTitle } from '$lib/server/db/queries';
 
 export const GET: RequestHandler = async ({ url }) => {
 	const title = url.searchParams.get('title')?.trim();
@@ -17,6 +17,10 @@ export const GET: RequestHandler = async ({ url }) => {
 
 	if (!title) return error(400, 'Missing title');
 
+	if (url.searchParams.get('episodes') === '1') {
+		return json(watchedEpisodesForTitle(title));
+	}
+
 	const progress = getWatchProgress(title, type, season, episode);
 	return json(progress);
 };
@@ -27,17 +31,18 @@ export const POST: RequestHandler = async ({ request }) => {
 
 	if (!title) return error(400, 'Missing title');
 
-	saveWatchProgress(
-		title,
-		type ?? 'movie',
-		season ?? 0,
-		episode ?? 0,
-		currentTime ?? 0,
-		duration ?? 0,
-		subUrl ?? '',
-		subDelay ?? 0,
-		subFileName ?? ''
-	);
+	const t = type ?? 'movie';
+	const s = season ?? 0;
+	const e = episode ?? 0;
+	const ct = currentTime ?? 0;
+	const d = duration ?? 0;
+
+	if (d > 0 && ct / d >= 0.93) {
+		deleteWatchProgress(title, t, s, e);
+		return json({ ok: true });
+	}
+
+	saveWatchProgress(title, t, s, e, ct, d, subUrl ?? '', subDelay ?? 0, subFileName ?? '');
 	return json({ ok: true });
 };
 
@@ -45,9 +50,13 @@ export const DELETE: RequestHandler = async ({ url }) => {
 	const title = url.searchParams.get('title')?.trim();
 	if (title) {
 		const type = url.searchParams.get('type') ?? 'movie';
-		const season = Number(url.searchParams.get('season') ?? 0);
-		const episode = Number(url.searchParams.get('episode') ?? 0);
-		deleteWatchProgress(title, type, season, episode);
+		if (url.searchParams.get('all_episodes') === '1') {
+			deleteTitleProgress(title, type);
+		} else {
+			const season = Number(url.searchParams.get('season') ?? 0);
+			const episode = Number(url.searchParams.get('episode') ?? 0);
+			deleteWatchProgress(title, type, season, episode);
+		}
 	} else {
 		clearAllWatchProgress();
 	}

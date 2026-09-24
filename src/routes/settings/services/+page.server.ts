@@ -1,7 +1,7 @@
 import { readSettings, updateSettings } from '$lib/server/settings';
 import { verifyTmdbKey } from '$lib/server/metadata/tmdb';
 import { verifyOmdbKey } from '$lib/server/metadata/omdb';
-import { watchRegion } from '$lib/server/metadata/providers';
+import { watchRegion, detectedRegion } from '$lib/server/metadata/providers';
 import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 
@@ -14,7 +14,8 @@ export const load: PageServerLoad = async () => {
 		febboxKeySaved: Boolean(settings.febboxToken),
 		febboxToken: settings.febboxToken ?? '',
 		region: settings.watchRegion ?? '',
-		regionInUse: watchRegion()
+		regionInUse: watchRegion(),
+		detectedRegion: detectedRegion()
 	};
 };
 

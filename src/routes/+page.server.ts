@@ -1,4 +1,4 @@
-import { listCategories, listEntries, countsByCategory } from '$lib/server/db/queries';
+import { listCategories, listEntries, countsByCategory, continueWatchingList } from '$lib/server/db/queries';
 import { countNotes } from '$lib/server/db/notes';
 import { listTags } from '$lib/server/db/tags';
 import { SORTS } from '$lib/constants';
@@ -38,6 +38,7 @@ export const load: PageServerLoad = async ({ url }) => {
 		total,
 		noteCount: countNotes(),
 		tags: listTags(),
-		filters: { q, cat, status, sort: sort.value, tags: tagIds }
+		filters: { q, cat, status, sort: sort.value, tags: tagIds },
+		continueWatching: continueWatchingList()
 	};
 };

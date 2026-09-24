@@ -1,5 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { createFromResult } from '$lib/server/entries';
+import { markEntryCompleted, incrementRewatches, updateSeasonEpisodeReached, deleteEntry } from '$lib/server/db/queries';
 import type { SearchResult } from '$lib/server/metadata';
 import type { RequestHandler } from './$types';
 
@@ -25,4 +26,26 @@ export const POST: RequestHandler = async ({ request }) => {
 	});
 
 	return json({ id });
+};
+
+export const PATCH: RequestHandler = async ({ request }) => {
+	const body = (await request.json()) as { id: number; action: string; season?: number; episode?: number };
+	if (!body.id) return error(400, 'Missing id');
+
+	if (body.action === 'complete') markEntryCompleted(body.id);
+	else if (body.action === 'rewatch') incrementRewatches(body.id);
+	else if (body.action === 'update_progress') {
+		if (body.season == null || body.episode == null) return error(400, 'Missing season/episode');
+		updateSeasonEpisodeReached(body.id, body.season, body.episode);
+	}
+	else return error(400, 'Unknown action');
+
+	return json({ ok: true });
+};
+
+export const DELETE: RequestHandler = async ({ request }) => {
+	const body = (await request.json()) as { id: number };
+	if (!body.id) return error(400, 'Missing id');
+	deleteEntry(body.id);
+	return json({ ok: true });
 };

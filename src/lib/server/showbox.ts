@@ -286,11 +286,16 @@ export async function listEpisodes(
 	const seasons: number[] = [];
 	const allQualities = new Set<string>();
 
-	for (const folder of seasonFolders) {
-		const seasonNum = Number(folder.name.match(/\d+/)?.[0] ?? 0);
-		seasons.push(seasonNum);
+	const seasonResults = await Promise.all(
+		seasonFolders.map(async (folder) => {
+			const seasonNum = Number(folder.name.match(/\d+/)?.[0] ?? 0);
+			const files = await listFebboxFiles(shareUrl, folder.fid);
+			return { seasonNum, files };
+		})
+	);
 
-		const files = await listFebboxFiles(shareUrl, folder.fid);
+	for (const { seasonNum, files } of seasonResults) {
+		seasons.push(seasonNum);
 		const epFiles = new Map<string, FileOption[]>();
 
 		for (const file of files) {
