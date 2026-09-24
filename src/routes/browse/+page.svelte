@@ -2,10 +2,12 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import BackBar from '$lib/BackBar.svelte';
+	import { p, pRandom } from '$lib/poison';
 	import type { SearchResult } from '$lib/server/metadata/types';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
+	const pm = $derived(page.data.poisonMode);
 
 	const TABS = [
 		{ value: '', label: 'Everything' },
@@ -147,21 +149,21 @@
 		`/title/${result.source}/${encodeURIComponent(result.sourceId)}?back=${encodeURIComponent(here)}`;
 </script>
 
-<svelte:head><title>Browse · Catalog</title></svelte:head>
+<svelte:head><title>{pm ? 'Find giblets' : 'Browse'} · {pm ? "Papa's Giblets" : 'Catalog'}</title></svelte:head>
 
 <BackBar />
 
 <header class="masthead">
-	<h1>Browse everything</h1>
+	<h1>{pm ? 'Find giblets' : 'Browse everything'}</h1>
 	<p class="muted">
-		Every film, series and anime the databases know about — not only what you've added.
+		{pm ? 'All the giblets the databases know about — are we deadass rn.' : 'Every film, series and anime the databases know about — not only what you\'ve added.'}
 	</p>
 </header>
 
 <div class="toolbar">
 	<input
 		type="search"
-		placeholder="Search for anything…"
+		placeholder={pm ? "find a giblet..." : "Search for anything…"}
 		bind:value={searchText}
 		oninput={onSearch}
 		aria-label="Search every title"
@@ -175,11 +177,10 @@
 			class:active={data.cat === tab.value}
 			onclick={() => setParam('cat', tab.value)}
 		>
-			{tab.label}
+			{pm ? p(tab.label) : tab.label}
 		</button>
 	{/each}
 
-	<!-- Only meaningful for the shelves; a search is a search either way. -->
 	{#if !data.q}
 		<span class="modes">
 			{#each MODES as option (option.value)}
@@ -189,7 +190,7 @@
 					class:active={data.mode === option.value}
 					onclick={() => setParam('mode', option.value === 'trending' ? '' : option.value)}
 				>
-					{option.label}
+					{pm ? p(option.label) : option.label}
 				</button>
 			{/each}
 		</span>
@@ -231,9 +232,9 @@
 		{/if}
 
 		{#if justAdded[keyOf(result)]}
-			<a class="added" href="/entry/{justAdded[keyOf(result)]}">Added &rarr;</a>
+			<a class="added" href="/entry/{justAdded[keyOf(result)]}">{pm ? 'Claimed →' : 'Added →'}</a>
 		{:else if have(result)}
-			<span class="added">In your library</span>
+			<span class="added">{pm ? p('In your library') : 'In your library'}</span>
 		{/if}
 	</li>
 {/snippet}
@@ -253,7 +254,7 @@
 {:else}
 	{#each data.shelves as shelf (shelf.key)}
 		<section class="shelf">
-			<h2>{shelf.label}</h2>
+			<h2>{pm ? p(shelf.label) : shelf.label}</h2>
 			<ul class="grid">
 				{#each shelfResults(shelf) as result (result.key)}
 					{@render card(result)}
@@ -269,7 +270,7 @@
 					disabled={loading === shelf.key}
 					onclick={() => more(shelf)}
 				>
-					{loading === shelf.key ? 'Finding more…' : 'Show more'}
+					{loading === shelf.key ? (pm ? pRandom() : 'Finding more…') : (pm ? 'gimme more giblets' : 'Show more')}
 				</button>
 			{/if}
 		</section>

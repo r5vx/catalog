@@ -31,7 +31,7 @@ export const load: PageServerLoad = async ({ url }) => {
 
 	// A wider net than the add box: browsing is the case where the thing you
 	// want is the twentieth result, not the first.
-	const found = q ? await searchAll(title, { year, limit: 60 }) : [];
+	const found = q ? await searchAll(title, { year, limit: 60, fuzzy: true }) : [];
 
 	const results = category ? found.filter((one) => one.categorySlug === category) : found;
 

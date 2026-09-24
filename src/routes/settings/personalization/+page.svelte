@@ -13,6 +13,7 @@
 
 	let theme = $state(untrack(() => data.theme));
 	let wideLayout = $state(untrack(() => data.wideLayout));
+	let poisonMode = $state(untrack(() => (data as any).poisonMode as boolean));
 
 	const THEMES = [
 		{ value: '', label: 'System', desc: 'Follows your device', bg: '' },
@@ -215,6 +216,27 @@
 		{/each}
 
 		<button type="submit" class="btn btn-primary">Save sorting</button>
+	</form>
+</section>
+<section>
+	<div class="head"><h2>Poison Mode</h2></div>
+	<p class="muted">Replaces UI text with giblet vocabulary. Call me papa.</p>
+
+	{#if (form as any)?.poisonOk}
+		<p class="msg good" role="status">{(form as any).poisonOk}</p>
+	{/if}
+
+	<form method="POST" action="?/savePoison" class="poison-form">
+		<input type="hidden" name="poisonMode" value={poisonMode ? '1' : '0'} />
+		<label class="toggle">
+			<input
+				type="checkbox"
+				checked={poisonMode}
+				onchange={(e) => { poisonMode = e.currentTarget.checked; }}
+			/>
+			{poisonMode ? "ARE YOU DUMB it's on" : 'Off'}
+		</label>
+		<button type="submit" class="btn btn-primary">Save</button>
 	</form>
 </section>
 </div>

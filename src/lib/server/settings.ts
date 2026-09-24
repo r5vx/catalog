@@ -46,6 +46,8 @@ export type Settings = {
 	febboxToken?: string;
 	/** When '1', the layout stretches edge-to-edge instead of centering. */
 	wideLayout?: string;
+	/** When '1', UI text gets replaced with Poison's vocabulary. */
+	poisonMode?: string;
 };
 
 export function readSettings(): Settings {

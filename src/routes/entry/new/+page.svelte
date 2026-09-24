@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
+	import { p } from '$lib/poison';
 	import type { SearchResult } from '$lib/server/metadata/types';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
+	const pm = $derived(page.data.poisonMode);
 
 	let query = $state('');
 	let results = $state<SearchResult[]>([]);
@@ -111,12 +113,12 @@
 	const addedCount = $derived(Object.keys(added).length);
 </script>
 
-<svelte:head><title>Add to your library · Catalog</title></svelte:head>
+<svelte:head><title>{pm ? 'Claim a giblet' : 'Add to your library'} · {pm ? "Papa's back" : 'Catalog'}</title></svelte:head>
 
 <header>
-	<a href="/" class="back faint">&larr; Library</a>
-	<h1>Add to your library</h1>
-	<p class="muted sub">Poster, year and category fill in automatically.</p>
+	<a href="/" class="back faint">&larr; {pm ? p('Library') : 'Library'}</a>
+	<h1>{pm ? 'Claim a giblet' : 'Add to your library'}</h1>
+	<p class="muted sub">{pm ? 'i dont knoww just type something chill' : 'Poster, year and category fill in automatically.'}</p>
 </header>
 
 <!-- svelte-ignore a11y_autofocus -->
@@ -124,7 +126,7 @@
 	type="search"
 	id="lookup"
 	class="lookup"
-	placeholder="Start typing a title…"
+	placeholder={pm ? "whats the giblet called..." : "Start typing a title…"}
 	autocomplete="off"
 	autofocus
 	value={query}
@@ -206,7 +208,7 @@
 						disabled={busy === result.key}
 						onclick={() => add(result)}
 					>
-						{busy === result.key ? 'Adding…' : 'Add'}
+						{busy === result.key ? (pm ? 'hold on...' : 'Adding…') : (pm ? 'Claim' : 'Add')}
 					</button>
 				{/if}
 			</div>

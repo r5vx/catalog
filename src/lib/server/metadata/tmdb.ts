@@ -138,6 +138,20 @@ function punctuationVariants(query: string): string[] {
  * spin-off film, "drake & josh" finds the series. Neither form returns nothing,
  * so we can't wait for an empty result — both are always searched and merged.
  */
+const PHONETIC_SWAPS: [string, string][] = [
+	['aw', 'au'], ['au', 'aw'], ['ee', 'ea'], ['ea', 'ee'],
+	['oo', 'ou'], ['ou', 'oo'], ['ei', 'ie'], ['ie', 'ei'],
+	['ck', 'k'], ['k', 'ck'], ['ph', 'f'], ['f', 'ph'],
+];
+
+function phoneticVariant(query: string): string | null {
+	if (query.length < 4) return null;
+	for (const [from, to] of PHONETIC_SWAPS) {
+		if (query.includes(from)) return query.replace(from, to);
+	}
+	return null;
+}
+
 function conjunctionVariant(query: string): string | null {
 	// Word boundaries matter: without them "WandaVision" becomes "W&aVision".
 	if (/\band\b/i.test(query)) return query.replace(/\band\b/gi, '&');
@@ -165,7 +179,7 @@ async function fetchTmdb(query: string, key: string): Promise<TmdbItem[]> {
 	return (payload.results ?? []).filter((item) => item.media_type !== 'person');
 }
 
-export async function searchTmdb(query: string): Promise<SearchResult[]> {
+export async function searchTmdb(query: string, fuzzy = false): Promise<SearchResult[]> {
 	const key = tmdbKey();
 	if (!key) return [];
 
@@ -176,13 +190,14 @@ export async function searchTmdb(query: string): Promise<SearchResult[]> {
 		};
 
 		const swapped = conjunctionVariant(query);
-		const [first, second] = await Promise.all([
+		const phonetic = fuzzy ? phoneticVariant(query) : null;
+		const searches: Promise<TmdbItem[]>[] = [
 			fetchTmdb(query, key),
-			swapped ? fetchTmdb(swapped, key) : Promise.resolve([])
-		]);
-
-		collect(first);
-		collect(second);
+			swapped ? fetchTmdb(swapped, key) : Promise.resolve([]),
+			phonetic ? fetchTmdb(phonetic, key) : Promise.resolve([])
+		];
+		const batched = await Promise.all(searches);
+		for (const batch of batched) collect(batch);
 
 		// Still nothing? The title probably uses punctuation we didn't type.
 		if (byId.size === 0) {
@@ -191,6 +206,30 @@ export async function searchTmdb(query: string): Promise<SearchResult[]> {
 				if (attempt.length > 0) {
 					collect(attempt);
 					break;
+				}
+			}
+		}
+
+		if (fuzzy) {
+			// Compound word with no spaces? Try splitting it.
+			if (byId.size === 0 && !/\s/.test(query) && query.length > 6) {
+				for (let i = 3; i <= query.length - 3; i++) {
+					const split = query.slice(0, i) + ' ' + query.slice(i);
+					const attempt = await fetchTmdb(split, key);
+					if (attempt.length > 0) { collect(attempt); break; }
+				}
+			}
+
+			// Misspelled words? Try dropping each word and searching the rest.
+			if (byId.size === 0 && query.includes(' ')) {
+				const words = query.split(/\s+/);
+				if (words.length >= 2) {
+					for (let i = 0; i < words.length; i++) {
+						const partial = words.filter((_, j) => j !== i).join(' ');
+						if (partial.length < 3) continue;
+						const attempt = await fetchTmdb(partial, key);
+						if (attempt.length > 0) { collect(attempt); break; }
+					}
 				}
 			}
 		}
@@ -285,7 +324,8 @@ export async function trendingTmdb(
 			// Neither endpoint reliably carries the field the mapping reads.
 			.map((item) => ({ ...item, media_type: item.media_type ?? kind }))
 			.filter((item) => !isPlaceholder(item))
-			.map(toResult);
+			.map(toResult)
+			.filter((r) => r.categorySlug !== 'anime' || kind === 'movie');
 	} catch {
 		return [];
 	}
@@ -468,6 +508,54 @@ export async function fetchCast(
 				id: c.id,
 				name: c.name,
 				character: c.character,
+				photo: c.profile_path ? `https://image.tmdb.org/t/p/w185${c.profile_path}` : null
+			}));
+	} catch {
+		return [];
+	}
+}
+
+export async function fetchEpisodeCast(
+	title: string,
+	season: number,
+	episode: number
+): Promise<CastMember[]> {
+	const key = tmdbKey();
+	if (!key) return [];
+
+	try {
+		const searchUrl = new URL(`${BASE}/search/tv`);
+		searchUrl.searchParams.set('query', title);
+		const searchResp = await fetch(searchUrl, authorize(searchUrl, key));
+		if (!searchResp.ok) return [];
+
+		const searchData = (await searchResp.json()) as { results?: { id: number }[] };
+		const item = searchData.results?.[0];
+		if (!item) return [];
+
+		const epCreditsUrl = new URL(`${BASE}/tv/${item.id}/season/${season}/episode/${episode}/credits`);
+		const epResp = await fetch(epCreditsUrl, authorize(epCreditsUrl, key));
+		if (!epResp.ok) return [];
+
+		const credits = (await epResp.json()) as {
+			cast?: { id: number; name: string; character: string; profile_path?: string | null; order?: number }[];
+			guest_stars?: { id: number; name: string; character: string; profile_path?: string | null; order?: number }[];
+		};
+
+		const mainCast = (credits.cast ?? []).map(c => ({ ...c, isGuest: false }));
+		const guests = (credits.guest_stars ?? []).map(c => ({ ...c, isGuest: true }));
+		const all = [...mainCast, ...guests];
+
+		const seen = new Set<number>();
+		const unique = all.filter(c => { if (seen.has(c.id)) return false; seen.add(c.id); return true; });
+
+		return unique
+			.sort((a, b) => (a.order ?? 999) - (b.order ?? 999))
+			.slice(0, 30)
+			.map((c) => ({
+				id: c.id,
+				name: c.name,
+				character: c.character + (c.isGuest ? ' (Guest)' : ''),
 				photo: c.profile_path ? `https://image.tmdb.org/t/p/w185${c.profile_path}` : null
 			}));
 	} catch {

@@ -1,8 +1,11 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
+	import { p } from '$lib/poison';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
+	const pm = $derived(page.data.poisonMode);
 
 	let timer: ReturnType<typeof setTimeout>;
 
@@ -18,12 +21,12 @@
 	}
 </script>
 
-<svelte:head><title>Actors · Catalog</title></svelte:head>
+<svelte:head><title>{pm ? 'Baddies' : 'Actors'} · {pm ? "Papa's back" : 'Catalog'}</title></svelte:head>
 
 <header>
-	<a href="/" class="back faint">&larr; Library</a>
-	<h1>Actors</h1>
-	<p class="muted sub">Anyone who appears in something you've watched.</p>
+	<a href="/" class="back faint">&larr; {pm ? p('Library') : 'Library'}</a>
+	<h1>{pm ? p('Actors') : 'Actors'}</h1>
+	<p class="muted sub">{pm ? "all the baddies from stuff you've watched" : "Anyone who appears in something you've watched."}</p>
 </header>
 
 <!-- svelte-ignore a11y_autofocus -->
@@ -31,7 +34,7 @@
 	type="search"
 	id="people-search"
 	class="lookup"
-	placeholder="Search actors and voice actors…"
+	placeholder={pm ? "find a baddie..." : "Search actors and voice actors…"}
 	value={data.q}
 	autocomplete="off"
 	autofocus
@@ -66,7 +69,7 @@
 
 {#if !data.q && data.trending.length > 0}
 	<section class="trending">
-		<h2 class="label">Trending this week</h2>
+		<h2 class="label">{pm ? "alpha baddies rn" : 'Trending this week'}</h2>
 		<ul class="trend-grid">
 			{#each data.trending as person (person.id)}
 				<li>

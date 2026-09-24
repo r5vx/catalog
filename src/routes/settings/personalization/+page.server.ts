@@ -16,7 +16,8 @@ export const load: PageServerLoad = async () => {
 		})(),
 		hiddenSorts: (settings.hiddenSorts ?? '').split(',').filter(Boolean),
 		theme: settings.theme ?? '',
-		wideLayout: settings.wideLayout === '1'
+		wideLayout: settings.wideLayout === '1',
+		poisonMode: settings.poisonMode === '1'
 	};
 };
 
@@ -57,6 +58,12 @@ export const actions: Actions = {
 		const wide = form.get('wideLayout') === '1';
 		updateSettings({ wideLayout: wide ? '1' : undefined });
 		return { layoutOk: wide ? 'Wide layout enabled.' : 'Centered layout restored.' };
+	},
+
+	savePoison: async ({ request }) => {
+		const on = String((await request.formData()).get('poisonMode')) === '1';
+		updateSettings({ poisonMode: on ? '1' : undefined });
+		return { poisonOk: on ? 'giblet mode activated' : 'Back to normal.' };
 	},
 
 	saveSorts: async ({ request }) => {

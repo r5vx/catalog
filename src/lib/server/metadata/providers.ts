@@ -42,19 +42,19 @@ const tmdbKey = () => (readSettings().tmdbApiKey || env.TMDB_API_KEY || '').trim
  * to someone in Australia. Windows tells us the region through the locale,
  * and Settings can override it when that's wrong.
  */
-export function watchRegion(): string {
-	const chosen = (readSettings().watchRegion || '').trim().toUpperCase();
-	if (/^[A-Z]{2}$/.test(chosen)) return chosen;
-
+export function detectedRegion(): string {
 	try {
 		const locale = new Intl.DateTimeFormat().resolvedOptions().locale;
 		const region = new Intl.Locale(locale).maximize().region;
 		if (region && /^[A-Z]{2}$/.test(region)) return region;
-	} catch {
-		// An old runtime, or a locale it can't expand.
-	}
-
+	} catch {}
 	return 'US';
+}
+
+export function watchRegion(): string {
+	const chosen = (readSettings().watchRegion || '').trim().toUpperCase();
+	if (/^[A-Z]{2}$/.test(chosen)) return chosen;
+	return detectedRegion();
 }
 
 function authorize(url: URL, key: string): RequestInit {

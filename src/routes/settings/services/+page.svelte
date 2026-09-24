@@ -238,7 +238,7 @@
 
 		<form method="POST" action="?/saveRegion" class="inline-form">
 			<select name="watchRegion" aria-label="Country">
-				<option value="" selected={!data.region}>This PC's country ({data.regionInUse})</option>
+				<option value="" selected={!data.region}>This PC's country ({data.detectedRegion})</option>
 				{#each countries as country (country.code)}
 					<option value={country.code} selected={data.region === country.code}>
 						{country.name}

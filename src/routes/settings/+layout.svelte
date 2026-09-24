@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import type { Snippet } from 'svelte';
+	import { p, pHint } from '$lib/poison';
 	import type { LayoutData } from './$types';
 
 	let { children, data }: { children: Snippet; data: LayoutData } = $props();
+	const pm = $derived(page.data.poisonMode);
 
 	type Section = {
 		href: string;
@@ -43,11 +45,11 @@
 
 <header>
 	{#if atIndex}
-		<a href="/" class="back faint">&larr; Library</a>
+		<a href="/" class="back faint">&larr; {pm ? p('Library') : 'Library'}</a>
 	{:else}
-		<a href="/settings" class="back faint">&larr; Settings</a>
+		<a href="/settings" class="back faint">&larr; {pm ? p('Settings') : 'Settings'}</a>
 	{/if}
-	<h1>{atIndex ? 'Settings' : (current?.label ?? 'Settings')}</h1>
+	<h1>{atIndex ? (pm ? p('Settings') : 'Settings') : (pm ? p(current?.label ?? 'Settings') : (current?.label ?? 'Settings'))}</h1>
 </header>
 
 <div class="shell" class:index={atIndex}>
@@ -61,7 +63,7 @@
 						aria-current={page.url.pathname.startsWith(section.href) ? 'page' : undefined}
 					>
 						<span class="name">
-							{section.label}
+							{pm ? p(section.label) : section.label}
 							{#if section.flag && data.needs[section.flag]}
 								<span
 									class="dot"
@@ -72,7 +74,7 @@
 								></span>
 							{/if}
 						</span>
-						<span class="hint faint">{section.hint}</span>
+						<span class="hint faint">{pm ? pHint(section.hint) : section.hint}</span>
 						<span class="chevron" aria-hidden="true"></span>
 					</a>
 				</li>
@@ -80,7 +82,7 @@
 		</ul>
 
 		{#if data.appVersion}
-			<p class="version faint tabular">Catalog {data.appVersion}</p>
+			<p class="version faint tabular">{pm ? "Papa's Giblets" : 'Catalog'} {data.appVersion}</p>
 		{/if}
 	</nav>
 

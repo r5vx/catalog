@@ -1,21 +1,16 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import { libraryHref } from '$lib/nav';
+	import { p } from '$lib/poison';
 
-	/**
-	 * Where you came from, and a way straight out.
-	 *
-	 * The chain film → actor → film → actor can run as deep as you like, and
-	 * walking back up it one step at a time is tedious — so Home is always
-	 * there, and it returns to the library as you left it rather than the top.
-	 */
 	let {
 		href = null,
 		label = 'Back'
 	}: {
-		/** Where "back" goes. Falls back to the library you came from. */
 		href?: string | null;
 		label?: string;
 	} = $props();
+	const pm = $derived(page.data.poisonMode);
 
 	let library = $state('/');
 
@@ -24,7 +19,7 @@
 	});
 
 	const backTo = $derived(href ?? library);
-	const backLabel = $derived(href ? label : 'Library');
+	const backLabel = $derived(href ? (pm ? p(label) : label) : (pm ? p('Library') : 'Library'));
 
 	// No point offering both when back already goes there.
 	const showHome = $derived(Boolean(href));
@@ -33,7 +28,7 @@
 <nav class="bar">
 	<a href={backTo} class="faint">&larr; {backLabel}</a>
 	{#if showHome}
-		<a href={library} class="faint home">Library</a>
+		<a href={library} class="faint home">{pm ? p('Library') : 'Library'}</a>
 	{/if}
 </nav>
 

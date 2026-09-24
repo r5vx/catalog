@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { page } from '$app/state';
 	import BackBar from '$lib/BackBar.svelte';
 	import EntryForm from '$lib/EntryForm.svelte';
 	import TitleSearch from '$lib/TitleSearch.svelte';
@@ -12,15 +13,26 @@
 	import { progressSummary } from '$lib/progress';
 	import { statusLabel } from '$lib/constants';
 	import { money } from '$lib/format';
+	import { p } from '$lib/poison';
 	import type { SearchResult } from '$lib/server/metadata/types';
 	import type { PageData, ActionData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
+	const pm = $derived(page.data.poisonMode);
 
 	let busyKey = $state<string | null>(null);
 	let showWatchElsewhere = $state(false);
 
-	onMount(() => showbox.check());
+	onMount(() => {
+		showbox.check();
+		if (page.url.searchParams.get('edit') === '1') {
+			const el = document.querySelector<HTMLDetailsElement>('.editor');
+			if (el) {
+				el.open = true;
+				requestAnimationFrame(() => el.scrollIntoView({ behavior: 'smooth' }));
+			}
+		}
+	});
 
 	const entry = $derived(data.entry);
 
@@ -151,14 +163,14 @@
 	}
 </script>
 
-<svelte:head><title>{entry.title} · Catalog</title></svelte:head>
+<svelte:head><title>{entry.title} · {pm ? "Papa's Giblets" : 'Catalog'}</title></svelte:head>
 
 <BackBar />
 
 {#if form?.error}
 	<p class="notice error" role="alert">{form.error}</p>
 {:else if form?.saved}
-	<p class="notice saved" role="status">Saved.</p>
+	<p class="notice saved" role="status">{pm ? p('Saved.') : 'Saved.'}</p>
 {:else if form?.refreshed}
 	<p class="notice saved" role="status">
 		Refreshed — {form.refreshed} cast {form.refreshed === 1 ? 'member' : 'members'}, tags and
@@ -178,14 +190,14 @@
 
 		<div class="meta">
 			<div class="pills">
-				<span class="pill {entry.status}">{statusLabel(entry.status)}</span>
-				{#if entry.favorite}<span class="pill fav">★ Favourite</span>{/if}
+				<span class="pill {entry.status}">{pm ? p(statusLabel(entry.status)) : statusLabel(entry.status)}</span>
+				{#if entry.favorite}<span class="pill fav">{pm ? '★ Finch approved' : '★ Favourite'}</span>{/if}
 				<a
 					href="/watch?title={encodeURIComponent(entry.title)}&type={category?.slug === 'movies' ? 'movie' : 'tv'}{entry.year ? `&year=${entry.year}` : ''}&auto=1"
 					class="pill watch"
 					class:disabled={!showbox.up}
 					title={showbox.up ? 'Watch now' : 'showbox.media is down'}
-				>▶ Watch</a>
+				>{pm ? p('▶ Watch') : '▶ Watch'}</a>
 				<span class="watch-elsewhere-wrap">
 					<button class="pill watch-elsewhere" onclick={() => showWatchElsewhere = !showWatchElsewhere}>
 						Watch elsewhere ▾
@@ -266,7 +278,7 @@
 	     wall of empty text boxes. -->
 	<details class="editor">
 		<summary>
-			<span class="summary-title">Edit</span>
+			<span class="summary-title">{pm ? p('Edit') : 'Edit'}</span>
 			<span class="summary-sub faint">rating, status, dates, your own notes</span>
 		</summary>
 
@@ -309,7 +321,7 @@
 					<p class="tool-title">Remove it</p>
 					<p class="faint hint">Added {added}.</p>
 				</div>
-				<button type="submit" class="btn btn-danger">Delete this entry</button>
+				<button type="submit" class="btn btn-danger">{pm ? p('Delete this entry') : 'Delete this entry'}</button>
 			</form>
 		</div>
 	</details>

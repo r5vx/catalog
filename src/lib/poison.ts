@@ -1,0 +1,106 @@
+const REPLACEMENTS: Record<string, string> = {
+	'Catalog': "Papa's back",
+	'Add to library': 'Claim this giblet',
+	'+ Add to library': '+ Claim this giblet',
+	'Remove from library': 'Yeet this giblet',
+	'Mark completed': "That's alpha",
+	'Rewatched +1': "Papa's back again",
+	'Continue Watching': 'Still watching chill',
+	'All': 'All the giblets',
+	'Actors': 'Baddies',
+	'Browse': 'Find giblets',
+	'Search your library…': 'find a giblet...',
+	'Search your library': 'find a giblet',
+	'Notes': "Papa's notes",
+	'Settings': 'Giblet settings',
+	'Personalization': 'Giblet vibes',
+	'Completed': 'Alpha',
+	'completed': 'alpha',
+	'Want to watch': '6 or 7',
+	'want to watch': '6 or 7',
+	'Planned': 'im gonna watch it chill',
+	'planned': 'im gonna watch it chill',
+	'Watching': 'Watching rn',
+	'watching': 'watching rn',
+	'Dropped': 'piece of poop',
+	'dropped': 'piece of poop',
+	'Edit': 'Fix this giblet',
+	'Saved.': 'O-kay.',
+	'Save': 'O-kay save it',
+	'Delete this entry': 'Yeet it',
+	'Films people are watching': 'Movies the giblets are watching',
+	'Series people are watching': 'Shows the giblets are watching',
+	'Anime people are watching': 'Anime the giblets are watching',
+	'Watch': 'ARE YOU DUMB lets watch',
+	'▶ Watch': '▶ ARE YOU DUMB watch this',
+	'No entries yet.': "no giblets here... im hungry",
+	'Searching for title…': 'hold on giblet...',
+	'Loading episodes…': "papa's loading the episodes...",
+	'Getting stream…': 'hold on getting the stream...',
+	'Resuming': "PAPA'S BACK resuming",
+	'Library': 'Giblet collection',
+	'Back': 'Chill go back',
+	'Your rating': 'alpha rating',
+	'Cast': 'The baddies',
+	'Episodes': "Dean's episodes",
+	'Subtitles': 'Words on screen',
+	'Fullscreen': 'Make it big',
+	'Next Episode': 'hello?? next one',
+	'Nothing matches': 'hello?? no giblets found',
+	'Favourite': 'Finch approved',
+	'Awards': 'Was that aura',
+	'Services': 'Giblet sources',
+	'Watch Progress': "Papa's watch history",
+	'Privacy': 'Chill zone',
+	'Updates': "Papa's updates",
+	'Remove it': 'Yeet it',
+	'Wrong match?': 'ARE YOU DUMB wrong giblet?',
+	'In your library': 'already claimed this giblet',
+	'Added': 'Claimed',
+	'Show more': 'gimme more giblets',
+	'Trending now': "what's alpha rn",
+	'All time': 'forever alpha',
+	'Everything': 'All the giblets',
+	'Films': 'Movies',
+	'Series': 'Shows',
+};
+
+const HINTS: Record<string, string> = {
+	'Colour and sorting': 'Make it look alpha',
+	'Export, where your files live': 'Where ur giblets live',
+	'Where titles and scores come from': 'Where the giblets come from',
+	'Saved positions and history': 'Remembers where u stopped',
+	'PIN lock': 'Keep the giblets safe',
+	'Keep Catalog current': "Papa's got new stuff for u",
+};
+
+const RANDOM_LOADING = [
+	'hold on giblet...',
+	"papa's loading...",
+	'ARE YOU DUMB hold on...',
+	"i dont knoww let me find it...",
+	'im gonna get it chill...',
+	'watch this tiktok while u wait jk...',
+	'that guy looks like you btw...',
+	'im hungry but loading first...',
+	'im gonna get a drink brb...',
+	'call me on tiktok while u wait...',
+	'Deaaan its loading...',
+	'was that aura? loading...',
+	'dr pepper break while we load...',
+	'hello?? give it a sec...',
+	'alpha is here just loading...',
+	'call me papa while u wait...',
+];
+
+export function p(text: string): string {
+	return REPLACEMENTS[text] ?? text;
+}
+
+export function pHint(text: string): string {
+	return HINTS[text] ?? text;
+}
+
+export function pRandom(): string {
+	return RANDOM_LOADING[Math.floor(Math.random() * RANDOM_LOADING.length)];
+}

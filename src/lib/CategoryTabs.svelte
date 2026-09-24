@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { p } from '$lib/poison';
 	import type { Category } from '$lib/server/db/types';
 
 	type Props = {
@@ -7,11 +8,13 @@
 		countByCategory: Record<number, number>;
 		total: number;
 		noteCount: number;
-		/** The category slug in view, '' for All, or 'notes' on the notes page. */
+		watchingCount?: number;
 		active: string;
+		poisonMode?: boolean;
 	};
 
-	let { categories, countByCategory, total, noteCount, active }: Props = $props();
+	let { categories, countByCategory, total, noteCount, watchingCount = 0, active, poisonMode = false }: Props = $props();
+	const pm = $derived(poisonMode);
 
 	/**
 	 * Keep sort, search and tag filters when switching category — they're
@@ -29,8 +32,16 @@
 
 <nav class="tabs" aria-label="Categories">
 	<a href={link('')} class="tab" class:active={active === ''}>
-		All <span class="n tabular">{total}</span>
+		{pm ? p('All') : 'All'} <span class="n tabular">{total}</span>
 	</a>
+
+	{#if watchingCount > 0}
+		<a href={link('watching')} class="tab" class:active={active === 'watching'}>
+			<span aria-hidden="true">▶</span>
+			{pm ? p('Continue Watching') : 'Continue Watching'}
+			<span class="n tabular">{watchingCount}</span>
+		</a>
+	{/if}
 
 	{#each categories as category (category.id)}
 		<a href={link(category.slug)} class="tab" class:active={active === category.slug}>
@@ -40,11 +51,9 @@
 		</a>
 	{/each}
 
-	<!-- Notes sits with the categories because that's how it's used, even though
-	     it holds pages rather than things you've watched. -->
 	<a href="/notes" class="tab" class:active={active === 'notes'}>
 		<span aria-hidden="true">📝</span>
-		Notes
+		{pm ? p('Notes') : 'Notes'}
 		<span class="n tabular">{noteCount}</span>
 	</a>
 </nav>
