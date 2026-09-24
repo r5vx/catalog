@@ -52,7 +52,7 @@ const REPLACEMENTS: Record<string, string> = {
 	'Services': 'Giblet sources',
 	'Watch Progress': "Papa's watch history",
 	'Privacy': 'Chill zone',
-	'Updates': "Papa's updates",
+	'Updates': 'Giblet updates',
 	'Remove it': 'Yeet it',
 	'Wrong match?': 'ARE YOU DUMB wrong giblet?',
 	'In your library': 'already claimed this giblet',
@@ -71,7 +71,7 @@ const HINTS: Record<string, string> = {
 	'Where titles and scores come from': 'Where the giblets come from',
 	'Saved positions and history': 'Remembers where u stopped',
 	'PIN lock': 'Keep the giblets safe',
-	'Keep Catalog current': "Papa's got new stuff for u",
+	'Keep Catalog current': 'New giblet stuff is here',
 };
 
 const RANDOM_LOADING = [
