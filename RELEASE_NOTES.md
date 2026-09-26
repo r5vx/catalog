@@ -7,6 +7,22 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 2.1.4 — 2026-09-26
+
+- **Cleaner player bar.** Removed the "Logged in" label. Quality
+  files are now a dropdown instead of a row of buttons.
+- **Highest quality selected by default.** The player picks the
+  largest quality and file size automatically.
+- **Subtitle tooltips.** Hover a subtitle to see the full name.
+- **Wrong-episode subtitles filtered.** SubDL results for other
+  episodes and season packs are now filtered out.
+- **Active subtitle name shown.** The captions button shows which
+  subtitle is loaded instead of generic text.
+- **"Wrong one?" moved to Settings.** Frees up space in the player
+  bar — find it in Settings > Other.
+- **Addic7ed subtitles.** TV shows now also search Addic7ed (via
+  Gestdown) for more subtitle options.
+
 ## 2.1.2 — 2026-09-26
 
 - **Better video quality.** The player now uses a direct full-quality

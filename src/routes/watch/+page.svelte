@@ -136,6 +136,7 @@
 	let showDelay = $state(false);
 	let showAudioPicker = $state(false);
 	let showFileName = $state(false);
+	let showFilePicker = $state(false);
 	let seeking = $state(false);
 	let seekPreview = $state(-1);
 	let seekTarget = $state(-1);
@@ -1110,6 +1111,7 @@
 	});
 
 	onDestroy(() => {
+		if (typeof window === 'undefined') return;
 		if (hlsInstance) {
 			hlsInstance.destroy();
 			hlsInstance = null;
@@ -1175,12 +1177,15 @@
 		if (!files.length) return null;
 		const exact = files.find((f) => f.quality === wanted);
 		if (exact) return exact;
-		const target = parseInt(wanted) || 1080;
-		return files.reduce((best, f) => {
-			const bestDiff = Math.abs((parseInt(best.quality) || 0) - target);
-			const fDiff = Math.abs((parseInt(f.quality) || 0) - target);
-			return fDiff < bestDiff ? f : best;
+		const sorted = [...files].sort((a, b) => {
+			const aq = parseInt(a.quality) || 0;
+			const bq = parseInt(b.quality) || 0;
+			if (bq !== aq) return bq - aq;
+			const aSize = parseFloat(a.size) || 0;
+			const bSize = parseFloat(b.size) || 0;
+			return bSize - aSize;
 		});
+		return sorted[0];
 	}
 
 	async function resolve(title: string, type: string, year: string) {
@@ -1525,7 +1530,7 @@
 		showAudioPicker = false;
 		showFileName = false;
 		febboxSubs = [];
-		activeSubFid = 0;
+		activeSubFid = '';
 		episodeNames = {};
 	}
 </script>
@@ -1550,16 +1555,28 @@
 			<h1 class="player-title">{videoTitle}</h1>
 
 			{#if currentFiles.length > 1}
-				<div class="quality-picker">
-					{#each currentFiles as f (f.fid)}
-						<button
-							type="button"
-							class="q-btn"
-							class:active={activeFileFid === f.fid}
-							disabled={changingQuality}
-							onclick={() => changeToFile(f)}
-						>{f.quality}{currentFiles.filter(o => o.quality === f.quality).length > 1 ? ` · ${f.size}` : ''}</button>
-					{/each}
+				<div class="file-pick-wrap">
+					<button
+						type="button"
+						class="bar-btn file-pick-btn"
+						disabled={changingQuality}
+						onclick={() => { showFilePicker = !showFilePicker; }}
+					>{activeFile?.quality ?? ''} · {activeFile?.size ?? ''}</button>
+					{#if showFilePicker}
+						<div class="popup popup-files">
+							<p class="popup-label">Quality</p>
+							{#each currentFiles as f (f.fid)}
+								<button
+									class="popup-item"
+									class:active={activeFileFid === f.fid}
+									onclick={() => { changeToFile(f); showFilePicker = false; }}
+								>
+									{#if activeFileFid === f.fid}<span class="popup-check">&#10003;</span>{/if}
+									{f.quality} · {f.size}
+								</button>
+							{/each}
+						</div>
+					{/if}
 				</div>
 			{/if}
 
@@ -1595,13 +1612,9 @@
 				>{sidebarOpen ? (pm ? 'Hide episodes' : 'Hide episodes') : (pm ? p('Episodes') : 'Episodes')}</button>
 			{/if}
 
-			{#if loggedIn}
-				<span class="bar-btn logged-in">Logged in</span>
-			{:else}
+			{#if !loggedIn}
 				<button type="button" class="bar-btn login-btn" onclick={loginToFebbox}>Log in</button>
 			{/if}
-
-			<button type="button" class="bar-btn wrong-btn" onclick={wrongShow}>{pm ? 'Wrong one?' : 'Wrong one?'}</button>
 
 			{#if libraryEntryId}
 				<a href="/entry/{libraryEntryId}" class="bar-btn in-library-btn">{pm ? 'In library' : 'In library'}</a>
@@ -1962,6 +1975,12 @@
 									{s.label}
 								</button>
 							{/each}
+							<hr class="popup-divider" />
+							<p class="popup-label">Other</p>
+							<button class="popup-item" onclick={() => { wrongShow(); showSettings = false; }}>
+								Wrong one?
+								<span class="popup-sub">Go back to search results</span>
+							</button>
 						</div>
 					{/if}
 
@@ -2001,7 +2020,7 @@
 									onclick={() => { subtitlesOn = true; showCaptions = false; }}
 								>
 									{#if subtitlesOn}<span class="popup-check">&#10003;</span>{/if}
-									Loaded subtitle
+									{activeSubFileName || 'Loaded subtitle'}
 								</button>
 							{/if}
 							{#if febboxSubs.length > 0 || loadingSubs}
@@ -2016,6 +2035,7 @@
 												class="popup-item"
 												class:active={activeSubFid === sub.id && subtitlesOn}
 												onclick={() => loadSub(sub)}
+												title={sub.fileName || sub.language}
 											>
 												{#if activeSubFid === sub.id && subtitlesOn}<span class="popup-check">&#10003;</span>{/if}
 												<span class="sub-name-row">
@@ -2174,22 +2194,17 @@
 	.player-bar.bar-hidden { opacity: 0; pointer-events: none; transform: translateY(-100%); }
 	.bar-btn { flex: none; font-size: 0.82rem; font-weight: 600; padding: 5px 12px; border-radius: var(--radius-sm); border: 1px solid rgba(255, 255, 255, 0.15); background: rgba(255, 255, 255, 0.06); color: #e0e0e0; cursor: pointer; text-decoration: none; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
 	.bar-btn:hover { border-color: rgba(255, 255, 255, 0.3); color: #fff; }
-	.player-title { font-size: 1rem; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #fff; }
+	.player-title { flex: 1; font-size: 1rem; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #fff; }
 	.player-error { margin: 0; padding: 6px 16px; font-size: 0.82rem; color: var(--accent); background: rgba(140, 47, 57, 0.2); border-bottom: 1px solid rgba(255, 255, 255, 0.06); flex: none; }
-	.quality-picker { display: flex; gap: 3px; flex: none; }
-	.q-btn { font-size: 0.72rem; font-weight: 700; padding: 3px 8px; border-radius: var(--radius-sm); border: 1px solid rgba(255, 255, 255, 0.15); background: rgba(255, 255, 255, 0.06); color: rgba(255, 255, 255, 0.6); cursor: pointer; text-transform: uppercase; }
-	.q-btn:hover:not(.active) { border-color: rgba(255, 255, 255, 0.3); color: #fff; }
-	.q-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-	.q-btn:disabled { opacity: 0.5; cursor: wait; }
+	.file-pick-wrap { position: relative; flex: none; }
+	.file-pick-btn { font-weight: 600; }
+	.popup-files.popup-files { position: absolute; top: calc(100% + 4px); left: 0; right: auto; bottom: auto; min-width: 160px; z-index: 25; }
 
 	.file-btn { font-size: 0.76rem; max-width: 350px; overflow: hidden; text-overflow: ellipsis; }
 	.file-btn.expanded { max-width: none; overflow: visible; }
 	.file-name-text { font-weight: 400; font-size: 0.74rem; opacity: 0.85; }
-	.episodes-btn { color: var(--accent); border-color: var(--accent); font-size: 0.78rem; }
-	.login-btn { margin-left: auto; color: var(--accent); border-color: var(--accent); font-size: 0.78rem; }
-	.logged-in { margin-left: auto; color: var(--good); border-color: var(--good); font-size: 0.78rem; cursor: default; }
-	.wrong-btn { color: #e88; border-color: rgba(255, 100, 100, 0.3); font-size: 0.78rem; }
-	.wrong-btn:hover { color: #f99; border-color: rgba(255, 100, 100, 0.5); }
+	.episodes-btn { font-size: 0.78rem; }
+	.login-btn { color: var(--accent); border-color: var(--accent); font-size: 0.78rem; }
 	.add-btn { background: var(--good); color: #fff; border-color: var(--good); cursor: pointer; }
 	.add-btn:hover { filter: brightness(1.12); color: #fff; }
 	.add-btn:disabled { opacity: 0.6; cursor: wait; }
@@ -2346,7 +2361,6 @@
 	@media (max-width: 560px) {
 		.player-bar { flex-wrap: wrap; gap: 8px; }
 		.player-title { order: -1; width: 100%; font-size: 0.9rem; }
-		.quality-picker { order: 1; }
 		.add-btn { margin-left: 0; flex: 1; text-align: center; }
 		.player-body { flex-direction: column; }
 		.sidebar { width: 100%; max-height: 200px; border-right: none; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
