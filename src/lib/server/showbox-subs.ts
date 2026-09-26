@@ -5,6 +5,7 @@ import { gunzipSync, inflateRawSync } from 'node:zlib';
 const OS_REST = 'https://rest.opensubtitles.org/search';
 const SUBDL_API = 'https://api.subdl.com/api/v1/subtitles';
 const SUBDL_DL = 'https://dl.subdl.com';
+const GESTDOWN_API = 'https://api.gestdown.info';
 const UA = 'Catalog v1.0';
 
 const SUBDL_LANG_MAP: Record<string, string> = {
@@ -117,10 +118,17 @@ async function querySubDL(
 	if (type === 'tv' && episode) {
 		results = results.filter(s => {
 			const m = s.fileName.match(/[SE](\d{2,})/gi);
-			if (!m) return true;
-			const eps = m.filter(p => /^E\d/i.test(p)).map(p => parseInt(p.slice(1)));
-			if (eps.length === 0) return true;
-			return eps.includes(episode);
+			if (m) {
+				const eps = m.filter(p => /^E\d/i.test(p)).map(p => parseInt(p.slice(1)));
+				if (eps.length === 0) return false;
+				return eps.includes(episode);
+			}
+			const trail = [...s.fileName.matchAll(/[-–]\s*(\d{1,3})(?=[\s.)_\]\[,]|$)/g)];
+			if (trail.length > 0) {
+				const nums = trail.map(t => parseInt(t[1])).filter(n => n > 0 && n < 500);
+				if (nums.length > 0) return nums.includes(episode);
+			}
+			return true;
 		});
 	}
 
@@ -141,6 +149,46 @@ async function queryOS(path: string): Promise<OSResult[]> {
 	}
 }
 
+
+async function queryGestdown(
+	title: string,
+	type: 'movie' | 'tv',
+	season?: number,
+	episode?: number
+): Promise<SubtitleOption[]> {
+	if (type !== 'tv' || !season || !episode) return [];
+	try {
+		const q = title.replace(/[^a-zA-Z0-9 ]/g, ' ').trim();
+		const resp = await fetch(`${GESTDOWN_API}/shows/search/${encodeURIComponent(q)}`, {
+			signal: AbortSignal.timeout(8000)
+		});
+		if (!resp.ok) return [];
+		const data = await resp.json();
+		const shows = data?.shows;
+		if (!Array.isArray(shows) || shows.length === 0) return [];
+
+		const show = shows[0];
+		const subResp = await fetch(
+			`${GESTDOWN_API}/subtitles/get/${show.id}/${season}/${episode}/english`,
+			{ signal: AbortSignal.timeout(8000) }
+		);
+		if (!subResp.ok) return [];
+		const subData = await subResp.json();
+		const subs = subData?.matchingSubtitles;
+		if (!Array.isArray(subs)) return [];
+
+		return subs.slice(0, 10).map((s: any, i: number) => ({
+			id: `addic7ed-${i}`,
+			url: `${GESTDOWN_API}${s.downloadUri}`,
+			lang: 'eng',
+			language: 'English',
+			fileName: `${show.name} S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')} ${s.version || ''}`.trim(),
+			source: 'Addic7ed'
+		}));
+	} catch {
+		return [];
+	}
+}
 
 export async function fetchSubtitlesForTitle(
 	title: string,
@@ -218,8 +266,11 @@ export async function fetchSubtitlesForTitle(
 			}
 		}
 
-		const subdlSubs = await querySubDL(imdbId, title, type, season, episode);
-		for (const s of subdlSubs) {
+		const [subdlSubs, gestdownSubs] = await Promise.all([
+			querySubDL(imdbId, title, type, season, episode),
+			queryGestdown(title, type, season, episode)
+		]);
+		for (const s of [...subdlSubs, ...gestdownSubs]) {
 			const key = s.fileName.toLowerCase();
 			if (!seen.has(key) && !seen.has(s.url)) {
 				seen.add(key);

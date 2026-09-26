@@ -136,6 +136,7 @@
 	let showDelay = $state(false);
 	let showAudioPicker = $state(false);
 	let showFileName = $state(false);
+	let showFilePicker = $state(false);
 	let seeking = $state(false);
 	let seekPreview = $state(-1);
 	let seekTarget = $state(-1);
@@ -1110,6 +1111,7 @@
 	});
 
 	onDestroy(() => {
+		if (typeof window === 'undefined') return;
 		if (hlsInstance) {
 			hlsInstance.destroy();
 			hlsInstance = null;
@@ -1528,7 +1530,7 @@
 		showAudioPicker = false;
 		showFileName = false;
 		febboxSubs = [];
-		activeSubFid = 0;
+		activeSubFid = '';
 		episodeNames = {};
 	}
 </script>
@@ -1553,20 +1555,29 @@
 			<h1 class="player-title">{videoTitle}</h1>
 
 			{#if currentFiles.length > 1}
-				<select
-					class="bar-select"
-					disabled={changingQuality}
-					onchange={(e) => {
-						const f = currentFiles.find(o => o.fid === Number(e.currentTarget.value));
-						if (f) changeToFile(f);
-					}}
-				>
-					{#each currentFiles as f (f.fid)}
-						<option value={f.fid} selected={activeFileFid === f.fid}>
-							{f.quality}{currentFiles.filter(o => o.quality === f.quality).length > 1 ? ` · ${f.size}` : ''}
-						</option>
-					{/each}
-				</select>
+				<div class="file-pick-wrap">
+					<button
+						type="button"
+						class="bar-btn file-pick-btn"
+						disabled={changingQuality}
+						onclick={() => { showFilePicker = !showFilePicker; }}
+					>{activeFile?.quality ?? ''} · {activeFile?.size ?? ''}</button>
+					{#if showFilePicker}
+						<div class="popup popup-files">
+							<p class="popup-label">Quality</p>
+							{#each currentFiles as f (f.fid)}
+								<button
+									class="popup-item"
+									class:active={activeFileFid === f.fid}
+									onclick={() => { changeToFile(f); showFilePicker = false; }}
+								>
+									{#if activeFileFid === f.fid}<span class="popup-check">&#10003;</span>{/if}
+									{f.quality} · {f.size}
+								</button>
+							{/each}
+						</div>
+					{/if}
+				</div>
 			{/if}
 
 			{#if activeFile}
@@ -1604,8 +1615,6 @@
 			{#if !loggedIn}
 				<button type="button" class="bar-btn login-btn" onclick={loginToFebbox}>Log in</button>
 			{/if}
-
-			<button type="button" class="bar-btn wrong-btn" onclick={wrongShow}>{pm ? 'ARE YOU DUMB wrong one?' : 'Wrong one?'}</button>
 
 			{#if libraryEntryId}
 				<a href="/entry/{libraryEntryId}" class="bar-btn in-library-btn">{pm ? 'Giblet claimed' : 'In library'}</a>
@@ -1966,6 +1975,12 @@
 									{s.label}
 								</button>
 							{/each}
+							<hr class="popup-divider" />
+							<p class="popup-label">Other</p>
+							<button class="popup-item" onclick={() => { wrongShow(); showSettings = false; }}>
+								Wrong one?
+								<span class="popup-sub">Go back to search results</span>
+							</button>
 						</div>
 					{/if}
 
@@ -2005,7 +2020,7 @@
 									onclick={() => { subtitlesOn = true; showCaptions = false; }}
 								>
 									{#if subtitlesOn}<span class="popup-check">&#10003;</span>{/if}
-									Loaded subtitle
+									{activeSubFileName || 'Loaded subtitle'}
 								</button>
 							{/if}
 							{#if febboxSubs.length > 0 || loadingSubs}
@@ -2179,18 +2194,17 @@
 	.player-bar.bar-hidden { opacity: 0; pointer-events: none; transform: translateY(-100%); }
 	.bar-btn { flex: none; font-size: 0.82rem; font-weight: 600; padding: 5px 12px; border-radius: var(--radius-sm); border: 1px solid rgba(255, 255, 255, 0.15); background: rgba(255, 255, 255, 0.06); color: #e0e0e0; cursor: pointer; text-decoration: none; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
 	.bar-btn:hover { border-color: rgba(255, 255, 255, 0.3); color: #fff; }
-	.player-title { font-size: 1rem; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #fff; }
+	.player-title { flex: 1; font-size: 1rem; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #fff; }
 	.player-error { margin: 0; padding: 6px 16px; font-size: 0.82rem; color: var(--accent); background: rgba(140, 47, 57, 0.2); border-bottom: 1px solid rgba(255, 255, 255, 0.06); flex: none; }
-	.bar-select { font-size: 0.78rem; font-weight: 600; padding: 4px 8px; border-radius: var(--radius-sm); border: 1px solid rgba(255, 255, 255, 0.15); background: rgba(255, 255, 255, 0.06); color: rgba(255, 255, 255, 0.85); cursor: pointer; flex: none; }
-	.bar-select:disabled { opacity: 0.5; cursor: wait; }
+	.file-pick-wrap { position: relative; flex: none; }
+	.file-pick-btn { font-weight: 600; }
+	.popup-files.popup-files { position: absolute; top: calc(100% + 4px); left: 0; right: auto; bottom: auto; min-width: 160px; z-index: 25; }
 
 	.file-btn { font-size: 0.76rem; max-width: 350px; overflow: hidden; text-overflow: ellipsis; }
 	.file-btn.expanded { max-width: none; overflow: visible; }
 	.file-name-text { font-weight: 400; font-size: 0.74rem; opacity: 0.85; }
-	.episodes-btn { color: var(--accent); border-color: var(--accent); font-size: 0.78rem; }
-	.login-btn { margin-left: auto; color: var(--accent); border-color: var(--accent); font-size: 0.78rem; }
-	.wrong-btn { color: #e88; border-color: rgba(255, 100, 100, 0.3); font-size: 0.78rem; }
-	.wrong-btn:hover { color: #f99; border-color: rgba(255, 100, 100, 0.5); }
+	.episodes-btn { font-size: 0.78rem; }
+	.login-btn { color: var(--accent); border-color: var(--accent); font-size: 0.78rem; }
 	.add-btn { background: var(--good); color: #fff; border-color: var(--good); cursor: pointer; }
 	.add-btn:hover { filter: brightness(1.12); color: #fff; }
 	.add-btn:disabled { opacity: 0.6; cursor: wait; }
@@ -2347,7 +2361,6 @@
 	@media (max-width: 560px) {
 		.player-bar { flex-wrap: wrap; gap: 8px; }
 		.player-title { order: -1; width: 100%; font-size: 0.9rem; }
-		.bar-select { order: 1; }
 		.add-btn { margin-left: 0; flex: 1; text-align: center; }
 		.player-body { flex-direction: column; }
 		.sidebar { width: 100%; max-height: 200px; border-right: none; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
