@@ -106,12 +106,25 @@ async function querySubDL(
 	if (type === 'tv' && season) base.season_number = String(season);
 	if (type === 'tv' && episode) base.episode_number = String(episode);
 
+	let results: SubtitleOption[] = [];
 	if (imdbId) {
-		const results = await fetchSubDL(new URLSearchParams({ ...base, imdb_id: imdbId }));
-		if (results.length > 0) return results;
+		results = await fetchSubDL(new URLSearchParams({ ...base, imdb_id: imdbId }));
+	}
+	if (results.length === 0) {
+		results = await fetchSubDL(new URLSearchParams({ ...base, film_name: title }));
 	}
 
-	return fetchSubDL(new URLSearchParams({ ...base, film_name: title }));
+	if (type === 'tv' && episode) {
+		results = results.filter(s => {
+			const m = s.fileName.match(/[SE](\d{2,})/gi);
+			if (!m) return true;
+			const eps = m.filter(p => /^E\d/i.test(p)).map(p => parseInt(p.slice(1)));
+			if (eps.length === 0) return true;
+			return eps.includes(episode);
+		});
+	}
+
+	return results;
 }
 
 async function queryOS(path: string): Promise<OSResult[]> {

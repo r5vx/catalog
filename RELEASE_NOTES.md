@@ -7,6 +7,16 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 2.1.3 — 2026-09-26
+
+- **Cleaner player bar.** Removed the "Logged in" label. Quality
+  files are now a dropdown instead of a row of buttons.
+- **Highest quality selected by default.** The player picks the
+  largest quality and file size automatically.
+- **Subtitle tooltips.** Hover a subtitle to see the full name.
+- **Wrong-episode subtitles filtered.** SubDL results for other
+  episodes (e.g. S1E75 on episode 10) are now filtered out.
+
 ## 2.1.2 — 2026-09-26
 
 - **Better video quality.** The player now uses a direct full-quality
