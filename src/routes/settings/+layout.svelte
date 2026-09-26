@@ -68,7 +68,7 @@
 								<span
 									class="dot"
 									title={section.flag === 'services'
-										? 'A key is missing'
+										? 'New option available'
 										: 'An update is waiting'}
 									aria-label="Needs attention"
 								></span>

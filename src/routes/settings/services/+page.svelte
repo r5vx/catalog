@@ -221,6 +221,60 @@
 
 	<section>
 		<div class="head">
+			<h2>More subtitles</h2>
+			<span class="pill" class:completed={data.subdlKeySaved}>
+				{data.subdlKeySaved ? 'On' : 'Off'}
+			</span>
+		</div>
+
+		<p class="muted">
+			Adds subtitle results from
+			<a href="https://subdl.com" target="_blank" rel="noreferrer">SubDL</a>.
+			Optional — subtitles already come from OpenSubtitles, but SubDL often has
+			more options for anime and newer shows. Get a free key from
+			<a href="https://subdl.com/panel/api" target="_blank" rel="noreferrer">subdl.com/panel/api</a>.
+		</p>
+
+		{#if form?.subdlError}
+			<p class="msg bad" role="alert">{form.subdlError}</p>
+		{:else if form?.subdlOk}
+			<p class="msg good" role="status">{form.subdlOk}</p>
+		{/if}
+
+		{#if data.subdlKeySaved}
+			<div class="saved-row">
+				<span class="muted">A key is saved.</span>
+				<form method="POST" action="?/removeSubdl">
+					<button type="submit" class="btn btn-danger">Remove</button>
+				</form>
+			</div>
+			<details>
+				<summary>Replace it</summary>
+				<form method="POST" action="?/saveSubdl" class="inline-form">
+					<input
+						type="password"
+						name="subdlApiKey"
+						placeholder="Paste a new key"
+						autocomplete="off"
+					/>
+					<button type="submit" class="btn btn-primary">Save</button>
+				</form>
+			</details>
+		{:else}
+			<form method="POST" action="?/saveSubdl" class="inline-form">
+				<input
+					type="password"
+					name="subdlApiKey"
+					placeholder="Paste your SubDL key here"
+					autocomplete="off"
+				/>
+				<button type="submit" class="btn">Save</button>
+			</form>
+		{/if}
+	</section>
+
+	<section>
+		<div class="head">
 			<h2>Where to watch</h2>
 			<span class="pill completed">{data.regionInUse}</span>
 		</div>

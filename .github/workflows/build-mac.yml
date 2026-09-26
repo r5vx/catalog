@@ -28,10 +28,13 @@ jobs:
 
       - run: npx electron-builder --mac --publish never
 
-      - name: Upload .dmg to release
+      - name: Upload .dmg and update manifest to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.event.inputs.tag || github.event.release.tag_name }}"
           DMG=$(ls dist-app/*.dmg | head -1)
           gh release upload "$TAG" "$DMG" --clobber
+          if [ -f dist-app/latest-mac.yml ]; then
+            gh release upload "$TAG" dist-app/latest-mac.yml --clobber
+          fi

@@ -1,5 +1,5 @@
 import { listNotes, createNote, countNotes } from '$lib/server/db/notes';
-import { listCategories, countsByCategory } from '$lib/server/db/queries';
+import { listCategories, countsByCategory, continueWatchingList } from '$lib/server/db/queries';
 import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 
@@ -11,7 +11,8 @@ export const load: PageServerLoad = async () => {
 		categories: listCategories(),
 		countByCategory,
 		total: Object.values(countByCategory).reduce((sum, n) => sum + n, 0),
-		noteCount: countNotes()
+		noteCount: countNotes(),
+		watchingCount: continueWatchingList().length
 	};
 };
 

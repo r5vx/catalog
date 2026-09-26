@@ -7,6 +7,77 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 2.1.2 — 2026-09-26
+
+- **Better video quality.** The player now uses a direct full-quality
+  stream instead of the low-quality preview URL. Should fix the
+  360p-only playback.
+- **Faster loading.** Removed unnecessary network polling that added
+  10–15 seconds to every video load.
+- **Watched episodes actually show.** Previously, completed episodes
+  were deleted from the database so the sidebar never knew they were
+  watched. Now they stay tracked, and episodes before your library
+  position also show as watched.
+- **File picker shows every file.** Multiple files at the same quality
+  (different codecs or sizes) now appear as separate choices instead
+  of being collapsed into one.
+- **Resolution picker.** When the stream offers multiple renditions
+  (360p, 720p, 1080p, etc.) a Resolution section appears in player
+  settings so you can lock a specific one. Shows the actual playing
+  resolution when only one rendition is available.
+- **Continue Watching posters.** Titles that don't exactly match the
+  library name (e.g. "Backrooms" vs "The Backrooms") now find their
+  poster instead of showing a grey rectangle.
+- **Image resize handle stays put.** Dragging the resize handle on a
+  note image no longer makes it disappear.
+- **Library search forgives punctuation.** Searching "Xmen" now finds
+  "X-Men", "Spiderman" finds "Spider-Man", etc.
+- **Continue Watching shows on the Notes page.** The tab no longer
+  disappears when you navigate to Notes.
+- **Captions on iPhone.** Subtitles now show in iOS fullscreen via native
+  text tracks. No longer duplicated on desktop.
+- **Continue Watching posters for non-library titles.** Shows like
+  "Backrooms" that aren't in your library now keep their poster in
+  Continue Watching instead of showing a grey rectangle.
+- **Stream debug info.** The settings popup shows stream info so you can
+  see what quality the player is actually getting.
+- **Mac update error fixed.** The updates page shows a clear message
+  instead of a raw error on Mac.
+- **Seamless quality switching.** Changing the video file no longer
+  freezes the player with a "Switching quality" dialog — the old
+  stream keeps playing until the new one is ready.
+- **Settings popup cleaned up.** Removed the duplicate file-type
+  list from settings (the top-bar buttons already cover it).
+- **Watch Next stays visible.** The Next Episode button no longer
+  vanishes the instant the episode finishes playing.
+- **Continue Watching shows the next episode.** When you finish a
+  TV episode, the next one appears in Continue Watching instead
+  of the show disappearing. Only goes away once the series is over.
+- **Search finds "Re:Zero" from "rezero".** Punctuation and spaces
+  are now fully stripped for matching, so run-together searches work.
+- **Stream info shortened.** The settings popup no longer shows the
+  full stream URL — just a truncated preview with a Copy button.
+- **Progress bar resets properly.** Switching episodes no longer
+  leaves the bar pinned at the old episode's position.
+- **Skip to end shows the last frame.** Skipping forward near the
+  end of a video now lands just before the end so it renders.
+- **Quality switch shows a toast.** A small "Switching quality…"
+  label appears near the top while the new stream loads.
+- **Green dot for watched episodes.** Replaced the checkmark with
+  a green dot — and rewatching no longer removes the indicator.
+- **Buffering recovery.** If the player is stuck buffering for 12
+  seconds it automatically retries.
+- **More subtitles found.** Subtitle search now tries multiple name
+  variations (e.g. "re zero" and "rezero"), which finds subs that
+  were missed before — especially for anime titles.
+- **SubDL subtitles (optional).** Drop a free key from subdl.com
+  into Settings > Services and the player searches SubDL alongside
+  OpenSubtitles, giving you more subtitle options.
+- **Subtitle source labels.** Each subtitle in the picker shows
+  where it came from (OpenSubtitles or SubDL).
+- **Continue Watching catches short visits.** TV episodes show up
+  immediately. Movies need 30 seconds instead of 2 minutes.
+
 ## 2.1.1 — 2026-09-24
 
 - **Continue watching tab.** A Watching tab in the library shows what

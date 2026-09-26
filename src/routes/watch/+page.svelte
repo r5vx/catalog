@@ -35,6 +35,7 @@
 		lang: string;
 		language: string;
 		fileName: string;
+		source?: string;
 	}
 
 	/* --------------------------------------------------------------- content state */
@@ -52,6 +53,7 @@
 	let iframeFid = $state(0);
 	let needsLogin = $state(false);
 	let loggedIn = $state(false);
+	let watchPosterUrl = $state('');
 	let hlsInstance: Hls | null = null;
 
 	let movieFiles = $state<FileOption[]>([]);
@@ -61,6 +63,7 @@
 	let activeSeason = $state(1);
 	let activeEpisode = $state<Episode | null>(null);
 	let activeQuality = $state('');
+	let activeFileFid = $state(0);
 	let preferredQuality = $state('1080p');
 	let sidebarOpen = $state(true);
 	let loadingEpisode = $state(false);
@@ -68,7 +71,7 @@
 
 	let febboxSubs = $state<SubOption[]>([]);
 	let loadingSubs = $state(false);
-	let activeSubFid = $state(0);
+	let activeSubFid = $state('');
 	let activeSubUrl = $state('');
 	let activeSubFileName = $state('');
 	let episodeNames = $state<Record<number, string>>({});
@@ -79,10 +82,13 @@
 	let loadingCast = $state(false);
 	let preferredAudioName = $state('');
 	let libraryEntryId = $state<number | null>(null);
+	let libLastSeason = $state(0);
+	let libLastEpisode = $state(0);
 	let addingToLibrary = $state(false);
 	let watchedEpisodeMap = $state<Map<string, number>>(new Map());
 	let skipResume = false;
 	let switchingEpisode = false;
+	let bufferTimer: ReturnType<typeof setTimeout> | null = null;
 	let seekAfterLoad = 0;
 	let restoreSub: { fileName: string; language: string; delay: number } | null = null;
 	let resumeSeason = 0;
@@ -146,6 +152,9 @@
 
 	let hlsAudioTracks = $state<{ id: number; name: string }[]>([]);
 	let hlsActiveAudio = $state(-1);
+	let hlsLevels = $state<{ index: number; height: number; bitrate: number }[]>([]);
+	let hlsActiveLevel = $state(-1);
+	let videoResolution = $state('');
 
 	const SPEEDS = [
 		{ value: 0.25, label: '0.25x' },
@@ -158,7 +167,10 @@
 		{ value: 2, label: '2x' }
 	];
 
-	const activeFile = $derived(currentFiles.find((f) => f.quality === activeQuality) ?? null);
+	const activeFile = $derived(
+		(activeFileFid ? currentFiles.find((f) => f.fid === activeFileFid) : null) ??
+		currentFiles.find((f) => f.quality === activeQuality) ?? null
+	);
 	const progressPct = $derived(duration > 0 ? (currentTime / duration) * 100 : 0);
 	const displayPct = $derived(
 		seekPreview >= 0 ? seekPreview
@@ -175,7 +187,7 @@
 			: ''
 	);
 
-	const nearEnd = $derived(showType === 'tv' && duration > 0 && (duration - currentTime) < 90 && (duration - currentTime) > 0 && !loadingEpisode);
+	const nearEnd = $derived(showType === 'tv' && duration > 0 && (duration - currentTime) < 90 && !loadingEpisode);
 	const nextEp = $derived(nearEnd ? nextEpisode() : null);
 
 	const subsByLanguage = $derived.by(() => {
@@ -212,7 +224,8 @@
 
 	function skip(delta: number) {
 		if (!videoEl) return;
-		videoEl.currentTime = Math.max(0, Math.min(duration, videoEl.currentTime + delta));
+		const cap = duration > 0.5 ? duration - 0.5 : duration;
+		videoEl.currentTime = Math.max(0, Math.min(cap, videoEl.currentTime + delta));
 	}
 
 	function toggleMute() {
@@ -264,10 +277,23 @@
 		}
 	}
 
+	function setHlsLevel(index: number) {
+		if (!hlsInstance) return;
+		hlsInstance.currentLevel = index;
+		hlsActiveLevel = index;
+	}
+
 	function toggleFS() {
 		if (!playerPageEl) return;
-		if (document.fullscreenElement) document.exitFullscreen();
-		else playerPageEl.requestFullscreen();
+		if (document.fullscreenElement) {
+			document.exitFullscreen();
+		} else if ((videoEl as any)?.webkitEnterFullscreen && !document.fullscreenEnabled) {
+			(videoEl as any).webkitEnterFullscreen();
+		} else {
+			playerPageEl.requestFullscreen().catch(() => {
+				if ((videoEl as any)?.webkitEnterFullscreen) (videoEl as any).webkitEnterFullscreen();
+			});
+		}
 	}
 
 	async function togglePiP() {
@@ -587,7 +613,8 @@
 			currentTime: ct, duration: dur,
 			subUrl: subtitlesOn ? activeSubUrl : '',
 			subDelay: subtitleDelay,
-			subFileName: subtitlesOn ? activeSubFileName : ''
+			subFileName: subtitlesOn ? activeSubFileName : '',
+			posterUrl: watchPosterUrl
 		});
 	}
 
@@ -615,10 +642,12 @@
 			if (r.ok) {
 				lastSavedTime = JSON.parse(body).currentTime;
 				if (showType === 'tv' && activeEpisode && duration > 0) {
-					watchedEpisodeMap = new Map(watchedEpisodeMap).set(
-						`${activeEpisode.season}-${activeEpisode.episode}`,
-						currentTime / duration
-					);
+					const key = `${activeEpisode.season}-${activeEpisode.episode}`;
+					const pct = currentTime / duration;
+					const prev = watchedEpisodeMap.get(key) ?? 0;
+					if (pct > prev) {
+						watchedEpisodeMap = new Map(watchedEpisodeMap).set(key, pct);
+					}
 				}
 			}
 		}).catch(() => {});
@@ -682,14 +711,25 @@
 	async function fetchWatchedEpisodes() {
 		if (showType !== 'tv' || !videoTitle) return;
 		const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
+		const map = new Map<string, number>();
 		try {
 			const resp = await fetch(`/api/watch/progress?title=${encodeURIComponent(baseTitle)}&type=tv&episodes=1`);
-			if (!resp.ok) return;
-			const data = await resp.json() as { season: number; episode: number; pct: number }[];
-			const map = new Map<string, number>();
-			for (const row of data) map.set(`${row.season}-${row.episode}`, row.pct);
-			watchedEpisodeMap = map;
+			if (resp.ok) {
+				const data = await resp.json() as { season: number; episode: number; pct: number }[];
+				for (const row of data) map.set(`${row.season}-${row.episode}`, row.pct);
+			}
 		} catch {}
+		// Fill in episodes before the library entry's tracked position
+		if (libLastSeason > 0 && libLastEpisode > 0) {
+			for (const ep of episodes) {
+				const key = `${ep.season}-${ep.episode}`;
+				if (map.has(key)) continue;
+				if (ep.season < libLastSeason || (ep.season === libLastSeason && ep.episode < libLastEpisode)) {
+					map.set(key, 1.0);
+				}
+			}
+		}
+		watchedEpisodeMap = map;
 	}
 
 	function nextEpisode(): Episode | null {
@@ -773,7 +813,7 @@
 			if (data.content) {
 				subtitleCues = parseSrt(data.content);
 				subtitlesOn = true;
-				activeSubFid = Number(sub.id) || 0;
+				activeSubFid = sub.id;
 				activeSubUrl = sub.url;
 				activeSubFileName = sub.fileName || sub.language;
 			}
@@ -908,6 +948,9 @@
 			hlsInstance.destroy();
 			hlsInstance = null;
 		}
+		hlsLevels = [];
+		hlsActiveLevel = -1;
+		videoResolution = '';
 
 		currentTime = 0;
 		duration = 0;
@@ -925,11 +968,25 @@
 				highBufferWatchdogPeriod: 2,
 				nudgeMaxRetry: 5,
 				liveSyncDurationCount: 3,
-				enableWorker: true
+				enableWorker: true,
+				abrEwmaDefaultEstimate: 50_000_000
 			});
 			hls.loadSource(streamUrl);
 			hls.attachMedia(videoEl);
 			hls.on(Hls.Events.MANIFEST_PARSED, () => {
+				hlsLevels = hls.levels.map((l, i) => ({
+					index: i, height: l.height, bitrate: l.bitrate
+				}));
+				const lvlInfo = hls.levels.map((l: { height: number; codecSet?: string; videoCodec?: string }) =>
+					`${l.height}p/${l.codecSet || l.videoCodec || '?'}`
+				).join(', ');
+				debugInfo = (debugInfo ? debugInfo + ' | ' : '') + `hls: ${hls.levels.length} lvl (${lvlInfo})`;
+				if (hls.levels.length > 1) {
+					hls.currentLevel = hls.levels.length - 1;
+					hlsActiveLevel = hls.levels.length - 1;
+				} else {
+					hlsActiveLevel = 0;
+				}
 				switchingEpisode = false;
 				videoEl?.play().catch(() => {});
 				hlsAudioTracks = hls.audioTracks.map((t, i) => ({
@@ -953,6 +1010,9 @@
 				}));
 				hlsActiveAudio = hls.audioTrack;
 				applyPreferredAudio();
+			});
+			hls.on(Hls.Events.LEVEL_SWITCHED, (_e, data) => {
+				hlsActiveLevel = data.level;
 			});
 			hls.on(Hls.Events.ERROR, async (_e, data) => {
 				if (!data.fatal) return;
@@ -997,10 +1057,49 @@
 
 	$effect(() => {
 		const onChange = () => {
-			isFullscreen = !!document.fullscreenElement;
+			isFullscreen = !!document.fullscreenElement || !!(videoEl as any)?.webkitDisplayingFullscreen;
 		};
 		document.addEventListener('fullscreenchange', onChange);
-		return () => document.removeEventListener('fullscreenchange', onChange);
+		videoEl?.addEventListener('webkitbeginfullscreen', onChange);
+		videoEl?.addEventListener('webkitendfullscreen', onChange);
+		return () => {
+			document.removeEventListener('fullscreenchange', onChange);
+			videoEl?.removeEventListener('webkitbeginfullscreen', onChange);
+			videoEl?.removeEventListener('webkitendfullscreen', onChange);
+		};
+	});
+
+	$effect(() => {
+		if (!videoEl) return;
+		const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+			(navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+		if (!isIOS) return;
+		while (videoEl.textTracks.length > 0) {
+			videoEl.textTracks[0].mode = 'disabled';
+			const track = videoEl.querySelector('track');
+			if (track) track.remove(); else break;
+		}
+		if (!subtitlesOn || subtitleCues.length === 0) return;
+		const track = videoEl.addTextTrack('subtitles', 'Subtitles', 'en');
+		track.mode = 'showing';
+		for (const c of subtitleCues) {
+			const cue = new VTTCue(c.start + subtitleDelay, c.end + subtitleDelay, c.text.replace(/<[^>]*>/g, ''));
+			track.addCue(cue);
+		}
+	});
+
+	$effect(() => {
+		if (!videoEl) { videoResolution = ''; return; }
+		const update = () => {
+			if (videoEl && videoEl.videoWidth > 0) videoResolution = `${videoEl.videoWidth}×${videoEl.videoHeight}`;
+		};
+		videoEl.addEventListener('loadeddata', update);
+		videoEl.addEventListener('resize', update);
+		update();
+		return () => {
+			videoEl?.removeEventListener('loadeddata', update);
+			videoEl?.removeEventListener('resize', update);
+		};
 	});
 
 	$effect(() => {
@@ -1121,6 +1220,9 @@
 			shareKey = data.shareKey;
 			showboxId = data.showboxId ?? 0;
 			libraryEntryId = data.libraryEntry?.id ?? null;
+			libLastSeason = data.libraryEntry?.lastSeason ?? 0;
+			libLastEpisode = data.libraryEntry?.lastEpisode ?? 0;
+			watchPosterUrl = data.posterUrl ?? '';
 			loadingStatus = pm ? pRandom() : (data.episodes ? 'Loading episodes...' : 'Getting stream...');
 
 			if (data.files) movieFiles = data.files;
@@ -1136,8 +1238,37 @@
 					activeEpisode = target ?? episodes[0] ?? null;
 					needsResume = Boolean(target && (target.season !== seasons[0] || target.episode !== episodes[0]?.episode));
 				} else {
-					if (seasons.length) activeSeason = seasons[0];
-					if (episodes.length) activeEpisode = episodes[0];
+					try {
+						const progResp = await fetch(`/api/watch/progress?title=${encodeURIComponent(data.title)}&type=tv&episodes=1`);
+						if (progResp.ok) {
+							const watched = await progResp.json() as { season: number; episode: number; pct: number }[];
+							if (watched.length > 0) {
+								const last = watched.reduce((best, ep) =>
+									ep.season > best.season || (ep.season === best.season && ep.episode > best.episode) ? ep : best
+								);
+								let ts = last.season, te = last.episode;
+								if (last.pct >= 0.9) {
+									const idx = episodes.findIndex(ep => ep.season === ts && ep.episode === te);
+									if (idx >= 0 && idx + 1 < episodes.length) {
+										ts = episodes[idx + 1].season;
+										te = episodes[idx + 1].episode;
+									}
+								}
+								activeSeason = seasons.includes(ts) ? ts : seasons[0];
+								const target = episodes.find(ep => ep.season === ts && ep.episode === te);
+								if (target) {
+									activeEpisode = target;
+									resumeSeason = ts;
+									resumeEpisode = te;
+									needsResume = true;
+								}
+							}
+						}
+					} catch {}
+					if (!resumeSeason) {
+						if (seasons.length) activeSeason = seasons[0];
+						if (episodes.length) activeEpisode = episodes[0];
+					}
 				}
 			}
 
@@ -1157,6 +1288,7 @@
 							if (sData.url) {
 								streamUrl = sData.url;
 								activeQuality = resumeFile.quality;
+								activeFileFid = resumeFile.fid;
 								fetchSubtitles();
 								loading = false;
 								return;
@@ -1170,6 +1302,7 @@
 				streamUrl = data.streamUrl;
 				const af = currentFiles.find((f) => f.fid === data.fid);
 				activeQuality = af?.quality ?? currentFiles[0]?.quality ?? '';
+				activeFileFid = af?.fid ?? currentFiles[0]?.fid ?? 0;
 			} else if (!data.hasToken) {
 				needsLogin = true;
 			} else {
@@ -1178,6 +1311,7 @@
 					useIframe = true;
 					iframeFid = defaultFile.fid;
 					activeQuality = defaultFile.quality;
+					activeFileFid = defaultFile.fid;
 				} else {
 					problem = 'No video file found for this title.';
 				}
@@ -1191,14 +1325,14 @@
 		}
 	}
 
-	async function changeQuality(quality: string) {
-		const file = pickFile(currentFiles, quality);
-		if (!file || file.fid === (currentFiles.find((f) => f.quality === activeQuality)?.fid)) return;
-		preferredQuality = quality;
+	async function changeToFile(file: FileOption) {
+		if (!file || file.fid === activeFileFid) return;
+		preferredQuality = file.quality;
 
 		if (useIframe) {
 			iframeFid = file.fid;
-			activeQuality = quality;
+			activeQuality = file.quality;
+			activeFileFid = file.fid;
 			reloadWebview();
 			return;
 		}
@@ -1210,7 +1344,9 @@
 			const data = await resp.json();
 			if (data.url) {
 				streamUrl = data.url;
-				activeQuality = quality;
+				activeQuality = file.quality;
+				activeFileFid = file.fid;
+				if (data.debug) debugInfo = data.debug;
 			} else {
 				problem = 'Could not get that quality.';
 				if (data.debug) debugInfo = data.debug;
@@ -1245,8 +1381,10 @@
 		currentTime = 0;
 		duration = 0;
 		bufferedEnd = 0;
+		seekTarget = -1;
+		seekPreview = -1;
 		febboxSubs = [];
-		activeSubFid = 0;
+		activeSubFid = '';
 		activeSubUrl = '';
 		activeSubFileName = '';
 		subtitleCues = [];
@@ -1255,6 +1393,7 @@
 		if (useIframe) {
 			iframeFid = file.fid;
 			activeQuality = file.quality;
+			activeFileFid = file.fid;
 			videoTitle = `${baseTitle} S${ep.season}E${ep.episode}`;
 			reloadWebview();
 			fetchSubtitles(prevSub);
@@ -1270,6 +1409,7 @@
 				streamUrl = data.url;
 				videoTitle = `${baseTitle} S${ep.season}E${ep.episode}`;
 				activeQuality = file.quality;
+				activeFileFid = file.fid;
 				fetchSubtitles(prevSub);
 			} else {
 				problem = 'Could not get a link for that episode.';
@@ -1409,16 +1549,16 @@
 			<button type="button" class="bar-btn" onclick={goBack}>&larr; Back</button>
 			<h1 class="player-title">{videoTitle}</h1>
 
-			{#if availableQualities.length > 1}
+			{#if currentFiles.length > 1}
 				<div class="quality-picker">
-					{#each availableQualities as q (q)}
+					{#each currentFiles as f (f.fid)}
 						<button
 							type="button"
 							class="q-btn"
-							class:active={activeQuality === q}
+							class:active={activeFileFid === f.fid}
 							disabled={changingQuality}
-							onclick={() => changeQuality(q)}
-						>{q}</button>
+							onclick={() => changeToFile(f)}
+						>{f.quality}{currentFiles.filter(o => o.quality === f.quality).length > 1 ? ` · ${f.size}` : ''}</button>
 					{/each}
 				</div>
 			{/if}
@@ -1515,9 +1655,6 @@
 										<span class="ep-name">{episodeNames[ep.episode]}</span>
 									{/if}
 									<span class="ep-meta">
-										{#if epPct >= 0.9}
-											<span class="ep-watched-badge">✓</span>
-										{/if}
 										{#each ep.files as f (f.fid)}
 											<span class="ep-quality">{f.quality || 'SD'}</span>
 										{/each}
@@ -1556,14 +1693,15 @@
 						class="hidden-webview"
 					></webview>
 				{:else}
-					{#if loadingEpisode || changingQuality}
-						<p class="player-status">{changingQuality ? 'Switching quality...' : 'Loading episode...'}</p>
+					{#if loadingEpisode}
+						<p class="player-status">Loading episode...</p>
 					{/if}
 
 					<!-- svelte-ignore a11y_media_has_caption -->
 					<video
 						bind:this={videoEl}
 						autoplay
+						playsinline
 						class:buffering={loadingEpisode || changingQuality}
 						ontimeupdate={() => {
 							if (videoEl && !seeking && !switchingEpisode) currentTime = videoEl.currentTime;
@@ -1590,14 +1728,36 @@
 							if (videoEl && videoEl.buffered.length > 0)
 								bufferedEnd = videoEl.buffered.end(videoEl.buffered.length - 1);
 						}}
-						onwaiting={() => { buffering = true; }}
-						oncanplay={() => { buffering = false; }}
+						onwaiting={() => {
+							buffering = true;
+							if (bufferTimer) clearTimeout(bufferTimer);
+							bufferTimer = setTimeout(() => {
+								if (videoEl && buffering && !loadingEpisode) {
+									const pos = videoEl.currentTime;
+									videoEl.currentTime = Math.max(0, pos - 1);
+								}
+							}, 12000);
+						}}
+						oncanplay={() => { buffering = false; if (bufferTimer) { clearTimeout(bufferTimer); bufferTimer = null; } }}
 						onseeking={() => { buffering = true; }}
-						onseeked={() => { buffering = false; }}
+						onseeked={() => { buffering = false; if (bufferTimer) { clearTimeout(bufferTimer); bufferTimer = null; } }}
 						onended={() => {
 							playing = false;
 							showControls = true;
 							saveProgress();
+							const next = nextEpisode();
+							if (showType === 'tv' && next) {
+								const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
+								const payload = JSON.stringify({
+									title: baseTitle, type: 'tv',
+									season: next.season, episode: next.episode,
+									currentTime: 0, duration: 0,
+									posterUrl: watchPosterUrl
+								});
+								setTimeout(() => {
+									navigator.sendBeacon('/api/watch/progress', new Blob([payload], { type: 'application/json' }));
+								}, 300);
+							}
 						}}
 					>
 						Your browser doesn't support video playback.
@@ -1617,6 +1777,11 @@
 						<div class="buffering-overlay">
 							<div class="buffering-spinner"></div>
 						</div>
+					{/if}
+
+					<!-- quality switch toast -->
+					{#if changingQuality}
+						<div class="quality-toast">Switching quality…</div>
 					{/if}
 
 					<!-- subtitle overlay -->
@@ -1684,7 +1849,7 @@
 								</div>
 							</div>
 
-							<span class="time-display">{fmt(seekPreview >= 0 ? seekPreview / 100 * duration : currentTime)} / {fmt(duration)}</span>
+							<span class="time-display">{fmt(seekPreview >= 0 ? seekPreview / 100 * duration : seekTarget >= 0 ? seekTarget / 100 * duration : currentTime)} / {fmt(duration)}</span>
 
 							<div class="ctrl-spacer"></div>
 
@@ -1760,17 +1925,31 @@
 					<!-- settings popup -->
 					{#if showSettings}
 						<div class="popup popup-settings">
-							<p class="popup-label">Quality</p>
-							{#each availableQualities as q (q)}
-								<button
-									class="popup-item"
-									class:active={activeQuality === q}
-									onclick={() => { changeQuality(q); showSettings = false; }}
-								>
-									{#if activeQuality === q}<span class="popup-check">&#10003;</span>{/if}
-									{q}
-								</button>
-							{/each}
+							{#if hlsLevels.length > 1}
+								<p class="popup-label">Resolution <span class="popup-hint" title="Higher resolutions may buffer on slower connections">?</span></p>
+								{#each [...hlsLevels].sort((a, b) => b.height - a.height) as lvl (lvl.index)}
+									<button
+										class="popup-item"
+										class:active={hlsActiveLevel === lvl.index}
+										onclick={() => { setHlsLevel(lvl.index); showSettings = false; }}
+									>
+										{#if hlsActiveLevel === lvl.index}<span class="popup-check">&#10003;</span>{/if}
+										{lvl.height}p
+										<span class="popup-sub">{lvl.bitrate > 1_000_000 ? `${(lvl.bitrate / 1_000_000).toFixed(1)} Mbps` : `${Math.round(lvl.bitrate / 1000)} kbps`}</span>
+									</button>
+								{/each}
+							{:else if videoResolution}
+								<hr class="popup-divider" />
+								<p class="popup-label">Playing at</p>
+								<p class="popup-item popup-info">{videoResolution}</p>
+							{/if}
+							{#if debugInfo}
+								<hr class="popup-divider" />
+								<p class="popup-label">Stream info
+									<button type="button" class="copy-debug-btn" onclick={() => navigator.clipboard.writeText(debugInfo)}>Copy</button>
+								</p>
+								<p class="popup-item popup-info" style="font-size:0.72rem;word-break:break-all">{debugInfo.length > 80 ? debugInfo.slice(0, 80) + '…' : debugInfo}</p>
+							{/if}
 							<hr class="popup-divider" />
 							<p class="popup-label">Speed</p>
 							{#each SPEEDS as s (s.value)}
@@ -1835,11 +2014,14 @@
 										{#each subs as sub (sub.id)}
 											<button
 												class="popup-item"
-												class:active={activeSubFid === (Number(sub.id) || 0) && subtitlesOn}
+												class:active={activeSubFid === sub.id && subtitlesOn}
 												onclick={() => loadSub(sub)}
 											>
-												{#if activeSubFid === (Number(sub.id) || 0) && subtitlesOn}<span class="popup-check">&#10003;</span>{/if}
-												{sub.fileName || sub.language}
+												{#if activeSubFid === sub.id && subtitlesOn}<span class="popup-check">&#10003;</span>{/if}
+												<span class="sub-name-row">
+													<span class="sub-name-text">{sub.fileName || sub.language}</span>
+													{#if sub.source}<span class="sub-source-badge">{sub.source}</span>{/if}
+												</span>
 											</button>
 										{/each}
 									{/each}
@@ -2027,12 +2209,11 @@
 	.ep-btn { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 14px; border: none; background: none; color: rgba(255, 255, 255, 0.8); cursor: pointer; text-align: left; font-size: 0.84rem; }
 	.ep-btn:hover { background: rgba(255, 255, 255, 0.06); }
 	.ep-btn.playing { background: rgba(217, 122, 131, 0.15); color: var(--accent); }
-	.ep-btn.watched { color: rgba(255, 255, 255, 0.45); }
-	.ep-btn.partial { border-left: 2px solid var(--accent); }
+	.ep-btn.watched { color: rgba(255, 255, 255, 0.45); border-left: 3px solid var(--good, #4caf50); background: rgba(76, 175, 80, 0.07); }
+	.ep-btn.partial { border-left: 3px solid var(--accent); }
 	.ep-btn:disabled { opacity: 0.5; cursor: wait; }
 	.ep-num { font-weight: 700; min-width: 2.2em; }
 	.ep-meta { display: flex; gap: 4px; margin-left: auto; font-size: 0.68rem; color: rgba(255, 255, 255, 0.4); }
-	.ep-watched-badge { color: var(--good, #4caf50); font-size: 0.75rem; font-weight: 700; }
 	.ep-quality { text-transform: uppercase; font-weight: 600; padding: 1px 4px; border-radius: 3px; background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.08); }
 
 	/* --------------------------------------------------------- cast sidebar */
@@ -2104,12 +2285,17 @@
 	.ctrl-spacer { flex: 1; }
 
 	/* --------------------------------------------------------- popups (settings / captions) */
-	.popup { position: absolute; bottom: 60px; right: 16px; background: rgba(18, 18, 18, 0.96); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; padding: 8px 0; min-width: 190px; max-height: 400px; overflow-y: auto; backdrop-filter: blur(12px); z-index: 20; }
-	.popup-label { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: rgba(255, 255, 255, 0.4); margin: 0; padding: 8px 16px 4px; }
-	.popup-item { display: flex; align-items: center; gap: 8px; padding: 7px 16px; font-size: 0.84rem; color: rgba(255, 255, 255, 0.8); cursor: pointer; border: none; background: none; width: 100%; text-align: left; }
+	.popup { position: absolute; bottom: 60px; right: 16px; background: rgba(18, 18, 18, 0.96); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; padding: 8px 0; min-width: 190px; max-width: min(420px, 50vw); max-height: 400px; overflow-y: auto; backdrop-filter: blur(12px); z-index: 20; }
+	.popup-label { display: flex; align-items: center; font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: rgba(255, 255, 255, 0.4); margin: 0; padding: 8px 16px 4px; }
+	.popup-item { display: flex; align-items: center; gap: 8px; padding: 7px 16px; font-size: 0.84rem; color: rgba(255, 255, 255, 0.8); cursor: pointer; border: none; background: none; width: 100%; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.popup-item:hover { background: rgba(255, 255, 255, 0.08); }
 	.popup-item.active { color: var(--accent, #d97a83); }
 	.popup-check { font-size: 0.8rem; min-width: 14px; }
+	.popup-sub { font-size: 0.72rem; color: rgba(255, 255, 255, 0.35); margin-left: auto; }
+	.popup-hint { font-size: 0.65rem; color: rgba(255, 255, 255, 0.3); cursor: help; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 50%; width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; margin-left: 4px; }
+	.copy-debug-btn { margin-left: auto; padding: 1px 8px; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 4px; background: none; color: rgba(255, 255, 255, 0.5); font-size: 0.65rem; cursor: pointer; }
+	.copy-debug-btn:hover { color: #fff; border-color: rgba(255, 255, 255, 0.4); }
+	.popup-info { cursor: default; font-size: 0.85rem; color: rgba(255, 255, 255, 0.5); }
 	.popup-divider { border: none; border-top: 1px solid rgba(255, 255, 255, 0.08); margin: 6px 0; }
 
 	/* --------------------------------------------------------- file name tooltips */
@@ -2123,6 +2309,9 @@
 
 	/* --------------------------------------------------------- subtitle language groups */
 	.sub-lang-label { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: rgba(255, 255, 255, 0.5); margin: 0; padding: 6px 16px 2px; }
+	.sub-name-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+	.sub-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+	.sub-source-badge { flex: none; font-size: 0.62rem; padding: 1px 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.4) !important; text-transform: uppercase; letter-spacing: 0.03em; border: 1px solid rgba(255, 255, 255, 0.1); }
 
 	/* --------------------------------------------------------- subtitle delay */
 	.delay-wrap { position: relative; }
@@ -2136,6 +2325,7 @@
 
 	/* --------------------------------------------------------- buffering spinner */
 	.buffering-overlay { position: absolute; inset: 0; display: grid; place-items: center; z-index: 4; pointer-events: none; }
+	.quality-toast { position: absolute; top: 60px; left: 50%; transform: translateX(-50%); padding: 6px 16px; border-radius: 6px; background: rgba(0, 0, 0, 0.75); color: rgba(255, 255, 255, 0.85); font-size: 0.82rem; z-index: 9; pointer-events: none; backdrop-filter: blur(6px); }
 
 	.next-ep-overlay { position: absolute; bottom: 100px; right: 24px; z-index: 8; animation: fadeSlideIn 0.4s ease; }
 	.next-ep-btn { display: flex; flex-direction: column; gap: 4px; padding: 14px 22px; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px; background: rgba(0, 0, 0, 0.75); color: #fff; cursor: pointer; backdrop-filter: blur(8px); transition: background 0.2s, border-color 0.2s; }

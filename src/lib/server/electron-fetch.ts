@@ -7,6 +7,8 @@ interface FetchResult {
 interface VideoUrlResult {
 	playerHtml: string;
 	dlText: string;
+	capturedUrl?: string;
+	videoInfo?: string;
 	error?: string;
 }
 
@@ -50,6 +52,8 @@ try {
 					pending.get(m.id)!({
 						playerHtml: (m.playerHtml as string) ?? '',
 						dlText: (m.dlText as string) ?? '',
+						capturedUrl: (m.capturedUrl as string) ?? '',
+						videoInfo: (m.videoInfo as string) ?? '',
 						error: m.error as string | undefined
 					});
 					pending.delete(m.id);
@@ -122,7 +126,7 @@ export function electronGetVideoUrl(
 		setTimeout(() => {
 			if (pending.has(id)) {
 				pending.delete(id);
-				resolve({ playerHtml: '', dlText: '', error: 'timeout' });
+				resolve({ playerHtml: '', dlText: '', capturedUrl: '', videoInfo: '', error: 'timeout' });
 			}
 		}, 20000);
 	});

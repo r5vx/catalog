@@ -57,7 +57,25 @@
 		await fetch(`/api/watch/progress?title=${encodeURIComponent(title)}&type=${type}&all_episodes=1`, { method: 'DELETE' });
 	}
 
-	async function markCompleted(entryId: number, title: string, type: string) {
+	async function markCompleted(entryId: number | null, title: string, type: string, posterUrl?: string | null) {
+		if (!entryId) {
+			const categorySlug = type === 'movie' ? 'movies' : 'tv';
+			const result = {
+				key: `manual:${title}`, source: 'tmdb' as const, sourceId: '',
+				title, altTitle: null, year: null, posterUrl: posterUrl || null,
+				overview: null, categorySlug, confident: true, kind: type === 'movie' ? 'Movie' : 'TV',
+				episodesTotal: null, runtimeMinutes: null, externalRating: null, externalVotes: null,
+				popularity: 0
+			};
+			const resp = await fetch('/api/entries', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ result, status: 'completed' })
+			});
+			if (resp.ok) removeContinue(title, type);
+			invalidateAll();
+			return;
+		}
 		await fetch('/api/entries', {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
@@ -75,9 +93,20 @@
 		removeContinue(title, type);
 	}
 
+	/* --------------------------------------------------------------- watching context menu */
+
+	let cwCtx = $state<{ x: number; y: number; item: typeof continueItems[0] } | null>(null);
+
+	function onWatchingContext(e: MouseEvent, item: typeof continueItems[0]) {
+		e.preventDefault();
+		cwCtx = { x: e.clientX, y: e.clientY, item };
+	}
+
+	function closeCwCtx() { cwCtx = null; }
+
 	function formatProgress(current: number, total: number): string {
+		if (total <= 0) return 'Up next';
 		const pct = Math.round((current / total) * 100);
-		const mins = Math.floor(current / 60);
 		const left = Math.max(0, Math.floor((total - current) / 60));
 		return `${pct}% · ${left}m left`;
 	}
@@ -162,7 +191,8 @@
 	{:else}
 		<ul class="grid">
 			{#each continueItems as item (`${item.title}:${item.type}`)}
-				<li class="watching-item">
+				<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+				<li class="watching-item" oncontextmenu={(e) => onWatchingContext(e, item)}>
 					<a
 						href="/watch?title={encodeURIComponent(item.title)}&type={item.type}&auto=1{item.type === 'tv' ? `&resume_s=${item.season}&resume_e=${item.episode}` : ''}"
 						class="card"
@@ -174,7 +204,7 @@
 								<span class="poster-fallback" aria-hidden="true">▶</span>
 							{/if}
 							<span class="watching-progress-overlay">
-								<span class="watching-fill" style="width: {Math.min(100, Math.round((item.currentTime / item.duration) * 100))}%"></span>
+								<span class="watching-fill" style="width: {item.duration > 0 ? Math.min(100, Math.round((item.currentTime / item.duration) * 100)) : 0}%"></span>
 							</span>
 						</div>
 						<div class="meta">
@@ -192,12 +222,12 @@
 								title="Rewatched +1"
 								onclick={() => markRewatched(item.entryId!, item.title, item.type)}
 							>↻</button>
-						{:else if item.entryId}
+						{:else}
 							<button
 								type="button"
 								class="watching-action"
 								title="Mark completed"
-								onclick={() => markCompleted(item.entryId!, item.title, item.type)}
+								onclick={() => markCompleted(item.entryId, item.title, item.type, item.posterUrl)}
 							>✓</button>
 						{/if}
 						<button
@@ -341,6 +371,35 @@
 		<hr />
 		<button type="button" class="ctx-danger" onclick={ctxDelete}>
 			{pm ? p('Remove from library') : 'Remove from library'}
+		</button>
+	</div>
+{/if}
+
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+{#if cwCtx}
+	<div class="ctx-backdrop" onclick={closeCwCtx} oncontextmenu={(e) => { e.preventDefault(); closeCwCtx(); }}></div>
+	<div class="ctx-menu" style="left: {cwCtx.x}px; top: {cwCtx.y}px;">
+		<button type="button" onclick={() => { const i = cwCtx!.item; goto(`/watch?title=${encodeURIComponent(i.title)}&type=${i.type}&auto=1${i.type === 'tv' ? `&resume_s=${i.season}&resume_e=${i.episode}` : ''}`); closeCwCtx(); }}>
+			▶ {pm ? p('Resume') : 'Resume'}
+		</button>
+		<hr />
+		{#if cwCtx.item.entryId && cwCtx.item.entryStatus === 'completed'}
+			<button type="button" onclick={() => { markRewatched(cwCtx!.item.entryId!, cwCtx!.item.title, cwCtx!.item.type); closeCwCtx(); }}>
+				↻ {pm ? p('Rewatched +1') : 'Rewatched +1'}
+			</button>
+		{:else}
+			<button type="button" onclick={() => { markCompleted(cwCtx!.item.entryId, cwCtx!.item.title, cwCtx!.item.type, cwCtx!.item.posterUrl); closeCwCtx(); }}>
+				✓ {pm ? p('Mark completed') : 'Mark completed'}
+			</button>
+		{/if}
+		{#if cwCtx.item.entryId}
+			<button type="button" onclick={() => { goto(`/entry/${cwCtx!.item.entryId}`); closeCwCtx(); }}>
+				{pm ? p('View entry') : 'View entry'}
+			</button>
+		{/if}
+		<hr />
+		<button type="button" class="ctx-danger" onclick={() => { removeContinue(cwCtx!.item.title, cwCtx!.item.type); closeCwCtx(); }}>
+			{pm ? p('Remove') : 'Remove'}
 		</button>
 	</div>
 {/if}

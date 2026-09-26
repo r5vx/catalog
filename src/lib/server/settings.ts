@@ -48,6 +48,10 @@ export type Settings = {
 	wideLayout?: string;
 	/** When '1', UI text gets replaced with Poison's vocabulary. */
 	poisonMode?: string;
+	/** Free key from subdl.com. Optional — adds more subtitle results. */
+	subdlApiKey?: string;
+	/** Set once the user has visited Services and seen the SubDL option. */
+	subdlSeen?: string;
 };
 
 export function readSettings(): Settings {

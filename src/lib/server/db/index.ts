@@ -206,6 +206,7 @@ db.exec(`
 try { db.exec("ALTER TABLE watch_progress ADD COLUMN sub_url TEXT NOT NULL DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE watch_progress ADD COLUMN sub_delay REAL NOT NULL DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE watch_progress ADD COLUMN sub_file_name TEXT NOT NULL DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE watch_progress ADD COLUMN poster_url TEXT NOT NULL DEFAULT ''"); } catch {}
 
 /**
  * node:sqlite hands back null-prototype objects. SvelteKit needs plain ones to

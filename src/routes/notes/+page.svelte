@@ -36,6 +36,7 @@
 	countByCategory={data.countByCategory}
 	total={data.total}
 	noteCount={data.noteCount}
+	watchingCount={data.watchingCount}
 	active="notes"
 	poisonMode={pm}
 />
