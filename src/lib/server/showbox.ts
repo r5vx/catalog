@@ -349,19 +349,78 @@ export async function listMovieFiles(shareUrl: string): Promise<FileOption[]> {
 }
 
 function extractVideoUrl(html: string): string | null {
-	const source = html.match(/<source[^>]+src=["']([^"']+)["']/i);
-	if (source) return source[1];
-
-	const videoSrc = html.match(/<video[^>]+src=["']([^"']+)["']/i);
-	if (videoSrc) return videoSrc[1];
-
-	const m3u8 = html.match(/(https?:\/\/[^\s"'<>\\]+\.m3u8[^\s"'<>\\]*)/i);
-	if (m3u8) return m3u8[1];
+	const allM3u8: string[] = [];
+	const seen = new Set<string>();
+	for (const m of html.matchAll(/(https?:\/\/[^\s"'<>\\]+\.m3u8[^\s"'<>\\]*)/gi)) {
+		if (!seen.has(m[1])) { seen.add(m[1]); allM3u8.push(m[1]); }
+	}
+	if (allM3u8.length > 1) {
+		const master = allM3u8.find((u) => !/\/(360|480|720|1080|2160)p?\//i.test(u));
+		if (master) return master;
+	}
+	if (allM3u8.length > 0) return allM3u8[0];
 
 	const mp4 = html.match(/(https?:\/\/[^\s"'<>\\]+\.mp4[^\s"'<>\\]*)/i);
 	if (mp4) return mp4[1];
 
 	return null;
+}
+
+async function probeAndUpgrade(url: string, debug: string[]): Promise<string> {
+	if (!url.includes('.m3u8')) return url;
+	try {
+		const resp = await fetch(url, {
+			headers: {
+				'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+				Referer: 'https://www.febbox.com/',
+				Origin: 'https://www.febbox.com'
+			},
+			signal: AbortSignal.timeout(8000)
+		});
+		if (!resp.ok) { debug.push(`probe ${resp.status}`); return url; }
+		const text = await resp.text();
+		if (text.includes('#EXT-X-STREAM-INF')) {
+			const infos = text.match(/#EXT-X-STREAM-INF:[^\n]*/g) || [];
+			const summary = infos.map((line) => {
+				const res = line.match(/RESOLUTION=(\d+x\d+)/)?.[1] ?? '?';
+				const codec = line.match(/CODECS="([^"]+)"/)?.[1] ?? '?';
+				return `${res}/${codec}`;
+			}).join(', ');
+			debug.push(`master (${infos.length} lvl: ${summary})`);
+			return url;
+		}
+		debug.push('media playlist, looking for master');
+		const base = url.replace(/[?#].*$/, '');
+		const parent = base.replace(/\/[^/]+$/, '');
+		const grandparent = parent.replace(/\/[^/]+$/, '');
+		const query = url.includes('?') ? url.slice(url.indexOf('?')) : '';
+		for (const candidate of [
+			grandparent + '/index.m3u8' + query,
+			grandparent + '/playlist.m3u8' + query,
+			grandparent + '/master.m3u8' + query,
+			parent + '/playlist.m3u8' + query,
+			parent + '/master.m3u8' + query,
+			parent + '/index.m3u8' + query
+		]) {
+			try {
+				const r = await fetch(candidate, {
+					headers: { Referer: 'https://www.febbox.com/', Origin: 'https://www.febbox.com' },
+					signal: AbortSignal.timeout(5000)
+				});
+				if (r.ok) {
+					const t = await r.text();
+					if (t.includes('#EXT-X-STREAM-INF')) {
+						debug.push(`found master at ${candidate.replace(/[?].*/, '?...')}`);
+						return candidate;
+					}
+				}
+			} catch {}
+		}
+		debug.push('no master found');
+	} catch (e: unknown) {
+		debug.push(`probe err: ${(e as Error)?.message ?? e}`);
+	}
+	return url;
 }
 
 export async function getStreamUrl(
@@ -373,7 +432,10 @@ export async function getStreamUrl(
 
 	// Electron's net.fetch sends real browser cookies — try it first
 	const electronUrl = await tryElectronStream(shareKey, fid, debug);
-	if (electronUrl) return { url: electronUrl };
+	if (electronUrl) {
+		const upgraded = await probeAndUpgrade(electronUrl, debug);
+		return { url: upgraded, debug: debug.join(' | ') };
+	}
 
 	// Fallback: server-side fetch with saved cookie string (for phone access)
 	const headers = {
@@ -395,7 +457,10 @@ export async function getStreamUrl(
 		if (resp.ok) {
 			const html = await resp.text();
 			const url = extractVideoUrl(html);
-			if (url) return { url };
+			if (url) {
+				const upgraded = await probeAndUpgrade(url, debug);
+				return { url: upgraded, debug: debug.join(' | ') };
+			}
 			const preview = html.length < 300 ? html : `${html.length}ch`;
 			debug.push(`player: ${preview}`);
 		}
@@ -427,26 +492,26 @@ async function tryElectronStream(
 	fid: number,
 	debug: string[]
 ): Promise<string | null> {
-	// Primary: hidden BrowserWindow fetches from inside the page context,
-	// so it has the same cookies + localStorage + headers as the real site.
+	// Hidden BrowserWindow: load the player page, wait for JW Player,
+	// and read its source URL (the real HD m3u8).
 	const bw = await electronGetVideoUrl(shareKey, fid);
 	if (bw.error) {
 		debug.push(`bw: ${bw.error}`);
 	} else {
+		if (bw.videoInfo) debug.push(`vi: ${bw.videoInfo.slice(0, 300)}`);
+		if (bw.capturedUrl) {
+			debug.push('hd:' + bw.capturedUrl.substring(0, 150));
+			return bw.capturedUrl;
+		}
 		if (bw.playerHtml) {
 			const url = extractVideoUrl(bw.playerHtml);
 			if (url) return url;
 			const preview = bw.playerHtml.length < 300 ? bw.playerHtml : `${bw.playerHtml.length}ch`;
 			debug.push(`bw-player: ${preview}`);
 		}
-		if (bw.dlText) {
-			const url = tryParseDownloadUrl(bw.dlText);
-			if (url) return url;
-			debug.push(`bw-dl: ${bw.dlText.slice(0, 200)}`);
-		}
 	}
 
-	// Fallback: net.fetch with credentials: include
+	// Fallback: net.fetch player page with credentials
 	const r1 = await electronFetch('https://www.febbox.com/file/player', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

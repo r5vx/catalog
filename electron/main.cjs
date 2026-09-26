@@ -11,6 +11,8 @@ const path = require('node:path');
 const fs = require('node:fs');
 const http = require('node:http');
 
+app.commandLine.appendSwitch('enable-features', 'PlatformHEVCDecoderSupport,PlatformHEVCEncoderSupport');
+
 const PORT = Number(process.env.CATALOG_PORT || 4173);
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 
@@ -80,47 +82,276 @@ function startServer() {
 			autoUpdater().quitAndInstall(true, true);
 		}
 
-		// Load a hidden BrowserWindow on febbox.com and make the request from
-		// inside the page's JS context — same cookies, localStorage, headers
-		// the real site uses.  Falls back to net.fetch if the window fails.
 		if (message?.type === 'get-video-url') {
-			let hidden;
+			const fid = Number(message.fid);
+			const shareKey = String(message.shareKey);
+			const postBody = `fid=${fid}&share_key=${shareKey}`;
+			let hidden = null;
+			let capturedUrl = '';
+			let playerHtml = '';
+			let videoInfo = '';
+
 			try {
-				hidden = new BrowserWindow({
-					show: false,
-					width: 400,
-					height: 300,
-					webPreferences: { nodeIntegration: false, contextIsolation: true }
-				});
+				const { net } = require('electron');
+				const chromeUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
-				const ready = new Promise((resolve) => {
-					hidden.webContents.on('dom-ready', resolve);
-					setTimeout(resolve, 10000);
-				});
-				hidden.loadURL('https://www.febbox.com');
-				await ready;
+				// Log session cookies for debugging (names show in stream info too)
+				let cookieNames = '';
+				try {
+					const cks = await session.defaultSession.cookies.get({ url: 'https://www.febbox.com' });
+					cookieNames = cks.map(c => c.name).join(',');
+					console.log('[video-url] cookies:', cookieNames);
+				} catch {}
 
-				const fid = Number(message.fid);
-				const shareKey = String(message.shareKey);
-				const body = `fid=${fid}&share_key=${shareKey}`;
+// 1. Hit file_info first (browser does this before player)
+				try {
+					await net.fetch(`https://www.febbox.com/file/file_info?fid=${fid}`, {
+						headers: {
+							'User-Agent': chromeUA,
+							'Referer': 'https://www.febbox.com/',
+							'X-Requested-With': 'XMLHttpRequest'
+						}
+					});
+				} catch {}
 
-				const playerHtml = await hidden.webContents.executeJavaScript(
-					`fetch('/file/player',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:${JSON.stringify(body)},credentials:'include'}).then(r=>r.text()).catch(e=>'fetch-error:'+e.message)`
-				);
-
-				let dlText = '';
-				if (!playerHtml.includes('.m3u8') && !playerHtml.includes('.mp4')) {
-					dlText = await hidden.webContents.executeJavaScript(
-						`fetch('/file/share_download?share_key=${shareKey}&fid=${fid}',{credentials:'include'}).then(r=>r.text()).catch(e=>'fetch-error:'+e.message)`
-					);
+				// 2. Fetch player HTML — net.fetch uses Chromium TLS + session cookies,
+				//    onBeforeSendHeaders spoofs UA/Client Hints to hide Electron
+				try {
+					const resp = await net.fetch('https://www.febbox.com/file/player', {
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/x-www-form-urlencoded',
+							'User-Agent': chromeUA,
+							'Referer': 'https://www.febbox.com/',
+							'Origin': 'https://www.febbox.com',
+							'X-Requested-With': 'XMLHttpRequest',
+							'Accept': '*/*',
+							'Accept-Language': 'en-US,en;q=0.9'
+						},
+						body: postBody
+					});
+					playerHtml = await resp.text();
+				} catch (e) {
+					console.log('[video-url] fetch:', e.message);
 				}
 
-				hidden.close();
-				hidden = null;
+				// 2. Parse HTML for HD stream URL
+				if (playerHtml) {
+					// Find ALL m3u8 URLs in the HTML
+					const allM3u8 = [...playerHtml.matchAll(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/gi)]
+						.map(m => m[1].replace(/&amp;/g, '&'));
+					// Prefer m3u8 from a non-febbox CDN
+					const cdnM3u8 = allM3u8.find(u => !u.includes('febbox.com'));
+
+					if (cdnM3u8) {
+						// The HTML URL has quality=3 (360p). Try without it.
+						if (cdnM3u8.includes('quality=')) {
+							try {
+								const parsed = new URL(cdnM3u8);
+								parsed.searchParams.delete('quality');
+								const noQualUrl = parsed.toString();
+								const probe = await net.fetch(noQualUrl, {
+									headers: { 'Referer': 'https://www.febbox.com/', 'Origin': 'https://www.febbox.com' },
+									signal: AbortSignal.timeout(5000)
+								});
+								if (probe.ok) {
+									const body = await probe.text();
+									if (body.includes('#EXT-X-STREAM-INF') &&
+										(body.includes('1920') || body.includes('1280') || body.includes('3840'))) {
+										capturedUrl = noQualUrl;
+										videoInfo = 'hd-noqual:' + noQualUrl.substring(0, 120);
+									} else {
+										console.log('[video-url] no-qual still low:', body.substring(0, 300));
+										capturedUrl = cdnM3u8;
+										videoInfo = 'lowq:' + cdnM3u8.substring(0, 120);
+									}
+								} else {
+									console.log('[video-url] no-qual status:', probe.status);
+									capturedUrl = cdnM3u8;
+									videoInfo = 'noqual-' + probe.status + ':' + cdnM3u8.substring(0, 100);
+								}
+							} catch (e) {
+								console.log('[video-url] no-qual err:', e.message);
+								capturedUrl = cdnM3u8;
+								videoInfo = 'noqual-err:' + cdnM3u8.substring(0, 100);
+							}
+						} else {
+							capturedUrl = cdnM3u8;
+							videoInfo = 'cdn-m3u8:' + cdnM3u8.substring(0, 120);
+						}
+					}
+
+					// Try JW Player file: config pointing to an API endpoint
+					if (!capturedUrl) {
+						const fileM = playerHtml.match(/["']?file["']?\s*:\s*["'](https?:\/\/[^"']+)["']/i);
+						if (fileM) {
+							const fileUrl = fileM[1].replace(/&amp;/g, '&');
+							if (/\.m3u8/i.test(fileUrl) && !fileUrl.includes('febbox.com')) {
+								capturedUrl = fileUrl;
+								videoInfo = 'jw-file:' + fileUrl.substring(0, 120);
+							} else if (!/\.(m3u8|mp4)/i.test(fileUrl)) {
+								try {
+									const r = await net.fetch(fileUrl, {
+										headers: { 'Referer': 'https://www.febbox.com/' },
+										redirect: 'manual'
+									});
+									const loc = r.headers.get('location');
+									if (loc && loc.includes('.m3u8')) {
+										capturedUrl = loc;
+										videoInfo = 'api-redir';
+									} else if (r.ok) {
+										const t = await r.text();
+										const m = t.match(/(https?:\/\/[^\s"'<>]*\.m3u8[^\s"'<>]*)/);
+										if (m) { capturedUrl = m[1]; videoInfo = 'api-body'; }
+									}
+								} catch {}
+							}
+						}
+					}
+
+					// Extract inline script content for debugging
+					const inlineScripts = [...playerHtml.matchAll(/<script(?:\s[^>]*)?>(?!\s*$)([\s\S]*?)<\/script>/gi)]
+						.map(m => m[1].trim()).filter(s => s.length > 10);
+					const scriptSummary = inlineScripts.map(s => s.substring(0, 80)).join(' ## ');
+					console.log('[video-url] html:', playerHtml.length + 'ch',
+						'm3u8=' + allM3u8.length,
+						'inline-scripts=' + inlineScripts.length,
+						scriptSummary.substring(0, 500));
+				}
+
+				// 3. Quality-restricted? Try fetching from a real page context
+				//    (in-page fetch shares session cookies + Chromium TLS, and
+				//     onBeforeSendHeaders hides the Electron identity)
+				if (capturedUrl && capturedUrl.includes('quality=')) {
+					console.log('[video-url] quality-restricted, trying page-context fetch...');
+					let ctxWin = null;
+					try {
+						ctxWin = new BrowserWindow({
+							show: false, width: 800, height: 600,
+							webPreferences: { nodeIntegration: false, contextIsolation: true }
+						});
+
+						await new Promise(resolve => {
+							ctxWin.webContents.on('dom-ready', resolve);
+							ctxWin.loadURL(`https://www.febbox.com/share/${shareKey}`);
+							setTimeout(resolve, 8000);
+						});
+
+						const ctxHtml = await ctxWin.webContents.executeJavaScript(
+							`fetch('/file/player',{method:'POST',` +
+							`headers:{'Content-Type':'application/x-www-form-urlencoded','X-Requested-With':'XMLHttpRequest'},` +
+							`body:${JSON.stringify(postBody)},` +
+							`credentials:'include'` +
+							`}).then(r=>r.text()).catch(()=>'')`
+						);
+
+						if (ctxHtml && ctxHtml.length > 100) {
+							const ctxUrls = [...ctxHtml.matchAll(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/gi)]
+								.map(m => m[1].replace(/&amp;/g, '&'));
+							const ctxCdn = ctxUrls.find(u => !u.includes('febbox.com'));
+							if (ctxCdn && !ctxCdn.includes('quality=')) {
+								capturedUrl = ctxCdn;
+								videoInfo = 'ctx-hd:' + ctxCdn.substring(0, 120);
+								console.log('[video-url] page-context gave HD!');
+							} else if (ctxCdn) {
+								console.log('[video-url] page-context also restricted:', ctxCdn.substring(0, 150));
+								videoInfo += '|ctx-q';
+							} else {
+								console.log('[video-url] page-context no m3u8 found');
+							}
+						}
+					} catch (e) {
+						console.log('[video-url] ctx err:', e.message);
+					} finally {
+						if (ctxWin) try { ctxWin.close(); } catch {}
+					}
+				}
+
+				// 4. Hidden window: load player page with network interception
+				if (!capturedUrl) {
+					hidden = new BrowserWindow({
+						show: true,
+						x: -9999, y: -9999,
+						width: 1280,
+						height: 720,
+						webPreferences: {
+							nodeIntegration: false,
+							contextIsolation: true,
+							autoplayPolicy: 'no-user-gesture-required'
+						}
+					});
+					hidden.webContents.setAudioMuted(true);
+
+					// Intercept requests to the HD CDN
+					session.defaultSession.webRequest.onBeforeRequest(
+						{ urls: ['*://*.shegu.net/*', '*://*/*.m3u8*'] },
+						(details, callback) => {
+							if (!capturedUrl && details.url.includes('.m3u8') &&
+								!details.url.includes('febbox.com')) {
+								capturedUrl = details.url;
+								console.log('[video-url] net-capture:', details.url.substring(0, 200));
+							}
+							callback({});
+						}
+					);
+
+					// Navigate directly — session cookies are already present
+					hidden.loadURL('https://www.febbox.com/file/player', {
+						postData: [{ type: 'rawData', bytes: Buffer.from(postBody) }],
+						extraHeaders: 'Content-Type: application/x-www-form-urlencoded\nReferer: https://www.febbox.com/'
+					});
+
+					// Wait for page load + script execution time
+					await new Promise(resolve => {
+						const timer = setTimeout(resolve, 12000);
+						hidden.webContents.on('did-finish-load', () => {
+							clearTimeout(timer);
+							setTimeout(resolve, 3000);
+						});
+					});
+
+					// Poll JW Player (top frame + iframes)
+					for (let i = 0; i < 12 && !capturedUrl; i++) {
+						try {
+							const url = await hidden.webContents.executeJavaScript(
+								'(function(){' +
+								'if(typeof jwplayer==="function"){try{var p=jwplayer().getPlaylistItem();if(p&&p.file)return p.file}catch(e){}}' +
+								'try{var f=document.querySelectorAll("iframe");for(var j=0;j<f.length;j++){' +
+								'try{var w=f[j].contentWindow;if(typeof w.jwplayer==="function"){var p2=w.jwplayer().getPlaylistItem();if(p2&&p2.file)return p2.file}}catch(e){}' +
+								'}}catch(e){}' +
+								'return""' +
+								'})()'
+							);
+							if (url) { capturedUrl = url; videoInfo = 'jw:' + url.substring(0, 200); break; }
+						} catch {}
+						await new Promise(r => setTimeout(r, 500));
+					}
+
+					// Gather debug info if capture failed
+					if (!capturedUrl) {
+						try {
+							videoInfo = await hidden.webContents.executeJavaScript(
+								'(function(){var v=document.querySelector("video");var t=document.title||"";' +
+								'var jw=typeof jwplayer;var ifs=document.querySelectorAll("iframe").length;' +
+								'var sc=document.querySelectorAll("script[src]");' +
+								'var srcs=[];for(var i=0;i<Math.min(sc.length,5);i++)srcs.push(sc[i].src.split("/").pop());' +
+								'var loc=location.href.substring(0,100);' +
+								'return(v?"vid:"+v.src.substring(0,100):"no-vid")+" t:"+t.substring(0,60)+' +
+								'" jw:"+jw+" if:"+ifs+" sc:["+srcs.join(",")+"] url:"+loc;})()'
+							);
+						} catch (e) { videoInfo = 'err:' + (e.message || '').substring(0, 100); }
+					}
+
+					try { session.defaultSession.webRequest.onBeforeRequest(null); } catch {}
+					hidden.close();
+					hidden = null;
+				}
+
 				try {
-					server.send({ type: 'get-video-url-result', id: message.id, playerHtml, dlText });
+					server.send({ type: 'get-video-url-result', id: message.id, playerHtml, dlText: '', capturedUrl, videoInfo: videoInfo + ' | ck:' + cookieNames });
 				} catch {}
 			} catch (e) {
+				try { session.defaultSession.webRequest.onBeforeRequest(null); } catch {}
 				if (hidden) try { hidden.close(); } catch {}
 				try {
 					server.send({
@@ -128,6 +359,8 @@ function startServer() {
 						id: message.id,
 						playerHtml: '',
 						dlText: '',
+						capturedUrl: '',
+						videoInfo: '',
 						error: e?.message || String(e)
 					});
 				} catch {}
@@ -587,59 +820,89 @@ if (!app.requestSingleInstanceLock()) {
 	app.whenReady().then(async () => {
 		Menu.setApplicationMenu(null);
 
-		// Strip framing restrictions so febbox loads inside webviews.
-		// Only touch subFrame responses — leave top-level navigation
-		// (the login window) completely alone so Set-Cookie headers
-		// are processed normally by Chromium's cookie jar.
+		// Strip framing restrictions so febbox loads inside webviews,
+		// and inject CORS headers on external CDN responses so HLS.js
+		// can fetch playlists and segments from any streaming domain.
 		session.defaultSession.webRequest.onHeadersReceived(
-			{ urls: ['*://*.febbox.com/*', '*://febbox.com/*'] },
+			{ urls: ['http://*/*', 'https://*/*'] },
 			(details, callback) => {
-				if (details.resourceType !== 'subFrame') {
+				const url = details.url;
+
+				// Never touch our own server
+				if (url.startsWith('http://localhost:') || url.startsWith('http://127.0.0.1:')) {
 					callback({});
 					return;
 				}
-				const headers = { ...details.responseHeaders };
-				delete headers['x-frame-options'];
-				delete headers['X-Frame-Options'];
-				delete headers['content-security-policy'];
-				delete headers['Content-Security-Policy'];
-				callback({ responseHeaders: headers });
+
+				// Febbox: strip frame restrictions on subframes only
+				if (url.includes('febbox.com')) {
+					if (details.resourceType !== 'subFrame') {
+						callback({});
+						return;
+					}
+					const headers = { ...details.responseHeaders };
+					delete headers['x-frame-options'];
+					delete headers['X-Frame-Options'];
+					delete headers['content-security-policy'];
+					delete headers['Content-Security-Policy'];
+					callback({ responseHeaders: headers });
+					return;
+				}
+
+				// External CDN (shegu.net, etc.): add CORS for media/XHR
+				if (details.resourceType === 'media' ||
+					details.resourceType === 'xmlhttprequest' ||
+					details.resourceType === 'other') {
+					const headers = { ...details.responseHeaders };
+					headers['access-control-allow-origin'] = ['*'];
+					headers['access-control-allow-headers'] = ['*'];
+					headers['access-control-allow-methods'] = ['GET, HEAD, OPTIONS'];
+					callback({ responseHeaders: headers });
+					return;
+				}
+
+				callback({});
 			}
 		);
 
-		// Spoof Referer/Origin only for subframe/XHR requests from
-		// webviews.  Leave mainFrame navigation untouched.
+		// Spoof Referer/Origin for febbox webview requests and for ALL
+		// external media/XHR so HLS.js streams load at full quality
+		// regardless of which CDN domain febbox routes them through.
 		session.defaultSession.webRequest.onBeforeSendHeaders(
-			{ urls: ['*://*.febbox.com/*', '*://febbox.com/*'] },
+			{ urls: ['http://*/*', 'https://*/*'] },
 			(details, callback) => {
+				const url = details.url;
+
+				// Never touch requests to our own server
+				if (url.startsWith('http://localhost:') || url.startsWith('http://127.0.0.1:')) {
+					callback({});
+					return;
+				}
+
+				// Never touch top-level navigation (login window, etc.)
 				if (details.resourceType === 'mainFrame') {
 					callback({});
 					return;
 				}
+
 				const headers = { ...details.requestHeaders };
 
-				const ref = headers['Referer'] || headers['referer'] || '';
-				if (ref && !ref.includes('febbox.com') && !ref.includes('google.com')) {
+				if (url.includes('febbox.com')) {
+					const ref = headers['Referer'] || headers['referer'] || '';
+					if (ref && !ref.includes('febbox.com') && !ref.includes('google.com')) {
+						headers['Referer'] = 'https://www.febbox.com/';
+						headers['Origin'] = 'https://www.febbox.com';
+					}
+				} else if (
+					details.resourceType === 'media' ||
+					details.resourceType === 'xmlhttprequest' ||
+					details.resourceType === 'other'
+				) {
+					// Any external CDN: spoof for media/XHR/other so streams work
 					headers['Referer'] = 'https://www.febbox.com/';
 					headers['Origin'] = 'https://www.febbox.com';
 				}
 
-				callback({ requestHeaders: headers });
-			}
-		);
-
-		// Video CDNs may check Referer.  Spoof it for media requests so
-		// the native <video>/hls.js can load streams extracted from febbox.
-		session.defaultSession.webRequest.onBeforeSendHeaders(
-			{ urls: ['*://*.cloudfront.net/*', '*://*.r2.cloudflarestorage.com/*', '*://*.cloudflare.com/*', '*://*.febbox.com/file/*'] },
-			(details, callback) => {
-				if (details.resourceType !== 'media' && details.resourceType !== 'xmlhttprequest' && details.resourceType !== 'other') {
-					callback({});
-					return;
-				}
-				const headers = { ...details.requestHeaders };
-				headers['Referer'] = 'https://www.febbox.com/';
-				headers['Origin'] = 'https://www.febbox.com';
 				callback({ requestHeaders: headers });
 			}
 		);

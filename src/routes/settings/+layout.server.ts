@@ -13,8 +13,9 @@ export const load: LayoutServerLoad = async () => {
 	 * Only for things that are genuinely worth acting on — a key that isn't
 	 * set, or an update actually waiting — so it never becomes decoration.
 	 */
+	const settings = readSettings();
 	const needs = {
-		services: !readSettings().tmdbApiKey || !omdbConfigured(),
+		services: !settings.tmdbApiKey || !omdbConfigured() || !settings.subdlSeen,
 		updates:
 			(mode === 'release' && updateState().status === 'ready') ||
 			(mode === 'source' && sourceIsStale())

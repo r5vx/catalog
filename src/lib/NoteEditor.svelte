@@ -13,6 +13,10 @@
 	let editor = $state<HTMLDivElement | null>(null);
 	let status = $state('');
 	let uploading = $state(false);
+	let resizingImg = $state<HTMLImageElement | null>(null);
+	let resizeStartX = 0;
+	let resizeStartW = 0;
+	let isResizing = false;
 
 	let timer: ReturnType<typeof setTimeout>;
 
@@ -99,6 +103,49 @@
 			save();
 		}
 	}
+
+	function onEditorClick(event: MouseEvent) {
+		if (isResizing) return;
+		const target = event.target as HTMLElement;
+		editor?.querySelectorAll('img.img-selected').forEach(img => img.classList.remove('img-selected'));
+		if (target.tagName === 'IMG') {
+			target.classList.add('img-selected');
+			resizingImg = target as HTMLImageElement;
+		} else {
+			resizingImg = null;
+		}
+	}
+
+	function startResize(event: MouseEvent | TouchEvent) {
+		if (!resizingImg || !editor) return;
+		event.preventDefault();
+		isResizing = true;
+		const clientX = 'touches' in event ? event.touches[0].clientX : event.clientX;
+		resizeStartX = clientX;
+		resizeStartW = resizingImg.offsetWidth;
+
+		const img = resizingImg;
+		const maxW = editor.clientWidth;
+
+		function onMove(e: MouseEvent | TouchEvent) {
+			const cx = 'touches' in e ? (e as TouchEvent).touches[0].clientX : (e as MouseEvent).clientX;
+			const newW = Math.max(60, Math.min(maxW, resizeStartW + (cx - resizeStartX)));
+			img.style.width = `${newW}px`;
+			img.style.maxWidth = '100%';
+		}
+		function onEnd() {
+			document.removeEventListener('mousemove', onMove);
+			document.removeEventListener('mouseup', onEnd);
+			document.removeEventListener('touchmove', onMove);
+			document.removeEventListener('touchend', onEnd);
+			setTimeout(() => { isResizing = false; }, 0);
+			queueSave();
+		}
+		document.addEventListener('mousemove', onMove);
+		document.addEventListener('mouseup', onEnd);
+		document.addEventListener('touchmove', onMove);
+		document.addEventListener('touchend', onEnd);
+	}
 </script>
 
 <svelte:window onkeydown={onKey} />
@@ -155,21 +202,33 @@
 	</div>
 
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div
-		class="page"
-		bind:this={editor}
-		contenteditable="true"
-		role="textbox"
-		tabindex="0"
-		aria-multiline="true"
-		aria-label="Page contents"
-		oninput={queueSave}
-		onblur={save}
-		onpaste={onPaste}
-		ondrop={onDrop}
-		ondragover={(e) => e.preventDefault()}
-	>
-		{@html initialBody}
+	<div class="page-wrap">
+		<div
+			class="page"
+			bind:this={editor}
+			contenteditable="true"
+			role="textbox"
+			tabindex="0"
+			aria-multiline="true"
+			aria-label="Page contents"
+			oninput={queueSave}
+			onblur={save}
+			onpaste={onPaste}
+			ondrop={onDrop}
+			ondragover={(e) => e.preventDefault()}
+			onclick={onEditorClick}
+		>
+			{@html initialBody}
+		</div>
+		{#if resizingImg}
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div
+				class="resize-handle"
+				style="top: {resizingImg.offsetTop + resizingImg.offsetHeight - 10}px; left: {resizingImg.offsetLeft + resizingImg.offsetWidth - 10}px;"
+				onmousedown={startResize}
+				ontouchstart={startResize}
+			></div>
+		{/if}
 	</div>
 
 	<p class="hint faint">
@@ -297,12 +356,30 @@
 		border-left: 3px solid var(--accent);
 		color: var(--ink-soft);
 	}
+	.page-wrap {
+		position: relative;
+	}
 	.page :global(img) {
 		max-width: 100%;
 		height: auto;
 		border-radius: var(--radius-sm);
 		margin: 0.5em 0;
 		display: block;
+		cursor: pointer;
+	}
+	.page :global(img.img-selected) {
+		outline: 2px solid var(--accent);
+		outline-offset: 2px;
+	}
+	.resize-handle {
+		position: absolute;
+		width: 18px;
+		height: 18px;
+		background: var(--accent);
+		border: 2px solid var(--bg);
+		border-radius: 3px;
+		cursor: nwse-resize;
+		z-index: 3;
 	}
 	.page :global(hr) {
 		border: none;

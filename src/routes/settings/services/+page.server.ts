@@ -8,11 +8,14 @@ import type { PageServerLoad, Actions } from './$types';
 export const load: PageServerLoad = async () => {
 	const settings = readSettings();
 
+	if (!settings.subdlSeen) updateSettings({ subdlSeen: '1' });
+
 	return {
 		tmdbKeySaved: Boolean(settings.tmdbApiKey),
 		omdbKeySaved: Boolean(settings.omdbApiKey),
 		febboxKeySaved: Boolean(settings.febboxToken),
 		febboxToken: settings.febboxToken ?? '',
+		subdlKeySaved: Boolean(settings.subdlApiKey),
 		region: settings.watchRegion ?? '',
 		regionInUse: watchRegion(),
 		detectedRegion: detectedRegion()
@@ -78,5 +81,18 @@ export const actions: Actions = {
 	removeFebbox: async () => {
 		updateSettings({ febboxToken: undefined });
 		return { febboxOk: 'Key removed.' };
+	},
+
+	saveSubdl: async ({ request }) => {
+		const key = String((await request.formData()).get('subdlApiKey') ?? '').trim();
+		if (!key) return fail(400, { subdlError: 'Paste your key first.' });
+
+		updateSettings({ subdlApiKey: key });
+		return { subdlOk: 'Key saved. Subtitle search will now include SubDL results.' };
+	},
+
+	removeSubdl: async () => {
+		updateSettings({ subdlApiKey: undefined });
+		return { subdlOk: 'Key removed. Subtitles will still come from OpenSubtitles.' };
 	}
 };

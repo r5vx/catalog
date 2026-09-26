@@ -128,7 +128,9 @@
 			case 'none':
 				return 'You have the latest version.';
 			case 'error':
-				return `Could not check: ${release.message}`;
+				if (release.message?.includes('latest-mac.yml'))
+					return 'Auto-updates are not available on Mac. Download new versions from the GitHub release page.';
+				return `Could not check for updates.`;
 			default:
 				return '';
 		}

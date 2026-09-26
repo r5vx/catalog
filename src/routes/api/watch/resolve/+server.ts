@@ -22,7 +22,7 @@ async function findOnShowbox(title: string, type: string, year: string) {
 }
 
 interface ResolveCache {
-	match: { id: number; title: string; type: string; slug?: string };
+	match: { id: number; title: string; type: string; slug?: string; posterUrl?: string };
 	shareKey: string;
 	episodes?: unknown;
 	files?: unknown[];
@@ -43,6 +43,7 @@ export const GET: RequestHandler = async ({ url }) => {
 	let matchTitle: string;
 	let matchId: number;
 	let matchType: string;
+	let matchPosterUrl: string | undefined;
 	let shareKey: string;
 	let episodeData: unknown | undefined;
 	let movieFileList: unknown[] | undefined;
@@ -51,6 +52,7 @@ export const GET: RequestHandler = async ({ url }) => {
 		matchTitle = cached.match.title;
 		matchId = cached.match.id;
 		matchType = cached.match.type;
+		matchPosterUrl = cached.match.posterUrl;
 		shareKey = cached.shareKey;
 		episodeData = cached.episodes;
 		movieFileList = cached.files;
@@ -93,6 +95,7 @@ export const GET: RequestHandler = async ({ url }) => {
 		matchTitle = match.title;
 		matchId = match.id;
 		matchType = match.type;
+		matchPosterUrl = match.posterUrl;
 		shareKey = sk;
 
 		if (match.type === 'tv') {
@@ -104,7 +107,7 @@ export const GET: RequestHandler = async ({ url }) => {
 		}
 
 		resolveCache.set(cacheKey, {
-			match: { id: matchId, title: matchTitle, type: matchType },
+			match: { id: matchId, title: matchTitle, type: matchType, posterUrl: matchPosterUrl },
 			shareKey,
 			episodes: episodeData,
 			files: movieFileList,
@@ -114,6 +117,7 @@ export const GET: RequestHandler = async ({ url }) => {
 
 	const { febboxToken } = readSettings();
 	const libraryEntry = findEntryByTitle(matchTitle);
+	const posterUrl = libraryEntry?.posterUrl || matchPosterUrl || '';
 
 	if (matchType === 'tv') {
 		const epData = episodeData as { episodes: { season: number; episode: number; files: { fid: number; quality: string }[] }[]; seasons: number[]; qualities?: string[] };
@@ -138,6 +142,7 @@ export const GET: RequestHandler = async ({ url }) => {
 			hasToken: Boolean(febboxToken),
 			episodes: epData,
 			debug: streamDebug,
+			posterUrl,
 			libraryEntry
 		});
 	}
@@ -166,6 +171,7 @@ export const GET: RequestHandler = async ({ url }) => {
 		hasToken: Boolean(febboxToken),
 		files,
 		debug: streamDebug,
+		posterUrl,
 		libraryEntry
 	});
 };

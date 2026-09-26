@@ -112,24 +112,27 @@ export function listEntries(options: ListOptions = {}): EntryCard[] {
 	const params: (string | number)[] = [];
 
 	if (options.search) {
-		// Titles, your own notes, and who's in it — so typing an actor's name
-		// finds everything of theirs you've watched.
 		const needle = `%${options.search}%`;
 
-		// Cast names match word by word, so "samuel jackson" finds
-		// "Samuel L. Jackson" despite the middle initial.
 		const words = options.search.trim().split(/\s+/).filter(Boolean);
 		const nameMatch = words.map(() => 'p.name LIKE ?').join(' AND ') || '1 = 0';
 
+		const stripped = options.search.replace(/[^a-zA-Z0-9\s]/g, '');
+		const strippedNeedle = stripped ? `%${stripped.toLowerCase()}%` : null;
+		const spacelessNeedle = stripped ? `%${stripped.replace(/\s+/g, '').toLowerCase()}%` : null;
+
 		where.push(`(
 			e.title LIKE ? OR e.notes LIKE ?
+			${strippedNeedle ? "OR lower(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(e.title, '-', ''), ':', ''), '.', ''), '''', ''), ' ', '')) LIKE ?" : ''}
 			OR e.id IN (
 				SELECT ec.entry_id FROM entry_cast ec
 				JOIN people p ON p.id = ec.person_id
 				WHERE ${nameMatch}
 			)
 		)`);
-		params.push(needle, needle, ...words.map((w) => `%${w}%`));
+		params.push(needle, needle);
+		if (spacelessNeedle) params.push(spacelessNeedle);
+		params.push(...words.map((w) => `%${w}%`));
 	}
 
 	if (options.categoryId) {
@@ -549,10 +552,10 @@ export function entryIdForSource(source: string, sourceId: string): number | nul
 	return row?.id ?? null;
 }
 
-export function findEntryByTitle(title: string): { id: number; status: string } | null {
+export function findEntryByTitle(title: string): { id: number; status: string; posterUrl: string; lastSeason: number; lastEpisode: number } | null {
 	const row = db
-		.prepare('SELECT id, status FROM entries WHERE title = ? COLLATE NOCASE LIMIT 1')
-		.get(title) as { id: number; status: string } | undefined;
+		.prepare('SELECT id, status, poster_url AS posterUrl, last_season AS lastSeason, last_episode AS lastEpisode FROM entries WHERE title = ? COLLATE NOCASE LIMIT 1')
+		.get(title) as { id: number; status: string; posterUrl: string; lastSeason: number; lastEpisode: number } | undefined;
 	return row ? { ...row } : null;
 }
 
@@ -577,16 +580,18 @@ export function saveWatchProgress(
 	duration: number,
 	subUrl?: string,
 	subDelay?: number,
-	subFileName?: string
+	subFileName?: string,
+	posterUrl?: string
 ): void {
 	db.prepare(`
-		INSERT INTO watch_progress (title, type, season, episode, current_time, duration, sub_url, sub_delay, sub_file_name, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		INSERT INTO watch_progress (title, type, season, episode, current_time, duration, sub_url, sub_delay, sub_file_name, poster_url, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 		ON CONFLICT (title, type, season, episode)
 		DO UPDATE SET current_time = excluded.current_time, duration = excluded.duration,
 			sub_url = excluded.sub_url, sub_delay = excluded.sub_delay, sub_file_name = excluded.sub_file_name,
+			poster_url = CASE WHEN excluded.poster_url != '' THEN excluded.poster_url ELSE watch_progress.poster_url END,
 			updated_at = excluded.updated_at
-	`).run(title, type, season, episode, currentTime, duration, subUrl ?? '', subDelay ?? 0, subFileName ?? '');
+	`).run(title, type, season, episode, currentTime, duration, subUrl ?? '', subDelay ?? 0, subFileName ?? '', posterUrl ?? '');
 }
 
 export function getWatchProgress(
@@ -617,18 +622,35 @@ export function deleteWatchProgress(title: string, type: string, season: number,
 }
 
 export function continueWatchingList(): (WatchProgress & { updatedAt: string; posterUrl: string | null; entryId: number | null; entryStatus: string | null })[] {
+	cleanupCompletedProgress();
 	return db
 		.prepare(`
 			SELECT w.title, w.type, w.season, w.episode, w."current_time" AS currentTime, w.duration, w.updated_at AS updatedAt,
-				(SELECT e.poster_url FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1) AS posterUrl,
-				(SELECT e.id FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1) AS entryId,
-				(SELECT e.status FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1) AS entryStatus
+				COALESCE(
+					(SELECT e.poster_url FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1),
+					(SELECT e.poster_url FROM entries e WHERE instr(lower(e.title), lower(w.title)) > 0 LIMIT 1),
+					(SELECT e.poster_url FROM entries e WHERE instr(lower(w.title), lower(e.title)) > 0 LIMIT 1),
+					NULLIF(w.poster_url, '')
+				) AS posterUrl,
+				COALESCE(
+					(SELECT e.id FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1),
+					(SELECT e.id FROM entries e WHERE instr(lower(e.title), lower(w.title)) > 0 LIMIT 1),
+					(SELECT e.id FROM entries e WHERE instr(lower(w.title), lower(e.title)) > 0 LIMIT 1)
+				) AS entryId,
+				COALESCE(
+					(SELECT e.status FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1),
+					(SELECT e.status FROM entries e WHERE instr(lower(e.title), lower(w.title)) > 0 LIMIT 1),
+					(SELECT e.status FROM entries e WHERE instr(lower(w.title), lower(e.title)) > 0 LIMIT 1)
+				) AS entryStatus
 			FROM watch_progress w
 			WHERE w.updated_at = (
 				SELECT MAX(w2.updated_at) FROM watch_progress w2 WHERE w2.title = w.title AND w2.type = w.type
 			)
-			AND w."current_time" > 120
-			AND (CAST(w."current_time" AS REAL) / w.duration) < 0.90
+			AND (
+				(w.type = 'tv' AND (CAST(w."current_time" AS REAL) / w.duration) < 0.90)
+				OR (w.type = 'tv' AND w."current_time" = 0 AND w.duration = 0)
+				OR (w.type = 'movie' AND w."current_time" > 30 AND (CAST(w."current_time" AS REAL) / w.duration) < 0.90)
+			)
 			ORDER BY w.updated_at DESC
 			LIMIT 20
 		`)
