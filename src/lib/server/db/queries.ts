@@ -647,9 +647,9 @@ export function continueWatchingList(): (WatchProgress & { updatedAt: string; po
 				SELECT MAX(w2.updated_at) FROM watch_progress w2 WHERE w2.title = w.title AND w2.type = w.type
 			)
 			AND (
-				(w.type = 'tv' AND (CAST(w."current_time" AS REAL) / w.duration) < 0.90)
+				(w.type = 'tv' AND (CAST(w."current_time" AS REAL) / w.duration) < 0.95)
 				OR (w.type = 'tv' AND w."current_time" = 0 AND w.duration = 0)
-				OR (w.type = 'movie' AND w."current_time" > 30 AND (CAST(w."current_time" AS REAL) / w.duration) < 0.90)
+				OR (w.type = 'movie' AND w."current_time" > 30 AND (CAST(w."current_time" AS REAL) / w.duration) < 0.95)
 			)
 			ORDER BY w.updated_at DESC
 			LIMIT 20
@@ -674,7 +674,7 @@ export function updateSeasonEpisodeReached(id: number, season: number, episode: 
 }
 
 export function cleanupCompletedProgress(): void {
-	db.prepare('DELETE FROM watch_progress WHERE duration > 0 AND (CAST("current_time" AS REAL) / duration) >= 0.93').run();
+	db.prepare("DELETE FROM watch_progress WHERE type = 'movie' AND duration > 0 AND (CAST(\"current_time\" AS REAL) / duration) >= 0.93").run();
 }
 
 export function listAllWatchProgressFull(): (WatchProgress & { updatedAt: string })[] {

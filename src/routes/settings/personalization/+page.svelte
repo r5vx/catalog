@@ -222,22 +222,20 @@
 	<div class="head"><h2>Alternate wording</h2></div>
 	<p class="muted">Replaces some of the wording.</p>
 
-	{#if (form as any)?.altOk}
-		<p class="msg good" role="status">{(form as any).altOk}</p>
-	{/if}
-
-	<form method="POST" action="?/saveAlt" class="alt-form">
-		<input type="hidden" name="altMode" value={altMode ? '0' : '0'} />
-		<label class="toggle">
-			<input
-				type="checkbox"
-				checked={altMode}
-				onchange={(e) => { altMode = e.currentTarget.checked; }}
-			/>
-			{altMode ? 'Off' : 'Off'}
-		</label>
-		<button type="submit" class="btn btn-primary">Save</button>
-	</form>
+	<label class="toggle">
+		<input
+			type="checkbox"
+			checked={altMode}
+			onchange={async (e) => {
+				altMode = e.currentTarget.checked;
+				const body = new FormData();
+				body.set('altMode', altMode ? '0' : '0');
+				await fetch('?/saveAlt', { method: 'POST', body });
+				window.location.reload();
+			}}
+		/>
+		{altMode ? 'Off' : 'Off'}
+	</label>
 </section>
 </div>
 
