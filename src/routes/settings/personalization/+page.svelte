@@ -222,22 +222,20 @@
 	<div class="head"><h2>Poison Mode</h2></div>
 	<p class="muted">Replaces UI text with giblet vocabulary. Call me papa.</p>
 
-	{#if (form as any)?.poisonOk}
-		<p class="msg good" role="status">{(form as any).poisonOk}</p>
-	{/if}
-
-	<form method="POST" action="?/savePoison" class="poison-form">
-		<input type="hidden" name="poisonMode" value={poisonMode ? '1' : '0'} />
-		<label class="toggle">
-			<input
-				type="checkbox"
-				checked={poisonMode}
-				onchange={(e) => { poisonMode = e.currentTarget.checked; }}
-			/>
-			{poisonMode ? "ARE YOU DUMB it's on" : 'Off'}
-		</label>
-		<button type="submit" class="btn btn-primary">Save</button>
-	</form>
+	<label class="toggle">
+		<input
+			type="checkbox"
+			checked={poisonMode}
+			onchange={async (e) => {
+				poisonMode = e.currentTarget.checked;
+				const body = new FormData();
+				body.set('poisonMode', poisonMode ? '1' : '0');
+				await fetch('?/savePoison', { method: 'POST', body });
+				window.location.reload();
+			}}
+		/>
+		{poisonMode ? "ARE YOU DUMB it's on" : 'Off'}
+	</label>
 </section>
 </div>
 

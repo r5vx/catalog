@@ -81,6 +81,7 @@
 	let castOpen = $state(false);
 	let loadingCast = $state(false);
 	let preferredAudioName = $state('');
+	let videoFit = $state<'contain' | 'cover'>('contain');
 	let libraryEntryId = $state<number | null>(null);
 	let libLastSeason = $state(0);
 	let libLastEpisode = $state(0);
@@ -101,7 +102,6 @@
 	let isAuto = false;
 	let lastResolveArgs = $state<{ title: string; type: string; year: string } | null>(null);
 
-	let searchTimer: ReturnType<typeof setTimeout>;
 	let videoEl: HTMLVideoElement | undefined = $state();
 
 	const seasonEpisodes = $derived(episodes.filter((ep) => ep.season === activeSeason));
@@ -137,10 +137,12 @@
 	let showAudioPicker = $state(false);
 	let showFileName = $state(false);
 	let showFilePicker = $state(false);
+	let inPiP = $state(false);
 	let seeking = $state(false);
 	let seekPreview = $state(-1);
 	let seekTarget = $state(-1);
 	let buffering = $state(false);
+	let isVideoSeeking = $state(false);
 	let clickTimeout: ReturnType<typeof setTimeout> | null = null;
 	let progressSaveTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -226,7 +228,9 @@
 	function skip(delta: number) {
 		if (!videoEl) return;
 		const cap = duration > 0.5 ? duration - 0.5 : duration;
-		videoEl.currentTime = Math.max(0, Math.min(cap, videoEl.currentTime + delta));
+		const target = Math.max(0, Math.min(cap, videoEl.currentTime + delta));
+		seekTarget = duration > 0 ? (target / duration) * 100 : 0;
+		videoEl.currentTime = target;
 	}
 
 	function toggleMute() {
@@ -297,12 +301,111 @@
 		}
 	}
 
+	let pipCanvas: HTMLCanvasElement | null = null;
+	let pipVideo: HTMLVideoElement | null = null;
+	let pipCtx: CanvasRenderingContext2D | null = null;
+	let pipAnimFrame: number | null = null;
+
+	function drawPiPFrame() {
+		if (!pipCanvas || !pipCtx || !videoEl) return;
+		const vw = videoEl.videoWidth || 1280;
+		const vh = videoEl.videoHeight || 720;
+		if (pipCanvas.width !== vw) pipCanvas.width = vw;
+		if (pipCanvas.height !== vh) pipCanvas.height = vh;
+
+		pipCtx.drawImage(videoEl, 0, 0, vw, vh);
+
+		if (subtitlesOn) {
+			const t = (videoEl.currentTime || 0) - subtitleDelay;
+			const cue = subtitleCues.find(c => t >= c.start && t < c.end);
+			if (cue) {
+				const text = cue.text.replace(/<[^>]*>/g, '');
+				const lines = text.split('\n');
+				const fontSize = Math.round(vh * 0.04);
+				pipCtx.font = `${fontSize}px system-ui, sans-serif`;
+				pipCtx.textAlign = 'center';
+				pipCtx.textBaseline = 'bottom';
+				const lineH = fontSize * 1.5;
+				const padX = Math.round(fontSize * 1.1);
+				const padY = Math.round(fontSize * 0.45);
+				const widths = lines.map(l => pipCtx!.measureText(l).width);
+				const maxW = Math.max(...widths);
+				const boxW = maxW + padX * 2;
+				const boxH = lines.length * lineH + padY * 2;
+				const boxX = (vw - boxW) / 2;
+				const boxY = vh * 0.92 - boxH;
+				const r = Math.round(fontSize * 0.28);
+				pipCtx.fillStyle = 'rgba(0,0,0,0.5)';
+				pipCtx.beginPath();
+				pipCtx.roundRect(boxX, boxY, boxW, boxH, r);
+				pipCtx.fill();
+				pipCtx.fillStyle = '#fff';
+				pipCtx.shadowColor = 'rgba(0,0,0,0.9)';
+				pipCtx.shadowBlur = 4;
+				for (let i = 0; i < lines.length; i++) {
+					const y = boxY + padY + (i + 1) * lineH;
+					pipCtx.fillText(lines[i], vw / 2, y);
+				}
+				pipCtx.shadowBlur = 0;
+			}
+		}
+		pipAnimFrame = requestAnimationFrame(drawPiPFrame);
+	}
+
+	function cleanupPiP() {
+		if (pipAnimFrame) { cancelAnimationFrame(pipAnimFrame); pipAnimFrame = null; }
+		if (pipVideo) {
+			pipVideo.removeEventListener('leavepictureinpicture', cleanupPiP);
+			pipVideo.pause();
+			pipVideo.srcObject = null;
+			pipVideo.remove();
+			pipVideo = null;
+		}
+		pipCanvas = null;
+		pipCtx = null;
+		inPiP = false;
+	}
+
 	async function togglePiP() {
 		if (!videoEl) return;
 		try {
-			if (document.pictureInPictureElement) await document.exitPictureInPicture();
-			else await videoEl.requestPictureInPicture();
-		} catch {}
+			if (inPiP) {
+				if (document.pictureInPictureElement) await document.exitPictureInPicture();
+				cleanupPiP();
+				return;
+			}
+
+			const canvas = document.createElement('canvas');
+			const vw = videoEl.videoWidth || 1280;
+			const vh = videoEl.videoHeight || 720;
+			canvas.width = vw;
+			canvas.height = vh;
+			const ctx = canvas.getContext('2d');
+			if (!ctx) return;
+
+			ctx.drawImage(videoEl, 0, 0, vw, vh);
+			const stream = canvas.captureStream(30);
+
+			pipCanvas = canvas;
+			pipCtx = ctx;
+			drawPiPFrame();
+
+			const pv = document.createElement('video');
+			pv.srcObject = stream;
+			pv.muted = true;
+			pv.style.cssText = 'position:fixed;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none';
+			document.body.appendChild(pv);
+			await pv.play();
+
+			pv.addEventListener('leavepictureinpicture', cleanupPiP);
+			await pv.requestPictureInPicture();
+			pipVideo = pv;
+			inPiP = true;
+		} catch (err) {
+			console.error('PiP failed:', err);
+			cleanupPiP();
+			try { await videoEl.requestPictureInPicture(); inPiP = true; } catch {}
+		}
 	}
 
 	function onProgressDown(e: MouseEvent) {
@@ -876,28 +979,34 @@
 	async function extractVideoFromWebview(wv: any, fid: number, sk: string) {
 		extracting = true;
 		try {
-			const html: string = await wv.executeJavaScript(`
-				new Promise(function(resolve) {
-					function tryFetch() {
-						if (typeof $ === 'undefined' || typeof $.ajax === 'undefined') {
-							setTimeout(tryFetch, 500);
-							return;
+			const html: string = await Promise.race([
+				wv.executeJavaScript(`
+					new Promise(function(resolve) {
+						var attempts = 0;
+						function tryFetch() {
+							attempts++;
+							if (attempts > 30) { resolve(''); return; }
+							if (typeof $ === 'undefined' || typeof $.ajax === 'undefined') {
+								setTimeout(tryFetch, 500);
+								return;
+							}
+							$.ajax({
+								type: 'POST',
+								url: '/file/player',
+								data: { fid: ${fid}, share_key: '${sk}' },
+								dataType: 'text',
+								success: function(d) { resolve(d); },
+								error: function() { resolve(''); }
+							});
 						}
-						$.ajax({
-							type: 'POST',
-							url: '/file/player',
-							data: { fid: ${fid}, share_key: '${sk}' },
-							dataType: 'text',
-							success: function(d) { resolve(d); },
-							error: function() { resolve(''); }
-						});
-					}
-					tryFetch();
-				});
-			`);
+						tryFetch();
+					});
+				`),
+				new Promise<string>(r => setTimeout(() => r(''), 20000))
+			]);
 
 			if (!html) {
-				problem = 'Could not load video.';
+				problem = 'Could not load video — try logging in again in Settings → Services.';
 				extracting = false;
 				return;
 			}
@@ -936,9 +1045,17 @@
 		if (useIframe && webviewEl && iframeFid && !webviewReady) {
 			webviewReady = true;
 			const wv = webviewEl as any;
+			let started = false;
 			wv.addEventListener('dom-ready', () => {
+				started = true;
 				extractVideoFromWebview(wv, iframeFid, shareKey);
 			});
+			setTimeout(() => {
+				if (!started && useIframe && !problem) {
+					problem = 'Could not load video — try logging in again in Settings → Services.';
+					extracting = false;
+				}
+			}, 25000);
 		}
 	});
 
@@ -963,13 +1080,17 @@
 
 		if (streamUrl.includes('.m3u8') && Hls.isSupported()) {
 			const hls = new Hls({
-				maxBufferLength: 60,
-				maxMaxBufferLength: 120,
+				maxBufferLength: 90,
+				maxMaxBufferLength: 180,
 				maxBufferHole: 0.5,
 				highBufferWatchdogPeriod: 2,
 				nudgeMaxRetry: 5,
 				liveSyncDurationCount: 3,
 				enableWorker: true,
+				startFragPrefetch: true,
+				backBufferLength: 30,
+				fragLoadingMaxRetry: 4,
+				fragLoadingRetryDelay: 1000,
 				abrEwmaDefaultEstimate: 50_000_000
 			});
 			hls.loadSource(streamUrl);
@@ -1071,6 +1192,10 @@
 	});
 
 	$effect(() => {
+		if (inPiP) return () => cleanupPiP();
+	});
+
+	$effect(() => {
 		if (!videoEl) return;
 		const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
 			(navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -1148,6 +1273,14 @@
 		if (showType === 'tv' && videoTitle && activeSeason) {
 			const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
 			loadEpisodeNames(baseTitle, activeSeason);
+		}
+	});
+
+	$effect(() => {
+		const q = query;
+		if (!streamUrl && !useIframe && !needsLogin && !loading) {
+			const timer = setTimeout(() => doSearch(q), 350);
+			return () => clearTimeout(timer);
 		}
 	});
 
@@ -1368,6 +1501,7 @@
 		saveProgress();
 		skipResume = true;
 		switchingEpisode = true;
+		if (inPiP) cleanupPiP();
 		lastCastKey = '';
 
 		const prevSub = subtitlesOn && activeSubFileName
@@ -1426,13 +1560,6 @@
 			loadingEpisode = false;
 			fetchWatchedEpisodes();
 		}
-	}
-
-	function onSearch(event: Event) {
-		clearTimeout(searchTimer);
-		const value = (event.target as HTMLInputElement).value;
-		query = value;
-		searchTimer = setTimeout(() => doSearch(value), 350);
 	}
 
 	async function doSearch(q: string) {
@@ -1715,9 +1842,10 @@
 						bind:this={videoEl}
 						autoplay
 						playsinline
+						style:object-fit={videoFit}
 						class:buffering={loadingEpisode || changingQuality}
 						ontimeupdate={() => {
-							if (videoEl && !seeking && !switchingEpisode) currentTime = videoEl.currentTime;
+							if (videoEl && !seeking && !isVideoSeeking && !switchingEpisode) currentTime = videoEl.currentTime;
 						}}
 						ondurationchange={() => {
 							if (videoEl && !switchingEpisode) duration = videoEl.duration;
@@ -1752,8 +1880,8 @@
 							}, 12000);
 						}}
 						oncanplay={() => { buffering = false; if (bufferTimer) { clearTimeout(bufferTimer); bufferTimer = null; } }}
-						onseeking={() => { buffering = true; }}
-						onseeked={() => { buffering = false; if (bufferTimer) { clearTimeout(bufferTimer); bufferTimer = null; } }}
+						onseeking={() => { buffering = true; isVideoSeeking = true; }}
+						onseeked={() => { buffering = false; isVideoSeeking = false; if (bufferTimer) { clearTimeout(bufferTimer); bufferTimer = null; } }}
 						onended={() => {
 							playing = false;
 							showControls = true;
@@ -1775,6 +1903,10 @@
 					>
 						Your browser doesn't support video playback.
 					</video>
+
+					{#if inPiP}
+						<div class="pip-placeholder">Playing in picture-in-picture</div>
+					{/if}
 
 					<!-- click-to-play / double-click-fullscreen layer -->
 					<div
@@ -1798,7 +1930,7 @@
 					{/if}
 
 					<!-- subtitle overlay -->
-					{#if currentSub}
+					{#if currentSub && !inPiP}
 						<div class="subtitle-display">{@html currentSub.replace(/\n/g, '<br>')}</div>
 					{/if}
 
@@ -1976,6 +2108,18 @@
 								</button>
 							{/each}
 							<hr class="popup-divider" />
+							<p class="popup-label">Aspect ratio</p>
+							<button class="popup-item" class:active={videoFit === 'contain'} onclick={() => (videoFit = 'contain')}>
+								{#if videoFit === 'contain'}<span class="popup-check">&#10003;</span>{/if}
+								Fit
+								<span class="popup-sub">Black bars on sides</span>
+							</button>
+							<button class="popup-item" class:active={videoFit === 'cover'} onclick={() => (videoFit = 'cover')}>
+								{#if videoFit === 'cover'}<span class="popup-check">&#10003;</span>{/if}
+								Fill
+								<span class="popup-sub">Fills the screen, may crop</span>
+							</button>
+							<hr class="popup-divider" />
 							<p class="popup-label">Other</p>
 							<button class="popup-item" onclick={() => { wrongShow(); showSettings = false; }}>
 								Wrong one?
@@ -2119,8 +2263,7 @@
 			<input
 				type="search"
 				placeholder={pm ? "whats the giblet called..." : "Search for a movie or show..."}
-				value={query}
-				oninput={onSearch}
+				bind:value={query}
 				aria-label={pm ? "find a giblet to watch" : "Search for media"}
 			/>
 		</div>
@@ -2253,7 +2396,7 @@
 	.video-area { position: relative; flex: 1; background: #000; min-height: 0; min-width: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
 	.video-area.hide-cursor { cursor: none; }
 
-	.video-area video { width: 100%; height: 100%; object-fit: contain; display: block; outline: none; }
+	.video-area video { width: 100%; height: 100%; display: block; outline: none; }
 	.video-area video.buffering { opacity: 0.3; }
 
 	.hidden-webview { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; overflow: hidden; }
@@ -2269,6 +2412,9 @@
 
 	/* --------------------------------------------------------- subtitle overlay */
 	.subtitle-display { position: absolute; bottom: 80px; left: 10%; right: 10%; text-align: center; color: #fff; font-size: 1.4rem; line-height: 1.5; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 0, 0, 0.7); pointer-events: none; z-index: 5; background: rgba(0, 0, 0, 0.5); padding: 6px 16px; border-radius: 4px; width: fit-content; margin: 0 auto; }
+
+	/* --------------------------------------------------------- PiP placeholder */
+	.pip-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--ink-faint); font-size: 1.1rem; pointer-events: none; z-index: 2; background: #000; }
 
 	/* --------------------------------------------------------- controls overlay */
 	.controls { position: absolute; bottom: 0; left: 0; right: 0; padding: 40px 16px 14px; background: linear-gradient(transparent, rgba(0, 0, 0, 0.85)); opacity: 0; transition: opacity 0.3s ease; pointer-events: none; z-index: 10; }

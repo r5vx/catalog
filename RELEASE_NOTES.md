@@ -7,7 +7,40 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 2.1.5 — 2026-09-27
+
+- **Black screen now shows an error.** If the video can't load (e.g.
+  expired login), the player tells you instead of showing nothing.
+- **Search bar fixed.** Letters no longer disappear while typing in
+  the Watch search bar.
+- **Watched episodes stay green.** Completed episode highlights no
+  longer vanish after leaving and coming back.
+- **Subtitles in picture-in-picture.** Captions now show in the PiP
+  popup window.
+- **Aspect ratio setting.** A Fit / Fill toggle in player settings
+  for ultrawide monitors — Fill crops to fill the screen.
+- **Right-click menu in Browse.** Right-click any title to watch it,
+  view details, or add it to your library.
+- **Smoother playback on large files.** Bigger buffer and automatic
+  retry on glitchy segments.
+- **Poison mode auto-saves.** The toggle saves instantly — no more
+  Save button.
+- **Continue Watching keeps near-finished episodes.** TV episodes
+  no longer vanish at 90% — threshold raised to 95%.
+- **Seeking feels snappier.** The progress bar jumps to the new
+  position immediately instead of snapping back while it loads.
+  Arrow keys respond faster too.
+
 ## 2.1.4 — 2026-09-26
+
+- **Active subtitle name shown.** The captions button shows which
+  subtitle is loaded instead of generic text.
+- **"Wrong one?" moved to Settings.** Frees up space in the player
+  bar — find it in Settings > Other.
+- **Addic7ed subtitles.** TV shows now also search Addic7ed (via
+  Gestdown) for more subtitle options.
+
+## 2.1.3 — 2026-09-26
 
 - **Cleaner player bar.** Removed the "Logged in" label. Quality
   files are now a dropdown instead of a row of buttons.
@@ -16,12 +49,6 @@ and stamps it with the version number.
 - **Subtitle tooltips.** Hover a subtitle to see the full name.
 - **Wrong-episode subtitles filtered.** SubDL results for other
   episodes and season packs are now filtered out.
-- **Active subtitle name shown.** The captions button shows which
-  subtitle is loaded instead of generic text.
-- **"Wrong one?" moved to Settings.** Frees up space in the player
-  bar — find it in Settings > Other.
-- **Addic7ed subtitles.** TV shows now also search Addic7ed (via
-  Gestdown) for more subtitle options.
 
 ## 2.1.2 — 2026-09-26
 

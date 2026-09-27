@@ -32,9 +32,8 @@
 	// eslint-disable-next-line svelte/valid-compile -- intentionally captures initial data.q only
 	let searchText = $state(data.q ?? '');
 	let typing: ReturnType<typeof setTimeout>;
-	function onSearch(event: Event) {
+	function onSearch() {
 		clearTimeout(typing);
-		searchText = (event.target as HTMLInputElement).value;
 		typing = setTimeout(() => setParam('q', searchText), 350);
 	}
 
@@ -49,6 +48,15 @@
 	let problem = $state('');
 
 	const have = (result: SearchResult) => owned.has(keyOf(result)) || keyOf(result) in justAdded;
+
+	let ctxMenu = $state<{ x: number; y: number; result: SearchResult } | null>(null);
+
+	function onCardContext(e: MouseEvent, result: SearchResult) {
+		e.preventDefault();
+		ctxMenu = { x: e.clientX, y: e.clientY, result };
+	}
+
+	function closeCtx() { ctxMenu = null; }
 
 	async function add(result: SearchResult, status: string) {
 		busy = keyOf(result);
@@ -209,7 +217,7 @@
 {/if}
 
 {#snippet card(result: SearchResult)}
-	<li class:mine={have(result)}>
+	<li class:mine={have(result)} oncontextmenu={(e) => onCardContext(e, result)}>
 		<a href={link(result)} class="poster">
 			{#if result.posterUrl}
 				<img src={result.posterUrl} alt="" loading="lazy" />
@@ -275,6 +283,44 @@
 			{/if}
 		</section>
 	{/each}
+{/if}
+
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+{#if ctxMenu}
+	<div class="ctx-backdrop" onclick={closeCtx} oncontextmenu={(e) => { e.preventDefault(); closeCtx(); }}></div>
+	<div class="ctx-menu" style="left: {ctxMenu.x}px; top: {ctxMenu.y}px;">
+		<button type="button" onclick={() => {
+			const r = ctxMenu!.result;
+			const t = r.kind === 'Movie' ? 'movie' : 'tv';
+			goto(`/watch?title=${encodeURIComponent(r.title)}&type=${t}&auto=1`);
+			closeCtx();
+		}}>
+			{pm ? p('▶ Watch') : '▶ Watch'}
+		</button>
+		<button type="button" onclick={() => { goto(link(ctxMenu!.result)); closeCtx(); }}>
+			{pm ? p('View details') : 'View details'}
+		</button>
+		<hr />
+		{#if have(ctxMenu.result)}
+			{#if justAdded[keyOf(ctxMenu.result)]}
+				<button type="button" onclick={() => { goto(`/entry/${justAdded[keyOf(ctxMenu!.result)]}`); closeCtx(); }}>
+					{pm ? p('View entry') : 'View entry'}
+				</button>
+			{:else}
+				<span class="ctx-info">{pm ? p('In your library') : 'In your library'}</span>
+			{/if}
+		{:else}
+			<button type="button" onclick={() => { add(ctxMenu!.result, 'completed'); closeCtx(); }}>
+				✓ {pm ? p('Add as completed') : 'Add as completed'}
+			</button>
+			<button type="button" onclick={() => { add(ctxMenu!.result, 'watching'); closeCtx(); }}>
+				{pm ? p('Add as watching') : 'Add as watching'}
+			</button>
+			<button type="button" onclick={() => { add(ctxMenu!.result, 'plan to watch'); closeCtx(); }}>
+				{pm ? p('Add to plan to watch') : 'Add to plan to watch'}
+			</button>
+		{/if}
+	</div>
 {/if}
 
 <style>
@@ -477,5 +523,53 @@
 
 	.empty {
 		margin-top: 34px;
+	}
+
+	.ctx-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 900;
+	}
+
+	.ctx-menu {
+		position: fixed;
+		z-index: 901;
+		min-width: 180px;
+		background: var(--surface, #1e1e1e);
+		border: 1px solid var(--rule, #333);
+		border-radius: var(--radius-sm, 6px);
+		padding: 4px 0;
+		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+	}
+
+	.ctx-menu button {
+		display: block;
+		width: 100%;
+		padding: 8px 14px;
+		border: none;
+		background: none;
+		color: var(--ink, #ddd);
+		text-align: left;
+		font-size: 0.84rem;
+		cursor: pointer;
+	}
+
+	.ctx-menu button:hover {
+		background: var(--accent);
+		color: var(--accent-ink, #fff);
+	}
+
+	.ctx-menu hr {
+		border: none;
+		border-top: 1px solid var(--rule, #333);
+		margin: 4px 0;
+	}
+
+	.ctx-info {
+		display: block;
+		padding: 8px 14px;
+		font-size: 0.84rem;
+		color: var(--good);
+		font-weight: 600;
 	}
 </style>

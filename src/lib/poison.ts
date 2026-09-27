@@ -80,17 +80,19 @@ const RANDOM_LOADING = [
 	'ARE YOU DUMB hold on...',
 	"i dont knoww let me find it...",
 	'im gonna get it chill...',
-	'watch this tiktok while u wait jk...',
 	'that guy looks like you btw...',
 	'im hungry but loading first...',
-	'im gonna get a drink brb...',
-	'call me on tiktok while u wait...',
+	'getting mozzarella sticks while this loads...',
+	'dr pepper break while we load...',
+	'i need nachos and a dr pepper rn...',
 	'Deaaan its loading...',
 	'was that aura? loading...',
-	'dr pepper break while we load...',
 	'hello?? give it a sec...',
 	'alpha is here just loading...',
 	'call me papa while u wait...',
+	'ordering mozzarella sticks hold on...',
+	'who wants dr pepper...',
+	'nachos would be alpha rn...',
 ];
 
 export function p(text: string): string {
