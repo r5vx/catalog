@@ -31,12 +31,21 @@
 		goto(`?${params.toString()}`, { keepFocus: true, noScroll: true });
 	}
 
+	let searchValue = $state(data.filters.q || '');
+	let searchEl = $state<HTMLInputElement | null>(null);
 	let searchTimer: ReturnType<typeof setTimeout>;
-	function onSearch(event: Event) {
+
+	function onSearch() {
 		clearTimeout(searchTimer);
-		const value = (event.target as HTMLInputElement).value;
-		searchTimer = setTimeout(() => setParam('q', value), 200);
+		searchTimer = setTimeout(() => setParam('q', searchValue), 200);
 	}
+
+	$effect(() => {
+		const q = data.filters.q || '';
+		if (searchEl && document.activeElement !== searchEl) {
+			searchValue = q;
+		}
+	});
 
 	// Keep the current view so other pages can send you back to it.
 	$effect(() => {
@@ -49,7 +58,9 @@
 
 	let dismissed = $state<Set<string>>(new Set());
 	const continueItems = $derived(
-		(data.continueWatching ?? []).filter((w) => !dismissed.has(`${w.title}:${w.type}`))
+		(data.continueWatching ?? [])
+			.filter((w) => w.title && !dismissed.has(`${w.title}:${w.type}`))
+			.filter((w, i, arr) => arr.findIndex(x => x.title === w.title && x.type === w.type) === i)
 	);
 
 	async function removeContinue(title: string, type: string) {
@@ -167,8 +178,7 @@
 		</div>
 	</div>
 	<p class="muted count tabular">
-		{data.total}
-		{data.total === 1 ? (pm ? 'giblet' : 'entry') : (pm ? 'giblets' : 'entries')}
+		{data.completed} {pm ? 'consumed' : 'completed'} · {data.total} {pm ? 'giblets' : 'total'}
 	</p>
 </header>
 
@@ -249,7 +259,8 @@
 			type="search"
 			id="search"
 			placeholder={pm ? "find a giblet..." : "Search titles and notes…"}
-			value={data.filters.q}
+			bind:this={searchEl}
+			bind:value={searchValue}
 			oninput={onSearch}
 			aria-label={pm ? "find a giblet" : "Search your library"}
 		/>

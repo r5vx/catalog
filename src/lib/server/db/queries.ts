@@ -215,6 +215,11 @@ export function countsByCategory(): Record<number, number> {
 	return Object.fromEntries(rows.map((row) => [row.categoryId, row.n]));
 }
 
+export function completedCount(): number {
+	const row = db.prepare("SELECT COUNT(*) AS n FROM entries WHERE status = 'completed'").get() as { n: number };
+	return row.n;
+}
+
 export function getEntry(id: number): Entry | null {
 	const row = db.prepare(`SELECT ${ENTRY_COLUMNS} FROM entries WHERE id = ?`).get(id);
 	if (!row) return null;
@@ -234,7 +239,7 @@ export function existingSourceKeys(): Set<string> {
 
 /* -------------------------------------------------------------------- writing */
 
-export type EntryInput = {
+type EntryInput = {
 	categoryId: number;
 	title: string;
 	year?: number | null;
@@ -559,7 +564,7 @@ export function findEntryByTitle(title: string): { id: number; status: string; p
 	return row ? { ...row } : null;
 }
 
-export interface WatchProgress {
+interface WatchProgress {
 	title: string;
 	type: string;
 	season: number;
@@ -623,38 +628,45 @@ export function deleteWatchProgress(title: string, type: string, season: number,
 
 export function continueWatchingList(): (WatchProgress & { updatedAt: string; posterUrl: string | null; entryId: number | null; entryStatus: string | null })[] {
 	cleanupCompletedProgress();
-	return db
-		.prepare(`
-			SELECT w.title, w.type, w.season, w.episode, w."current_time" AS currentTime, w.duration, w.updated_at AS updatedAt,
-				COALESCE(
-					(SELECT e.poster_url FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1),
-					(SELECT e.poster_url FROM entries e WHERE instr(lower(e.title), lower(w.title)) > 0 LIMIT 1),
-					(SELECT e.poster_url FROM entries e WHERE instr(lower(w.title), lower(e.title)) > 0 LIMIT 1),
-					NULLIF(w.poster_url, '')
-				) AS posterUrl,
-				COALESCE(
-					(SELECT e.id FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1),
-					(SELECT e.id FROM entries e WHERE instr(lower(e.title), lower(w.title)) > 0 LIMIT 1),
-					(SELECT e.id FROM entries e WHERE instr(lower(w.title), lower(e.title)) > 0 LIMIT 1)
-				) AS entryId,
-				COALESCE(
-					(SELECT e.status FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1),
-					(SELECT e.status FROM entries e WHERE instr(lower(e.title), lower(w.title)) > 0 LIMIT 1),
-					(SELECT e.status FROM entries e WHERE instr(lower(w.title), lower(e.title)) > 0 LIMIT 1)
-				) AS entryStatus
-			FROM watch_progress w
-			WHERE w.updated_at = (
-				SELECT MAX(w2.updated_at) FROM watch_progress w2 WHERE w2.title = w.title AND w2.type = w.type
-			)
-			AND (
-				(w.type = 'tv' AND (CAST(w."current_time" AS REAL) / w.duration) < 0.95)
-				OR (w.type = 'tv' AND w."current_time" = 0 AND w.duration = 0)
-				OR (w.type = 'movie' AND w."current_time" > 30 AND (CAST(w."current_time" AS REAL) / w.duration) < 0.95)
-			)
-			ORDER BY w.updated_at DESC
-			LIMIT 20
-		`)
-		.all() as unknown as (WatchProgress & { updatedAt: string; posterUrl: string | null; entryId: number | null; entryStatus: string | null })[];
+	try {
+		return db
+			.prepare(`
+				SELECT w.title, w.type, w.season, w.episode, w."current_time" AS currentTime, w.duration, w.updated_at AS updatedAt,
+					COALESCE(
+						(SELECT e.poster_url FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1),
+						(SELECT e.poster_url FROM entries e WHERE instr(lower(e.title), lower(w.title)) > 0 LIMIT 1),
+						(SELECT e.poster_url FROM entries e WHERE instr(lower(w.title), lower(e.title)) > 0 LIMIT 1),
+						NULLIF(w.poster_url, '')
+					) AS posterUrl,
+					COALESCE(
+						(SELECT e.id FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1),
+						(SELECT e.id FROM entries e WHERE instr(lower(e.title), lower(w.title)) > 0 LIMIT 1),
+						(SELECT e.id FROM entries e WHERE instr(lower(w.title), lower(e.title)) > 0 LIMIT 1)
+					) AS entryId,
+					COALESCE(
+						(SELECT e.status FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1),
+						(SELECT e.status FROM entries e WHERE instr(lower(e.title), lower(w.title)) > 0 LIMIT 1),
+						(SELECT e.status FROM entries e WHERE instr(lower(w.title), lower(e.title)) > 0 LIMIT 1)
+					) AS entryStatus
+				FROM watch_progress w
+				WHERE w.rowid = (
+					SELECT w2.rowid FROM watch_progress w2
+					WHERE w2.title = w.title AND w2.type = w.type
+					ORDER BY w2.updated_at DESC, w2.season DESC, w2.episode DESC
+					LIMIT 1
+				)
+				AND (
+					w.type = 'tv'
+					OR (w.type = 'movie' AND w.duration > 0 AND w."current_time" > 30 AND (CAST(w."current_time" AS REAL) / w.duration) < 0.95)
+				)
+				ORDER BY w.updated_at DESC
+				LIMIT 20
+			`)
+			.all() as unknown as (WatchProgress & { updatedAt: string; posterUrl: string | null; entryId: number | null; entryStatus: string | null })[];
+	} catch (e) {
+		console.error('[continueWatchingList]', e);
+		return [];
+	}
 }
 
 export function deleteTitleProgress(title: string, type: string): void {
@@ -673,7 +685,7 @@ export function updateSeasonEpisodeReached(id: number, season: number, episode: 
 		.run(season, episode, new Date().toISOString(), id);
 }
 
-export function cleanupCompletedProgress(): void {
+function cleanupCompletedProgress(): void {
 	db.prepare("DELETE FROM watch_progress WHERE type = 'movie' AND duration > 0 AND (CAST(\"current_time\" AS REAL) / duration) >= 0.93").run();
 }
 

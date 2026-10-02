@@ -21,10 +21,22 @@
 	};
 
 	let muted = $state(false);
+	let isMac = $state(false);
+	let quarantineStatus = $state<'idle' | 'done' | 'error'>('idle');
 
 	async function setMuted(next: boolean) {
 		muted = next;
 		await fetch(`/api/update?action=${next ? 'mute' : 'unmute'}`, { method: 'POST' });
+	}
+
+	async function fixQuarantine() {
+		try {
+			const resp = await fetch('/api/update?action=fix-quarantine', { method: 'POST' });
+			const data = await resp.json();
+			quarantineStatus = data.ok ? 'done' : 'error';
+		} catch {
+			quarantineStatus = 'error';
+		}
 	}
 
 	let rebuild = $state<RebuildState>({ status: 'idle', percent: 0, label: '' });
@@ -51,6 +63,7 @@
 			release = payload.state;
 			rebuild = payload.rebuild;
 			muted = payload.muted ?? muted;
+			isMac = payload.isMac ?? false;
 		} catch {
 			// The app is closing for the swap. Leave the last state on screen.
 		}
@@ -122,7 +135,9 @@
 			case 'checking':
 				return 'Checking…';
 			case 'downloading':
-				return `Downloading ${release.version ?? 'the update'} — ${release.percent ?? 0}%`;
+				return (release.percent ?? 0) > 0
+					? `Downloading ${release.version ?? 'the update'} — ${release.percent}%`
+					: `Downloading ${release.version ?? 'the update'}…`;
 			case 'ready':
 				return `Version ${release.version} is ready to install.`;
 			case 'none':
@@ -206,7 +221,7 @@
 
 			{#if downloading}
 				<div class="bar">
-					<div class="fill" style="width: {Math.max(4, release.percent ?? 0)}%"></div>
+					<div class="fill" class:indeterminate={(release.percent ?? 0) === 0} style="width: {Math.max(4, release.percent ?? 0)}%"></div>
 				</div>
 			{/if}
 
@@ -239,6 +254,20 @@
 				/>
 				Tell me when an update is ready
 			</label>
+		</section>
+	{/if}
+
+	{#if isMac}
+		<section>
+			<h3 class="mac-heading">Mac</h3>
+			<p class="faint hint">If macOS blocks Catalog after an update, click below to fix it.</p>
+			{#if quarantineStatus === 'done'}
+				<p class="msg good">Done — Catalog will open normally now.</p>
+			{:else if quarantineStatus === 'error'}
+				<p class="msg bad">Could not fix automatically. Open Terminal and run: <code>xattr -cr /Applications/Catalog.app</code></p>
+			{:else}
+				<button type="button" class="btn" onclick={fixQuarantine}>Fix Mac quarantine</button>
+			{/if}
 		</section>
 	{/if}
 
@@ -318,6 +347,19 @@
 		margin: 0;
 	}
 
+	.mac-heading {
+		font-size: 1rem;
+		margin: 0;
+	}
+
+	code {
+		font-family: var(--mono);
+		font-size: 0.82em;
+		background: var(--sunk);
+		padding: 2px 5px;
+		border-radius: 3px;
+	}
+
 	.toggle {
 		display: inline-flex;
 		align-items: center;
@@ -357,6 +399,17 @@
 
 	.fill.done {
 		background: var(--good);
+	}
+
+	.fill.indeterminate {
+		width: 30% !important;
+		animation: indeterminate 1.5s ease-in-out infinite;
+	}
+
+	@keyframes indeterminate {
+		0% { margin-left: 0; }
+		50% { margin-left: 70%; }
+		100% { margin-left: 0; }
 	}
 
 	.step {

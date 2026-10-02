@@ -7,6 +7,58 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 2.1.6 — 2026-10-02
+
+- **Continue Watching fixed.** The tab no longer breaks the library
+  when an episode has bad data. Phantom entries are filtered out.
+- **TV shows never vanish from Continue Watching.** Finishing an
+  episode no longer makes the show disappear — it stays until you
+  dismiss it or finish the series. The next episode shows as "Up next."
+- **Search bar fixed (for real).** Typing in the library search no
+  longer loses letters mid-word.
+- **Smoother seeking.** Dragging the progress bar no longer snaps
+  back while the video loads.
+- **Faster arrow-key seeking.** Spamming the arrow keys no longer
+  builds up lag — each seek cancels the previous download.
+- **Video stays smooth in the background.** Catalog no longer gets
+  choppy when another app (like a game) is focused.
+- **Library shows completed count.** The All tab now shows how many
+  titles you've completed out of the total.
+- **Mark as watched while playing.** Movies tagged "want to watch"
+  get a Watched button in the player bar.
+- **Better undo in Notes.** Ctrl+Z undoes one step at a time instead
+  of wiping out a whole paragraph. The toolbar now has a "Normal"
+  button to switch back from a heading.
+- **Mac: right-click to open.** The Mac build is now ad-hoc signed,
+  so you can right-click → Open instead of using Terminal.
+- **Mac: fix quarantine button.** Mac users see a button in Settings →
+  Updates that removes the quarantine flag automatically.
+- **Bigger buffer.** The player now preloads up to 5 minutes ahead
+  (and keeps 90 seconds behind) so playback is smoother on good connections.
+- **Autoplay next episode.** TV shows and anime have an autoplay toggle
+  in the player bar — when enabled, the next episode starts automatically
+  with 5 seconds left.
+- **Smoother updates.** The "update ready" banner now reliably appears,
+  the progress bar animates while downloading, and the app shows a clear
+  message before restarting to install.
+- **Resume across seasons.** If you finished an episode (95%+), opening
+  it from Continue Watching now takes you straight to the next episode
+  instead of restarting the old one.
+- **Episode sidebar auto-scrolls.** The sidebar scrolls to center the
+  playing episode, and switching seasons updates automatically when
+  autoplay crosses into a new season.
+- **Stale stream recovery.** If you leave the player paused for hours and
+  come back, it now silently refreshes the stream instead of showing an
+  infinite loading screen.
+- **Faster quality switching.** Stream URLs are cached so switching back to
+  a quality you already used is instant. Other qualities prefetch in the
+  background while you watch, so switching is ready before you click.
+- **Better search results.** Searching "jojo" now puts JoJo's Bizarre
+  Adventure near the top instead of burying it behind obscure matches.
+- **Quality switch timeout.** If a file can't be played after switching
+  quality, the player shows an error and reverts to what was playing
+  instead of loading forever.
+
 ## 2.1.5 — 2026-09-27
 
 - **Black screen now shows an error.** If the video can't load (e.g.

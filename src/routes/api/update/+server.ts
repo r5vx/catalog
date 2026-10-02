@@ -1,4 +1,5 @@
 import { json, error } from '@sveltejs/kit';
+import { execSync } from 'node:child_process';
 import {
 	updateMode,
 	updateState,
@@ -35,7 +36,7 @@ export const GET: RequestHandler = async () => {
 					? { kind: 'source' as const, version: null }
 					: null;
 
-	return json({ mode, version: appVersion(), state, rebuild, offer, muted });
+	return json({ mode, version: appVersion(), state, rebuild, offer, muted, isMac: process.platform === 'darwin' });
 };
 
 /**
@@ -72,6 +73,17 @@ export const POST: RequestHandler = async ({ url }) => {
 	if (action === 'unmute') {
 		updateSettings({ updatePromptOff: undefined });
 		return json({ muted: false });
+	}
+
+	if (action === 'fix-quarantine') {
+		if (process.platform !== 'darwin') return error(400, 'Only available on Mac.');
+		const appPath = process.execPath.replace(/\.app\/.*$/, '.app');
+		try {
+			execSync(`xattr -cr "${appPath}"`);
+			return json({ ok: true, path: appPath });
+		} catch (e: any) {
+			return json({ ok: false, message: e.message });
+		}
 	}
 
 	if (updateMode() !== 'source') {

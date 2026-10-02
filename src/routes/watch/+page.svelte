@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { beforeNavigate } from '$app/navigation';
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import Hls from 'hls.js';
 	import BackBar from '$lib/BackBar.svelte';
 	import { p, pRandom } from '$lib/poison';
@@ -48,7 +48,6 @@
 	let videoTitle = $state('');
 	let showType = $state<'movie' | 'tv'>('movie');
 	let shareKey = $state('');
-	let showboxId = $state(0);
 	let useIframe = $state(false);
 	let iframeFid = $state(0);
 	let needsLogin = $state(false);
@@ -59,7 +58,6 @@
 	let movieFiles = $state<FileOption[]>([]);
 	let episodes = $state<Episode[]>([]);
 	let seasons = $state<number[]>([]);
-	let allQualities = $state<string[]>([]);
 	let activeSeason = $state(1);
 	let activeEpisode = $state<Episode | null>(null);
 	let activeQuality = $state('');
@@ -68,6 +66,12 @@
 	let sidebarOpen = $state(true);
 	let loadingEpisode = $state(false);
 	let changingQuality = $state(false);
+	let qualityTimer: ReturnType<typeof setTimeout> | null = null;
+	let prevStreamUrl = '';
+	let prevFileFid = 0;
+	let prevQuality = '';
+	let qualityToast = $state('');
+	let qualityToastTimer: ReturnType<typeof setTimeout> | null = null;
 
 	let febboxSubs = $state<SubOption[]>([]);
 	let loadingSubs = $state(false);
@@ -83,13 +87,17 @@
 	let preferredAudioName = $state('');
 	let videoFit = $state<'contain' | 'cover'>('contain');
 	let libraryEntryId = $state<number | null>(null);
+	let libraryEntryStatus = $state('');
 	let libLastSeason = $state(0);
 	let libLastEpisode = $state(0);
 	let addingToLibrary = $state(false);
 	let watchedEpisodeMap = $state<Map<string, number>>(new Map());
+	let autoplayNext = $state(false);
+	let autoplayFired = false;
 	let skipResume = false;
 	let switchingEpisode = false;
 	let bufferTimer: ReturnType<typeof setTimeout> | null = null;
+	let refreshingStream = false;
 	let seekAfterLoad = 0;
 	let restoreSub: { fileName: string; language: string; delay: number } | null = null;
 	let resumeSeason = 0;
@@ -110,12 +118,6 @@
 		showType === 'tv' && activeEpisode ? activeEpisode.files : movieFiles
 	);
 
-	const availableQualities = $derived(
-		[...new Set(currentFiles.map((f) => f.quality).filter(Boolean))].sort(
-			(a, b) => parseInt(b) - parseInt(a)
-		)
-	);
-
 	/* --------------------------------------------------------------- player control state */
 
 	let playing = $state(false);
@@ -125,7 +127,7 @@
 	let muted = $state(false);
 	let bufferedEnd = $state(0);
 	let gainNode: GainNode | undefined = $state();
-	let audioCtx: AudioContext | undefined = $state();
+	let audioCtx: AudioContext | undefined;
 	let playbackRate = $state(1);
 	let isFullscreen = $state(false);
 
@@ -230,7 +232,10 @@
 		const cap = duration > 0.5 ? duration - 0.5 : duration;
 		const target = Math.max(0, Math.min(cap, videoEl.currentTime + delta));
 		seekTarget = duration > 0 ? (target / duration) * 100 : 0;
+		isVideoSeeking = true;
+		if (hlsInstance) hlsInstance.stopLoad();
 		videoEl.currentTime = target;
+		if (hlsInstance) hlsInstance.startLoad(-1);
 	}
 
 	function toggleMute() {
@@ -434,7 +439,10 @@
 		const rect = progressBarEl.getBoundingClientRect();
 		const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
 		seekTarget = ratio * 100;
+		isVideoSeeking = true;
+		if (hlsInstance) hlsInstance.stopLoad();
 		videoEl.currentTime = ratio * duration;
+		if (hlsInstance) hlsInstance.startLoad(-1);
 	}
 
 	function showControlsBriefly() {
@@ -702,8 +710,6 @@
 
 	/* --------------------------------------------------------------- watch progress */
 
-	let lastSavedTime = 0;
-
 	function buildProgressBody(): string | null {
 		if (!videoTitle || !videoEl) return null;
 		const ct = videoEl.currentTime;
@@ -730,7 +736,6 @@
 			xhr.open('POST', '/api/watch/progress', false);
 			xhr.setRequestHeader('Content-Type', 'application/json');
 			xhr.send(body);
-			lastSavedTime = JSON.parse(body).currentTime;
 		} catch {}
 	}
 
@@ -744,7 +749,6 @@
 			keepalive: true
 		}).then((r) => {
 			if (r.ok) {
-				lastSavedTime = JSON.parse(body).currentTime;
 				if (showType === 'tv' && activeEpisode && duration > 0) {
 					const key = `${activeEpisode.season}-${activeEpisode.episode}`;
 					const pct = currentTime / duration;
@@ -784,7 +788,11 @@
 			const data = await resp.json();
 			if (data && data.currentTime > 5 && data.duration > 0) {
 				const pct = data.currentTime / data.duration;
-				if (pct < 0.95) {
+				if (pct >= 0.95 && showType === 'tv') {
+					const next = nextEpisode();
+					if (next) { playEpisode(next); return; }
+				}
+				if (pct < 0.95 || showType === 'tv') {
 					const seekTo = data.currentTime;
 					if (videoEl.readyState >= 1) {
 						videoEl.currentTime = seekTo;
@@ -800,6 +808,27 @@
 				if (data.subDelay) subtitleDelay = data.subDelay;
 			}
 		} catch {}
+	}
+
+	async function refreshStaleStream() {
+		if (refreshingStream) return;
+		const fid = activeFile?.fid;
+		if (!fid || !shareKey || !videoEl) return;
+		refreshingStream = true;
+		const savedTime = videoEl.currentTime;
+		try {
+			const resp = await fetch(`/api/watch/stream?share_key=${shareKey}&fid=${fid}&refresh=1`);
+			if (!resp.ok) throw new Error();
+			const result = await resp.json();
+			if (result.url) {
+				streamUrl = result.url;
+				seekAfterLoad = savedTime;
+			}
+		} catch {
+			problem = 'Stream expired. Try reopening the title.';
+		} finally {
+			refreshingStream = false;
+		}
 	}
 
 	function handleBeforeUnload() {
@@ -858,6 +887,23 @@
 		} catch {} finally {
 			addingToLibrary = false;
 		}
+	}
+
+	async function markEntryWatched() {
+		if (!libraryEntryId) return;
+		try {
+			await fetch('/api/entries', {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ id: libraryEntryId, action: 'complete' })
+			});
+			libraryEntryStatus = 'completed';
+		} catch {}
+	}
+
+	function toggleAutoplay() {
+		autoplayNext = !autoplayNext;
+		try { localStorage.setItem('catalog-autoplay', autoplayNext ? '1' : '0'); } catch {}
 	}
 
 	async function syncProgressToEntry() {
@@ -1080,15 +1126,15 @@
 
 		if (streamUrl.includes('.m3u8') && Hls.isSupported()) {
 			const hls = new Hls({
-				maxBufferLength: 90,
-				maxMaxBufferLength: 180,
+				maxBufferLength: 300,
+				maxMaxBufferLength: 600,
 				maxBufferHole: 0.5,
 				highBufferWatchdogPeriod: 2,
 				nudgeMaxRetry: 5,
 				liveSyncDurationCount: 3,
 				enableWorker: true,
 				startFragPrefetch: true,
-				backBufferLength: 30,
+				backBufferLength: 90,
 				fragLoadingMaxRetry: 4,
 				fragLoadingRetryDelay: 1000,
 				abrEwmaDefaultEstimate: 50_000_000
@@ -1110,6 +1156,7 @@
 					hlsActiveLevel = 0;
 				}
 				switchingEpisode = false;
+				autoplayFired = false;
 				videoEl?.play().catch(() => {});
 				hlsAudioTracks = hls.audioTracks.map((t, i) => ({
 					id: i,
@@ -1137,7 +1184,28 @@
 				hlsActiveLevel = data.level;
 			});
 			hls.on(Hls.Events.ERROR, async (_e, data) => {
-				if (!data.fatal) return;
+				if (!data.fatal) {
+					if (data.details === 'bufferStalledError') {
+						hls.startLoad(-1);
+					}
+					if (data.type === 'networkError' && (data.details === 'fragLoadError' || data.details === 'fragLoadTimeOut')) {
+						if ((data as any).response?.code === 403 || (data as any).response?.code === 410) {
+							refreshStaleStream();
+						}
+					}
+					return;
+				}
+				if (prevStreamUrl) {
+					if (qualityTimer) { clearTimeout(qualityTimer); qualityTimer = null; }
+					showQualityToast('That file could not be played. Try a different one.');
+					const t = videoEl?.currentTime ?? 0;
+					seekAfterLoad = t;
+					streamUrl = prevStreamUrl;
+					activeFileFid = prevFileFid;
+					activeQuality = prevQuality;
+					prevStreamUrl = '';
+					return;
+				}
 				const fid = activeFile?.fid;
 				if (!fid || !shareKey) {
 					problem = `Video failed to load (${data.type}).`;
@@ -1153,7 +1221,7 @@
 					};
 				}
 				try {
-					const resp = await fetch(`/api/watch/stream?share_key=${shareKey}&fid=${fid}`);
+					const resp = await fetch(`/api/watch/stream?share_key=${shareKey}&fid=${fid}&refresh=1`);
 					if (!resp.ok) throw new Error();
 					const result = await resp.json();
 					if (result.url) {
@@ -1170,7 +1238,7 @@
 			videoEl.src = streamUrl;
 			videoEl.play().catch(() => {});
 			hlsAudioTracks = [];
-			videoEl.addEventListener('loadedmetadata', () => { switchingEpisode = false; loadAndResumeProgress(); }, { once: true });
+			videoEl.addEventListener('loadedmetadata', () => { switchingEpisode = false; autoplayFired = false; loadAndResumeProgress(); }, { once: true });
 		}
 
 		startProgressSaving();
@@ -1243,6 +1311,9 @@
 		}
 		if (controlsTimer) clearTimeout(controlsTimer);
 		if (clickTimeout) clearTimeout(clickTimeout);
+		if (bufferTimer) clearTimeout(bufferTimer);
+		if (qualityTimer) clearTimeout(qualityTimer);
+		if (qualityToastTimer) clearTimeout(qualityToastTimer);
 		stopProgressSaving();
 		saveProgressBeacon();
 		window.removeEventListener('beforeunload', handleBeforeUnload);
@@ -1284,9 +1355,19 @@
 		}
 	});
 
+	$effect(() => {
+		const ep = activeEpisode;
+		if (!ep) return;
+		tick().then(() => {
+			const active = document.querySelector('.ep-btn.playing');
+			active?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+		});
+	});
+
 	/* --------------------------------------------------------------- content functions */
 
 	onMount(async () => {
+		try { autoplayNext = localStorage.getItem('catalog-autoplay') === '1'; } catch {}
 		const title = page.url.searchParams.get('title');
 		isAuto = page.url.searchParams.get('auto') === '1';
 		const type = page.url.searchParams.get('type') ?? '';
@@ -1356,8 +1437,8 @@
 			videoTitle = data.title;
 			showType = data.type;
 			shareKey = data.shareKey;
-			showboxId = data.showboxId ?? 0;
 			libraryEntryId = data.libraryEntry?.id ?? null;
+			libraryEntryStatus = data.libraryEntry?.status ?? '';
 			libLastSeason = data.libraryEntry?.lastSeason ?? 0;
 			libLastEpisode = data.libraryEntry?.lastEpisode ?? 0;
 			watchPosterUrl = data.posterUrl ?? '';
@@ -1369,7 +1450,6 @@
 			if (data.episodes) {
 				episodes = data.episodes.episodes;
 				seasons = data.episodes.seasons;
-				allQualities = data.episodes.qualities ?? [];
 				if (resumeSeason && resumeEpisode) {
 					activeSeason = seasons.includes(resumeSeason) ? resumeSeason : seasons[0];
 					const target = episodes.find(ep => ep.season === activeSeason && ep.episode === resumeEpisode);
@@ -1460,7 +1540,21 @@
 			loading = false;
 			loadingStatus = '';
 			fetchWatchedEpisodes();
+			if (shareKey && currentFiles.length > 1) {
+				const otherFids = currentFiles.filter(f => f.fid !== activeFileFid).map(f => f.fid);
+				fetch('/api/watch/prefetch', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ share_key: shareKey, fids: otherFids })
+				}).catch(() => {});
+			}
 		}
+	}
+
+	function showQualityToast(msg: string) {
+		if (qualityToastTimer) clearTimeout(qualityToastTimer);
+		qualityToast = msg;
+		qualityToastTimer = setTimeout(() => { qualityToast = ''; qualityToastTimer = null; }, 5000);
 	}
 
 	async function changeToFile(file: FileOption) {
@@ -1475,21 +1569,40 @@
 			return;
 		}
 
+		if (qualityTimer) { clearTimeout(qualityTimer); qualityTimer = null; }
+		prevStreamUrl = streamUrl;
+		prevFileFid = activeFileFid;
+		prevQuality = activeQuality;
 		changingQuality = true;
+		const savedTime = videoEl?.currentTime ?? 0;
 		try {
 			const resp = await fetch(`/api/watch/stream?share_key=${shareKey}&fid=${file.fid}`);
 			if (!resp.ok) throw new Error();
 			const data = await resp.json();
 			if (data.url) {
+				seekAfterLoad = savedTime;
 				streamUrl = data.url;
 				activeQuality = file.quality;
 				activeFileFid = file.fid;
 				if (data.debug) debugInfo = data.debug;
+				qualityTimer = setTimeout(() => {
+					qualityTimer = null;
+					if (!prevStreamUrl) return;
+					if (playing && !buffering) { prevStreamUrl = ''; return; }
+					showQualityToast('That file could not be played. Try a different one.');
+					seekAfterLoad = savedTime;
+					streamUrl = prevStreamUrl;
+					activeFileFid = prevFileFid;
+					activeQuality = prevQuality;
+					prevStreamUrl = '';
+				}, 20000);
 			} else {
+				prevStreamUrl = '';
 				problem = 'Could not get that quality.';
 				if (data.debug) debugInfo = data.debug;
 			}
 		} catch {
+			prevStreamUrl = '';
 			problem = 'Failed to switch quality.';
 		} finally {
 			changingQuality = false;
@@ -1509,6 +1622,7 @@
 			: undefined;
 
 		activeEpisode = ep;
+		if (ep.season !== activeSeason) activeSeason = ep.season;
 		problem = '';
 		const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
 		const file = pickFile(ep.files, preferredQuality);
@@ -1559,6 +1673,14 @@
 		} finally {
 			loadingEpisode = false;
 			fetchWatchedEpisodes();
+			if (shareKey && ep.files.length > 1) {
+				const otherFids = ep.files.filter(f => f.fid !== file.fid).map(f => f.fid);
+				fetch('/api/watch/prefetch', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ share_key: shareKey, fids: otherFids })
+				}).catch(() => {});
+			}
 		}
 	}
 
@@ -1603,7 +1725,6 @@
 		movieFiles = [];
 		activeEpisode = null;
 		useIframe = false;
-		showboxId = 0;
 		needsLogin = false;
 		loading = false;
 		query = searchTitle;
@@ -1644,7 +1765,6 @@
 		activeEpisode = null;
 		useIframe = false;
 		iframeFid = 0;
-		showboxId = 0;
 		webviewReady = false;
 		needsLogin = false;
 		loading = false;
@@ -1739,12 +1859,21 @@
 				>{sidebarOpen ? (pm ? 'Hide' : 'Hide episodes') : (pm ? p('Episodes') : 'Episodes')}</button>
 			{/if}
 
+			{#if showType === 'tv'}
+				<button type="button" class="bar-btn autoplay-btn" class:active={autoplayNext} onclick={toggleAutoplay}>
+					{autoplayNext ? '⏭ Autoplay: On' : '⏭ Autoplay: Off'}
+				</button>
+			{/if}
+
 			{#if !loggedIn}
 				<button type="button" class="bar-btn login-btn" onclick={loginToFebbox}>Log in</button>
 			{/if}
 
 			{#if libraryEntryId}
 				<a href="/entry/{libraryEntryId}" class="bar-btn in-library-btn">{pm ? 'Giblet claimed' : 'In library'}</a>
+				{#if libraryEntryStatus === 'want to watch'}
+					<button type="button" class="bar-btn mark-watched-btn" onclick={markEntryWatched}>✓ Watched</button>
+				{/if}
 				{#if showType === 'tv' && activeEpisode}
 					<button type="button" class="bar-btn sync-btn" onclick={syncProgressToEntry}
 						title="Update season/episode reached to S{activeEpisode.season}E{activeEpisode.episode}"
@@ -1815,7 +1944,10 @@
 					if (playing && !showSettings && !showCaptions && !showAudioPicker) showControls = false;
 				}}
 			>
-				{#if needsLogin}
+				{#if qualityToast}
+						<div class="quality-toast">{qualityToast}</div>
+					{/if}
+					{#if needsLogin}
 					<div class="login-prompt">
 						<p>Log in to start watching.</p>
 						<button type="button" class="login-action" onclick={loginToFebbox}>
@@ -1846,6 +1978,10 @@
 						class:buffering={loadingEpisode || changingQuality}
 						ontimeupdate={() => {
 							if (videoEl && !seeking && !isVideoSeeking && !switchingEpisode) currentTime = videoEl.currentTime;
+							if (autoplayNext && !autoplayFired && !loadingEpisode && showType === 'tv' && duration > 0 && (duration - currentTime) <= 5) {
+								const next = nextEpisode();
+								if (next) { autoplayFired = true; playEpisode(next); }
+							}
 						}}
 						ondurationchange={() => {
 							if (videoEl && !switchingEpisode) duration = videoEl.duration;
@@ -1879,7 +2015,10 @@
 								}
 							}, 12000);
 						}}
-						oncanplay={() => { buffering = false; if (bufferTimer) { clearTimeout(bufferTimer); bufferTimer = null; } }}
+						oncanplay={() => {
+							buffering = false;
+							if (bufferTimer) { clearTimeout(bufferTimer); bufferTimer = null; }
+						}}
 						onseeking={() => { buffering = true; isVideoSeeking = true; }}
 						onseeked={() => { buffering = false; isVideoSeeking = false; if (bufferTimer) { clearTimeout(bufferTimer); bufferTimer = null; } }}
 						onended={() => {
@@ -1895,9 +2034,7 @@
 									currentTime: 0, duration: 0,
 									posterUrl: watchPosterUrl
 								});
-								setTimeout(() => {
-									navigator.sendBeacon('/api/watch/progress', new Blob([payload], { type: 'application/json' }));
-								}, 300);
+								navigator.sendBeacon('/api/watch/progress', new Blob([payload], { type: 'application/json' }));
 							}
 						}}
 					>
@@ -1938,7 +2075,15 @@
 					{#if nextEp}
 						<div class="next-ep-overlay">
 							<button type="button" class="next-ep-btn" onclick={() => playEpisode(nextEp)}>
-								<span class="next-ep-label">{pm ? p('Next Episode') : 'Next Episode'}</span>
+								<span class="next-ep-label">
+									{#if autoplayNext && duration > 0 && (duration - currentTime) <= 5}
+										Auto-playing...
+									{:else if autoplayNext}
+										{pm ? p('Next Episode') : 'Next Episode'} (auto)
+									{:else}
+										{pm ? p('Next Episode') : 'Next Episode'}
+									{/if}
+								</span>
 								<span class="next-ep-title">S{nextEp.season}E{nextEp.episode}{episodeNames[nextEp.episode] ? ` — ${episodeNames[nextEp.episode]}` : ''}</span>
 							</button>
 						</div>
@@ -2339,6 +2484,8 @@
 	.bar-btn:hover { border-color: rgba(255, 255, 255, 0.3); color: #fff; }
 	.player-title { flex: 1; font-size: 1rem; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #fff; }
 	.player-error { margin: 0; padding: 6px 16px; font-size: 0.82rem; color: var(--accent); background: rgba(140, 47, 57, 0.2); border-bottom: 1px solid rgba(255, 255, 255, 0.06); flex: none; }
+	.quality-toast { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 80; padding: 14px 28px; border-radius: 10px; background: rgba(0, 0, 0, 0.85); color: #fff; font-size: 1rem; text-align: center; pointer-events: none; animation: toast-fade 5s ease-in-out forwards; }
+	@keyframes toast-fade { 0% { opacity: 0; } 8% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
 	.file-pick-wrap { position: relative; flex: none; }
 	.file-pick-btn { font-weight: 600; }
 	.popup-files.popup-files { position: absolute; top: calc(100% + 4px); left: 0; right: auto; bottom: auto; min-width: 160px; z-index: 25; }
@@ -2353,6 +2500,11 @@
 	.add-btn:disabled { opacity: 0.6; cursor: wait; }
 	.in-library-btn { color: var(--good); border-color: var(--good); text-decoration: none; }
 	.in-library-btn:hover { background: rgba(255, 255, 255, 0.06); color: var(--good); }
+	.autoplay-btn { font-size: 0.78rem; cursor: pointer; }
+	.autoplay-btn.active { color: var(--accent); border-color: var(--accent); }
+	.autoplay-btn:hover { background: rgba(255, 255, 255, 0.06); }
+	.mark-watched-btn { color: var(--accent); border-color: var(--accent); cursor: pointer; }
+	.mark-watched-btn:hover { background: rgba(255, 255, 255, 0.06); }
 
 	/* --------------------------------------------------------- player body */
 	.player-body { display: flex; flex: 1; min-height: 0; padding-top: 45px; }

@@ -5,6 +5,14 @@ const BASE = 'https://showbox.media';
 let cachedUp: boolean | null = null;
 let cachedAt = 0;
 
+const streamCache = new Map<number, { url: string; debug: string; ts: number }>();
+const streamInFlight = new Map<number, Promise<{ url: string | null; debug?: string }>>();
+const STREAM_CACHE_TTL = 30 * 60 * 1000;
+
+export function invalidateStreamCache(fid: number) {
+	streamCache.delete(fid);
+}
+
 export async function isShowboxUp(): Promise<boolean> {
 	if (cachedUp !== null && Date.now() - cachedAt < 60_000) return cachedUp;
 	try {
@@ -147,6 +155,18 @@ export async function resolveSlugId(slug: string, type: 'movie' | 'tv'): Promise
 	}
 }
 
+function searchRelevance(title: string, query: string): number {
+	const t = title.toLowerCase().replace(/['']/g, '');
+	const q = query.toLowerCase();
+	if (t === q) return 100;
+	if (t.startsWith(q + ' ') || t.startsWith(q + ':') || t.startsWith(q + "'")) return 90;
+	if (t.startsWith(q)) return 85;
+	const wordBoundary = new RegExp(`(^|[\\s:''"])${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[\\s:''"])`, 'i');
+	if (wordBoundary.test(title)) return 70;
+	if (t.includes(q)) return 50;
+	return 10;
+}
+
 export async function searchShowbox(query: string): Promise<ShowboxResult[]> {
 	const seenTitles = new Set<string>();
 	const merged: ShowboxResult[] = [];
@@ -166,13 +186,13 @@ export async function searchShowbox(query: string): Promise<ShowboxResult[]> {
 	addResults(autocomplete);
 	addResults(page);
 
-	if (merged.length > 0) return merged;
+	if (merged.length > 0) return sortByRelevance(merged, query);
 
 	if (query.includes(':') || query.includes(' - ')) {
 		const parts = query.split(/[:–—]\s*/).map((s) => s.trim()).filter(Boolean);
 		for (const part of parts) {
 			addResults(await rawSearch(part));
-			if (merged.length > 0) return merged;
+			if (merged.length > 0) return sortByRelevance(merged, query);
 		}
 	}
 
@@ -190,10 +210,14 @@ export async function searchShowbox(query: string): Promise<ShowboxResult[]> {
 
 	for (const t of tries) {
 		addResults(await rawSearch(t));
-		if (merged.length > 0) return merged;
+		if (merged.length > 0) return sortByRelevance(merged, query);
 	}
 
 	return [];
+}
+
+function sortByRelevance(results: ShowboxResult[], query: string): ShowboxResult[] {
+	return results.sort((a, b) => searchRelevance(b.title, query) - searchRelevance(a.title, query));
 }
 
 export async function getFebboxLink(id: number, type: 'movie' | 'tv'): Promise<string | null> {
@@ -394,27 +418,28 @@ async function probeAndUpgrade(url: string, debug: string[]): Promise<string> {
 		const parent = base.replace(/\/[^/]+$/, '');
 		const grandparent = parent.replace(/\/[^/]+$/, '');
 		const query = url.includes('?') ? url.slice(url.indexOf('?')) : '';
-		for (const candidate of [
+		const candidates = [
 			grandparent + '/index.m3u8' + query,
 			grandparent + '/playlist.m3u8' + query,
 			grandparent + '/master.m3u8' + query,
 			parent + '/playlist.m3u8' + query,
 			parent + '/master.m3u8' + query,
 			parent + '/index.m3u8' + query
-		]) {
-			try {
-				const r = await fetch(candidate, {
-					headers: { Referer: 'https://www.febbox.com/', Origin: 'https://www.febbox.com' },
-					signal: AbortSignal.timeout(5000)
-				});
-				if (r.ok) {
-					const t = await r.text();
-					if (t.includes('#EXT-X-STREAM-INF')) {
-						debug.push(`found master at ${candidate.replace(/[?].*/, '?...')}`);
-						return candidate;
-					}
-				}
-			} catch {}
+		];
+		const results = await Promise.allSettled(candidates.map(async (c) => {
+			const r = await fetch(c, {
+				headers: { Referer: 'https://www.febbox.com/', Origin: 'https://www.febbox.com' },
+				signal: AbortSignal.timeout(5000)
+			});
+			if (!r.ok) throw new Error();
+			const t = await r.text();
+			if (!t.includes('#EXT-X-STREAM-INF')) throw new Error();
+			return c;
+		}));
+		const found = results.find((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled');
+		if (found) {
+			debug.push(`found master at ${found.value.replace(/[?].*/, '?...')}`);
+			return found.value;
 		}
 		debug.push('no master found');
 	} catch (e: unknown) {
@@ -428,13 +453,40 @@ export async function getStreamUrl(
 	fid: number,
 	token: string
 ): Promise<{ url: string | null; debug?: string }> {
+	const cached = streamCache.get(fid);
+	if (cached && Date.now() - cached.ts < STREAM_CACHE_TTL) {
+		return { url: cached.url, debug: cached.debug + ' | cached' };
+	}
+
+	const existing = streamInFlight.get(fid);
+	if (existing) return existing;
+
+	const promise = doGetStreamUrl(shareKey, fid, token);
+	streamInFlight.set(fid, promise);
+	try {
+		return await promise;
+	} finally {
+		streamInFlight.delete(fid);
+	}
+}
+
+async function doGetStreamUrl(
+	shareKey: string,
+	fid: number,
+	token: string
+): Promise<{ url: string | null; debug?: string }> {
 	const debug: string[] = [];
+
+	function cacheAndReturn(url: string, dbg: string) {
+		streamCache.set(fid, { url, debug: dbg, ts: Date.now() });
+		return { url, debug: dbg };
+	}
 
 	// Electron's net.fetch sends real browser cookies — try it first
 	const electronUrl = await tryElectronStream(shareKey, fid, debug);
 	if (electronUrl) {
 		const upgraded = await probeAndUpgrade(electronUrl, debug);
-		return { url: upgraded, debug: debug.join(' | ') };
+		return cacheAndReturn(upgraded, debug.join(' | '));
 	}
 
 	// Fallback: server-side fetch with saved cookie string (for phone access)
@@ -459,7 +511,7 @@ export async function getStreamUrl(
 			const url = extractVideoUrl(html);
 			if (url) {
 				const upgraded = await probeAndUpgrade(url, debug);
-				return { url: upgraded, debug: debug.join(' | ') };
+				return cacheAndReturn(upgraded, debug.join(' | '));
 			}
 			const preview = html.length < 300 ? html : `${html.length}ch`;
 			debug.push(`player: ${preview}`);
@@ -477,7 +529,7 @@ export async function getStreamUrl(
 		if (resp.ok) {
 			const text = await resp.text();
 			const url = tryParseDownloadUrl(text);
-			if (url) return { url };
+			if (url) return cacheAndReturn(url, debug.join(' | '));
 			debug.push(`dl: ${text.slice(0, 200)}`);
 		}
 	} catch (e: unknown) {
@@ -543,6 +595,15 @@ function tryParseDownloadUrl(text: string): string | null {
 		return extractVideoUrl(text);
 	}
 	return null;
+}
+
+export function prefetchStreamUrls(shareKey: string, fids: number[], token: string) {
+	let chain = Promise.resolve<unknown>(undefined);
+	for (const fid of fids) {
+		const cached = streamCache.get(fid);
+		if (cached && Date.now() - cached.ts < STREAM_CACHE_TTL) continue;
+		chain = chain.then(() => getStreamUrl(shareKey, fid, token).catch(() => {}));
+	}
 }
 
 /* -------------------------------------------------------- subtitles */
