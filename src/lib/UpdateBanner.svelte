@@ -13,46 +13,54 @@
 	let offer = $state<Offer | null>(null);
 	let dismissed = $state(false);
 	let starting = $state(false);
-	/** So a successful answer isn't asked for again on every navigation. */
-	let answered = $state(false);
+	let polling = $state(false);
 
 	const SESSION_KEY = 'catalog.updateDismissed';
 
 	$effect(() => {
 		try {
 			if (sessionStorage.getItem(SESSION_KEY)) dismissed = true;
-		} catch {
-			// No session storage. It just shows again.
-		}
+		} catch {}
 
-		/**
-		 * Read so this re-runs when you move between pages.
-		 *
-		 * With a PIN set, Catalog opens on the login page — and this component
-		 * lives in the layout, which stays mounted right through signing in. It
-		 * asked once, from behind the lock, got the login page instead of an
-		 * answer, and never asked again. Anyone with a PIN was simply never
-		 * told an update was waiting.
-		 */
 		const path = page.url.pathname;
-		if (path === '/login' || answered) return;
+		if (path === '/login') return;
 
-		look();
+		if (!polling && !offer) startPolling();
 	});
 
-	async function look() {
+	async function startPolling() {
+		if (polling) return;
+		polling = true;
+
+		try {
+			const until = Date.now() + 10 * 60_000;
+			while (Date.now() < until) {
+				const result = await look();
+				if (result === 'found' || result === 'none') break;
+				await new Promise((r) => setTimeout(r, 5000));
+			}
+		} finally {
+			polling = false;
+		}
+	}
+
+	async function look(): Promise<'found' | 'none' | 'wait'> {
 		try {
 			const response = await fetch('/api/update');
-			if (!response.ok) return;
+			if (!response.ok) return 'wait';
 
-			// Behind the lock this comes back as the login page, with a cheerful
-			// 200. Parsing it would throw, be swallowed, and look like "no update".
-			if (!response.headers.get('content-type')?.includes('application/json')) return;
+			if (!response.headers.get('content-type')?.includes('application/json')) return 'wait';
 
-			offer = (await response.json()).offer ?? null;
-			answered = true;
+			const payload = await response.json();
+			const state = payload.state;
+			offer = payload.offer ?? null;
+
+			if (offer) return 'found';
+			if (state?.status === 'none' || state?.status === 'error') return 'none';
+			if (state?.status === 'downloading' || state?.status === 'checking') return 'wait';
+			return 'none';
 		} catch {
-			// Not the desktop app, or offline.
+			return 'wait';
 		}
 	}
 

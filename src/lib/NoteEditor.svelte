@@ -20,6 +20,43 @@
 
 	let timer: ReturnType<typeof setTimeout>;
 
+	let undoStack: string[] = [];
+	let redoStack: string[] = [];
+	let lastSnapshot = untrack(() => initialBody);
+	let undoTimer: ReturnType<typeof setTimeout>;
+
+	function pushUndoState() {
+		const html = editor?.innerHTML ?? '';
+		if (html === lastSnapshot) return;
+		undoStack.push(lastSnapshot);
+		lastSnapshot = html;
+		redoStack = [];
+		if (undoStack.length > 100) undoStack.shift();
+	}
+
+	function scheduleUndoSnapshot() {
+		clearTimeout(undoTimer);
+		undoTimer = setTimeout(pushUndoState, 400);
+	}
+
+	function customUndo() {
+		if (!editor) return;
+		pushUndoState();
+		if (undoStack.length === 0) return;
+		redoStack.push(lastSnapshot);
+		lastSnapshot = undoStack.pop()!;
+		editor.innerHTML = lastSnapshot;
+		queueSave();
+	}
+
+	function customRedo() {
+		if (redoStack.length === 0 || !editor) return;
+		undoStack.push(lastSnapshot);
+		lastSnapshot = redoStack.pop()!;
+		editor.innerHTML = lastSnapshot;
+		queueSave();
+	}
+
 	function queueSave() {
 		status = 'Unsaved';
 		clearTimeout(timer);
@@ -44,6 +81,7 @@
 	 */
 	function run(command: string, value?: string) {
 		editor?.focus();
+		pushUndoState();
 		document.execCommand(command, false, value);
 		queueSave();
 	}
@@ -80,10 +118,10 @@
 			return;
 		}
 
-		// Paste text without dragging along the source page's styling.
 		const text = event.clipboardData?.getData('text/plain');
 		if (text !== undefined) {
 			event.preventDefault();
+			pushUndoState();
 			document.execCommand('insertText', false, text);
 			queueSave();
 		}
@@ -98,9 +136,18 @@
 	}
 
 	function onKey(event: KeyboardEvent) {
-		if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+		const mod = event.ctrlKey || event.metaKey;
+		if (mod && event.key.toLowerCase() === 's') {
 			event.preventDefault();
 			save();
+		}
+		if (mod && event.key.toLowerCase() === 'z' && !event.shiftKey) {
+			event.preventDefault();
+			customUndo();
+		}
+		if (mod && (event.key.toLowerCase() === 'y' || (event.key.toLowerCase() === 'z' && event.shiftKey))) {
+			event.preventDefault();
+			customRedo();
 		}
 	}
 
@@ -172,7 +219,7 @@
 
 		<button type="button" title="Large heading" onclick={() => run('formatBlock', 'h2')}>H1</button>
 		<button type="button" title="Small heading" onclick={() => run('formatBlock', 'h3')}>H2</button>
-		<button type="button" title="Normal text" onclick={() => run('formatBlock', 'p')}>¶</button>
+		<button type="button" title="Normal text" onclick={() => run('formatBlock', 'p')}>Normal</button>
 
 		<span class="sep" aria-hidden="true"></span>
 
@@ -211,7 +258,7 @@
 			tabindex="0"
 			aria-multiline="true"
 			aria-label="Page contents"
-			oninput={queueSave}
+			oninput={() => { queueSave(); scheduleUndoSnapshot(); }}
 			onblur={save}
 			onpaste={onPaste}
 			ondrop={onDrop}

@@ -26,7 +26,21 @@ jobs:
 
       - run: npm run build
 
-      - run: npx electron-builder --mac --publish never
+      - name: Build unpacked app
+        run: npx electron-builder --mac dir --publish never
+
+      - name: Ad-hoc sign so right-click Open works without Terminal
+        run: |
+          APP=$(find dist-app -name "Catalog.app" -maxdepth 2 | head -1)
+          if [ -n "$APP" ]; then
+            codesign --force --deep --sign - "$APP"
+            echo "Signed $APP"
+          fi
+
+      - name: Package into DMG
+        run: |
+          DIR=$(find dist-app -name "Catalog.app" -maxdepth 2 -exec dirname {} \; | head -1)
+          npx electron-builder --mac dmg --prepackaged "$DIR" --publish never
 
       - name: Upload .dmg and update manifest to release
         env:

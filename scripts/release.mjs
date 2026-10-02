@@ -335,7 +335,12 @@ async function upload() {
 
 ---
 
-Download **Catalog-Setup-${next}.exe** below. Copies already installed update themselves.`
+**Windows** — Download **Catalog-Setup-${next}.exe** below. Copies already installed update themselves.
+
+**Mac** — Download the **.dmg** once it appears (built automatically). After installing, **right-click** Catalog and choose **Open** the first time. If that doesn't work, open Terminal and run:
+\`\`\`
+xattr -cr /Applications/Catalog.app
+\`\`\``
 			})
 		});
 

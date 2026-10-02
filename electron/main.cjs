@@ -77,9 +77,15 @@ function startServer() {
 		if (message?.type === 'check-for-updates') checkForUpdates();
 
 		if (message?.type === 'install-update') {
-			// Silent, and start back up afterwards — the person clicked a button
-			// in Settings, they don't need to click through an installer too.
-			autoUpdater().quitAndInstall(true, true);
+			if (window) {
+				window.loadURL(`data:text/html,
+					<html><body style="background:#111;color:#fff;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:12px">
+					<h2 style="font-weight:600;font-size:1.4rem">Installing update…</h2>
+					<p style="opacity:0.6;font-size:0.9rem">Catalog will restart in a moment.</p>
+					</body></html>
+				`);
+			}
+			setTimeout(() => autoUpdater().quitAndInstall(true, true), 1500);
 		}
 
 		if (message?.type === 'get-video-url') {
@@ -103,7 +109,6 @@ function startServer() {
 					console.log('[video-url] cookies:', cookieNames);
 				} catch {}
 
-// 1. Hit file_info first (browser does this before player)
 				try {
 					await net.fetch(`https://www.febbox.com/file/file_info?fid=${fid}`, {
 						headers: {
@@ -114,8 +119,6 @@ function startServer() {
 					});
 				} catch {}
 
-				// 2. Fetch player HTML — net.fetch uses Chromium TLS + session cookies,
-				//    onBeforeSendHeaders spoofs UA/Client Hints to hide Electron
 				try {
 					const resp = await net.fetch('https://www.febbox.com/file/player', {
 						method: 'POST',
@@ -571,24 +574,23 @@ function autoUpdater() {
 	updater.autoInstallOnAppQuit = true;
 	updater.logger = null;
 
-	// The Settings page is a web page, so progress has to travel to the server
-	// first. It holds the last state and hands it to the page when asked.
+	let downloadVersion = null;
+
 	const send = (state) => {
 		try {
+			console.log('[update]', state.status, state.percent ?? '', state.version ?? '');
 			server?.send({ type: 'update-state', state });
-		} catch {
-			// The server is already gone — nothing left to tell.
-		}
+		} catch {}
 	};
 
 	updater.on('checking-for-update', () => send({ status: 'checking' }));
 	updater.on('update-not-available', () => send({ status: 'none', version: app.getVersion() }));
-	// autoDownload means "available" is immediately followed by the download.
-	updater.on('update-available', (info) =>
-		send({ status: 'downloading', version: info?.version, percent: 0 })
-	);
+	updater.on('update-available', (info) => {
+		downloadVersion = info?.version;
+		send({ status: 'downloading', version: info?.version, percent: 0 });
+	});
 	updater.on('download-progress', (progress) =>
-		send({ status: 'downloading', percent: Math.round(progress?.percent ?? 0) })
+		send({ status: 'downloading', version: downloadVersion, percent: Math.round(progress?.percent ?? 0) })
 	);
 	updater.on('update-downloaded', (info) => send({ status: 'ready', version: info?.version }));
 	updater.on('error', (error) =>
@@ -639,7 +641,12 @@ function createWindow() {
 		// A multi-size .ico so Windows picks the right one instead of
 		// squashing a 512px image down to taskbar size.
 		icon: path.join(__dirname, '..', 'build', 'client', 'icon.ico'),
-		webPreferences: { nodeIntegration: false, contextIsolation: true, webviewTag: true }
+		webPreferences: {
+			nodeIntegration: false,
+			contextIsolation: true,
+			webviewTag: true,
+			backgroundThrottling: false
+		}
 	});
 
 	window.once('ready-to-show', () => window.show());
