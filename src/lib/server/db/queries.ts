@@ -83,6 +83,8 @@ type ListOptions = {
 	categoryId?: number | null;
 	status?: string;
 	tagIds?: number[];
+	yearFrom?: number | null;
+	yearTo?: number | null;
 	/** Must be one of SORT_COLUMNS below — never raw user input. */
 	sortColumn?: string;
 	sortDir?: 'asc' | 'desc';
@@ -149,6 +151,15 @@ export function listEntries(options: ListOptions = {}): EntryCard[] {
 	for (const tagId of options.tagIds ?? []) {
 		where.push('e.id IN (SELECT entry_id FROM entry_tags WHERE tag_id = ?)');
 		params.push(tagId);
+	}
+
+	if (options.yearFrom) {
+		where.push('e.year >= ?');
+		params.push(options.yearFrom);
+	}
+	if (options.yearTo) {
+		where.push('e.year <= ?');
+		params.push(options.yearTo);
 	}
 
 	const column = SORT_COLUMNS[options.sortColumn ?? 'created_at'] ?? 'e.created_at';
@@ -218,6 +229,47 @@ export function countsByCategory(): Record<number, number> {
 export function completedCount(): number {
 	const row = db.prepare("SELECT COUNT(*) AS n FROM entries WHERE status = 'completed'").get() as { n: number };
 	return row.n;
+}
+
+export function completedByCategory(): Record<number, number> {
+	const rows = db
+		.prepare("SELECT category_id AS categoryId, COUNT(*) AS n FROM entries WHERE status = 'completed' GROUP BY category_id")
+		.all() as { categoryId: number; n: number }[];
+	return Object.fromEntries(rows.map((row) => [row.categoryId, row.n]));
+}
+
+/* -------------------------------------------------------- shared catalogs */
+
+export type SharedCatalog = {
+	id: number;
+	name: string;
+	titlesCount: number;
+	importedAt: string;
+};
+
+export function listSharedCatalogs(): SharedCatalog[] {
+	return plainAll<SharedCatalog>(
+		db.prepare('SELECT id, name, titles_count AS titlesCount, imported_at AS importedAt FROM shared_catalogs ORDER BY imported_at DESC').all()
+	);
+}
+
+export function sharedCatalogCount(): number {
+	return (db.prepare('SELECT COUNT(*) AS n FROM shared_catalogs').get() as { n: number }).n;
+}
+
+export function getSharedCatalog(id: number): { name: string; data: string } | null {
+	const row = db.prepare('SELECT name, data FROM shared_catalogs WHERE id = ?').get(id) as { name: string; data: string } | undefined;
+	return row ?? null;
+}
+
+export function importSharedCatalog(name: string, data: string, titlesCount: number): number {
+	const now = new Date().toISOString();
+	const result = db.prepare('INSERT INTO shared_catalogs (name, data, titles_count, imported_at) VALUES (?, ?, ?, ?)').run(name, data, titlesCount, now);
+	return Number(result.lastInsertRowid);
+}
+
+export function removeSharedCatalog(id: number): void {
+	db.prepare('DELETE FROM shared_catalogs WHERE id = ?').run(id);
 }
 
 export function getEntry(id: number): Entry | null {
@@ -586,17 +638,21 @@ export function saveWatchProgress(
 	subUrl?: string,
 	subDelay?: number,
 	subFileName?: string,
-	posterUrl?: string
+	posterUrl?: string,
+	shareKey?: string,
+	fid?: number
 ): void {
 	db.prepare(`
-		INSERT INTO watch_progress (title, type, season, episode, current_time, duration, sub_url, sub_delay, sub_file_name, poster_url, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		INSERT INTO watch_progress (title, type, season, episode, current_time, duration, sub_url, sub_delay, sub_file_name, poster_url, share_key, fid, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 		ON CONFLICT (title, type, season, episode)
 		DO UPDATE SET current_time = excluded.current_time, duration = excluded.duration,
 			sub_url = excluded.sub_url, sub_delay = excluded.sub_delay, sub_file_name = excluded.sub_file_name,
 			poster_url = CASE WHEN excluded.poster_url != '' THEN excluded.poster_url ELSE watch_progress.poster_url END,
+			share_key = CASE WHEN excluded.share_key != '' THEN excluded.share_key ELSE watch_progress.share_key END,
+			fid = CASE WHEN excluded.fid != 0 THEN excluded.fid ELSE watch_progress.fid END,
 			updated_at = excluded.updated_at
-	`).run(title, type, season, episode, currentTime, duration, subUrl ?? '', subDelay ?? 0, subFileName ?? '', posterUrl ?? '');
+	`).run(title, type, season, episode, currentTime, duration, subUrl ?? '', subDelay ?? 0, subFileName ?? '', posterUrl ?? '', shareKey ?? '', fid ?? 0);
 }
 
 export function getWatchProgress(
@@ -609,6 +665,13 @@ export function getWatchProgress(
 		.prepare('SELECT title, type, season, episode, "current_time" AS currentTime, duration, sub_url AS subUrl, sub_delay AS subDelay, sub_file_name AS subFileName FROM watch_progress WHERE title = ? AND type = ? AND season = ? AND episode = ?')
 		.get(title, type, season, episode) as WatchProgress | undefined;
 	return row ? { ...row } : null;
+}
+
+export function getCachedStreamInfo(title: string, type: string): { shareKey: string; fid: number } | null {
+	const row = db
+		.prepare("SELECT share_key AS shareKey, fid FROM watch_progress WHERE title = ? AND type = ? AND share_key != '' AND fid != 0 ORDER BY updated_at DESC LIMIT 1")
+		.get(title, type) as { shareKey: string; fid: number } | undefined;
+	return row ?? null;
 }
 
 export function listAllWatchProgress(): (WatchProgress & { updatedAt: string })[] {

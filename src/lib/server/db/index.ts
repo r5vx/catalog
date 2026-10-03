@@ -203,10 +203,22 @@ db.exec(`
 	)
 `);
 
+db.exec(`
+	CREATE TABLE IF NOT EXISTS shared_catalogs (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		titles_count INTEGER NOT NULL DEFAULT 0,
+		data TEXT NOT NULL,
+		imported_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)
+`);
+
 try { db.exec("ALTER TABLE watch_progress ADD COLUMN sub_url TEXT NOT NULL DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE watch_progress ADD COLUMN sub_delay REAL NOT NULL DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE watch_progress ADD COLUMN sub_file_name TEXT NOT NULL DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE watch_progress ADD COLUMN poster_url TEXT NOT NULL DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE watch_progress ADD COLUMN share_key TEXT NOT NULL DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE watch_progress ADD COLUMN fid INTEGER NOT NULL DEFAULT 0"); } catch {}
 
 /**
  * node:sqlite hands back null-prototype objects. SvelteKit needs plain ones to

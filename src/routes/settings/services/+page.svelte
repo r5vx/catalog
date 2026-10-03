@@ -284,23 +284,21 @@
 			asking. Catalog follows this PC unless you tell it otherwise.
 		</p>
 
-		{#if form?.regionError}
-			<p class="msg bad" role="alert">{form.regionError}</p>
-		{:else if form?.regionOk}
-			<p class="msg good" role="status">Saved.</p>
-		{/if}
-
-		<form method="POST" action="?/saveRegion" class="inline-form">
-			<select name="watchRegion" aria-label="Country">
-				<option value="" selected={!data.region}>This PC's country ({data.detectedRegion})</option>
-				{#each countries as country (country.code)}
-					<option value={country.code} selected={data.region === country.code}>
-						{country.name}
-					</option>
-				{/each}
-			</select>
-			<button type="submit" class="btn">Save</button>
-		</form>
+		<select
+			aria-label="Country"
+			onchange={async (e) => {
+				const body = new FormData();
+				body.set('watchRegion', e.currentTarget.value);
+				await fetch('?/saveRegion', { method: 'POST', body });
+			}}
+		>
+			<option value="" selected={!data.region}>This PC's country ({data.detectedRegion})</option>
+			{#each countries as country (country.code)}
+				<option value={country.code} selected={data.region === country.code}>
+					{country.name}
+				</option>
+			{/each}
+		</select>
 	</section>
 </div>
 

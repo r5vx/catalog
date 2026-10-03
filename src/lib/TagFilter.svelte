@@ -6,9 +6,12 @@
 		/** Tag ids currently applied. */
 		selected: number[];
 		onchange: (ids: number[]) => void;
+		yearFrom?: number | null;
+		yearTo?: number | null;
+		onyearchange?: (from: string, to: string) => void;
 	};
 
-	let { tags, selected, onchange }: Props = $props();
+	let { tags, selected, onchange, yearFrom = null, yearTo = null, onyearchange }: Props = $props();
 
 	const KIND_LABELS: Record<string, string> = {
 		genre: 'Genres',
@@ -25,6 +28,8 @@
 	let expanded = $state<Record<string, boolean>>({});
 
 	const chosen = $derived(tags.filter((t) => selected.includes(t.id)));
+	const hasYears = $derived(Boolean(yearFrom || yearTo));
+	const activeCount = $derived(chosen.length + (hasYears ? 1 : 0));
 
 	/**
 	 * Typing narrows the list, which is the point — there are hundreds of tags
@@ -49,19 +54,19 @@
 		onchange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
 	}
 
-	function onWindowClick(event: MouseEvent) {
+	function onWindowMousedown(event: MouseEvent) {
 		if (!open) return;
 		if (panel && !panel.contains(event.target as Node)) open = false;
 	}
 </script>
 
-<svelte:window onclick={onWindowClick} onkeydown={(e) => e.key === 'Escape' && (open = false)} />
+<svelte:window onmousedown={onWindowMousedown} onkeydown={(e) => e.key === 'Escape' && (open = false)} />
 
 <div class="wrap" bind:this={panel}>
 	<button
 		type="button"
 		class="btn trigger"
-		class:on={chosen.length > 0}
+		class:on={activeCount > 0}
 		aria-expanded={open}
 		onclick={(e) => {
 			e.stopPropagation();
@@ -69,12 +74,38 @@
 			filter = '';
 		}}
 	>
-		{chosen.length > 0 ? `${chosen.length} filter${chosen.length === 1 ? '' : 's'}` : 'Filter'}
+		{activeCount > 0 ? `${activeCount} filter${activeCount === 1 ? '' : 's'}` : 'Filter'}
 		<span class="caret" aria-hidden="true">▾</span>
 	</button>
 
 	{#if open}
 		<div class="panel">
+			{#if onyearchange}
+				<div class="year-row">
+					<input
+						type="number"
+						min="1900"
+						max="2030"
+						placeholder="From year"
+						aria-label="From year"
+						value={yearFrom ?? ''}
+						onchange={(e) => onyearchange(e.currentTarget.value, String(yearTo ?? ''))}
+						class="year-field"
+					/>
+					<span class="year-dash">–</span>
+					<input
+						type="number"
+						min="1900"
+						max="2030"
+						placeholder="To year"
+						aria-label="To year"
+						value={yearTo ?? ''}
+						onchange={(e) => onyearchange(String(yearFrom ?? ''), e.currentTarget.value)}
+						class="year-field"
+					/>
+				</div>
+			{/if}
+
 			<input
 				type="search"
 				class="find"
@@ -117,8 +148,8 @@
 				{/if}
 			</div>
 
-			{#if chosen.length > 0}
-				<button type="button" class="clear" onclick={() => onchange([])}>
+			{#if activeCount > 0}
+				<button type="button" class="clear" onclick={() => { onchange([]); if (onyearchange) onyearchange('', ''); }}>
 					Clear all filters
 				</button>
 			{/if}
@@ -126,9 +157,16 @@
 	{/if}
 </div>
 
-{#if chosen.length > 0}
-	<!-- Chips, so what's applied is visible without opening the panel. -->
+{#if activeCount > 0}
 	<ul class="chips">
+		{#if hasYears}
+			<li>
+				<button type="button" onclick={() => onyearchange?.('', '')} title="Remove year filter">
+					{yearFrom && yearTo ? `${yearFrom}–${yearTo}` : yearFrom ? `From ${yearFrom}` : `To ${yearTo}`}
+					<span aria-hidden="true">×</span>
+				</button>
+			</li>
+		{/if}
 		{#each chosen as tag (tag.id)}
 			<li>
 				<button type="button" onclick={() => toggle(tag.id)} title="Remove this filter">
@@ -177,6 +215,28 @@
 		display: flex;
 		flex-direction: column;
 		gap: 8px;
+	}
+
+	.year-row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.year-field {
+		flex: 1;
+		font-size: 0.85rem;
+		padding: 6px 8px;
+		min-width: 0;
+		border: 1px solid var(--rule);
+		border-radius: var(--radius);
+		background: var(--surface);
+		color: var(--ink);
+	}
+
+	.year-dash {
+		color: var(--ink-soft);
+		font-size: 0.85rem;
 	}
 
 	.find {

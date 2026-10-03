@@ -1,4 +1,4 @@
-import { listCategories, listEntries, countsByCategory, completedCount, continueWatchingList } from '$lib/server/db/queries';
+import { listCategories, listEntries, countsByCategory, completedCount, completedByCategory, continueWatchingList, sharedCatalogCount, existingSourceKeys } from '$lib/server/db/queries';
 import { countNotes } from '$lib/server/db/notes';
 import { listTags } from '$lib/server/db/tags';
 import { SORTS } from '$lib/constants';
@@ -13,6 +13,8 @@ export const load: PageServerLoad = async ({ url }) => {
 		.getAll('tag')
 		.map((value) => Number(value))
 		.filter((value) => Number.isFinite(value) && value > 0);
+	const yearFrom = Number(url.searchParams.get('yearFrom')) || null;
+	const yearTo = Number(url.searchParams.get('yearTo')) || null;
 
 	const sort = SORTS.find((s) => s.value === sortKey) ?? SORTS[0];
 
@@ -24,6 +26,8 @@ export const load: PageServerLoad = async ({ url }) => {
 		categoryId: activeCategory?.id ?? null,
 		status,
 		tagIds,
+		yearFrom,
+		yearTo,
 		sortColumn: sort.column,
 		sortDir: sort.dir
 	});
@@ -37,9 +41,12 @@ export const load: PageServerLoad = async ({ url }) => {
 		countByCategory,
 		total,
 		completed: completedCount(),
+		completedByCategory: completedByCategory(),
 		noteCount: countNotes(),
 		tags: listTags(),
-		filters: { q, cat, status, sort: sort.value, tags: tagIds },
-		continueWatching: continueWatchingList()
+		filters: { q, cat, status, sort: sort.value, tags: tagIds, yearFrom, yearTo },
+		continueWatching: continueWatchingList(),
+		friendCount: sharedCatalogCount(),
+		ownedKeys: [...existingSourceKeys()]
 	};
 };

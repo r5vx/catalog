@@ -1,11 +1,11 @@
 import { searchAniList, trendingAniList } from './anilist';
-import { searchTmdb, trendingTmdb, trendingPeopleTmdb, hasTmdbKey } from './tmdb';
+import { searchTmdb, trendingTmdb, trendingPeopleTmdb, hasTmdbKey, type BrowseFilters } from './tmdb';
 export { trendingPeopleTmdb };
 import { normalizeTitle, type SearchResult } from './types';
 import { watchRegion as getWatchRegion } from './providers';
 
 export { hasTmdbKey };
-export type { SearchResult };
+export type { SearchResult, BrowseFilters };
 
 const ARTICLES = /^(the|a|an)\s+/;
 
@@ -51,16 +51,24 @@ function phoneticVariants(q: string): string[] {
 	return out;
 }
 
+const collapse = (s: string) => s.replace(/\s+/g, '');
+
 function scoreQuery(q: string, candidates: string[]): number {
 	const qNoArticle = stripArticle(q);
+	const qCollapsed = collapse(qNoArticle);
 	let best = 0;
 	for (const candidate of candidates) {
 		const cNoArticle = stripArticle(candidate);
-		if (candidate === q || cNoArticle === qNoArticle) best = Math.max(best, 3);
+		const cCollapsed = collapse(cNoArticle);
+		if (candidate === q || cNoArticle === qNoArticle || cCollapsed === qCollapsed)
+			best = Math.max(best, 3);
 		else if (candidate.startsWith(q) || candidate.endsWith(q)
-			|| cNoArticle.startsWith(qNoArticle) || cNoArticle.endsWith(qNoArticle))
+			|| cNoArticle.startsWith(qNoArticle) || cNoArticle.endsWith(qNoArticle)
+			|| cCollapsed.startsWith(qCollapsed) || cCollapsed.endsWith(qCollapsed))
 			best = Math.max(best, 2);
-		else if (candidate.includes(q) || cNoArticle.includes(qNoArticle)) best = Math.max(best, 1);
+		else if (candidate.includes(q) || cNoArticle.includes(qNoArticle)
+			|| cCollapsed.includes(qCollapsed))
+			best = Math.max(best, 1);
 		else if (fuzzyClose(cNoArticle, qNoArticle)) best = Math.max(best, 0.5);
 	}
 	return best;
@@ -92,13 +100,18 @@ function matchScore(result: SearchResult, query: string, fuzzy = false): number 
  * why "Iron Man" gives you the film rather than the obscure anime of the same
  * name. A year you supplied breaks the remaining ties.
  */
+const DEPRIORITIZED_KINDS = new Set(['Music', 'Special', 'OVA', 'TV Short']);
+
 function scoreOf(result: SearchResult, query: string, year: number | null, fuzzy = false): number {
 	const yearMatches = year !== null && result.year === year;
+	const match = matchScore(result, query, fuzzy);
+	const quality = result.posterUrl ? 1 : 0.4;
+	const kindPenalty = DEPRIORITIZED_KINDS.has(result.kind) ? 0.15 : 1;
 
 	return (
-		matchScore(result, query, fuzzy) * 10 + // 0, 10, 20 or 30 — the dominant term
-		(yearMatches ? 4 : 0) + //           a nudge, never enough to jump a tier
-		result.popularity * 5 //             0 to 5, orders everything within a tier
+		match * 10 * quality * kindPenalty + //  music/specials sink to the bottom
+		(yearMatches ? 4 : 0) + //               a nudge, never enough to jump a tier
+		result.popularity * 5 //                 0 to 5, orders everything within a tier
 	);
 }
 
@@ -199,16 +212,18 @@ export async function browsePage(
 	category: string,
 	mode: BrowseMode,
 	page: number,
-	region?: string
+	region?: string,
+	filters?: BrowseFilters
 ): Promise<SearchResult[]> {
-	const key = `${category}:${mode}:${page}:${region ?? ''}`;
+	const filterKey = filters ? `${filters.yearFrom ?? ''}-${filters.yearTo ?? ''}-${filters.sort ?? ''}` : '';
+	const key = `${category}:${mode}:${page}:${region ?? ''}:${filterKey}`;
 	const cached = browseCache.get(key);
 	if (cached && Date.now() - cached.time < BROWSE_TTL) return cached.data;
 
 	let data: SearchResult[];
 	if (category === 'anime') data = await trendingAniList(24, page, mode);
-	else if (category === 'movies') data = await trendingTmdb('movie', page, mode, region);
-	else if (category === 'tv') data = await trendingTmdb('tv', page, mode, region);
+	else if (category === 'movies') data = await trendingTmdb('movie', page, mode, region, filters);
+	else if (category === 'tv') data = await trendingTmdb('tv', page, mode, region, filters);
 	else data = [];
 
 	browseCache.set(key, { data, time: Date.now() });
@@ -227,18 +242,26 @@ export function warmBrowseCache(): void {
 	browseShelves(undefined, 'trending', getWatchRegion()).catch(() => {});
 }
 
-export async function browseShelves(only?: string, mode: BrowseMode = 'trending', region?: string): Promise<Shelf[]> {
+const INITIAL_PAGES = 3;
+
+export async function browseShelves(only?: string, mode: BrowseMode = 'trending', region?: string, filters?: BrowseFilters): Promise<Shelf[]> {
 	const wanted = only
 		? BROWSE_CATEGORIES.filter((one) => one === only)
 		: [...BROWSE_CATEGORIES];
 
 	const filled = await Promise.all(
-		wanted.map(async (key) => ({
-			key,
-			label: LABELS[key][mode],
-			results: await browsePage(key, mode, 1, region),
-			page: 1
-		}))
+		wanted.map(async (key) => {
+			const pages = await Promise.all(
+				Array.from({ length: INITIAL_PAGES }, (_, i) => browsePage(key, mode, i + 1, region, filters))
+			);
+			const seen = new Set<string>();
+			const results = pages.flat().filter((r) => {
+				if (seen.has(r.key)) return false;
+				seen.add(r.key);
+				return true;
+			});
+			return { key, label: LABELS[key][mode], results, page: INITIAL_PAGES };
+		})
 	);
 
 	return filled.filter((shelf) => shelf.results.length > 0);

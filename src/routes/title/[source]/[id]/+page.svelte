@@ -13,6 +13,47 @@
 
 	const details = $derived(data.details);
 
+	let addedId = $state<number | null>(null);
+	let addBusy = $state(false);
+	let addError = $state('');
+
+	async function addToLibrary(status: string) {
+		addBusy = true;
+		addError = '';
+		try {
+			const resp = await fetch('/api/add', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ source: data.source, sourceId: data.sourceId, status })
+			});
+			if (!resp.ok) { addError = 'Could not add. Try again.'; return; }
+			const result = await resp.json();
+			addedId = result.id;
+		} catch {
+			addError = 'No connection.';
+		} finally {
+			addBusy = false;
+		}
+	}
+
+	let selectedStatus = $state('completed');
+
+	let watchAvailable = $state<boolean | null>(null);
+	let checkingWatch = $state(false);
+
+	$effect(() => {
+		if (details.unreleased) return;
+		checkingWatch = true;
+		const type = details.categorySlug === 'movies' ? 'movie' : 'tv';
+		const params = new URLSearchParams({ title: details.title ?? '', type });
+		if (details.year) params.set('year', String(details.year));
+		fetch(`/api/watch/available?${params}`)
+			.then((r) => r.json())
+			.then((d) => { watchAvailable = d.available; })
+			.catch(() => { watchAvailable = null; })
+			.finally(() => { checkingWatch = false; });
+	});
+
 	const facts = $derived(
 		[
 			details.year ? String(details.year) : null,
@@ -41,7 +82,11 @@
 		</div>
 
 		<div class="meta">
-			<p class="eyebrow faint">Not in your library</p>
+			{#if data.ownedEntryId}
+				<p class="eyebrow"><a href="/entry/{data.ownedEntryId}">In your library →</a></p>
+			{:else}
+				<p class="eyebrow faint">Not in your library</p>
+			{/if}
 			<h1>{details.title}</h1>
 			{#if details.altTitle && details.altTitle !== details.title}
 				<p class="alt muted">{details.altTitle}</p>
@@ -61,21 +106,43 @@
 			/>
 
 			<div class="title-actions">
-				<a
-					href="/watch?title={encodeURIComponent(details.title ?? '')}&type={details.categorySlug === 'movies' ? 'movie' : 'tv'}{details.year ? `&year=${details.year}` : ''}&auto=1"
-					class="btn btn-watch"
-				>▶ Watch</a>
+				{#if !details.unreleased}
+					{#if watchAvailable === true}
+						<a
+							href="/watch?title={encodeURIComponent(details.title ?? '')}&type={details.categorySlug === 'movies' ? 'movie' : 'tv'}{details.year ? `&year=${details.year}` : ''}&auto=1"
+							class="btn btn-watch"
+						>▶ Watch</a>
+					{:else if watchAvailable === false}
+						<span class="btn btn-watch unavailable">Not available on Showbox</span>
+					{:else}
+						<span class="btn btn-watch checking">Checking availability…</span>
+					{/if}
+				{/if}
 
-				<form method="POST" action="?/add" class="add">
-					<select name="status" aria-label="Add it as">
-						{#each STATUSES as option (option.value)}
-							<option value={option.value} selected={option.value === 'completed'}>
-								{option.label}
-							</option>
-						{/each}
-					</select>
-					<button type="submit" class="btn btn-primary">Add to library</button>
-				</form>
+				{#if data.ownedEntryId}
+					<a href="/entry/{data.ownedEntryId}" class="btn btn-primary">View in library</a>
+				{:else if addedId}
+					<span class="add-done">
+						Added! <a href="/entry/{addedId}">View entry</a>
+					</span>
+				{:else}
+					<div class="add">
+						<select bind:value={selectedStatus} aria-label="Add it as">
+							{#each STATUSES as option (option.value)}
+								<option value={option.value} selected={option.value === 'completed'}>
+									{option.label}
+								</option>
+							{/each}
+						</select>
+						<button
+							type="button"
+							class="btn btn-primary"
+							disabled={addBusy}
+							onclick={() => addToLibrary(selectedStatus)}
+						>{addBusy ? 'Adding...' : 'Add to library'}</button>
+					</div>
+				{/if}
+				{#if addError}<p class="add-error">{addError}</p>{/if}
 			</div>
 		</div>
 	</header>
@@ -204,6 +271,27 @@
 		filter: brightness(1.12);
 	}
 
+	.btn-watch.unavailable {
+		background: var(--danger, #c33);
+		cursor: default;
+		opacity: 0.85;
+	}
+
+	.btn-watch.unavailable:hover {
+		filter: none;
+	}
+
+	.btn-watch.checking {
+		background: var(--ink-faint);
+		cursor: default;
+		opacity: 0.6;
+	}
+
+	.btn-watch.checking:hover {
+		filter: none;
+	}
+
+
 	.add {
 		display: flex;
 		gap: 8px;
@@ -212,6 +300,23 @@
 	.add select {
 		flex: 1;
 		min-width: 0;
+	}
+
+	.add-done {
+		font-size: 0.9rem;
+		color: var(--good);
+		font-weight: 600;
+	}
+
+	.add-done a {
+		color: var(--accent);
+		margin-left: 6px;
+	}
+
+	.add-error {
+		font-size: 0.84rem;
+		color: var(--accent);
+		margin: 0;
 	}
 
 	.label {

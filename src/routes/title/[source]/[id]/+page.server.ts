@@ -20,8 +20,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
 
 	if (source !== 'tmdb' && source !== 'anilist') error(404, 'Unknown source.');
 
-	const owned = entryIdForSource(source, id);
-	if (owned) redirect(303, `/entry/${owned}`);
+	const ownedEntryId = entryIdForSource(source, id);
 
 	const details = await fetchDetails(source, id);
 	if (!details.title) error(404, 'Nothing found for that.');
@@ -48,6 +47,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
 		details: { ...details, cast: [] },
 		cast,
 		scores,
+		ownedEntryId: ownedEntryId ?? null,
 		// Set when you arrived from somewhere in the app, so "back" returns there.
 		back: safeBack(url.searchParams.get('back'))
 	};
