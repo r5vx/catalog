@@ -178,10 +178,10 @@
 			<a href="/entry/new" class="btn btn-primary">{pm ? '+ Claim giblet' : '+ Add'}</a>
 		</div>
 	</div>
-	<p class="muted count tabular">
-		{data.completed} {pm ? 'consumed' : 'watched'} / {data.total} in library
+	<p class="muted count stats-line">
+		<span class="stat">{data.completed} {pm ? 'consumed' : 'watched'} / {data.total} in library</span>
 		{#each data.categories as cat}
-			<span> · {data.completedByCategory[cat.id] ?? 0} / {data.countByCategory[cat.id] ?? 0} {cat.name}</span>
+			<span class="stat">{data.completedByCategory[cat.id] ?? 0} / {data.countByCategory[cat.id] ?? 0} {cat.name}</span>
 		{/each}
 	</p>
 </header>
@@ -475,6 +475,19 @@
 
 	.count {
 		font-size: 0.85rem;
+	}
+
+	.stats-line {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px 16px;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.stats-line .stat + .stat::before {
+		content: '·';
+		margin-right: 16px;
+		opacity: 0.4;
 	}
 
 	.count-breakdown {
