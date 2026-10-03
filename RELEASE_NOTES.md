@@ -7,6 +7,11 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 2.1.8 — 2026-10-03
+
+- **Stats line is easier to read.** The watched/total counts per
+  category are spaced out instead of crammed together.
+
 ## 2.1.7 — 2026-10-03
 
 - **Browse cards are fully clickable.** Clicking anywhere on a card
