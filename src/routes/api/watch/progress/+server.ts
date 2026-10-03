@@ -27,7 +27,7 @@ export const GET: RequestHandler = async ({ url }) => {
 
 export const POST: RequestHandler = async ({ request }) => {
 	const body = await request.json();
-	const { title, type, season, episode, currentTime, duration, subUrl, subDelay, subFileName, posterUrl } = body;
+	const { title, type, season, episode, currentTime, duration, subUrl, subDelay, subFileName, posterUrl, shareKey, fid } = body;
 
 	if (!title) return error(400, 'Missing title');
 
@@ -37,7 +37,7 @@ export const POST: RequestHandler = async ({ request }) => {
 	const ct = currentTime ?? 0;
 	const d = duration ?? 0;
 
-	saveWatchProgress(title, t, s, e, ct, d, subUrl ?? '', subDelay ?? 0, subFileName ?? '', posterUrl ?? '');
+	saveWatchProgress(title, t, s, e, ct, d, subUrl ?? '', subDelay ?? 0, subFileName ?? '', posterUrl ?? '', shareKey ?? '', fid ?? 0);
 	return json({ ok: true });
 };
 

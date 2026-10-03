@@ -40,6 +40,7 @@ export type TitleDetails = {
 	homepage: string | null;
 	kind: string;
 	categorySlug: 'anime' | 'movies' | 'tv';
+	unreleased?: boolean;
 };
 
 const EMPTY: TitleDetails = {
@@ -214,6 +215,9 @@ async function fromTmdb(sourceId: string): Promise<TitleDetails> {
 	const data = await response.json();
 	const tags: DerivedTag[] = [];
 
+	const isAnime = (data.genres ?? []).some((g: { id: number }) => g.id === 16) && data.original_language === 'ja';
+	const releaseDate = String(data.release_date ?? data.first_air_date ?? '');
+
 	for (const genre of data.genres ?? []) {
 		if (genre?.name) tags.push({ name: genre.name, kind: 'genre' });
 	}
@@ -258,14 +262,12 @@ async function fromTmdb(sourceId: string): Promise<TitleDetails> {
 		}))
 		.filter((person: DerivedCast) => person.sourceId && person.name);
 
-	const released = String(data.release_date ?? data.first_air_date ?? '');
-
 	return {
 		tags,
 		cast,
 		title: data.title ?? data.name ?? null,
 		altTitle: (data.original_title ?? data.original_name ?? null) || null,
-		year: Number(released.slice(0, 4)) || null,
+		year: Number(releaseDate.slice(0, 4)) || null,
 		overview: data.overview || null,
 		tagline: data.tagline || null,
 		posterUrl: data.poster_path ? `https://image.tmdb.org/t/p/w500${data.poster_path}` : null,
@@ -294,7 +296,8 @@ async function fromTmdb(sourceId: string): Promise<TitleDetails> {
 		status: data.status || null,
 		homepage: data.homepage || null,
 		kind: isSeries ? 'TV' : 'Movie',
-		categorySlug: isSeries ? 'tv' : 'movies'
+		categorySlug: isAnime ? 'anime' : (isSeries ? 'tv' : 'movies'),
+		unreleased: releaseDate.length > 0 && releaseDate > new Date().toISOString().slice(0, 10)
 	};
 }
 
@@ -386,7 +389,8 @@ async function fromAniList(id: string): Promise<TitleDetails> {
 		status: media.status || null,
 		homepage: media.siteUrl || null,
 		kind: media.format === 'MOVIE' ? 'Movie' : 'Anime',
-		categorySlug: 'anime'
+		categorySlug: 'anime',
+		unreleased: media.status === 'NOT_YET_RELEASED'
 	};
 }
 

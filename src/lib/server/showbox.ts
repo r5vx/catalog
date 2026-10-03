@@ -7,7 +7,7 @@ let cachedAt = 0;
 
 const streamCache = new Map<number, { url: string; debug: string; ts: number }>();
 const streamInFlight = new Map<number, Promise<{ url: string | null; debug?: string }>>();
-const STREAM_CACHE_TTL = 30 * 60 * 1000;
+const STREAM_CACHE_TTL = 15 * 60 * 1000;
 
 export function invalidateStreamCache(fid: number) {
 	streamCache.delete(fid);
@@ -807,7 +807,13 @@ export function bestMatch(
 		const coverage = wantWords.length > 0 ? overlap / wantWords.length : 0;
 		const reverseCoverage = rWords.length > 0 ? overlap / rWords.length : 0;
 		let score = Math.min(coverage, reverseCoverage + 0.2);
-		if (t.includes(want) || want.includes(t)) score = Math.max(score, 0.9);
+		if (t === want) {
+			score = Math.max(score, 0.95);
+		} else if (want.includes(t) && t.length / want.length > 0.6) {
+			score = Math.max(score, 0.9);
+		} else if (t.includes(want) && want.length / t.length > 0.6) {
+			score = Math.max(score, 0.85);
+		}
 		if (wantYear) {
 			const resultYear = extractYear(r.info);
 			if (r.info.includes(wantYear)) {

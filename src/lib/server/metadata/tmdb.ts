@@ -179,6 +179,24 @@ async function fetchTmdb(query: string, key: string): Promise<TmdbItem[]> {
 	return (payload.results ?? []).filter((item) => item.media_type !== 'person');
 }
 
+async function fetchTmdbTyped(query: string, key: string): Promise<TmdbItem[]> {
+	const results: TmdbItem[] = [];
+	for (const type of ['movie', 'tv'] as const) {
+		const url = new URL(`${BASE}/search/${type}`);
+		url.searchParams.set('query', query);
+		url.searchParams.set('include_adult', 'false');
+		try {
+			const response = await fetch(url, authorize(url, key));
+			if (!response.ok) continue;
+			const payload = (await response.json()) as { results?: TmdbItem[] };
+			for (const item of payload.results ?? []) {
+				results.push({ ...item, media_type: type });
+			}
+		} catch {}
+	}
+	return results;
+}
+
 export async function searchTmdb(query: string, fuzzy = false): Promise<SearchResult[]> {
 	const key = tmdbKey();
 	if (!key) return [];
@@ -191,10 +209,15 @@ export async function searchTmdb(query: string, fuzzy = false): Promise<SearchRe
 
 		const swapped = conjunctionVariant(query);
 		const phonetic = fuzzy ? phoneticVariant(query) : null;
+		const noSpaces = /\s/.test(query) ? query.replace(/\s+/g, '') : null;
+		const prefix = !(/\s/.test(query)) && query.length >= 4 ? query.slice(0, 3) : null;
 		const searches: Promise<TmdbItem[]>[] = [
 			fetchTmdb(query, key),
+			fetchTmdbTyped(query, key),
 			swapped ? fetchTmdb(swapped, key) : Promise.resolve([]),
-			phonetic ? fetchTmdb(phonetic, key) : Promise.resolve([])
+			phonetic ? fetchTmdb(phonetic, key) : Promise.resolve([]),
+			noSpaces ? fetchTmdb(noSpaces, key) : Promise.resolve([]),
+			prefix ? fetchTmdbTyped(prefix, key) : Promise.resolve([])
 		];
 		const batched = await Promise.all(searches);
 		for (const batch of batched) collect(batch);
@@ -262,7 +285,7 @@ function toResult(item: TmdbItem): SearchResult {
 		overview: plainText(item.overview),
 		categorySlug: slug,
 		confident,
-		kind: item.media_type === 'movie' ? 'Movie' : 'TV',
+		kind: slug === 'anime' ? 'Anime' : (item.media_type === 'movie' ? 'Movie' : 'TV'),
 		episodesTotal: null,
 		runtimeMinutes: null,
 		externalRating: item.vote_average ? item.vote_average : null,
@@ -280,37 +303,71 @@ function toResult(item: TmdbItem): SearchResult {
  */
 export type BrowseMode = 'trending' | 'popular';
 
+export type BrowseSort = 'vote_count' | 'vote_average' | 'popularity' | 'release_date_desc' | 'release_date_asc';
+
+export interface BrowseFilters {
+	yearFrom?: number;
+	yearTo?: number;
+	sort?: BrowseSort;
+	genre?: number;
+}
+
 export async function trendingTmdb(
 	kind: 'movie' | 'tv',
 	page = 1,
 	mode: BrowseMode = 'trending',
-	region?: string
+	region?: string,
+	filters?: BrowseFilters
 ): Promise<SearchResult[]> {
 	const key = tmdbKey();
 	if (!key) return [];
 
 	try {
-		/**
-		 * "This week" and "of all time" are different endpoints, not a sort.
-		 *
-		 * All-time orders by `vote_count`, not by TMDB's `popularity` — the
-		 * same choice the search ranking makes, and for the same reason:
-		 * popularity is a rolling this-week score, so sorting by it would just
-		 * hand back trending again in a different order.
-		 */
-		const url =
-			mode === 'popular'
-				? new URL(`${BASE}/discover/${kind}`)
-				: new URL(`${BASE}/trending/${kind}/week`);
+		const hasFilters = filters && (filters.yearFrom || filters.yearTo || filters.sort || filters.genre);
+		const useDiscover = mode === 'popular' || hasFilters;
 
-		if (mode === 'popular') {
-			url.searchParams.set('sort_by', 'vote_count.desc');
+		const url = useDiscover
+			? new URL(`${BASE}/discover/${kind}`)
+			: new URL(`${BASE}/trending/${kind}/week`);
+
+		if (useDiscover) {
+			const sortMap: Record<BrowseSort, string> = {
+				vote_count: 'vote_count.desc',
+				vote_average: 'vote_average.desc',
+				popularity: 'popularity.desc',
+				release_date_desc: kind === 'movie' ? 'primary_release_date.desc' : 'first_air_date.desc',
+				release_date_asc: kind === 'movie' ? 'primary_release_date.asc' : 'first_air_date.asc'
+			};
+			const sortBy = filters?.sort ? sortMap[filters.sort] : 'vote_count.desc';
+			url.searchParams.set('sort_by', sortBy);
 			url.searchParams.set('include_adult', 'false');
+
+			if (filters?.sort === 'vote_average') {
+				url.searchParams.set('vote_count.gte', '200');
+			} else if (!filters?.sort || filters.sort === 'vote_count') {
+				url.searchParams.set('vote_count.gte', '300');
+			}
+
+			if (!hasFilters || !filters?.sort) {
+				url.searchParams.set('with_original_language', 'en|ja|ko|fr|es|de|it|pt|hi|zh');
+			}
+
+			if (filters?.genre) {
+				url.searchParams.set('with_genres', String(filters.genre));
+			}
+
+			if (filters?.yearFrom) {
+				const dateKey = kind === 'movie' ? 'primary_release_date.gte' : 'first_air_date.gte';
+				url.searchParams.set(dateKey, `${filters.yearFrom}-01-01`);
+			}
+			if (filters?.yearTo) {
+				const dateKey = kind === 'movie' ? 'primary_release_date.lte' : 'first_air_date.lte';
+				url.searchParams.set(dateKey, `${filters.yearTo}-12-31`);
+			}
 		}
 
-		if (region) {
+		if (region && !useDiscover) {
 			url.searchParams.set('region', region);
-			if (mode === 'popular') url.searchParams.set('watch_region', region);
 		}
 
 		url.searchParams.set('page', String(page));
@@ -320,10 +377,14 @@ export async function trendingTmdb(
 
 		const payload = (await response.json()) as { results?: TmdbItem[] };
 
+		const today = new Date().toISOString().slice(0, 10);
 		return (payload.results ?? [])
-			// Neither endpoint reliably carries the field the mapping reads.
 			.map((item) => ({ ...item, media_type: item.media_type ?? kind }))
 			.filter((item) => !isPlaceholder(item))
+			.filter((item) => {
+				const d = item.release_date ?? item.first_air_date ?? '';
+				return !d || d <= today;
+			})
 			.map(toResult)
 			.filter((r) => r.categorySlug !== 'anime' || kind === 'movie');
 	} catch {

@@ -1,36 +1,32 @@
-import { searchAll, browseShelves, hasTmdbKey, type BrowseMode } from '$lib/server/metadata';
+import { searchAll, browseShelves, hasTmdbKey, type BrowseMode, type BrowseFilters } from '$lib/server/metadata';
 import { existingSourceKeys } from '$lib/server/db/queries';
 import { parseTitle } from '$lib/parseTitle';
 import { watchRegion } from '$lib/server/metadata/providers';
 import type { PageServerLoad } from './$types';
 
-/**
- * Everything, rather than only what you own.
- *
- * The library answers "what have I seen"; this answers "what is there". Same
- * databases the rest of the app uses, no filter on whether it's yours — so
- * you can read what something is about before deciding it's worth an evening.
- */
-
 const CATEGORIES = ['movies', 'tv', 'anime'];
+const VALID_SORTS = ['vote_count', 'vote_average', 'popularity', 'release_date_desc', 'release_date_asc'];
 
 export const load: PageServerLoad = async ({ url }) => {
 	const q = (url.searchParams.get('q') ?? '').trim();
 	const cat = url.searchParams.get('cat') ?? '';
 	const category = CATEGORIES.includes(cat) ? cat : '';
 
-	// What's on this week, or what has been biggest ever. Different questions,
-	// and which one you want depends on whether you've already seen this year.
 	const mode: BrowseMode = url.searchParams.get('mode') === 'popular' ? 'popular' : 'trending';
 
 	const region = watchRegion();
 
-	// "Fantastic Four (2005)" should work here exactly as it does in the
-	// importer and the add box.
+	const yearFrom = Number(url.searchParams.get('from')) || undefined;
+	const yearTo = Number(url.searchParams.get('to')) || undefined;
+	const sortRaw = url.searchParams.get('sort') ?? '';
+	const sort = VALID_SORTS.includes(sortRaw) ? sortRaw as BrowseFilters['sort'] : undefined;
+	const genre = Number(url.searchParams.get('genre')) || undefined;
+
+	const filters: BrowseFilters | undefined =
+		(yearFrom || yearTo || sort || genre) ? { yearFrom, yearTo, sort, genre } : undefined;
+
 	const { title, year } = parseTitle(q);
 
-	// A wider net than the add box: browsing is the case where the thing you
-	// want is the twentieth result, not the first.
 	const found = q ? await searchAll(title, { year, limit: 60, fuzzy: true }) : [];
 
 	const results = category ? found.filter((one) => one.categorySlug === category) : found;
@@ -39,12 +35,12 @@ export const load: PageServerLoad = async ({ url }) => {
 		q,
 		cat: category,
 		mode,
+		yearFrom: yearFrom ?? null,
+		yearTo: yearTo ?? null,
+		sort: sort ?? null,
+		genre: genre ?? null,
 		results,
-		// Only asked for when there's nothing to search, so a search doesn't
-		// wait on three lists it won't show.
-		shelves: q ? [] : await browseShelves(category || undefined, mode, region),
-		// Marks what's already yours, so browsing doesn't offer you your own
-		// library back.
+		shelves: q ? [] : await browseShelves(category || undefined, mode, region, filters),
 		owned: [...existingSourceKeys()],
 		tmdbEnabled: hasTmdbKey()
 	};

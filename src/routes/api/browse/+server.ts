@@ -1,16 +1,11 @@
 import { json } from '@sveltejs/kit';
-import { browsePage, BROWSE_CATEGORIES, type BrowseMode } from '$lib/server/metadata';
+import { browsePage, BROWSE_CATEGORIES, type BrowseMode, type BrowseFilters } from '$lib/server/metadata';
 import { existingSourceKeys } from '$lib/server/db/queries';
 import { watchRegion } from '$lib/server/metadata/providers';
 import type { RequestHandler } from './$types';
 
-/**
- * One more page of a browse shelf.
- *
- * Paged rather than loaded in bulk: "show me more" is a question you ask when
- * nothing on screen appealed, and there's no telling how many times you'll
- * ask. The page appends what comes back instead of reloading.
- */
+const VALID_SORTS = ['vote_count', 'vote_average', 'popularity', 'release_date_desc', 'release_date_asc'];
+
 export const GET: RequestHandler = async ({ url }) => {
 	const category = url.searchParams.get('cat') ?? '';
 	const mode: BrowseMode = url.searchParams.get('mode') === 'popular' ? 'popular' : 'trending';
@@ -20,10 +15,17 @@ export const GET: RequestHandler = async ({ url }) => {
 		return json({ results: [], page, owned: [] });
 	}
 
+	const yearFrom = Number(url.searchParams.get('from')) || undefined;
+	const yearTo = Number(url.searchParams.get('to')) || undefined;
+	const sortRaw = url.searchParams.get('sort') ?? '';
+	const sort = VALID_SORTS.includes(sortRaw) ? sortRaw as BrowseFilters['sort'] : undefined;
+	const genre = Number(url.searchParams.get('genre')) || undefined;
+	const filters: BrowseFilters | undefined =
+		(yearFrom || yearTo || sort || genre) ? { yearFrom, yearTo, sort, genre } : undefined;
+
 	return json({
-		results: await browsePage(category, mode, page, watchRegion()),
+		results: await browsePage(category, mode, page, watchRegion(), filters),
 		page,
-		// Sent with each page so newly loaded cards know what's already yours.
 		owned: [...existingSourceKeys()]
 	});
 };

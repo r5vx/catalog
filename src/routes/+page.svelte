@@ -8,6 +8,7 @@
 	import CategoryTabs from '$lib/CategoryTabs.svelte';
 	import FillingIn from '$lib/FillingIn.svelte';
 	import TagFilter from '$lib/TagFilter.svelte';
+	import FriendsView from '$lib/FriendsView.svelte';
 	import { p } from '$lib/poison';
 	import type { PageData } from './$types';
 
@@ -53,7 +54,7 @@
 	});
 
 	const isFiltered = $derived(
-		Boolean(data.filters.q || data.filters.cat || data.filters.status || data.filters.tags.length > 0)
+		Boolean(data.filters.q || data.filters.cat || data.filters.status || data.filters.tags.length > 0 || data.filters.yearFrom || data.filters.yearTo)
 	);
 
 	let dismissed = $state<Set<string>>(new Set());
@@ -178,7 +179,10 @@
 		</div>
 	</div>
 	<p class="muted count tabular">
-		{data.completed} {pm ? 'consumed' : 'completed'} · {data.total} {pm ? 'giblets' : 'total'}
+		{data.completed} {pm ? 'consumed' : 'watched'} / {data.total} in library
+		{#each data.categories as cat}
+			<span> · {data.completedByCategory[cat.id] ?? 0} / {data.countByCategory[cat.id] ?? 0} {cat.name}</span>
+		{/each}
 	</p>
 </header>
 
@@ -188,6 +192,7 @@
 	total={data.total}
 	noteCount={data.noteCount}
 	watchingCount={continueItems.length}
+	friendCount={data.friendCount}
 	active={data.filters.cat}
 	poisonMode={pm}
 />
@@ -251,6 +256,8 @@
 			{/each}
 		</ul>
 	{/if}
+{:else if data.filters.cat === 'friends'}
+	<FriendsView owned={new Set(data.ownedKeys)} poisonMode={pm} />
 {:else}
 	<FillingIn />
 
@@ -266,7 +273,19 @@
 		/>
 
 		{#if data.tags.length > 0}
-			<TagFilter tags={data.tags} selected={data.filters.tags} onchange={setTags} />
+			<TagFilter
+				tags={data.tags}
+				selected={data.filters.tags}
+				onchange={setTags}
+				yearFrom={data.filters.yearFrom}
+				yearTo={data.filters.yearTo}
+				onyearchange={(from, to) => {
+					const params = new URLSearchParams(window.location.search);
+					if (from) params.set('yearFrom', from); else params.delete('yearFrom');
+					if (to) params.set('yearTo', to); else params.delete('yearTo');
+					goto(`?${params.toString()}`, { keepFocus: true, noScroll: true });
+				}}
+			/>
 		{/if}
 
 		<select
@@ -458,6 +477,10 @@
 		font-size: 0.85rem;
 	}
 
+	.count-breakdown {
+		opacity: 0.7;
+	}
+
 
 
 
@@ -468,6 +491,11 @@
 		flex-wrap: wrap;
 		gap: 10px;
 		margin-bottom: 24px;
+	}
+
+	.toolbar :global(.chips) {
+		order: 99;
+		margin-bottom: 0;
 	}
 
 	.toolbar input {

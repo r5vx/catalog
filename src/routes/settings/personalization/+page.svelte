@@ -22,10 +22,13 @@
 		{ value: 'black', label: 'Black', desc: 'OLED-friendly', bg: '#000000' }
 	];
 
-	function pickTheme(value: string) {
+	async function pickTheme(value: string) {
 		theme = value;
 		if (value) document.documentElement.dataset.theme = value;
 		else delete document.documentElement.dataset.theme;
+		const body = new FormData();
+		body.set('theme', value);
+		await fetch('?/saveTheme', { method: 'POST', body });
 	}
 
 	const isHex = (v: string) => /^#[0-9a-f]{6}$/i.test(v.trim());
@@ -50,80 +53,62 @@
 	<div class="head"><h2>Theme</h2></div>
 	<p class="muted">Pick the background style.</p>
 
-	{#if form?.themeError}
-		<p class="msg bad" role="alert">{form.themeError}</p>
-	{:else if form?.themeOk}
-		<p class="msg good" role="status">{form.themeOk}</p>
-	{/if}
-
-	<form method="POST" action="?/saveTheme">
-		<input type="hidden" name="theme" value={theme} />
-		<div class="theme-options">
-			{#each THEMES as t (t.value)}
-				<button
-					type="button"
-					class="theme-card"
-					class:picked={theme === t.value}
-					onclick={() => pickTheme(t.value)}
-				>
-					<span
-						class="theme-swatch"
-						class:system={!t.bg}
-						style={t.bg ? `background: ${t.bg}` : ''}
-					></span>
-					<span class="theme-label">{t.label}</span>
-					<span class="theme-desc faint">{t.desc}</span>
-				</button>
-			{/each}
-		</div>
-		<button type="submit" class="btn btn-primary">Save theme</button>
-	</form>
+	<div class="theme-options">
+		{#each THEMES as t (t.value)}
+			<button
+				type="button"
+				class="theme-card"
+				class:picked={theme === t.value}
+				onclick={() => pickTheme(t.value)}
+			>
+				<span
+					class="theme-swatch"
+					class:system={!t.bg}
+					style={t.bg ? `background: ${t.bg}` : ''}
+				></span>
+				<span class="theme-label">{t.label}</span>
+				<span class="theme-desc faint">{t.desc}</span>
+			</button>
+		{/each}
+	</div>
 </section>
 
 <section>
 	<div class="head"><h2>Layout</h2></div>
 	<p class="muted">How content fills the screen when the window is wide.</p>
 
-	{#if form?.layoutOk}
-		<p class="msg good" role="status">{form.layoutOk}</p>
-	{/if}
-
-	<form method="POST" action="?/saveLayout">
-		<input type="hidden" name="wideLayout" value={wideLayout ? '1' : '0'} />
-		<div class="layout-options">
-			<button
-				type="button"
-				class="layout-card"
-				class:picked={!wideLayout}
-				onclick={() => (wideLayout = false)}
-			>
-				<span class="layout-preview centered-preview">
-					<span class="layout-bar"></span>
-					<span class="layout-grid">
-						<span></span><span></span><span></span>
-					</span>
+	<div class="layout-options">
+		<button
+			type="button"
+			class="layout-card"
+			class:picked={!wideLayout}
+			onclick={async () => { wideLayout = false; const b = new FormData(); b.set('wideLayout', '0'); await fetch('?/saveLayout', { method: 'POST', body: b }); window.location.reload(); }}
+		>
+			<span class="layout-preview centered-preview">
+				<span class="layout-bar"></span>
+				<span class="layout-grid">
+					<span></span><span></span><span></span>
 				</span>
-				<span class="layout-label">Centered</span>
-				<span class="layout-desc faint">Content stays in the middle</span>
-			</button>
-			<button
-				type="button"
-				class="layout-card"
-				class:picked={wideLayout}
-				onclick={() => (wideLayout = true)}
-			>
-				<span class="layout-preview wide-preview">
-					<span class="layout-bar"></span>
-					<span class="layout-grid">
-						<span></span><span></span><span></span><span></span><span></span>
-					</span>
+			</span>
+			<span class="layout-label">Centered</span>
+			<span class="layout-desc faint">Content stays in the middle</span>
+		</button>
+		<button
+			type="button"
+			class="layout-card"
+			class:picked={wideLayout}
+			onclick={async () => { wideLayout = true; const b = new FormData(); b.set('wideLayout', '1'); await fetch('?/saveLayout', { method: 'POST', body: b }); window.location.reload(); }}
+		>
+			<span class="layout-preview wide-preview">
+				<span class="layout-bar"></span>
+				<span class="layout-grid">
+					<span></span><span></span><span></span><span></span><span></span>
 				</span>
-				<span class="layout-label">Wide</span>
-				<span class="layout-desc faint">Uses the full window width</span>
-			</button>
-		</div>
-		<button type="submit" class="btn btn-primary">Save layout</button>
-	</form>
+			</span>
+			<span class="layout-label">Wide</span>
+			<span class="layout-desc faint">Uses the full window width</span>
+		</button>
+	</div>
 </section>
 
 <section style="--accent: {accent}">
@@ -191,13 +176,7 @@
 	<div class="head"><h2>Sorting</h2></div>
 	<p class="muted">Turn off the orders you never use and they stop appearing in the list.</p>
 
-	{#if form?.sortError}
-		<p class="msg bad" role="alert">{form.sortError}</p>
-	{:else if form?.sortOk}
-		<p class="msg good" role="status">{form.sortOk}</p>
-	{/if}
-
-	<form method="POST" action="?/saveSorts" class="sorts">
+	<div class="sorts">
 		{#each SORT_GROUPS as group (group.key)}
 			<fieldset>
 				<legend>{group.label}</legend>
@@ -205,18 +184,28 @@
 					<label class="toggle">
 						<input
 							type="checkbox"
-							name="sort"
 							value={option.value}
 							checked={!data.hiddenSorts.includes(option.value)}
+							onchange={async (e) => {
+								const checked = e.currentTarget.checked;
+								if (checked) {
+									data.hiddenSorts = data.hiddenSorts.filter((v: string) => v !== option.value);
+								} else {
+									data.hiddenSorts = [...data.hiddenSorts, option.value];
+								}
+								const body = new FormData();
+								for (const s of SORTS) {
+									if (!data.hiddenSorts.includes(s.value)) body.append('sort', s.value);
+								}
+								await fetch('?/saveSorts', { method: 'POST', body });
+							}}
 						/>
 						{option.label}
 					</label>
 				{/each}
 			</fieldset>
 		{/each}
-
-		<button type="submit" class="btn btn-primary">Save sorting</button>
-	</form>
+	</div>
 </section>
 <section>
 	<div class="head"><h2>Poison Mode</h2></div>

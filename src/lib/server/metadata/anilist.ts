@@ -121,6 +121,7 @@ function toResult(item: AniListMedia): SearchResult {
 const TRENDING = `
 query ($perPage: Int, $page: Int, $sort: [MediaSort]) {
   Page(perPage: $perPage, page: $page) {
+    pageInfo { hasNextPage }
     media(type: ANIME, sort: $sort, isAdult: false) {
       id
       title { romaji english }
@@ -148,7 +149,7 @@ export async function trendingAniList(
 	mode: 'trending' | 'popular' = 'trending'
 ): Promise<SearchResult[]> {
 	try {
-		const sort = mode === 'popular' ? ['POPULARITY_DESC'] : ['TRENDING_DESC'];
+		const sort = mode === 'popular' ? ['POPULARITY_DESC'] : ['TRENDING_DESC', 'POPULARITY_DESC'];
 
 		const response = await fetch(ENDPOINT, {
 			method: 'POST',
@@ -159,7 +160,7 @@ export async function trendingAniList(
 		if (!response.ok) return [];
 
 		const payload = (await response.json()) as {
-			data?: { Page?: { media?: AniListMedia[] } };
+			data?: { Page?: { pageInfo?: { hasNextPage?: boolean }; media?: AniListMedia[] } };
 		};
 
 		return (payload.data?.Page?.media ?? []).map(toResult);

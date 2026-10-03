@@ -17,19 +17,27 @@
 
 	const ORDER = ['franchise', 'director', 'studio', 'genre'];
 
-	const sorted = $derived(
-		[...tags].sort((a, b) => {
-			const byKind = ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind);
-			return byKind !== 0 ? byKind : a.name.localeCompare(b.name);
-		})
-	);
+	const sorted = $derived.by(() => {
+		const seen = new Set<string>();
+		return [...tags]
+			.sort((a, b) => {
+				const byKind = ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind);
+				return byKind !== 0 ? byKind : a.name.localeCompare(b.name);
+			})
+			.filter((t) => {
+				const key = t.name + t.kind;
+				if (seen.has(key)) return false;
+				seen.add(key);
+				return true;
+			});
+	});
 </script>
 
 {#if sorted.length > 0}
 	<section class="tags">
 		<h2 class="label">{heading}</h2>
 		<ul>
-			{#each sorted as tag (tag.name + tag.kind)}
+			{#each sorted as tag, i (`${tag.name}:${tag.kind}:${i}`)}
 				<li>
 					{#if tag.id}
 						<a class="chip {tag.kind}" href="/?tag={tag.id}" title="Everything tagged {tag.name}">

@@ -21,12 +21,65 @@
 		{ value: 'popular', label: 'All time' }
 	];
 
+	const SORTS = [
+		{ value: '', label: 'Most voted' },
+		{ value: 'vote_average', label: 'Highest rated' },
+		{ value: 'popularity', label: 'Most popular' },
+		{ value: 'release_date_desc', label: 'Newest first' },
+		{ value: 'release_date_asc', label: 'Oldest first' }
+	];
+
+	const GENRES = [
+		{ value: '', label: 'Any genre' },
+		{ value: '28', label: 'Action' },
+		{ value: '12', label: 'Adventure' },
+		{ value: '16', label: 'Animation' },
+		{ value: '35', label: 'Comedy' },
+		{ value: '80', label: 'Crime' },
+		{ value: '99', label: 'Documentary' },
+		{ value: '18', label: 'Drama' },
+		{ value: '10751', label: 'Family' },
+		{ value: '14', label: 'Fantasy' },
+		{ value: '36', label: 'History' },
+		{ value: '27', label: 'Horror' },
+		{ value: '9648', label: 'Mystery' },
+		{ value: '10749', label: 'Romance' },
+		{ value: '878', label: 'Sci-Fi' },
+		{ value: '53', label: 'Thriller' },
+		{ value: '10752', label: 'War' },
+		{ value: '37', label: 'Western' }
+	];
+
 	/** Filters live in the URL, so a search you liked is a link you can keep. */
 	function setParam(key: string, value: string) {
 		const params = new URLSearchParams(window.location.search);
 		if (value) params.set(key, value);
 		else params.delete(key);
 		goto(`?${params.toString()}`, { keepFocus: true, noScroll: true });
+	}
+
+	function setParams(pairs: Record<string, string>) {
+		const params = new URLSearchParams(window.location.search);
+		for (const [k, v] of Object.entries(pairs)) {
+			if (v) params.set(k, v);
+			else params.delete(k);
+		}
+		goto(`?${params.toString()}`, { keepFocus: true, noScroll: true });
+	}
+
+	let yearFromInput = $state(data.yearFrom ? String(data.yearFrom) : '');
+	let yearToInput = $state(data.yearTo ? String(data.yearTo) : '');
+	let browseFilterOpen = $state(false);
+	let browseFilterPanel = $state<HTMLDivElement | null>(null);
+
+	function applyYears() {
+		setParams({ from: yearFromInput, to: yearToInput });
+	}
+
+	const browseFilterCount = $derived((data.genre ? 1 : 0) + (data.yearFrom || data.yearTo ? 1 : 0));
+
+	function onBrowseFilterClick(e: MouseEvent) {
+		if (browseFilterPanel && !browseFilterPanel.contains(e.target as Node)) browseFilterOpen = false;
 	}
 
 	// eslint-disable-next-line svelte/valid-compile -- intentionally captures initial data.q only
@@ -53,7 +106,11 @@
 
 	function onCardContext(e: MouseEvent, result: SearchResult) {
 		e.preventDefault();
-		ctxMenu = { x: e.clientX, y: e.clientY, result };
+		const menuW = 200;
+		const menuH = 220;
+		const x = Math.min(e.clientX, window.innerWidth - menuW);
+		const y = Math.min(e.clientY, window.innerHeight - menuH);
+		ctxMenu = { x, y, result };
 	}
 
 	function closeCtx() { ctxMenu = null; }
@@ -102,7 +159,7 @@
 	let showing = $state('');
 
 	$effect(() => {
-		const signature = `${data.cat}:${data.mode}`;
+		const signature = `${data.cat}:${data.mode}:${data.sort}:${data.yearFrom}:${data.yearTo}:${data.genre}`;
 		if (showing === signature) return;
 
 		showing = signature;
@@ -118,31 +175,47 @@
 
 	async function more(shelf: { key: string; results: SearchResult[]; page: number }) {
 		loading = shelf.key;
+		const PAGES_PER_CLICK = 3;
 
 		try {
-			const next = (at[shelf.key] ?? shelf.page) + 1;
-			const response = await fetch(`/api/browse?cat=${shelf.key}&mode=${data.mode}&page=${next}`);
-
-			if (!response.ok) {
-				ended = { ...ended, [shelf.key]: true };
-				return;
-			}
-
-			const payload = await response.json();
-			const results: SearchResult[] = payload.results ?? [];
-
-			// Pages overlap now and then, and a duplicate key would take the
-			// list down with it.
+			let currentPage = at[shelf.key] ?? shelf.page;
+			let allFresh: SearchResult[] = [];
 			const already = new Set(shelfResults(shelf).map((one) => one.key));
-			const fresh = results.filter((one) => !already.has(one.key));
 
-			if (fresh.length === 0) {
-				ended = { ...ended, [shelf.key]: true };
-				return;
+			for (let i = 0; i < PAGES_PER_CLICK; i++) {
+				const next = currentPage + 1;
+				let moreUrl = `/api/browse?cat=${shelf.key}&mode=${data.mode}&page=${next}`;
+					if (data.sort) moreUrl += `&sort=${data.sort}`;
+					if (data.yearFrom) moreUrl += `&from=${data.yearFrom}`;
+					if (data.yearTo) moreUrl += `&to=${data.yearTo}`;
+					if (data.genre) moreUrl += `&genre=${data.genre}`;
+					const response = await fetch(moreUrl);
+
+				if (!response.ok) break;
+
+				const payload = await response.json();
+				const results: SearchResult[] = payload.results ?? [];
+				const fresh = results.filter((one) => {
+					if (already.has(one.key)) return false;
+					already.add(one.key);
+					return true;
+				});
+
+				if (fresh.length === 0) {
+					ended = { ...ended, [shelf.key]: true };
+					break;
+				}
+
+				allFresh = [...allFresh, ...fresh];
+				currentPage = next;
 			}
 
-			extra = { ...extra, [shelf.key]: [...(extra[shelf.key] ?? []), ...fresh] };
-			at = { ...at, [shelf.key]: next };
+			if (allFresh.length > 0) {
+				extra = { ...extra, [shelf.key]: [...(extra[shelf.key] ?? []), ...allFresh] };
+				at = { ...at, [shelf.key]: currentPage };
+			} else if (!ended[shelf.key]) {
+				ended = { ...ended, [shelf.key]: true };
+			}
 		} catch {
 			ended = { ...ended, [shelf.key]: true };
 		} finally {
@@ -153,10 +226,53 @@
 	/** Where "back" should return to, including whatever you searched for. */
 	const here = $derived(`/browse${page.url.search}`);
 
+	let showBackToTop = $state(false);
+
+	function onScroll() {
+		showBackToTop = window.scrollY > 600;
+	}
+
+	function scrollToTop() {
+		window.scrollTo({ top: 0, behavior: 'smooth' });
+	}
+
+	$effect(() => {
+		window.addEventListener('scroll', onScroll, { passive: true });
+		const saved = sessionStorage.getItem('browse-scroll');
+		const savedExtra = sessionStorage.getItem('browse-extra');
+		if (savedExtra) {
+			try {
+				const parsed = JSON.parse(savedExtra);
+				extra = parsed.extra ?? {};
+				at = parsed.at ?? {};
+				ended = parsed.ended ?? {};
+			} catch {}
+			sessionStorage.removeItem('browse-extra');
+		}
+		if (saved) {
+			const y = Number(saved);
+			sessionStorage.removeItem('browse-scroll');
+			requestAnimationFrame(() => {
+				requestAnimationFrame(() => window.scrollTo(0, y));
+			});
+		}
+		return () => window.removeEventListener('scroll', onScroll);
+	});
+
+	function saveScroll() {
+		try {
+			sessionStorage.setItem('browse-scroll', String(window.scrollY));
+			if (Object.keys(extra).length > 0) {
+				sessionStorage.setItem('browse-extra', JSON.stringify({ extra, at, ended }));
+			}
+		} catch {}
+	}
+
 	const link = (result: SearchResult) =>
 		`/title/${result.source}/${encodeURIComponent(result.sourceId)}?back=${encodeURIComponent(here)}`;
 </script>
 
+<svelte:window onmousedown={onBrowseFilterClick} onkeydown={(e) => e.key === 'Escape' && (browseFilterOpen = false)} />
 <svelte:head><title>{pm ? 'Find giblets' : 'Browse'} · {pm ? "Papa's Giblets" : 'Catalog'}</title></svelte:head>
 
 <BackBar />
@@ -205,6 +321,59 @@
 	{/if}
 </nav>
 
+{#if !data.q}
+	<div class="browse-toolbar">
+		<select
+			aria-label="Sort by"
+			onchange={(e) => setParam('sort', (e.target as HTMLSelectElement).value)}
+		>
+			{#each SORTS as opt (opt.value)}
+				<option value={opt.value} selected={data.sort === opt.value || (!data.sort && !opt.value)}>{opt.label}</option>
+			{/each}
+		</select>
+
+		<div class="browse-filter-wrap" bind:this={browseFilterPanel}>
+			<button
+				type="button"
+				class="btn browse-filter-trigger"
+				class:on={browseFilterCount > 0}
+				aria-expanded={browseFilterOpen}
+				onclick={(e) => { e.stopPropagation(); browseFilterOpen = !browseFilterOpen; }}
+			>
+				{browseFilterCount > 0 ? `${browseFilterCount} filter${browseFilterCount === 1 ? '' : 's'}` : 'Filter'}
+				<span class="caret" aria-hidden="true">▾</span>
+			</button>
+
+			{#if browseFilterOpen}
+				<div class="browse-filter-panel">
+					<label class="browse-filter-label">Genre</label>
+					<select
+						aria-label="Genre"
+						onchange={(e) => setParam('genre', (e.target as HTMLSelectElement).value)}
+					>
+						{#each GENRES as opt (opt.value)}
+							<option value={opt.value} selected={String(data.genre ?? '') === opt.value}>{opt.label}</option>
+						{/each}
+					</select>
+
+					<label class="browse-filter-label">Year range</label>
+					<div class="browse-year-row">
+						<input type="number" min="1900" max="2030" placeholder="From" aria-label="From year" bind:value={yearFromInput} onchange={applyYears} />
+						<span class="browse-year-dash">–</span>
+						<input type="number" min="1900" max="2030" placeholder="To" aria-label="To year" bind:value={yearToInput} onchange={applyYears} />
+					</div>
+
+					{#if browseFilterCount > 0}
+						<button type="button" class="browse-filter-clear" onclick={() => { setParams({ genre: '', from: '', to: '' }); yearFromInput = ''; yearToInput = ''; }}>
+							Clear all
+						</button>
+					{/if}
+				</div>
+			{/if}
+		</div>
+	</div>
+{/if}
+
 {#if !data.tmdbEnabled}
 	<p class="msg" role="status">
 		Without a TMDB key this only finds anime. <a href="/settings/services">Add one</a> and films
@@ -217,17 +386,24 @@
 {/if}
 
 {#snippet card(result: SearchResult)}
-	<li class:mine={have(result)} oncontextmenu={(e) => onCardContext(e, result)}>
-		<a href={link(result)} class="poster">
+	<li class="card" class:mine={have(result)} oncontextmenu={(e) => onCardContext(e, result)}>
+		<a href={link(result)} class="card-link" aria-label={result.title} onclick={saveScroll}></a>
+		<div class="poster">
 			{#if result.posterUrl}
 				<img src={result.posterUrl} alt="" loading="lazy" />
 			{:else}
 				<span class="fallback" aria-hidden="true">?</span>
 			{/if}
 			{#if have(result)}<span class="tick" title="In your library">&check;</span>{/if}
-		</a>
+			{#if !have(result)}
+				<span class="hover-actions">
+					<button type="button" title="Add as completed" onclick={(e) => { e.stopPropagation(); add(result, 'completed'); }}>+ Add</button>
+					<button type="button" title="Add to watchlist" onclick={(e) => { e.stopPropagation(); add(result, 'planned'); }}>♡ Watchlist</button>
+				</span>
+			{/if}
+		</div>
 
-		<a href={link(result)} class="name">{result.title}</a>
+		<span class="name">{result.title}</span>
 
 		<p class="sub faint tabular">
 			{result.year ?? '—'} · {result.kind}{#if result.externalRating}&nbsp;· {result.externalRating.toFixed(
@@ -285,6 +461,10 @@
 	{/each}
 {/if}
 
+{#if showBackToTop}
+	<button type="button" class="back-to-top" onclick={scrollToTop}>↑ Back to top</button>
+{/if}
+
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 {#if ctxMenu}
 	<div class="ctx-backdrop" onclick={closeCtx} oncontextmenu={(e) => { e.preventDefault(); closeCtx(); }}></div>
@@ -316,8 +496,8 @@
 			<button type="button" onclick={() => { add(ctxMenu!.result, 'watching'); closeCtx(); }}>
 				{pm ? p('Add as watching') : 'Add as watching'}
 			</button>
-			<button type="button" onclick={() => { add(ctxMenu!.result, 'plan to watch'); closeCtx(); }}>
-				{pm ? p('Add to plan to watch') : 'Add to plan to watch'}
+			<button type="button" onclick={() => { add(ctxMenu!.result, 'planned'); closeCtx(); }}>
+				{pm ? p('Add to watchlist') : 'Add to watchlist'}
 			</button>
 		{/if}
 	</div>
@@ -392,6 +572,108 @@
 		color: var(--accent-ink);
 	}
 
+	.browse-toolbar {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 10px;
+		margin-bottom: 18px;
+	}
+
+	.browse-toolbar select {
+		width: auto;
+		min-width: 130px;
+		max-width: 220px;
+	}
+
+	.browse-filter-wrap {
+		position: relative;
+	}
+
+	.browse-filter-trigger {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		white-space: nowrap;
+	}
+
+	.browse-filter-trigger.on {
+		border-color: var(--accent);
+		color: var(--accent);
+	}
+
+	.caret {
+		font-size: 0.7rem;
+		opacity: 0.7;
+	}
+
+	.browse-filter-panel {
+		position: absolute;
+		top: calc(100% + 6px);
+		left: 0;
+		z-index: 20;
+		width: 260px;
+		max-width: calc(100vw - 32px);
+		background: var(--surface);
+		border: 1px solid var(--rule-firm);
+		border-radius: var(--radius);
+		box-shadow: var(--shadow);
+		padding: 12px;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.browse-filter-panel select {
+		width: 100%;
+		min-width: 0;
+		max-width: none;
+	}
+
+	.browse-filter-label {
+		font-size: 0.7rem;
+		font-weight: 600;
+		letter-spacing: 0.07em;
+		text-transform: uppercase;
+		color: var(--ink-soft);
+		margin: 0;
+	}
+
+	.browse-year-row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.browse-year-row input {
+		flex: 1;
+		min-width: 0;
+		font-size: 0.85rem;
+		padding: 6px 8px;
+	}
+
+	.browse-year-dash {
+		color: var(--ink-soft);
+		font-size: 0.85rem;
+	}
+
+	.browse-filter-clear {
+		background: none;
+		border: none;
+		border-top: 1px solid var(--rule);
+		padding: 8px 0 0;
+		color: var(--accent);
+		font-size: 0.83rem;
+		text-align: left;
+		cursor: pointer;
+	}
+
+	@media (max-width: 560px) {
+		.browse-toolbar select {
+			flex: 1;
+			min-width: 0;
+		}
+	}
+
 	.shelf .more {
 		margin-top: 16px;
 	}
@@ -437,6 +719,21 @@
 		gap: 24px 16px;
 	}
 
+	.card {
+		position: relative;
+	}
+
+	.card-link {
+		position: absolute;
+		inset: 0;
+		z-index: 1;
+	}
+
+	.card .added {
+		position: relative;
+		z-index: 2;
+	}
+
 	.poster {
 		position: relative;
 		display: grid;
@@ -456,8 +753,44 @@
 		display: block;
 	}
 
-	.poster:hover {
+	.card:hover .poster {
 		border-color: var(--accent);
+	}
+
+	.hover-actions {
+		position: absolute;
+		bottom: 0;
+		left: 0;
+		right: 0;
+		display: flex;
+		gap: 4px;
+		padding: 6px;
+		background: linear-gradient(transparent, rgba(0, 0, 0, 0.85));
+		z-index: 3;
+		opacity: 0;
+		transition: opacity 0.15s;
+	}
+
+	.card:hover .hover-actions {
+		opacity: 1;
+	}
+
+	.hover-actions button {
+		flex: 1;
+		padding: 5px 4px;
+		border: none;
+		border-radius: 4px;
+		background: rgba(255, 255, 255, 0.18);
+		color: #fff;
+		font-size: 0.7rem;
+		font-weight: 600;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+
+	.hover-actions button:hover {
+		background: var(--accent);
+		color: var(--accent-ink);
 	}
 
 	.fallback {
@@ -492,7 +825,7 @@
 		overflow-wrap: anywhere;
 	}
 
-	.name:hover {
+	.card:hover .name {
 		color: var(--accent);
 	}
 
@@ -523,6 +856,32 @@
 
 	.empty {
 		margin-top: 34px;
+	}
+
+	.back-to-top {
+		position: fixed;
+		bottom: 28px;
+		right: 28px;
+		z-index: 50;
+		padding: 10px 18px;
+		border-radius: 100px;
+		border: 1px solid var(--rule);
+		background: var(--surface);
+		color: var(--ink);
+		font-size: 0.85rem;
+		font-weight: 600;
+		cursor: pointer;
+		box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		white-space: nowrap;
+	}
+
+	.back-to-top:hover {
+		background: var(--accent);
+		color: var(--accent-ink);
+		border-color: var(--accent);
 	}
 
 	.ctx-backdrop {

@@ -724,7 +724,8 @@
 			subUrl: subtitlesOn ? activeSubUrl : '',
 			subDelay: subtitleDelay,
 			subFileName: subtitlesOn ? activeSubFileName : '',
-			posterUrl: watchPosterUrl
+			posterUrl: watchPosterUrl,
+			shareKey, fid: activeFileFid
 		});
 	}
 
@@ -1137,7 +1138,10 @@
 				backBufferLength: 90,
 				fragLoadingMaxRetry: 4,
 				fragLoadingRetryDelay: 1000,
-				abrEwmaDefaultEstimate: 50_000_000
+				abrEwmaDefaultEstimate: 50_000_000,
+				xhrSetup: (xhr: XMLHttpRequest) => {
+					try { xhr.setRequestHeader('Referer', 'https://www.febbox.com/'); } catch {}
+				}
 			});
 			hls.loadSource(streamUrl);
 			hls.attachMedia(videoEl);
@@ -1150,8 +1154,13 @@
 				).join(', ');
 				debugInfo = (debugInfo ? debugInfo + ' | ' : '') + `hls: ${hls.levels.length} lvl (${lvlInfo})`;
 				if (hls.levels.length > 1) {
-					hls.currentLevel = hls.levels.length - 1;
-					hlsActiveLevel = hls.levels.length - 1;
+					let best = hls.levels.length - 1;
+					for (let i = hls.levels.length - 1; i >= 0; i--) {
+						const vc = hls.levels[i].codecSet || hls.levels[i].videoCodec || '';
+						if (vc.includes('avc1') || vc.includes('avc3')) { best = i; break; }
+					}
+					hls.currentLevel = best;
+					hlsActiveLevel = best;
 				} else {
 					hlsActiveLevel = 0;
 				}
@@ -1184,6 +1193,10 @@
 				hlsActiveLevel = data.level;
 			});
 			hls.on(Hls.Events.ERROR, async (_e, data) => {
+				const errDetail = `${data.type}/${data.details}` +
+					((data as any).response?.code ? ` http=${(data as any).response.code}` : '') +
+					((data as any).reason ? ` reason=${(data as any).reason}` : '') +
+					(data.url ? ` url=${data.url.substring(0, 120)}` : '');
 				if (!data.fatal) {
 					if (data.details === 'bufferStalledError') {
 						hls.startLoad(-1);
@@ -1198,6 +1211,7 @@
 				if (prevStreamUrl) {
 					if (qualityTimer) { clearTimeout(qualityTimer); qualityTimer = null; }
 					showQualityToast('That file could not be played. Try a different one.');
+					debugInfo = (debugInfo ? debugInfo + ' | ' : '') + 'fatal: ' + errDetail;
 					const t = videoEl?.currentTime ?? 0;
 					seekAfterLoad = t;
 					streamUrl = prevStreamUrl;
@@ -1208,8 +1222,8 @@
 				}
 				const fid = activeFile?.fid;
 				if (!fid || !shareKey) {
-					problem = `Video failed to load (${data.type}).`;
-					debugInfo = streamUrl;
+					problem = `Video failed to load (${data.details}).`;
+					debugInfo = (debugInfo ? debugInfo + ' | ' : '') + 'fatal: ' + errDetail;
 					return;
 				}
 				const savedTime = videoEl?.currentTime ?? 0;
@@ -1230,8 +1244,8 @@
 						return;
 					}
 				} catch {}
-				problem = `Video failed to load (${data.type}).`;
-				debugInfo = streamUrl;
+				problem = `Video failed to load (${data.details}).`;
+				debugInfo = (debugInfo ? debugInfo + ' | ' : '') + 'fatal: ' + errDetail;
 			});
 			hlsInstance = hls;
 		} else {
@@ -1355,13 +1369,20 @@
 		}
 	});
 
+	function scrollToActiveEpisode() {
+		tick().then(() => {
+			setTimeout(() => {
+				const active = document.querySelector('.ep-btn.playing');
+				if (active) active.scrollIntoView({ block: 'center', behavior: 'instant' });
+			}, 150);
+		});
+	}
+
 	$effect(() => {
 		const ep = activeEpisode;
+		const _url = streamUrl;
 		if (!ep) return;
-		tick().then(() => {
-			const active = document.querySelector('.ep-btn.playing');
-			active?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-		});
+		scrollToActiveEpisode();
 	});
 
 	/* --------------------------------------------------------------- content functions */
@@ -1560,6 +1581,7 @@
 	async function changeToFile(file: FileOption) {
 		if (!file || file.fid === activeFileFid) return;
 		preferredQuality = file.quality;
+		if (qualityToast) { qualityToast = ''; if (qualityToastTimer) { clearTimeout(qualityToastTimer); qualityToastTimer = null; } }
 
 		if (useIframe) {
 			iframeFid = file.fid;

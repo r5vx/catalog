@@ -5,10 +5,12 @@ import { pinIsSet, sessionToken, setupNeeded, readSettings } from '$lib/server/s
 import '$lib/server/updater';
 import { consumePdfToken } from '$lib/server/pdf';
 import { scheduleBackfill } from '$lib/server/backfill';
+import { recategorizeAnime } from '$lib/server/recategorize';
 
 // Runtimes, synopses and outside scores that the search results never carried
 // get filled in shortly after the app opens, without anyone asking.
 scheduleBackfill();
+recategorizeAnime();
 
 /** Icons and the web manifest stay reachable so "Add to Home Screen" works. */
 const PUBLIC_PATHS = ['/manifest.webmanifest', '/favicon.ico', '/api/diagnostics', '/api/watch/save-token', '/api/watch/debug'];

@@ -9,11 +9,12 @@
 		total: number;
 		noteCount: number;
 		watchingCount?: number;
+		friendCount?: number;
 		active: string;
 		poisonMode?: boolean;
 	};
 
-	let { categories, countByCategory, total, noteCount, watchingCount = 0, active, poisonMode = false }: Props = $props();
+	let { categories, countByCategory, total, noteCount, watchingCount = 0, friendCount = 0, active, poisonMode = false }: Props = $props();
 	const pm = $derived(poisonMode);
 
 	/**
@@ -50,6 +51,12 @@
 			<span class="n tabular">{countByCategory[category.id] ?? 0}</span>
 		</a>
 	{/each}
+
+	<a href={link('friends')} class="tab" class:active={active === 'friends'}>
+		<span aria-hidden="true">👥</span>
+		{pm ? p('Friends') : 'Friends'}
+		{#if friendCount > 0}<span class="n tabular">{friendCount}</span>{/if}
+	</a>
 
 	<a href="/notes" class="tab" class:active={active === 'notes'}>
 		<span aria-hidden="true">📝</span>

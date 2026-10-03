@@ -7,6 +7,109 @@ and stamps it with the version number.
 
 ## Unreleased
 
+## 2.1.7 — 2026-10-03
+
+- **Browse cards are fully clickable.** Clicking anywhere on a card
+  opens the title — not just the poster or the name text.
+- **Browse remembers your scroll position.** Coming back from a title
+  page puts you right where you left off.
+- **Back to top button.** A floating arrow appears in Browse when you
+  scroll down.
+- **Adding from a title page stays on the page.** You no longer get
+  sent away to the library entry — the button says "Added!" with a
+  link if you want it.
+- **Right-click menu stays on screen.** Context menus near the right
+  edge no longer get cropped.
+- **Show more loads 60 titles.** Each click fetches three pages
+  instead of one.
+- **Anime classified correctly.** Japanese animated titles from TMDB
+  (like Hunter x Hunter) now land under Anime, not Series.
+- **No unreleased movies in Browse.** Films that haven't come out yet
+  no longer appear in trending or popular. The Watch button is also
+  hidden on title pages for unreleased titles.
+- **Quality switch error is visible.** The error message when a file
+  can't be played now shows as a clear toast over the video instead
+  of a barely-visible bar.
+- **Browse starts with 60 titles per shelf.** The initial load now
+  matches what "Show more" gives, so you see three times as much
+  before needing to click.
+- **"Show more" state preserved.** Coming back from a title page
+  restores everything you expanded, not just the scroll position.
+- **"All time" shows real classics.** The popular list no longer mixes
+  in obscure regional titles — only well-known films, series and anime.
+- **Settings auto-save.** Theme, layout, sorting and region all apply
+  instantly when you pick them. No more Save buttons.
+- **Completed counts per category.** The library header now shows how
+  many you've completed in each category (Movies, TV Shows, Anime).
+- **Anime never runs out in Browse.** "Show more" on the Anime shelf
+  now keeps going with popular titles once the trending list is
+  exhausted.
+- **Watch button always visible.** Title pages check Showbox in the
+  background — if the title isn't available, the button turns red and
+  says "Not available on Showbox" instead of disappearing.
+- **Friends tab in your library.** Import a friend's shared catalog and
+  browse it right from the library. See what they've watched, filter by
+  category, search their titles, and add anything to your library with
+  one click. Friends persist between sessions — no need to re-import.
+- **Clicking titles works from everywhere.** Titles that are already in
+  your library (like Peacemaker) no longer reset your position — they
+  open the title page with an "In your library" link instead.
+- **Watch button doesn't flash.** The button now shows "Checking
+  availability…" while loading, instead of flashing.
+- **Browse search is more forgiving.** "peace maker" (with a space) now
+  finds Peacemaker. The search also tries separate movie and TV lookups
+  for broader results.
+- **Browse filters match the library.** Sort and year filters are now
+  inline dropdowns in the toolbar, the same style as the library page.
+- **Add from Browse on hover.** Hovering a card shows "+ Add" and
+  "Watchlist" buttons so you don't have to right-click.
+- **Back to top is clearer.** The button is bigger and says "Back to
+  top" instead of just showing an arrow.
+- **Search finds compound titles.** Typing "peace" now finds
+  "Peacemaker" — the search tries a broader lookup so single-word
+  titles that start with your query don't get missed.
+- **Popular titles rank higher.** Obscure titles with no poster no
+  longer outrank well-known ones just because the name matches exactly.
+- **Episode list scrolls to where you are.** Opening a show from
+  Continue Watching now scrolls the episode sidebar to the episode
+  you're on, instead of starting at the top.
+- **Friends tab hides watchlists by default.** Their planned/want-to-
+  watch titles are hidden unless you pick "Their watchlist" from the
+  filter. No more wading through titles they haven't actually seen.
+- **Year range lives inside the filter dropdown.** The From/To year
+  fields moved out of the toolbar and into the Filter panel in both
+  the library and Browse, reducing clutter.
+- **Library stats show watched vs total.** The header now reads
+  "386 watched / 397 in library · 264 / 269 Movies · …" so you can
+  see at a glance how many you've actually watched per category.
+- **Filter dropdown stays open while selecting text.** Highlighting a
+  year value no longer closes the dropdown when your mouse leaves the
+  panel.
+- **4K HEVC files play instead of failing.** Files whose highest
+  quality level uses HEVC (unsupported in Electron) now fall back to
+  the best H.264 level automatically, instead of showing "file cannot
+  be played."
+- **Browse filters consolidated.** Genre, year range, and clear-all
+  are grouped in a single "Filter" dropdown button.
+- **Compact stats line.** The library header now shows per-category
+  counts and the overall completed ratio in one line.
+- **Anime classified correctly everywhere.** Japanese animated shows
+  (like Apothecary Diaries, Shangri-La Frontier) are now properly
+  categorised as Anime, not TV Shows — in the library, in Browse
+  results, and in search. Existing mis-categorised entries are
+  fixed automatically on startup.
+- **Episode sidebar scrolls on resume.** Opening a show from Continue
+  Watching now reliably scrolls the sidebar to the current episode.
+- **Better stream error diagnostics.** When a file fails to play,
+  the error now shows exactly what went wrong (HTTP status, error
+  type) in the debug details, making it easier to diagnose.
+- **Music and specials sink to the bottom.** Music videos, OVAs, TV
+  shorts, and specials no longer outrank real films and series in
+  search results.
+- **Watch button won't send you to a different title.** Clicking Watch
+  on "Peace" no longer opens "War and Peace" — the match is stricter
+  now and says "not available" when Showbox doesn't have it.
+
 ## 2.1.6 — 2026-10-02
 
 - **Continue Watching fixed.** The tab no longer breaks the library
