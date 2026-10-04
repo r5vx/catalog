@@ -289,6 +289,16 @@ export function existingSourceKeys(): Set<string> {
 	return new Set(rows.map((row) => `${row.source}:${row.sourceId}`));
 }
 
+export function existingSourceKeysWithIds(): Record<string, number> {
+	const rows = db
+		.prepare('SELECT id, source, source_id AS sourceId FROM entries WHERE source_id IS NOT NULL')
+		.all() as { id: number; source: string; sourceId: string }[];
+
+	const map: Record<string, number> = {};
+	for (const row of rows) map[`${row.source}:${row.sourceId}`] = row.id;
+	return map;
+}
+
 /* -------------------------------------------------------------------- writing */
 
 type EntryInput = {

@@ -41,7 +41,7 @@ type AniListMedia = {
 const scalePopularity = (members: number) => fameScore(members, 1_000, 400_000);
 
 const FORMAT_LABELS: Record<string, string> = {
-	TV: 'TV',
+	TV: 'Anime',
 	TV_SHORT: 'TV Short',
 	MOVIE: 'Movie',
 	SPECIAL: 'Special',
@@ -119,10 +119,10 @@ function toResult(item: AniListMedia): SearchResult {
 }
 
 const TRENDING = `
-query ($perPage: Int, $page: Int, $sort: [MediaSort]) {
+query ($perPage: Int, $page: Int, $sort: [MediaSort], $yearGreater: FuzzyDateInt, $yearLesser: FuzzyDateInt, $genre: String, $statusNot: MediaStatus) {
   Page(perPage: $perPage, page: $page) {
     pageInfo { hasNextPage }
-    media(type: ANIME, sort: $sort, isAdult: false) {
+    media(type: ANIME, sort: $sort, isAdult: false, startDate_greater: $yearGreater, startDate_lesser: $yearLesser, genre: $genre, status_not: $statusNot) {
       id
       title { romaji english }
       startDate { year }
@@ -137,6 +137,22 @@ query ($perPage: Int, $page: Int, $sort: [MediaSort]) {
   }
 }`;
 
+const TMDB_GENRE_TO_ANILIST: Record<number, string> = {
+	28: 'Action', 12: 'Adventure', 35: 'Comedy', 18: 'Drama',
+	14: 'Fantasy', 27: 'Horror', 9648: 'Mystery', 10749: 'Romance',
+	878: 'Sci-Fi', 53: 'Thriller'
+};
+
+type BrowseSort = 'vote_count' | 'vote_average' | 'popularity' | 'release_date_desc' | 'release_date_asc';
+
+const SORT_MAP: Record<BrowseSort, string[]> = {
+	vote_count: ['POPULARITY_DESC'],
+	vote_average: ['SCORE_DESC'],
+	popularity: ['POPULARITY_DESC'],
+	release_date_desc: ['START_DATE_DESC'],
+	release_date_asc: ['START_DATE']
+};
+
 /**
  * The anime half of the browse page.
  *
@@ -146,16 +162,45 @@ query ($perPage: Int, $page: Int, $sort: [MediaSort]) {
 export async function trendingAniList(
 	perPage = 24,
 	page = 1,
-	mode: 'trending' | 'popular' = 'trending'
+	mode: 'trending' | 'popular' = 'trending',
+	filters?: { yearFrom?: number; yearTo?: number; sort?: BrowseSort; genre?: number }
 ): Promise<SearchResult[]> {
 	try {
-		const sort = mode === 'popular' ? ['POPULARITY_DESC'] : ['TRENDING_DESC', 'POPULARITY_DESC'];
+		const hasSort = filters?.sort && SORT_MAP[filters.sort];
+		const sort = hasSort
+			? SORT_MAP[filters!.sort!]
+			: mode === 'popular' ? ['POPULARITY_DESC'] : ['TRENDING_DESC', 'POPULARITY_DESC'];
+		const variables: Record<string, unknown> = { perPage, page, sort };
 
-		const response = await fetch(ENDPOINT, {
+		if (filters?.yearFrom) variables.yearGreater = filters.yearFrom * 10000;
+		if (filters?.yearTo) {
+			variables.yearLesser = (filters.yearTo + 1) * 10000;
+		} else if (filters?.sort === 'release_date_desc') {
+			variables.yearLesser = (new Date().getFullYear() + 1) * 10000;
+		}
+
+		const aniGenre = filters?.genre ? TMDB_GENRE_TO_ANILIST[filters.genre] : undefined;
+		if (aniGenre) variables.genre = aniGenre;
+
+		if (filters?.sort === 'release_date_desc' || filters?.sort === 'release_date_asc') {
+			variables.statusNot = 'NOT_YET_RELEASED';
+		}
+
+		let response = await fetch(ENDPOINT, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-			body: JSON.stringify({ query: TRENDING, variables: { perPage, page, sort } })
+			body: JSON.stringify({ query: TRENDING, variables })
 		});
+
+		if (response.status === 429) {
+			const wait = Number(response.headers.get('Retry-After') ?? '2');
+			await new Promise((resolve) => setTimeout(resolve, Math.min(wait, 10) * 1000));
+			response = await fetch(ENDPOINT, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+				body: JSON.stringify({ query: TRENDING, variables })
+			});
+		}
 
 		if (!response.ok) return [];
 
@@ -163,7 +208,16 @@ export async function trendingAniList(
 			data?: { Page?: { pageInfo?: { hasNextPage?: boolean }; media?: AniListMedia[] } };
 		};
 
-		return (payload.data?.Page?.media ?? []).map(toResult);
+		const isDateSort = filters?.sort === 'release_date_desc' || filters?.sort === 'release_date_asc';
+		const results = (payload.data?.Page?.media ?? [])
+			.filter((m) => !isDateSort || m.startDate?.year != null)
+			.map(toResult);
+
+		if (results.length === 0 && mode === 'trending' && !hasSort) {
+			return trendingAniList(perPage, page, 'popular', filters);
+		}
+
+		return results;
 	} catch {
 		return [];
 	}

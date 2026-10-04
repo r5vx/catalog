@@ -1,5 +1,6 @@
-import { searchAll, browseShelves, hasTmdbKey, type BrowseMode, type BrowseFilters } from '$lib/server/metadata';
-import { existingSourceKeys } from '$lib/server/db/queries';
+import { searchAll, browseShelves, hasTmdbKey, trendingPeopleTmdb, type BrowseMode, type BrowseFilters } from '$lib/server/metadata';
+import { existingSourceKeysWithIds } from '$lib/server/db/queries';
+import { searchPeople } from '$lib/server/db/people';
 import { parseTitle } from '$lib/parseTitle';
 import { watchRegion } from '$lib/server/metadata/providers';
 import type { PageServerLoad } from './$types';
@@ -10,6 +11,7 @@ const VALID_SORTS = ['vote_count', 'vote_average', 'popularity', 'release_date_d
 export const load: PageServerLoad = async ({ url }) => {
 	const q = (url.searchParams.get('q') ?? '').trim();
 	const cat = url.searchParams.get('cat') ?? '';
+	const isActors = cat === 'actors';
 	const category = CATEGORIES.includes(cat) ? cat : '';
 
 	const mode: BrowseMode = url.searchParams.get('mode') === 'popular' ? 'popular' : 'trending';
@@ -25,11 +27,33 @@ export const load: PageServerLoad = async ({ url }) => {
 	const filters: BrowseFilters | undefined =
 		(yearFrom || yearTo || sort || genre) ? { yearFrom, yearTo, sort, genre } : undefined;
 
+	if (isActors) {
+		const people = q.length >= 2 ? searchPeople(q) : [];
+		const trending = !q && hasTmdbKey() ? await trendingPeopleTmdb() : [];
+		return {
+			q,
+			cat: 'actors',
+			mode,
+			yearFrom: yearFrom ?? null,
+			yearTo: yearTo ?? null,
+			sort: sort ?? null,
+			genre: genre ?? null,
+			results: [],
+			shelves: [],
+			owned: existingSourceKeysWithIds(),
+			tmdbEnabled: hasTmdbKey(),
+			people,
+			trending
+		};
+	}
+
 	const { title, year } = parseTitle(q);
 
 	const found = q ? await searchAll(title, { year, limit: 60, fuzzy: true }) : [];
 
 	const results = category ? found.filter((one) => one.categorySlug === category) : found;
+
+	const shelves = q ? [] : await browseShelves(category || undefined, mode, region, filters);
 
 	return {
 		q,
@@ -40,8 +64,10 @@ export const load: PageServerLoad = async ({ url }) => {
 		sort: sort ?? null,
 		genre: genre ?? null,
 		results,
-		shelves: q ? [] : await browseShelves(category || undefined, mode, region, filters),
-		owned: [...existingSourceKeys()],
-		tmdbEnabled: hasTmdbKey()
+		shelves,
+		owned: existingSourceKeysWithIds(),
+		tmdbEnabled: hasTmdbKey(),
+		people: [],
+		trending: []
 	};
 };

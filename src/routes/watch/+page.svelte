@@ -1442,14 +1442,9 @@
 
 			if (data.error) {
 				if (data.error === 'not_found') {
-					query = lastResolveArgs?.title ?? '';
-					streamUrl = '';
-					isAuto = false;
-					loading = false;
-					doSearch(query);
-					return;
-				} else if (data.error === 'no_link') problem = 'No link available for that title.';
-				else if (data.error === 'no_file') problem = 'No video file found.';
+					problem = 'This title is unavailable on Showbox.';
+				} else if (data.error === 'no_link') problem = 'This title is unavailable on Showbox.';
+				else if (data.error === 'no_file') problem = 'This title is on Showbox but has no video file.';
 				else problem = 'Something went wrong.';
 				loading = false;
 				return;
@@ -1505,8 +1500,15 @@
 						}
 					} catch {}
 					if (!resumeSeason) {
-						if (seasons.length) activeSeason = seasons[0];
-						if (episodes.length) activeEpisode = episodes[0];
+						if (data.startSeason && seasons.includes(data.startSeason)) {
+							activeSeason = data.startSeason;
+							const first = episodes.find(ep => ep.season === data.startSeason);
+							activeEpisode = first ?? episodes[0] ?? null;
+							needsResume = Boolean(first);
+						} else {
+							if (seasons.length) activeSeason = seasons[0];
+							if (episodes.length) activeEpisode = episodes[0];
+						}
 					}
 				}
 			}
@@ -1959,7 +1961,7 @@
 
 			<div
 				class="video-area"
-				class:hide-cursor={!showControls && playing}
+				class:hide-cursor={isFullscreen && !showControls && playing}
 				onmousemove={showControlsBriefly}
 				ontouchstart={showControlsBriefly}
 				onmouseleave={() => {
@@ -2568,7 +2570,7 @@
 
 	/* --------------------------------------------------------- video area */
 	.video-area { position: relative; flex: 1; background: #000; min-height: 0; min-width: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-	.video-area.hide-cursor { cursor: none; }
+	.video-area.hide-cursor, .video-area.hide-cursor * { cursor: none !important; }
 
 	.video-area video { width: 100%; height: 100%; display: block; outline: none; }
 	.video-area video.buffering { opacity: 0.3; }

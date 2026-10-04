@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { browsePage, BROWSE_CATEGORIES, type BrowseMode, type BrowseFilters } from '$lib/server/metadata';
-import { existingSourceKeys } from '$lib/server/db/queries';
+import { existingSourceKeysWithIds } from '$lib/server/db/queries';
 import { watchRegion } from '$lib/server/metadata/providers';
 import type { RequestHandler } from './$types';
 
@@ -26,6 +26,6 @@ export const GET: RequestHandler = async ({ url }) => {
 	return json({
 		results: await browsePage(category, mode, page, watchRegion(), filters),
 		page,
-		owned: [...existingSourceKeys()]
+		owned: existingSourceKeysWithIds()
 	});
 };

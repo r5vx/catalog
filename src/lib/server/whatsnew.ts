@@ -45,11 +45,11 @@ function notesFile(): string | null {
 	return candidates.find((path) => existsSync(path)) ?? null;
 }
 
-/** Cached: the file can't change without the app being replaced. */
+/** Cached in production; re-reads on every call in dev so edits show up. */
 let cached: ReleaseNote[] | null = null;
 
 export function whatsNew(): ReleaseNote[] {
-	if (cached) return cached;
+	if (cached && !import.meta.env.DEV) return cached;
 
 	const path = notesFile();
 	if (!path) return (cached = []);

@@ -762,7 +762,12 @@ export async function downloadSubtitleContent(
 }
 
 function titleWords(s: string): string[] {
-	return s.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter((w) => w.length > 1);
+	return s.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter((w) => w.length > 1 || /^\d$/.test(w));
+}
+
+function trailingNumber(s: string): string | null {
+	const m = s.trim().match(/\b(\d+)$/);
+	return m ? m[1] : null;
 }
 
 function wordOverlap(a: string[], b: string[]): number {
@@ -784,6 +789,7 @@ export function bestMatch(
 	if (!items.length) return null;
 	const want = query.toLowerCase().trim();
 	const wantWords = titleWords(query);
+	const wantNum = trailingNumber(want);
 
 	let exactWithYear: ShowboxResult | null = null;
 	let exactNoYear: ShowboxResult | null = null;
@@ -795,7 +801,12 @@ export function bestMatch(
 		if (!exactNoYear) exactNoYear = r;
 	}
 	if (exactWithYear) return exactWithYear;
-	if (exactNoYear) return exactNoYear;
+	if (exactNoYear && !wantYear) return exactNoYear;
+	if (exactNoYear && wantYear) {
+		const ey = extractYear(exactNoYear.info);
+		if (!ey && Number(wantYear) >= 2000) return exactNoYear;
+		if (ey && Math.abs(Number(ey) - Number(wantYear)) <= 5) return exactNoYear;
+	}
 
 	let best: ShowboxResult | null = null;
 	let bestScore = 0;
@@ -803,6 +814,12 @@ export function bestMatch(
 		if (wantType && r.type !== wantType) continue;
 		const t = r.title.toLowerCase();
 		const rWords = titleWords(r.title);
+
+		if (wantNum) {
+			const resultNum = trailingNumber(t);
+			if (resultNum !== wantNum) continue;
+		}
+
 		const overlap = wordOverlap(wantWords, rWords);
 		const coverage = wantWords.length > 0 ? overlap / wantWords.length : 0;
 		const reverseCoverage = rWords.length > 0 ? overlap / rWords.length : 0;
@@ -819,9 +836,17 @@ export function bestMatch(
 			if (r.info.includes(wantYear)) {
 				score += 0.15;
 			} else if (resultYear && resultYear !== wantYear) {
-				score -= 0.4;
+				if (t === want && Math.abs(Number(resultYear) - Number(wantYear)) <= 5) {
+					// close enough year for exact title match
+				} else {
+					continue;
+				}
 			} else if (!resultYear) {
-				score -= 0.2;
+				if (t === want && Number(wantYear) >= 2000) {
+					// no year info + exact title + modern request = trust it
+				} else {
+					score -= 0.4;
+				}
 			}
 		}
 		if (score > bestScore) {
@@ -830,6 +855,6 @@ export function bestMatch(
 		}
 	}
 
-	if (best && bestScore >= 0.6) return best;
+	if (best && bestScore >= 0.65) return best;
 	return null;
 }
