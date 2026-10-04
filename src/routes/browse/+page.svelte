@@ -12,8 +12,9 @@
 	const TABS = [
 		{ value: '', label: 'Everything' },
 		{ value: 'movies', label: 'Films' },
-		{ value: 'tv', label: 'Series' },
-		{ value: 'anime', label: 'Anime' }
+		{ value: 'tv', label: 'TV Series' },
+		{ value: 'anime', label: 'Anime' },
+		{ value: 'actors', label: 'Actors' }
 	];
 
 	const MODES = [
@@ -92,15 +93,38 @@
 
 	/* ------------------------------------------------- what you already have */
 
-	const owned = $derived(new Set(data.owned));
+	const owned = $derived(data.owned as Record<string, number>);
 	const keyOf = (result: SearchResult) => `${result.source}:${result.sourceId}`;
 
 	/** Added during this visit — the page doesn't reload, so it tracks its own. */
 	let justAdded = $state<Record<string, number>>({});
+	let justRemoved = $state<Set<string>>(new Set());
 	let busy = $state<string | null>(null);
 	let problem = $state('');
 
-	const have = (result: SearchResult) => owned.has(keyOf(result)) || keyOf(result) in justAdded;
+	const have = (result: SearchResult) => {
+		const k = keyOf(result);
+		if (justRemoved.has(k)) return false;
+		return k in owned || k in justAdded;
+	};
+
+	function entryIdOf(result: SearchResult): number | null {
+		const k = keyOf(result);
+		return justAdded[k] ?? owned[k] ?? null;
+	}
+
+	async function remove(result: SearchResult) {
+		const id = entryIdOf(result);
+		if (!id) return;
+		try {
+			await fetch('/api/entries', {
+				method: 'DELETE',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ id })
+			});
+			justRemoved = new Set([...justRemoved, keyOf(result)]);
+		} catch {}
+	}
 
 	let ctxMenu = $state<{ x: number; y: number; result: SearchResult } | null>(null);
 
@@ -176,15 +200,18 @@
 	async function more(shelf: { key: string; results: SearchResult[]; page: number }) {
 		loading = shelf.key;
 		const PAGES_PER_CLICK = 3;
+		const MAX_EMPTY = shelf.key === 'anime' ? 3 : 1;
 
 		try {
 			let currentPage = at[shelf.key] ?? shelf.page;
 			let allFresh: SearchResult[] = [];
 			const already = new Set(shelfResults(shelf).map((one) => one.key));
+			let emptyRun = 0;
+			let mode = data.mode;
 
-			for (let i = 0; i < PAGES_PER_CLICK; i++) {
+			for (let i = 0; i < PAGES_PER_CLICK + MAX_EMPTY; i++) {
 				const next = currentPage + 1;
-				let moreUrl = `/api/browse?cat=${shelf.key}&mode=${data.mode}&page=${next}`;
+				let moreUrl = `/api/browse?cat=${shelf.key}&mode=${mode}&page=${next}`;
 					if (data.sort) moreUrl += `&sort=${data.sort}`;
 					if (data.yearFrom) moreUrl += `&from=${data.yearFrom}`;
 					if (data.yearTo) moreUrl += `&to=${data.yearTo}`;
@@ -202,12 +229,24 @@
 				});
 
 				if (fresh.length === 0) {
-					ended = { ...ended, [shelf.key]: true };
-					break;
+					emptyRun++;
+					if (emptyRun >= MAX_EMPTY) {
+						if (shelf.key === 'anime' && mode === 'trending' && !data.sort) {
+							mode = 'popular';
+							emptyRun = 0;
+							continue;
+						}
+						ended = { ...ended, [shelf.key]: true };
+						break;
+					}
+					currentPage = next;
+					continue;
 				}
 
+				emptyRun = 0;
 				allFresh = [...allFresh, ...fresh];
 				currentPage = next;
+				if (allFresh.length >= PAGES_PER_CLICK * 50) break;
 			}
 
 			if (allFresh.length > 0) {
@@ -287,10 +326,10 @@
 <div class="toolbar">
 	<input
 		type="search"
-		placeholder={pm ? "find a giblet..." : "Search for anything…"}
+		placeholder={data.cat === 'actors' ? (pm ? "find a baddie..." : "Search actors…") : (pm ? "find a giblet..." : "Search for anything…")}
 		bind:value={searchText}
 		oninput={onSearch}
-		aria-label="Search every title"
+		aria-label={data.cat === 'actors' ? "Search actors" : "Search every title"}
 	/>
 </div>
 
@@ -305,7 +344,7 @@
 		</button>
 	{/each}
 
-	{#if !data.q}
+	{#if !data.q && data.cat !== 'actors'}
 		<span class="modes">
 			{#each MODES as option (option.value)}
 				<button
@@ -321,7 +360,7 @@
 	{/if}
 </nav>
 
-{#if !data.q}
+{#if !data.q && data.cat !== 'actors'}
 	<div class="browse-toolbar">
 		<select
 			aria-label="Sort by"
@@ -385,6 +424,54 @@
 	<p class="msg bad" role="alert">{problem}</p>
 {/if}
 
+{#if data.cat === 'actors'}
+	{#if data.q && data.q.length >= 2 && data.people.length === 0}
+		<p class="muted actor-none">No one by that name in your library.</p>
+	{/if}
+
+	<ul class="actor-list">
+		{#each data.people as person (person.id)}
+			<li>
+				<a href="/person/{person.id}">
+					{#if person.photo}
+						<img src={person.photo} alt="" loading="lazy" />
+					{:else}
+						<span class="noface" aria-hidden="true">?</span>
+					{/if}
+					<span class="actor-who">
+						<span class="actor-name">{person.name}</span>
+						<span class="faint small tabular">
+							{person.count}
+							{person.count === 1 ? 'title' : 'titles'} · {person.sample}
+						</span>
+					</span>
+				</a>
+			</li>
+		{/each}
+	</ul>
+
+	{#if !data.q && data.trending.length > 0}
+		<section class="trending">
+			<h2 class="trending-label">{pm ? "alpha baddies rn" : 'Trending this week'}</h2>
+			<ul class="trend-grid">
+				{#each data.trending as person (person.id)}
+					<li>
+						<a href="/person/tmdb:{person.id}">
+							<div class="trend-photo">
+								<img src={person.photo} alt="" loading="lazy" />
+							</div>
+							<span class="trend-name">{person.name}</span>
+							{#if person.knownFor}
+								<span class="trend-known faint">{person.knownFor}</span>
+							{/if}
+						</a>
+					</li>
+				{/each}
+			</ul>
+		</section>
+	{/if}
+{/if}
+
 {#snippet card(result: SearchResult)}
 	<li class="card" class:mine={have(result)} oncontextmenu={(e) => onCardContext(e, result)}>
 		<a href={link(result)} class="card-link" aria-label={result.title} onclick={saveScroll}></a>
@@ -395,7 +482,9 @@
 				<span class="fallback" aria-hidden="true">?</span>
 			{/if}
 			{#if have(result)}<span class="tick" title="In your library">&check;</span>{/if}
-			{#if !have(result)}
+			{#if have(result)}
+				<button type="button" class="hover-remove" title="Remove from library" onclick={(e) => { e.preventDefault(); e.stopPropagation(); remove(result); }}>&times;</button>
+			{:else}
 				<span class="hover-actions">
 					<button type="button" title="Add as completed" onclick={(e) => { e.stopPropagation(); add(result, 'completed'); }}>+ Add</button>
 					<button type="button" title="Add to watchlist" onclick={(e) => { e.stopPropagation(); add(result, 'planned'); }}>♡ Watchlist</button>
@@ -423,42 +512,44 @@
 	</li>
 {/snippet}
 
-{#if data.q}
-	{#if data.results.length === 0}
-		<p class="empty muted">Nothing found for that.</p>
-	{:else}
-		<ul class="grid">
-			{#each data.results as result (result.key)}
-				{@render card(result)}
-			{/each}
-		</ul>
-	{/if}
-{:else if data.shelves.length === 0}
-	<p class="empty muted">Nothing to show. Check your connection, or search for a title.</p>
-{:else}
-	{#each data.shelves as shelf (shelf.key)}
-		<section class="shelf">
-			<h2>{pm ? p(shelf.label) : shelf.label}</h2>
+{#if data.cat !== 'actors'}
+	{#if data.q}
+		{#if data.results.length === 0}
+			<p class="empty muted">Nothing found for that.</p>
+		{:else}
 			<ul class="grid">
-				{#each shelfResults(shelf) as result (result.key)}
+				{#each data.results as result (result.key)}
 					{@render card(result)}
 				{/each}
 			</ul>
+		{/if}
+	{:else if data.shelves.length === 0}
+		<p class="empty muted">Nothing to show. Check your connection, or search for a title.</p>
+	{:else}
+		{#each data.shelves as shelf (shelf.key)}
+			<section class="shelf">
+				<h2>{pm ? p(shelf.label) : shelf.label}</h2>
+				<ul class="grid">
+					{#each shelfResults(shelf) as result (result.key)}
+						{@render card(result)}
+					{/each}
+				</ul>
 
-			{#if ended[shelf.key]}
-				<p class="faint end">That's everything {shelf.key === 'anime' ? 'AniList' : 'TMDB'} has here.</p>
-			{:else}
-				<button
-					type="button"
-					class="btn more"
-					disabled={loading === shelf.key}
-					onclick={() => more(shelf)}
-				>
-					{loading === shelf.key ? (pm ? pRandom() : 'Finding more…') : (pm ? 'gimme more giblets' : 'Show more')}
-				</button>
-			{/if}
-		</section>
-	{/each}
+				{#if ended[shelf.key]}
+					<p class="faint end">That's everything {shelf.key === 'anime' ? 'AniList' : 'TMDB'} has here.</p>
+				{:else}
+					<button
+						type="button"
+						class="btn more"
+						disabled={loading === shelf.key}
+						onclick={() => more(shelf)}
+					>
+						{loading === shelf.key ? (pm ? pRandom() : 'Finding more…') : (pm ? 'gimme more giblets' : 'Show more')}
+					</button>
+				{/if}
+			</section>
+		{/each}
+	{/if}
 {/if}
 
 {#if showBackToTop}
@@ -472,7 +563,7 @@
 		<button type="button" onclick={() => {
 			const r = ctxMenu!.result;
 			const t = r.kind === 'Movie' ? 'movie' : 'tv';
-			goto(`/watch?title=${encodeURIComponent(r.title)}&type=${t}&auto=1`);
+			goto(`/watch?title=${encodeURIComponent(r.title)}&type=${t}${r.year ? `&year=${r.year}` : ''}&auto=1`);
 			closeCtx();
 		}}>
 			{pm ? p('▶ Watch') : '▶ Watch'}
@@ -482,13 +573,15 @@
 		</button>
 		<hr />
 		{#if have(ctxMenu.result)}
-			{#if justAdded[keyOf(ctxMenu.result)]}
-				<button type="button" onclick={() => { goto(`/entry/${justAdded[keyOf(ctxMenu!.result)]}`); closeCtx(); }}>
+			{#if entryIdOf(ctxMenu.result)}
+				<button type="button" onclick={() => { goto(`/entry/${entryIdOf(ctxMenu!.result)}`); closeCtx(); }}>
 					{pm ? p('View entry') : 'View entry'}
 				</button>
-			{:else}
-				<span class="ctx-info">{pm ? p('In your library') : 'In your library'}</span>
 			{/if}
+			<hr />
+			<button type="button" class="ctx-danger" onclick={() => { remove(ctxMenu!.result); closeCtx(); }}>
+				{pm ? p('Remove from library') : 'Remove from library'}
+			</button>
 		{:else}
 			<button type="button" onclick={() => { add(ctxMenu!.result, 'completed'); closeCtx(); }}>
 				✓ {pm ? p('Add as completed') : 'Add as completed'}
@@ -793,6 +886,29 @@
 		color: var(--accent-ink);
 	}
 
+	.hover-remove {
+		position: absolute;
+		top: 6px;
+		left: 6px;
+		width: 26px;
+		height: 26px;
+		border-radius: 50%;
+		border: none;
+		background: rgba(0,0,0,0.65);
+		color: #fff;
+		font-size: 1.1rem;
+		line-height: 1;
+		display: grid;
+		place-items: center;
+		cursor: pointer;
+		opacity: 0;
+		transition: opacity 0.12s ease;
+		z-index: 2;
+	}
+
+	.card:hover .hover-remove { opacity: 1; }
+	.hover-remove:hover { background: var(--danger, #c33); }
+
 	.fallback {
 		font-size: 1.8rem;
 		opacity: 0.4;
@@ -930,5 +1046,138 @@
 		font-size: 0.84rem;
 		color: var(--good);
 		font-weight: 600;
+	}
+
+	.ctx-danger { color: var(--danger, #c33) !important; }
+	.ctx-danger:hover { background: var(--danger, #c33) !important; color: #fff !important; }
+
+	/* ---- Actors tab ---- */
+
+	.actor-none {
+		font-size: 0.9rem;
+		margin: 16px 0 0;
+	}
+
+	.actor-list {
+		list-style: none;
+		margin: 18px 0 0;
+		padding: 0;
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+		gap: 4px 16px;
+	}
+
+	.actor-list a {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 8px;
+		border-radius: var(--radius-sm);
+	}
+
+	.actor-list a:hover {
+		background: var(--surface);
+	}
+
+	.actor-list img,
+	.noface {
+		width: 46px;
+		height: 46px;
+		border-radius: 50%;
+		object-fit: cover;
+		border: 1px solid var(--rule);
+		flex-shrink: 0;
+	}
+
+	.noface {
+		display: grid;
+		place-items: center;
+		background: var(--surface-2);
+		color: var(--ink-faint);
+	}
+
+	.actor-who {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+	}
+
+	.actor-name {
+		font-weight: 600;
+		font-size: 0.93rem;
+	}
+
+	.small {
+		font-size: 0.76rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.trending {
+		margin-top: 32px;
+	}
+
+	.trending-label {
+		font-family: var(--body);
+		font-size: 0.72rem;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--ink-faint);
+		margin: 0;
+	}
+
+	.trend-grid {
+		list-style: none;
+		margin: 14px 0 0;
+		padding: 0;
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+		gap: 18px 14px;
+	}
+
+	.trend-grid a {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 6px;
+		text-align: center;
+		border-radius: var(--radius);
+		padding: 8px 4px;
+	}
+
+	.trend-grid a:hover {
+		background: var(--surface);
+	}
+
+	.trend-photo {
+		width: 90px;
+		height: 90px;
+		border-radius: 50%;
+		overflow: hidden;
+		border: 2px solid var(--rule);
+	}
+
+	.trend-photo img {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		display: block;
+	}
+
+	.trend-name {
+		font-weight: 600;
+		font-size: 0.88rem;
+	}
+
+	.trend-known {
+		font-size: 0.74rem;
+		line-height: 1.3;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
 	}
 </style>

@@ -111,7 +111,7 @@ function scoreOf(result: SearchResult, query: string, year: number | null, fuzzy
 	return (
 		match * 10 * quality * kindPenalty + //  music/specials sink to the bottom
 		(yearMatches ? 4 : 0) + //               a nudge, never enough to jump a tier
-		result.popularity * 5 //                 0 to 5, orders everything within a tier
+		result.popularity * 20 //                0 to 20, separates blockbusters from obscurities within a tier
 	);
 }
 
@@ -215,18 +215,22 @@ export async function browsePage(
 	region?: string,
 	filters?: BrowseFilters
 ): Promise<SearchResult[]> {
-	const filterKey = filters ? `${filters.yearFrom ?? ''}-${filters.yearTo ?? ''}-${filters.sort ?? ''}` : '';
+	const filterKey = filters ? `${filters.yearFrom ?? ''}-${filters.yearTo ?? ''}-${filters.sort ?? ''}-${filters.genre ?? ''}` : '';
 	const key = `${category}:${mode}:${page}:${region ?? ''}:${filterKey}`;
 	const cached = browseCache.get(key);
 	if (cached && Date.now() - cached.time < BROWSE_TTL) return cached.data;
 
 	let data: SearchResult[];
-	if (category === 'anime') data = await trendingAniList(24, page, mode);
+	if (category === 'anime') data = await trendingAniList(50, page, mode, filters);
 	else if (category === 'movies') data = await trendingTmdb('movie', page, mode, region, filters);
 	else if (category === 'tv') data = await trendingTmdb('tv', page, mode, region, filters);
 	else data = [];
 
-	browseCache.set(key, { data, time: Date.now() });
+	if (data.length > 0) {
+		browseCache.set(key, { data, time: Date.now() });
+	} else if (cached) {
+		return cached.data;
+	}
 	return data;
 }
 
@@ -249,10 +253,13 @@ export async function browseShelves(only?: string, mode: BrowseMode = 'trending'
 		? BROWSE_CATEGORIES.filter((one) => one === only)
 		: [...BROWSE_CATEGORIES];
 
+	const hasNarrowingFilter = filters && (filters.yearFrom || filters.yearTo || filters.genre);
+	const pageCount = hasNarrowingFilter ? 1 : INITIAL_PAGES;
+
 	const filled = await Promise.all(
 		wanted.map(async (key) => {
 			const pages = await Promise.all(
-				Array.from({ length: INITIAL_PAGES }, (_, i) => browsePage(key, mode, i + 1, region, filters))
+				Array.from({ length: pageCount }, (_, i) => browsePage(key, mode, i + 1, region, filters))
 			);
 			const seen = new Set<string>();
 			const results = pages.flat().filter((r) => {
@@ -260,7 +267,7 @@ export async function browseShelves(only?: string, mode: BrowseMode = 'trending'
 				seen.add(r.key);
 				return true;
 			});
-			return { key, label: LABELS[key][mode], results, page: INITIAL_PAGES };
+			return { key, label: LABELS[key][mode], results, page: pageCount };
 		})
 	);
 

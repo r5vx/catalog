@@ -47,6 +47,7 @@ export const GET: RequestHandler = async ({ url }) => {
 	let shareKey: string;
 	let episodeData: unknown | undefined;
 	let movieFileList: unknown[] | undefined;
+	let startSeason = 0;
 
 	if (cached && Date.now() - cached.time < RESOLVE_TTL) {
 		matchTitle = cached.match.title;
@@ -58,6 +59,19 @@ export const GET: RequestHandler = async ({ url }) => {
 		movieFileList = cached.files;
 	} else {
 		let match = await findOnShowbox(title, type, year);
+
+		if (!match) {
+			const seasonPart = title.match(/\s+(season|s)\s*(\d+)\s*$/i);
+			const partPart = title.match(/\s+(part)\s*(\d+)\s*$/i);
+			if (seasonPart || partPart) {
+				const cleaned = title.replace(/\s+(season|part|s)\s*\d+\s*$/i, '').trim();
+				if (cleaned.length >= 2) {
+					const forceType = seasonPart ? 'tv' : type;
+					match = await findOnShowbox(cleaned, forceType, year);
+					if (match && seasonPart) startSeason = Number(seasonPart[2]);
+				}
+			}
+		}
 
 		if (!match) {
 			const altTitles: string[] = [];
@@ -121,8 +135,12 @@ export const GET: RequestHandler = async ({ url }) => {
 
 	if (matchType === 'tv') {
 		const epData = episodeData as { episodes: { season: number; episode: number; files: { fid: number; quality: string }[] }[]; seasons: number[]; qualities?: string[] };
-		const firstEp = epData.episodes[0];
-		const firstFile = firstEp?.files[0];
+		let targetEp = epData.episodes[0];
+		if (startSeason > 0) {
+			const seasonEp = epData.episodes.find(ep => ep.season === startSeason);
+			if (seasonEp) targetEp = seasonEp;
+		}
+		const firstFile = targetEp?.files[0];
 		let streamUrl = '';
 		let streamDebug: string | undefined;
 
@@ -143,7 +161,8 @@ export const GET: RequestHandler = async ({ url }) => {
 			episodes: epData,
 			debug: streamDebug,
 			posterUrl,
-			libraryEntry
+			libraryEntry,
+			startSeason
 		});
 	}
 

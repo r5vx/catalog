@@ -16,6 +16,18 @@ Your library lives on your PC. Nothing is uploaded, no account needed.
 
 Anime works without any keys.
 
+## Updating
+
+**Windows** — Updates download automatically in the background. Next time you close and reopen Catalog, the new version is installed. You can also check manually in **Settings → Updates**.
+
+**Mac** — Updates are not automatic. Download the new **.dmg** from the [latest release](https://github.com/r5vx/catalog/releases/latest), drag it to Applications, and replace the old copy. Then open Terminal and run:
+
+```
+xattr -cr /Applications/Catalog.app
+```
+
+This is needed after every update because the app isn't signed.
+
 ## Phone access
 
 Install [Tailscale](https://tailscale.com) on both devices, sign in with the same account. Open Catalog on your PC, then visit `http://<your-tailscale-ip>:4173` on your phone. Add to Home Screen for the app icon.

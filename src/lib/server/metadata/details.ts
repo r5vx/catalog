@@ -302,35 +302,40 @@ async function fromTmdb(sourceId: string): Promise<TitleDetails> {
 }
 
 async function fromAniList(id: string): Promise<TitleDetails> {
-	const response = await fetch('https://graphql.anilist.co', {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			query: `query($id:Int){Media(id:$id,type:ANIME){
-				title{ english romaji native }
-				description
-				startDate{ year }
-				episodes
-				duration
-				format
-				status
-				averageScore
-				popularity
-				siteUrl
-				coverImage{ extraLarge large }
-				bannerImage
-				genres
-				studios(isMain:true){nodes{name}}
-				characters(sort:ROLE, perPage:20){
-					edges{
-						node{ name{ full } }
-						voiceActors(language:JAPANESE){ id name{ full } image{ medium } }
-					}
+	const body = JSON.stringify({
+		query: `query($id:Int){Media(id:$id,type:ANIME){
+			title{ english romaji native }
+			description
+			startDate{ year }
+			episodes
+			duration
+			format
+			status
+			averageScore
+			popularity
+			siteUrl
+			coverImage{ extraLarge large }
+			bannerImage
+			genres
+			studios(isMain:true){nodes{name}}
+			characters(sort:ROLE, perPage:20){
+				edges{
+					node{ name{ full } }
+					voiceActors(language:JAPANESE){ id name{ full } image{ medium } }
 				}
-			}}`,
-			variables: { id: Number(id) }
-		})
+			}
+		}}`,
+		variables: { id: Number(id) }
 	});
+	const opts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body };
+
+	let response = await fetch('https://graphql.anilist.co', opts);
+
+	if (response.status === 429) {
+		const wait = Number(response.headers.get('Retry-After') ?? '2');
+		await new Promise((r) => setTimeout(r, Math.min(wait, 10) * 1000));
+		response = await fetch('https://graphql.anilist.co', opts);
+	}
 
 	if (!response.ok) return EMPTY;
 

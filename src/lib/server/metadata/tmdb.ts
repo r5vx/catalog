@@ -344,11 +344,13 @@ export async function trendingTmdb(
 
 			if (filters?.sort === 'vote_average') {
 				url.searchParams.set('vote_count.gte', '200');
+			} else if (filters?.sort === 'release_date_desc' || filters?.sort === 'release_date_asc') {
+				url.searchParams.set('vote_count.gte', '5');
 			} else if (!filters?.sort || filters.sort === 'vote_count') {
 				url.searchParams.set('vote_count.gte', '300');
 			}
 
-			if (!hasFilters || !filters?.sort) {
+			if (!hasFilters || !filters?.sort || filters.sort === 'release_date_desc' || filters.sort === 'release_date_asc') {
 				url.searchParams.set('with_original_language', 'en|ja|ko|fr|es|de|it|pt|hi|zh');
 			}
 
@@ -363,6 +365,11 @@ export async function trendingTmdb(
 			if (filters?.yearTo) {
 				const dateKey = kind === 'movie' ? 'primary_release_date.lte' : 'first_air_date.lte';
 				url.searchParams.set(dateKey, `${filters.yearTo}-12-31`);
+			}
+
+			if (filters?.sort === 'release_date_desc' && !filters?.yearTo) {
+				const dateKey = kind === 'movie' ? 'primary_release_date.lte' : 'first_air_date.lte';
+				url.searchParams.set(dateKey, new Date().toISOString().slice(0, 10));
 			}
 		}
 
@@ -385,8 +392,12 @@ export async function trendingTmdb(
 				const d = item.release_date ?? item.first_air_date ?? '';
 				return !d || d <= today;
 			})
+			.filter((item) => {
+				if (useDiscover) return true;
+				return (item.vote_count ?? 0) >= 50;
+			})
 			.map(toResult)
-			.filter((r) => r.categorySlug !== 'anime' || kind === 'movie');
+			.filter((r) => r.categorySlug !== 'anime');
 	} catch {
 		return [];
 	}
@@ -406,6 +417,7 @@ export async function trendingPeopleTmdb(): Promise<TrendingPerson[]> {
 	type RawPerson = {
 		id: number;
 		name: string;
+		popularity?: number;
 		profile_path?: string | null;
 		known_for?: { title?: string; name?: string; media_type?: string }[];
 	};
@@ -413,7 +425,7 @@ export async function trendingPeopleTmdb(): Promise<TrendingPerson[]> {
 	try {
 		const all: RawPerson[] = [];
 		for (let page = 1; page <= 3; page++) {
-			const url = new URL(`${BASE}/trending/person/week`);
+			const url = new URL(`${BASE}/person/popular`);
 			url.searchParams.set('page', String(page));
 			const response = await fetch(url, authorize(url, key));
 			if (!response.ok) break;
@@ -421,8 +433,11 @@ export async function trendingPeopleTmdb(): Promise<TrendingPerson[]> {
 			all.push(...(payload.results ?? []));
 		}
 
+		const seen = new Set<number>();
 		return all
 			.filter((p) => p.profile_path)
+			.filter((p) => (p.known_for?.length ?? 0) >= 2)
+			.filter((p) => { if (seen.has(p.id)) return false; seen.add(p.id); return true; })
 			.map((p) => ({
 				id: p.id,
 				name: p.name,

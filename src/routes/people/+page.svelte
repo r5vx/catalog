@@ -73,7 +73,7 @@
 		<ul class="trend-grid">
 			{#each data.trending as person (person.id)}
 				<li>
-					<a href="/person/{person.id}">
+					<a href="/person/tmdb:{person.id}">
 						<div class="trend-photo">
 							<img src={person.photo} alt="" loading="lazy" />
 						</div>

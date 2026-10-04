@@ -158,12 +158,16 @@
 
 	async function ctxDelete() {
 		if (!ctxMenu) return;
+		await removeEntry(ctxMenu.entry.id);
+		closeCtx();
+	}
+
+	async function removeEntry(id: number) {
 		await fetch('/api/entries', {
 			method: 'DELETE',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ id: ctxMenu.entry.id })
+			body: JSON.stringify({ id })
 		});
-		closeCtx();
 		invalidateAll();
 	}
 </script>
@@ -173,7 +177,6 @@
 		<h1>{pm ? p('Catalog') : 'Catalog'}</h1>
 		<div class="header-actions">
 			<a href="/settings" class="btn" title="Settings" aria-label="Settings">⚙</a>
-			<a href="/people" class="btn">{pm ? p('Actors') : 'Actors'}</a>
 			<a href="/browse" class="btn">{pm ? p('Browse') : 'Browse'}</a>
 			<a href="/entry/new" class="btn btn-primary">{pm ? '+ Claim giblet' : '+ Add'}</a>
 		</div>
@@ -257,7 +260,7 @@
 		</ul>
 	{/if}
 {:else if data.filters.cat === 'friends'}
-	<FriendsView owned={new Set(data.ownedKeys)} poisonMode={pm} />
+	<FriendsView owned={new Set(data.ownedKeys)} ownedMap={data.ownedMap} poisonMode={pm} />
 {:else}
 	<FillingIn />
 
@@ -333,6 +336,7 @@
 							{#if entry.favorite}
 								<span class="fav" title="Favourite" aria-label="Favourite">★</span>
 							{/if}
+							<button type="button" class="hover-remove" title="Remove from library" onclick={(e) => { e.preventDefault(); e.stopPropagation(); removeEntry(entry.id); }}>&times;</button>
 						</div>
 
 						<div class="meta">
@@ -383,7 +387,7 @@
 {#if ctxMenu}
 	<div class="ctx-backdrop" onclick={closeCtx} oncontextmenu={(e) => { e.preventDefault(); closeCtx(); }}></div>
 	<div class="ctx-menu" style="left: {ctxMenu.x}px; top: {ctxMenu.y}px;">
-		<button type="button" onclick={() => { const t = ctxMenu!.entry.categoryName === 'Movies' ? 'movie' : 'tv'; goto(`/watch?title=${encodeURIComponent(ctxMenu!.entry.title)}&type=${t}&auto=1`); closeCtx(); }}>
+		<button type="button" onclick={() => { const e = ctxMenu!.entry; const t = e.categoryName === 'Movies' ? 'movie' : 'tv'; goto(`/watch?title=${encodeURIComponent(e.title)}&type=${t}${e.year ? `&year=${e.year}` : ''}&auto=1`); closeCtx(); }}>
 			{pm ? p('▶ Watch') : '▶ Watch'}
 		</button>
 		<button type="button" onclick={() => { goto(`/entry/${ctxMenu!.entry.id}?edit=1`); closeCtx(); }}>
@@ -587,6 +591,29 @@
 		font-size: 1rem;
 		text-shadow: 0 1px 3px rgb(0 0 0 / 45%);
 	}
+
+	.hover-remove {
+		position: absolute;
+		top: 6px;
+		left: 6px;
+		width: 26px;
+		height: 26px;
+		border-radius: 50%;
+		border: none;
+		background: rgba(0,0,0,0.65);
+		color: #fff;
+		font-size: 1.1rem;
+		line-height: 1;
+		display: grid;
+		place-items: center;
+		cursor: pointer;
+		opacity: 0;
+		transition: opacity 0.12s ease;
+		z-index: 2;
+	}
+
+	li:hover .hover-remove { opacity: 1; }
+	.hover-remove:hover { background: var(--danger, #c33); }
 
 	.meta {
 		display: flex;

@@ -7,12 +7,76 @@ and stamps it with the version number.
 
 ## Unreleased
 
-## 2.1.8 — 2026-10-03
+## 2.1.9 — 2026-10-04
+
+- **Search results rank by popularity.** Searching "Die Hard" now puts
+  the 1988 classic and its sequels at the top, not obscure foreign films
+  that happen to share the name.
+- **No more random obscure titles in Browse.** Trending and popular
+  shelves now filter out titles with very few ratings.
+- **Release notes have titles.** Every update on the Updates page now
+  shows a descriptive name, not just a version number.
+- **Cursor hides in fullscreen.** The mouse cursor disappears after a
+  few seconds of inactivity in fullscreen, so it doesn't cover the
+  video.
+- **Anime keeps going.** "Show more" on the Anime shelf no longer runs
+  out after two clicks — once trending is exhausted it continues with
+  the full AniList catalog.
+- **Anime filters work.** Year range, sort, and genre filters in Browse
+  now apply to the Anime tab too, not just Films and Series.
+- **Error pages have a back button.** If a title page fails to load,
+  you can go back instead of restarting the app.
+- **Newest first sort works.** Browse no longer shows empty shelves
+  when sorting by release date — new titles with few ratings are
+  no longer filtered out.
+- **Remove from library everywhere.** Right-click any title in Library,
+  Browse, or Friends to remove it. A hover × button also appears on
+  the poster.
+- **Stricter watch matching.** Clicking Watch now passes the year, so
+  "Face to Face" (1946) doesn't land on the 2019 version. Sequel
+  numbers are matched strictly — "Edgerunners 2" won't match
+  "Edgerunners".
+- **Friends page remembers state.** Navigating away and back keeps
+  the selected friend, filters, and scroll position.
+- **Actors page works again.** Clicking trending actors no longer
+  gives a 404.
+- **Actors moved into Browse.** The actors page is now a tab inside
+  Browse instead of a separate page.
+- **Unavailable titles say so.** Clicking Watch on a title that
+  Showbox doesn't have now says "unavailable on Showbox" instead of
+  the generic "no link available."
+- **No random actors in trending.** People with fewer than two known
+  credits are filtered out of the trending actors list.
+- **Detective Conan stays in Anime.** Anime films no longer appear in
+  the Films tab.
+- **Anime year shows correctly.** Sorting anime by date no longer
+  shows "----" for the year.
+- **Faster filter changes.** Switching filters in Browse loads one
+  page instead of three, so results appear faster.
+- **Faster image loading.** Anime and movie poster images connect
+  sooner thanks to DNS preconnect hints.
+- **Season and part titles work in Watch.** Searching for
+  "Apothecary Diaries Season 3" now finds the show and opens at
+  the right season, instead of saying not found.
+- **Anime shows "Anime" not "TV".** Browse cards for anime series
+  now say "Anime" instead of the confusing "TV" label.
+- **Old Actors page redirects to Browse.** The standalone /people
+  page now redirects to the Actors tab in Browse.
+- **"TV Series" tab in Browse.** "Series" is now labelled "TV Series"
+  for clarity.
+- **Better year matching.** Titles with the same name but different
+  eras (like "Face to Face" 1946 vs 2019) are matched correctly —
+  old shows don't steal modern results and vice versa.
+- **Browse survives rate limits.** Heavy scrolling through anime
+  no longer wipes the page blank when AniList throttles requests.
+  Title pages also retry instead of showing a 404.
+
+## 2.1.8 — 2026-10-03 — Stats and spacing
 
 - **Stats line is easier to read.** The watched/total counts per
   category are spaced out instead of crammed together.
 
-## 2.1.7 — 2026-10-03
+## 2.1.7 — 2026-10-03 — Browse overhaul and HEVC fix
 
 - **Browse cards are fully clickable.** Clicking anywhere on a card
   opens the title — not just the poster or the name text.
@@ -115,7 +179,7 @@ and stamps it with the version number.
   on "Peace" no longer opens "War and Peace" — the match is stricter
   now and says "not available" when Showbox doesn't have it.
 
-## 2.1.6 — 2026-10-02
+## 2.1.6 — 2026-10-02 — Continue Watching and player fixes
 
 - **Continue Watching fixed.** The tab no longer breaks the library
   when an episode has bad data. Phantom entries are filtered out.
@@ -167,7 +231,7 @@ and stamps it with the version number.
   quality, the player shows an error and reverts to what was playing
   instead of loading forever.
 
-## 2.1.5 — 2026-09-27
+## 2.1.5 — 2026-09-27 — Black screen fix and PiP subtitles
 
 - **Black screen now shows an error.** If the video can't load (e.g.
   expired login), the player tells you instead of showing nothing.
@@ -191,7 +255,7 @@ and stamps it with the version number.
   position immediately instead of snapping back while it loads.
   Arrow keys respond faster too.
 
-## 2.1.4 — 2026-09-26
+## 2.1.4 — 2026-09-26 — Subtitle improvements
 
 - **Active subtitle name shown.** The captions button shows which
   subtitle is loaded instead of generic text.
@@ -200,7 +264,7 @@ and stamps it with the version number.
 - **Addic7ed subtitles.** TV shows now also search Addic7ed (via
   Gestdown) for more subtitle options.
 
-## 2.1.3 — 2026-09-26
+## 2.1.3 — 2026-09-26 — Cleaner player UI
 
 - **Cleaner player bar.** Removed the "Logged in" label. Quality
   files are now a dropdown instead of a row of buttons.
@@ -210,7 +274,7 @@ and stamps it with the version number.
 - **Wrong-episode subtitles filtered.** SubDL results for other
   episodes and season packs are now filtered out.
 
-## 2.1.2 — 2026-09-26
+## 2.1.2 — 2026-09-26 — Full quality streams
 
 - **Better video quality.** The player now uses a direct full-quality
   stream instead of the low-quality preview URL. Should fix the
@@ -281,7 +345,7 @@ and stamps it with the version number.
 - **Continue Watching catches short visits.** TV episodes show up
   immediately. Movies need 30 seconds instead of 2 minutes.
 
-## 2.1.1 — 2026-09-24
+## 2.1.1 — 2026-09-24 — Subtitle search and player polish
 
 - **Continue watching tab.** A Watching tab in the library shows what
   you were watching, with posters, progress bars and time left. Click to

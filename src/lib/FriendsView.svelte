@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { goto, invalidateAll } from '$app/navigation';
+	import { goto, invalidateAll, beforeNavigate } from '$app/navigation';
 	import { statusLabel, sortBadge } from '$lib/constants';
+	import { onMount, tick } from 'svelte';
 
 	type SharedTitle = {
 		title: string;
@@ -27,10 +28,11 @@
 
 	type Props = {
 		owned: Set<string>;
+		ownedMap?: Record<string, number>;
 		poisonMode?: boolean;
 	};
 
-	let { owned, poisonMode = false }: Props = $props();
+	let { owned, ownedMap = {}, poisonMode = false }: Props = $props();
 
 	let friends = $state<Friend[]>([]);
 	let activeFriend = $state<number | null>(null);
@@ -43,8 +45,42 @@
 	let show = $state('no_planned');
 	let sort = $state('title');
 
+	const STORAGE_KEY = 'catalog-friends-state';
+
+	function saveFriendsState() {
+		try {
+			const el = document.querySelector('.grid');
+			sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
+				activeFriend, search, category, show, sort,
+				scrollY: el ? el.parentElement?.scrollTop ?? window.scrollY : window.scrollY
+			}));
+		} catch {}
+	}
+
+	function restoreFriendsState() {
+		try {
+			const raw = sessionStorage.getItem(STORAGE_KEY);
+			if (!raw) return;
+			const s = JSON.parse(raw);
+			if (s.activeFriend != null) {
+				activeFriend = s.activeFriend;
+				loadFriend(s.activeFriend);
+			}
+			if (s.search) search = s.search;
+			if (s.category) category = s.category;
+			if (s.show) show = s.show;
+			if (s.sort) sort = s.sort;
+			if (s.scrollY) {
+				tick().then(() => setTimeout(() => window.scrollTo(0, s.scrollY), 100));
+			}
+		} catch {}
+	}
+
+	beforeNavigate(() => { saveFriendsState(); });
+
 	let ctxMenu = $state<{ x: number; y: number; row: SharedTitle } | null>(null);
 	let justAdded = $state<Record<string, number>>({});
+	let justRemoved = $state<Set<string>>(new Set());
 	let busy = $state<string | null>(null);
 
 	const SORTS = [
@@ -70,9 +106,31 @@
 	const keyOf = (row: SharedTitle) => row.source && row.sourceId ? `${row.source}:${row.sourceId}` : `title:${normalise(row.title)}`;
 
 	function isMine(row: SharedTitle): boolean {
-		if (keyOf(row) in justAdded) return true;
+		const k = keyOf(row);
+		if (justRemoved.has(k)) return false;
+		if (k in justAdded) return true;
 		if (row.source && row.sourceId && owned.has(`${row.source}:${row.sourceId}`)) return true;
 		return false;
+	}
+
+	function entryIdOfRow(row: SharedTitle): number | null {
+		const k = keyOf(row);
+		if (justAdded[k]) return justAdded[k];
+		if (row.source && row.sourceId) return ownedMap[`${row.source}:${row.sourceId}`] ?? null;
+		return null;
+	}
+
+	async function removeFromLibrary(row: SharedTitle) {
+		const id = entryIdOfRow(row);
+		if (!id) return;
+		try {
+			await fetch('/api/entries', {
+				method: 'DELETE',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ id })
+			});
+			justRemoved = new Set([...justRemoved, keyOf(row)]);
+		} catch {}
 	}
 
 	function sortValue(row: SharedTitle, by: string): number | null {
@@ -196,7 +254,7 @@
 		} catch {} finally { busy = null; }
 	}
 
-	$effect(() => { loadFriends(); });
+	$effect(() => { loadFriends().then(() => restoreFriendsState()); });
 
 	const activeName = $derived(friends.find((f) => f.id === activeFriend)?.name ?? '');
 </script>
@@ -288,6 +346,9 @@
 								<span class="fallback" aria-hidden="true">?</span>
 							{/if}
 							{#if row.owned}<span class="tick" title="In your library">&check;</span>{/if}
+							{#if row.owned}
+								<button type="button" class="hover-remove" title="Remove from library" onclick={(e) => { e.preventDefault(); e.stopPropagation(); removeFromLibrary(row); }}>&times;</button>
+							{/if}
 						</div>
 
 						<span class="name">{row.title}</span>
@@ -342,18 +403,18 @@
 			<button type="button" onclick={() => {
 				const r = ctxMenu!.row;
 				const t = r.category === 'Movies' ? 'movie' : 'tv';
-				goto(`/watch?title=${encodeURIComponent(r.title)}&type=${t}&auto=1`);
+				goto(`/watch?title=${encodeURIComponent(r.title)}&type=${t}${r.year ? `&year=${r.year}` : ''}&auto=1`);
 				closeCtx();
 			}}>▶ Watch</button>
 			<button type="button" onclick={() => { goto(link(ctxMenu!.row)!); closeCtx(); }}>View details</button>
 			<hr />
 		{/if}
 		{#if isMine(ctxMenu.row)}
-			{#if justAdded[keyOf(ctxMenu.row)]}
-				<button type="button" onclick={() => { goto(`/entry/${justAdded[keyOf(ctxMenu!.row)]}`); closeCtx(); }}>View entry</button>
-			{:else}
-				<span class="ctx-info">In your library</span>
+			{#if entryIdOfRow(ctxMenu.row)}
+				<button type="button" onclick={() => { goto(`/entry/${entryIdOfRow(ctxMenu!.row)}`); closeCtx(); }}>View entry</button>
 			{/if}
+			<hr />
+			<button type="button" class="ctx-danger" onclick={() => { removeFromLibrary(ctxMenu!.row); closeCtx(); }}>Remove from library</button>
 		{:else if ctxMenu.row.source && ctxMenu.row.sourceId}
 			<button type="button" onclick={() => { add(ctxMenu!.row, 'completed'); closeCtx(); }}>✓ Add as completed</button>
 			<button type="button" onclick={() => { add(ctxMenu!.row, 'watching'); closeCtx(); }}>Add as watching</button>
@@ -559,4 +620,30 @@
 	.ctx-menu button:hover { background: var(--accent); color: var(--accent-ink, #fff); }
 	.ctx-menu hr { border: none; border-top: 1px solid var(--rule, #333); margin: 4px 0; }
 	.ctx-info { display: block; padding: 8px 14px; font-size: 0.84rem; color: var(--good); font-weight: 600; }
+
+	.ctx-danger { color: var(--danger, #c33) !important; }
+	.ctx-danger:hover { background: var(--danger, #c33) !important; color: #fff !important; }
+
+	.hover-remove {
+		position: absolute;
+		top: 6px;
+		left: 6px;
+		width: 26px;
+		height: 26px;
+		border-radius: 50%;
+		border: none;
+		background: rgba(0,0,0,0.65);
+		color: #fff;
+		font-size: 1.1rem;
+		line-height: 1;
+		display: grid;
+		place-items: center;
+		cursor: pointer;
+		opacity: 0;
+		transition: opacity 0.12s ease;
+		z-index: 2;
+	}
+
+	.card:hover .hover-remove { opacity: 1; }
+	.hover-remove:hover { background: var(--danger, #c33); }
 </style>
