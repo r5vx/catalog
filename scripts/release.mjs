@@ -115,26 +115,34 @@ function takeNotes() {
 	if (!existsSync(notesFile)) return '';
 
 	const text = readFileSync(notesFile, 'utf8');
-	const match = /^## Unreleased\s*$([\s\S]*?)(?=^## |\Z)/m.exec(text);
+	// The heading carries the update's title: "## Unreleased — Skip Intro and faster loading".
+	const match = /^## Unreleased(?:[ \t]*—[ \t]*(.+?))?[ \t]*$([\s\S]*?)(?=^## |\Z)/m.exec(text);
 
-	const body = (match?.[1] ?? '').trim();
-	if (!body) return '';
+	const title = (match?.[1] ?? '').trim();
+	const body = (match?.[2] ?? '').trim();
+	if (!body || !title) return { title, body: '' };
 
 	const today = new Date().toISOString().slice(0, 10);
 
 	writeFileSync(
 		notesFile,
-		text.replace(/^## Unreleased\s*$/m, `## Unreleased
+		text.replace(/^## Unreleased.*$/m, `## Unreleased
 
-## ${next} — ${today}
-`),
+## ${next} — ${today} — ${title}`),
 		'utf8'
 	);
 
-	return body;
+	return { title, body };
 }
 
-const notes = takeNotes();
+const { title: releaseTitle, body: notes } = takeNotes();
+
+if (!releaseTitle) {
+	abort(
+		'The "## Unreleased" heading in RELEASE_NOTES.md has no title.\n' +
+			'  Name the update on that line, like:  ## Unreleased — Skip Intro and faster loading'
+	);
+}
 
 if (!notes) {
 	abort(
@@ -330,7 +338,7 @@ async function upload() {
 			method: 'POST',
 			body: JSON.stringify({
 				tag_name: tag,
-				name: `Catalog ${next}`,
+				name: `Catalog ${next} — ${releaseTitle}`,
 				body: `${notes}
 
 ---

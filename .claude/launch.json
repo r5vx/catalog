@@ -2,10 +2,13 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "catalog",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
-      "port": 5173
+      "name": "catalog-test",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "dev", "--port", "5199", "--strictPort"],
+      "port": 5199,
+      "env": {
+        "CATALOG_DB": "C:\\Users\\BlurA\\AppData\\Local\\Temp\\claude\\C--Users-BlurA-Desktop-catalog\\ba6716fd-c849-4776-a424-e0d7e5b66fd9\\scratchpad\\testdb\\library.db"
+      }
     }
   ]
 }

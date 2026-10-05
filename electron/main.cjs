@@ -19,6 +19,10 @@ const ORIGIN = `http://127.0.0.1:${PORT}`;
 let server = null;
 let window = null;
 
+/** Settles with `fallback` if `promise` hasn't settled within `ms` — page scripts in hidden windows can hang forever. */
+const withTimeout = (promise, ms, fallback) =>
+	Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve(fallback), ms))]);
+
 /**
  * Where the project lives, working back from the running exe:
  *   <project>/dist-app/win-unpacked/Catalog.exe
@@ -115,7 +119,8 @@ function startServer() {
 							'User-Agent': chromeUA,
 							'Referer': 'https://www.febbox.com/',
 							'X-Requested-With': 'XMLHttpRequest'
-						}
+						},
+						signal: AbortSignal.timeout(6000)
 					});
 				} catch {}
 
@@ -131,7 +136,8 @@ function startServer() {
 							'Accept': '*/*',
 							'Accept-Language': 'en-US,en;q=0.9'
 						},
-						body: postBody
+						body: postBody,
+						signal: AbortSignal.timeout(10000)
 					});
 					playerHtml = await resp.text();
 				} catch (e) {
@@ -196,7 +202,8 @@ function startServer() {
 								try {
 									const r = await net.fetch(fileUrl, {
 										headers: { 'Referer': 'https://www.febbox.com/' },
-										redirect: 'manual'
+										redirect: 'manual',
+										signal: AbortSignal.timeout(8000)
 									});
 									const loc = r.headers.get('location');
 									if (loc && loc.includes('.m3u8')) {
@@ -240,12 +247,16 @@ function startServer() {
 							setTimeout(resolve, 8000);
 						});
 
-						const ctxHtml = await ctxWin.webContents.executeJavaScript(
-							`fetch('/file/player',{method:'POST',` +
-							`headers:{'Content-Type':'application/x-www-form-urlencoded','X-Requested-With':'XMLHttpRequest'},` +
-							`body:${JSON.stringify(postBody)},` +
-							`credentials:'include'` +
-							`}).then(r=>r.text()).catch(()=>'')`
+						const ctxHtml = await withTimeout(
+							ctxWin.webContents.executeJavaScript(
+								`fetch('/file/player',{method:'POST',` +
+								`headers:{'Content-Type':'application/x-www-form-urlencoded','X-Requested-With':'XMLHttpRequest'},` +
+								`body:${JSON.stringify(postBody)},` +
+								`credentials:'include'` +
+								`}).then(r=>r.text()).catch(()=>'')`
+							),
+							10000,
+							''
 						);
 
 						if (ctxHtml && ctxHtml.length > 100) {
@@ -266,7 +277,7 @@ function startServer() {
 					} catch (e) {
 						console.log('[video-url] ctx err:', e.message);
 					} finally {
-						if (ctxWin) try { ctxWin.close(); } catch {}
+						if (ctxWin) try { ctxWin.destroy(); } catch {}
 					}
 				}
 
@@ -284,70 +295,77 @@ function startServer() {
 						}
 					});
 					hidden.webContents.setAudioMuted(true);
+					const hiddenId = hidden.webContents.id;
+					let onCaptured = null;
 
-					// Intercept requests to the HD CDN
+					// Intercept requests to the HD CDN — only this window's, never the video already playing.
 					session.defaultSession.webRequest.onBeforeRequest(
 						{ urls: ['*://*.shegu.net/*', '*://*/*.m3u8*'] },
 						(details, callback) => {
-							if (!capturedUrl && details.url.includes('.m3u8') &&
-								!details.url.includes('febbox.com')) {
+							if (!capturedUrl && details.webContentsId === hiddenId &&
+								details.url.includes('.m3u8') && !details.url.includes('febbox.com')) {
 								capturedUrl = details.url;
 								console.log('[video-url] net-capture:', details.url.substring(0, 200));
+								onCaptured?.();
 							}
 							callback({});
 						}
 					);
 
-					// Navigate directly — session cookies are already present
-					hidden.loadURL('https://www.febbox.com/file/player', {
-						postData: [{ type: 'rawData', bytes: Buffer.from(postBody) }],
-						extraHeaders: 'Content-Type: application/x-www-form-urlencoded\nReferer: https://www.febbox.com/'
-					});
-
-					// Wait for page load + script execution time
-					await new Promise(resolve => {
-						const timer = setTimeout(resolve, 12000);
-						hidden.webContents.on('did-finish-load', () => {
-							clearTimeout(timer);
-							setTimeout(resolve, 3000);
+					try {
+						// Navigate directly — session cookies are already present
+						hidden.loadURL('https://www.febbox.com/file/player', {
+							postData: [{ type: 'rawData', bytes: Buffer.from(postBody) }],
+							extraHeaders: 'Content-Type: application/x-www-form-urlencoded\nReferer: https://www.febbox.com/'
 						});
-					});
 
-					// Poll JW Player (top frame + iframes)
-					for (let i = 0; i < 12 && !capturedUrl; i++) {
-						try {
-							const url = await hidden.webContents.executeJavaScript(
-								'(function(){' +
-								'if(typeof jwplayer==="function"){try{var p=jwplayer().getPlaylistItem();if(p&&p.file)return p.file}catch(e){}}' +
-								'try{var f=document.querySelectorAll("iframe");for(var j=0;j<f.length;j++){' +
-								'try{var w=f[j].contentWindow;if(typeof w.jwplayer==="function"){var p2=w.jwplayer().getPlaylistItem();if(p2&&p2.file)return p2.file}}catch(e){}' +
-								'}}catch(e){}' +
-								'return""' +
-								'})()'
-							);
-							if (url) { capturedUrl = url; videoInfo = 'jw:' + url.substring(0, 200); break; }
-						} catch {}
-						await new Promise(r => setTimeout(r, 500));
+						// Wait for page load + script execution time, or less once the link is captured
+						await new Promise(resolve => {
+							onCaptured = resolve;
+							const timer = setTimeout(resolve, 12000);
+							hidden.webContents.on('did-finish-load', () => {
+								clearTimeout(timer);
+								setTimeout(resolve, 3000);
+							});
+						});
+
+						// Poll JW Player (top frame + iframes)
+						for (let i = 0; i < 12 && !capturedUrl; i++) {
+							try {
+								const url = await withTimeout(hidden.webContents.executeJavaScript(
+									'(function(){' +
+									'if(typeof jwplayer==="function"){try{var p=jwplayer().getPlaylistItem();if(p&&p.file)return p.file}catch(e){}}' +
+									'try{var f=document.querySelectorAll("iframe");for(var j=0;j<f.length;j++){' +
+									'try{var w=f[j].contentWindow;if(typeof w.jwplayer==="function"){var p2=w.jwplayer().getPlaylistItem();if(p2&&p2.file)return p2.file}}catch(e){}' +
+									'}}catch(e){}' +
+									'return""' +
+									'})()'
+								), 2000, '');
+								if (url) { capturedUrl = url; videoInfo = 'jw:' + url.substring(0, 200); break; }
+							} catch {}
+							await new Promise(r => setTimeout(r, 500));
+						}
+
+						// Gather debug info if capture failed
+						if (!capturedUrl) {
+							try {
+								videoInfo = await withTimeout(hidden.webContents.executeJavaScript(
+									'(function(){var v=document.querySelector("video");var t=document.title||"";' +
+									'var jw=typeof jwplayer;var ifs=document.querySelectorAll("iframe").length;' +
+									'var sc=document.querySelectorAll("script[src]");' +
+									'var srcs=[];for(var i=0;i<Math.min(sc.length,5);i++)srcs.push(sc[i].src.split("/").pop());' +
+									'var loc=location.href.substring(0,100);' +
+									'return(v?"vid:"+v.src.substring(0,100):"no-vid")+" t:"+t.substring(0,60)+' +
+									'" jw:"+jw+" if:"+ifs+" sc:["+srcs.join(",")+"] url:"+loc;})()'
+								), 2000, 'page did not answer');
+							} catch (e) { videoInfo = 'err:' + (e.message || '').substring(0, 100); }
+						}
+					} finally {
+						// The page plays the video muted; left open, it would stream in the background until restart.
+						try { session.defaultSession.webRequest.onBeforeRequest(null); } catch {}
+						try { hidden.destroy(); } catch {}
+						hidden = null;
 					}
-
-					// Gather debug info if capture failed
-					if (!capturedUrl) {
-						try {
-							videoInfo = await hidden.webContents.executeJavaScript(
-								'(function(){var v=document.querySelector("video");var t=document.title||"";' +
-								'var jw=typeof jwplayer;var ifs=document.querySelectorAll("iframe").length;' +
-								'var sc=document.querySelectorAll("script[src]");' +
-								'var srcs=[];for(var i=0;i<Math.min(sc.length,5);i++)srcs.push(sc[i].src.split("/").pop());' +
-								'var loc=location.href.substring(0,100);' +
-								'return(v?"vid:"+v.src.substring(0,100):"no-vid")+" t:"+t.substring(0,60)+' +
-								'" jw:"+jw+" if:"+ifs+" sc:["+srcs.join(",")+"] url:"+loc;})()'
-							);
-						} catch (e) { videoInfo = 'err:' + (e.message || '').substring(0, 100); }
-					}
-
-					try { session.defaultSession.webRequest.onBeforeRequest(null); } catch {}
-					hidden.close();
-					hidden = null;
 				}
 
 				try {
@@ -355,7 +373,7 @@ function startServer() {
 				} catch {}
 			} catch (e) {
 				try { session.defaultSession.webRequest.onBeforeRequest(null); } catch {}
-				if (hidden) try { hidden.close(); } catch {}
+				if (hidden) try { hidden.destroy(); } catch {}
 				try {
 					server.send({
 						type: 'get-video-url-result',
@@ -390,7 +408,7 @@ function startServer() {
 				const fid = Number(message.fid);
 				const shareKey = String(message.shareKey);
 
-				const raw = await hidden.webContents.executeJavaScript(`
+				const raw = await withTimeout(hidden.webContents.executeJavaScript(`
 					(async function() {
 						var endpoints = [
 							{ url: '/file/subtitle_list', method: 'POST', body: 'fid=${fid}&share_key=${shareKey}' },
@@ -414,15 +432,15 @@ function startServer() {
 						}
 						return '';
 					})()
-				`);
+				`), 12000, '');
 
-				hidden.close();
+				hidden.destroy();
 				hidden = null;
 				try {
 					server.send({ type: 'get-subtitles-result', id: message.id, data: raw || '' });
 				} catch {}
 			} catch (e) {
-				if (hidden) try { hidden.close(); } catch {}
+				if (hidden) try { hidden.destroy(); } catch {}
 				try {
 					server.send({
 						type: 'get-subtitles-result',

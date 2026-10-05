@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { beforeNavigate } from '$app/navigation';
-	import { onMount, onDestroy, tick } from 'svelte';
+	import { onMount, onDestroy, tick, untrack } from 'svelte';
 	import Hls from 'hls.js';
 	import BackBar from '$lib/BackBar.svelte';
 	import { p, pRandom } from '$lib/poison';
+	import { pickFile, PREFERRED_QUALITY } from '$lib/watch';
 
 	const pm = $derived(page.data.poisonMode);
 
@@ -62,7 +63,7 @@
 	let activeEpisode = $state<Episode | null>(null);
 	let activeQuality = $state('');
 	let activeFileFid = $state(0);
-	let preferredQuality = $state('1080p');
+	let preferredQuality = $state(PREFERRED_QUALITY);
 	let sidebarOpen = $state(true);
 	let loadingEpisode = $state(false);
 	let changingQuality = $state(false);
@@ -96,8 +97,25 @@
 	let autoplayFired = false;
 	let skipResume = false;
 	let switchingEpisode = false;
-	let bufferTimer: ReturnType<typeof setTimeout> | null = null;
 	let refreshingStream = false;
+	/** Bumped to reload the player even when a fresh link comes back identical. */
+	let streamNonce = $state(0);
+	let streamRefreshes = 0;
+	let lastRefreshAt = 0;
+	let stalledOut = $state(false);
+	let stallTimer: ReturnType<typeof setInterval> | null = null;
+	let stallSince = 0;
+	let stallNudged = false;
+	let stallReloaded = false;
+	let lastBytesAt = 0;
+	let mediaRecoveredAt = 0;
+	let pendingQualityPrefetch: number[] = [];
+	let nextPrefetchKey = '';
+	let resolveFailed = $state(false);
+
+	interface SkipSegment { type: 'intro' | 'recap' | 'credits'; start: number; end: number; }
+	let skipSegments = $state<SkipSegment[]>([]);
+	let skipLookupKey = '';
 	let seekAfterLoad = 0;
 	let restoreSub: { fileName: string; language: string; delay: number } | null = null;
 	let resumeSeason = 0;
@@ -133,6 +151,8 @@
 
 	let showControls = $state(true);
 	let controlsTimer: ReturnType<typeof setTimeout> | null = null;
+	let cursorIdle = $state(false);
+	let cursorTimer: ReturnType<typeof setTimeout> | null = null;
 	let showSettings = $state(false);
 	let showCaptions = $state(false);
 	let showDelay = $state(false);
@@ -151,7 +171,9 @@
 	let progressBarEl: HTMLDivElement | undefined = $state();
 	let playerPageEl: HTMLDivElement | undefined = $state();
 
-	let subtitleCues = $state<{ start: number; end: number; text: string }[]>([]);
+	/** `text` is already-escaped HTML (only i/b/u survive); `top` came from an {\an8}-style tag. */
+	interface Cue { start: number; end: number; text: string; top: boolean; }
+	let subtitleCues = $state<Cue[]>([]);
 	let subtitlesOn = $state(false);
 	let subtitleDelay = $state(0);
 
@@ -183,17 +205,29 @@
 			: progressPct
 	);
 	const bufferedPct = $derived(duration > 0 ? (bufferedEnd / duration) * 100 : 0);
-	const currentSub = $derived(
-		subtitlesOn
-			? subtitleCues.find((c) => {
-					const t = currentTime - subtitleDelay;
-					return t >= c.start && t < c.end;
-				})?.text ?? ''
-			: ''
-	);
+	const activeSubs = $derived(subtitlesOn ? subsAt(currentTime - subtitleDelay) : { top: '', bottom: '' });
 
-	const nearEnd = $derived(showType === 'tv' && duration > 0 && (duration - currentTime) < 90 && !loadingEpisode);
+	const inEndCredits = $derived(
+		skipSegments.some((s) => s.type === 'credits' && s.end >= duration - 20 && currentTime >= s.start)
+	);
+	const nearEnd = $derived(
+		showType === 'tv' && duration > 0 && ((duration - currentTime) < 90 || inEndCredits) && !loadingEpisode
+	);
 	const nextEp = $derived(nearEnd ? nextEpisode() : null);
+	const upcomingEp = $derived(showType === 'tv' ? nextEpisode() : null);
+
+	const SKIP_LABELS: Record<SkipSegment['type'], string> = {
+		intro: 'Skip Intro',
+		recap: 'Skip Recap',
+		credits: 'Skip Credits'
+	};
+	const activeSkip = $derived.by(() => {
+		const seg = skipSegments.find((s) => currentTime >= s.start && currentTime < s.end - 1);
+		if (!seg) return null;
+		// Credits that run to the end are what "Next Episode" is for.
+		if (seg.type === 'credits' && nextEp && seg.end >= duration - 20) return null;
+		return seg;
+	});
 
 	const subsByLanguage = $derived.by(() => {
 		const groups: Record<string, SubOption[]> = {};
@@ -227,15 +261,24 @@
 		videoEl.paused ? videoEl.play() : videoEl.pause();
 	}
 
-	function skip(delta: number) {
+	function seekTo(target: number) {
 		if (!videoEl) return;
-		const cap = duration > 0.5 ? duration - 0.5 : duration;
-		const target = Math.max(0, Math.min(cap, videoEl.currentTime + delta));
 		seekTarget = duration > 0 ? (target / duration) * 100 : 0;
 		isVideoSeeking = true;
 		if (hlsInstance) hlsInstance.stopLoad();
 		videoEl.currentTime = target;
 		if (hlsInstance) hlsInstance.startLoad(-1);
+	}
+
+	function skip(delta: number) {
+		if (!videoEl) return;
+		const cap = duration > 0.5 ? duration - 0.5 : duration;
+		seekTo(Math.max(0, Math.min(cap, videoEl.currentTime + delta)));
+	}
+
+	function skipSegment(seg: SkipSegment) {
+		const cap = duration > 0.5 ? duration - 0.5 : duration;
+		seekTo(Math.min(cap, seg.end));
 	}
 
 	function toggleMute() {
@@ -321,10 +364,9 @@
 		pipCtx.drawImage(videoEl, 0, 0, vw, vh);
 
 		if (subtitlesOn) {
-			const t = (videoEl.currentTime || 0) - subtitleDelay;
-			const cue = subtitleCues.find(c => t >= c.start && t < c.end);
-			if (cue) {
-				const text = cue.text.replace(/<[^>]*>/g, '');
+			const subs = subsAt((videoEl.currentTime || 0) - subtitleDelay);
+			const text = plainSubText(subs.bottom || subs.top);
+			if (text) {
 				const lines = text.split('\n');
 				const fontSize = Math.round(vh * 0.04);
 				pipCtx.font = `${fontSize}px system-ui, sans-serif`;
@@ -450,6 +492,12 @@
 		scheduleHide();
 	}
 
+	function wakeCursor() {
+		cursorIdle = false;
+		if (cursorTimer) clearTimeout(cursorTimer);
+		cursorTimer = setTimeout(() => { cursorIdle = true; }, 3000);
+	}
+
 	function scheduleHide() {
 		if (controlsTimer) clearTimeout(controlsTimer);
 		controlsTimer = setTimeout(() => {
@@ -532,50 +580,98 @@
 
 	/* --------------------------------------------------------------- subtitle functions */
 
+	/** Reads the first timestamp in a line, ignoring any cue settings after it. */
 	function parseTimestamp(t: string): number {
-		const p = t.trim().replace(',', '.').split(':');
-		return p.length === 3
-			? +p[0] * 3600 + +p[1] * 60 + parseFloat(p[2])
-			: +p[0] * 60 + parseFloat(p[1]);
+		const m = t.match(/(?:(\d+):)?(\d+):(\d+)(?:[.,](\d+))?/);
+		if (!m) return NaN;
+		return +(m[1] ?? 0) * 3600 + +m[2] * 60 + +m[3] + +`0.${m[4] ?? 0}`;
 	}
 
-	function parseSrt(text: string): { start: number; end: number; text: string }[] {
+	const ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+	/** Subtitle files come from strangers: escape everything but italics, bold and underline. */
+	function safeSubHtml(text: string): string {
+		return text
+			.replace(/<\/?(?:font|span|c|v|lang|ruby|rt)\b[^>]*>/gi, '')
+			.split(/(<\/?[ibu]>)/i)
+			.map((part, i) => (i % 2 ? part.toLowerCase() : part.replace(/[&<>"']/g, (ch) => ESCAPES[ch])))
+			.join('');
+	}
+
+	function plainSubText(html: string): string {
+		return html
+			.replace(/<[^>]*>/g, '')
+			.replace(/&lt;/g, '<')
+			.replace(/&gt;/g, '>')
+			.replace(/&quot;/g, '"')
+			.replace(/&#39;/g, "'")
+			.replace(/&amp;/g, '&');
+	}
+
+	/** One cue's raw text as display HTML. Null for lines that aren't readable text. */
+	function cleanCue(raw: string): { text: string; top: boolean } | null {
+		const tags = raw.match(/\{[^}]*\}/g) ?? [];
+		// Vector drawings and karaoke syllables render as gibberish once their tags are gone.
+		if (tags.some((t) => /\\p[1-9]|\\[kK][fo]?\d/.test(t))) return null;
+		const top = tags.some((t) => /\\an[789]|\\a[567](?!\d)/.test(t));
+		const text = raw
+			.replace(/\{[^}]*\}/g, (block) =>
+				(/\\i1(?!\d)/.test(block) ? '<i>' : '') +
+				(/\\b1(?!\d)/.test(block) ? '<b>' : '') +
+				(/\\i0(?!\d)/.test(block) ? '</i>' : '') +
+				(/\\b0(?!\d)/.test(block) ? '</b>' : '')
+			)
+			.replace(/\\[Nn]/g, '\n')
+			.replace(/\\h/g, ' ')
+			.split('\n')
+			.map((line) => line.trim())
+			.filter((line) => line.replace(/<[^>]*>/g, '').trim())
+			.join('\n');
+		return text ? { text: safeSubHtml(text), top } : null;
+	}
+
+	function parseSrt(text: string): Cue[] {
 		if (text.includes('[Events]') || text.includes('Dialogue:')) return parseAss(text);
 
-		const cues: { start: number; end: number; text: string }[] = [];
-		const blocks = text.replace(/\r\n/g, '\n').trim().split(/\n\n+/);
+		const cues: Cue[] = [];
+		const blocks = text.replace(/^﻿/, '').replace(/\r\n?/g, '\n').trim().split(/\n\n+/);
 		for (const block of blocks) {
 			const lines = block.split('\n');
 			const timeIdx = lines.findIndex((l) => l.includes('-->'));
 			if (timeIdx < 0) continue;
 			const [s, e] = lines[timeIdx].split('-->').map(parseTimestamp);
-			const txt = lines
-				.slice(timeIdx + 1)
-				.join('\n')
-				.trim();
-			if (txt) cues.push({ start: s, end: e, text: txt });
+			if (!isFinite(s) || !isFinite(e)) continue;
+			const cue = cleanCue(lines.slice(timeIdx + 1).join('\n'));
+			if (cue) cues.push({ start: s, end: e, ...cue });
 		}
 		return cues;
 	}
 
-	function parseAss(text: string): { start: number; end: number; text: string }[] {
-		const cues: { start: number; end: number; text: string }[] = [];
-		const lines = text.replace(/\r\n/g, '\n').split('\n');
-		for (const line of lines) {
+	function parseAss(text: string): Cue[] {
+		const cues: Cue[] = [];
+		for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
 			if (!line.startsWith('Dialogue:')) continue;
 			const parts = line.substring(9).split(',');
 			if (parts.length < 10) continue;
 			const s = parseTimestamp(parts[1]);
 			const e = parseTimestamp(parts[2]);
-			const raw = parts.slice(9).join(',');
-			const txt = raw
-				.replace(/\{[^}]*\}/g, '')
-				.replace(/\\N/g, '\n')
-				.replace(/\\n/g, '\n')
-				.trim();
-			if (txt) cues.push({ start: s, end: e, text: txt });
+			if (!isFinite(s) || !isFinite(e)) continue;
+			const cue = cleanCue(parts.slice(9).join(','));
+			if (cue) cues.push({ start: s, end: e, ...cue });
 		}
 		return cues;
+	}
+
+	/** Every line showing at time `t`, split by position, with duplicate layers dropped. */
+	function subsAt(t: number): { top: string; bottom: string } {
+		const top: string[] = [];
+		const bottom: string[] = [];
+		for (const c of subtitleCues) {
+			if (t < c.start || t >= c.end) continue;
+			const list = c.top ? top : bottom;
+			if (!list.includes(c.text)) list.push(c.text);
+		}
+		return { top: top.join('\n'), bottom: bottom.join('\n') };
 	}
 
 	function uploadSubtitle() {
@@ -811,25 +907,173 @@
 		} catch {}
 	}
 
-	async function refreshStaleStream() {
+	/** Gets a brand-new link for the current file and picks up where it left off. Capped so it can't loop forever. */
+	async function refreshStream() {
 		if (refreshingStream) return;
 		const fid = activeFile?.fid;
 		if (!fid || !shareKey || !videoEl) return;
+
+		const now = performance.now();
+		if (now - lastRefreshAt > 120_000) streamRefreshes = 0;
+		if (streamRefreshes >= 2) {
+			clearStallWatch();
+			stalledOut = true;
+			problem = 'The video keeps getting stuck.';
+			return;
+		}
+		streamRefreshes++;
+		lastRefreshAt = now;
+
 		refreshingStream = true;
-		const savedTime = videoEl.currentTime;
+		const savedTime = videoEl.currentTime || seekAfterLoad;
 		try {
 			const resp = await fetch(`/api/watch/stream?share_key=${shareKey}&fid=${fid}&refresh=1`);
 			if (!resp.ok) throw new Error();
 			const result = await resp.json();
-			if (result.url) {
-				streamUrl = result.url;
-				seekAfterLoad = savedTime;
-			}
+			if (!result.url) throw new Error();
+			if (result.debug) debugInfo = result.debug;
+			seekAfterLoad = savedTime;
+			streamUrl = result.url;
+			streamNonce++;
 		} catch {
-			problem = 'Stream expired. Try reopening the title.';
+			clearStallWatch();
+			stalledOut = true;
+			problem = 'Could not get a fresh link for this video.';
 		} finally {
 			refreshingStream = false;
 		}
+	}
+
+	function retryStream() {
+		stalledOut = false;
+		problem = '';
+		streamRefreshes = 0;
+		refreshStream();
+	}
+
+	function markBytes() {
+		lastBytesAt = performance.now();
+	}
+
+	function bufferedAhead(): number {
+		if (!videoEl) return 0;
+		const t = videoEl.currentTime;
+		for (let i = 0; i < videoEl.buffered.length; i++) {
+			if (videoEl.buffered.start(i) <= t + 0.5 && videoEl.buffered.end(i) > t) return videoEl.buffered.end(i) - t;
+		}
+		return 0;
+	}
+
+	/** Watches a stall (or a start) and steps up: skip a gap, reopen the connection, then fetch a fresh link. */
+	function watchForStall() {
+		stallSince = performance.now();
+		stallNudged = false;
+		stallReloaded = false;
+		if (!stallTimer) stallTimer = setInterval(checkStall, 2000);
+	}
+
+	function clearStallWatch() {
+		if (stallTimer) { clearInterval(stallTimer); stallTimer = null; }
+	}
+
+	function checkStall() {
+		if (!videoEl || loadingEpisode || changingQuality || refreshingStream) return;
+		if (!videoEl.paused && videoEl.readyState >= 3) { clearStallWatch(); return; }
+
+		const now = performance.now();
+		const stuckFor = now - stallSince;
+		// Silence on the wire, not slowness: a slow download still delivers bytes.
+		const quietFor = now - Math.max(lastBytesAt, stallSince);
+
+		if (!stallNudged && stuckFor > 6000 && bufferedAhead() > 3) {
+			stallNudged = true;
+			videoEl.currentTime = videoEl.currentTime + 0.1;
+			return;
+		}
+		if (!stallReloaded && quietFor > 10_000 && hlsInstance) {
+			stallReloaded = true;
+			stallSince = now;
+			hlsInstance.stopLoad();
+			hlsInstance.startLoad(videoEl.currentTime);
+			return;
+		}
+		if ((stallReloaded && quietFor > 12_000) || (!hlsInstance && stuckFor > 20_000)) {
+			clearStallWatch();
+			refreshStream();
+		}
+	}
+
+	/** Server-side link for the next episode, fetched while this one is already fully loaded. */
+	function prefetchNextEpisode() {
+		if (showType !== 'tv' || !shareKey || !videoEl || duration <= 0) return;
+		const remaining = duration - currentTime;
+		if (remaining > 180) return;
+		if (remaining > 60 && bufferedAhead() < remaining - 2) return;
+		const next = nextEpisode();
+		const file = next ? pickFile(next.files, preferredQuality) : null;
+		if (!file) return;
+		const key = `${shareKey}:${file.fid}`;
+		if (key === nextPrefetchKey) return;
+		nextPrefetchKey = key;
+		fetch('/api/watch/prefetch', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ share_key: shareKey, fids: [file.fid] })
+		}).catch(() => {});
+	}
+
+	/** Links for the other qualities, held back until playback is settled so they never compete with it. */
+	function queueQualityPrefetch(files: FileOption[], activeFid: number) {
+		pendingQualityPrefetch = files.filter((f) => f.fid !== activeFid).map((f) => f.fid);
+	}
+
+	function flushQualityPrefetch() {
+		if (!pendingQualityPrefetch.length || !shareKey || currentTime < 45) return;
+		const fids = pendingQualityPrefetch;
+		pendingQualityPrefetch = [];
+		fetch('/api/watch/prefetch', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ share_key: shareKey, fids })
+		}).catch(() => {});
+	}
+
+	function onTimeUpdate() {
+		if (videoEl && !seeking && !isVideoSeeking && !switchingEpisode) currentTime = videoEl.currentTime;
+		if (autoplayNext && !autoplayFired && !loadingEpisode && showType === 'tv' && duration > 0 && (duration - currentTime) <= 5) {
+			const next = nextEpisode();
+			if (next) { autoplayFired = true; playEpisode(next); return; }
+		}
+		flushQualityPrefetch();
+		prefetchNextEpisode();
+	}
+
+	function overallEpisodeNumber(ep: Episode): number {
+		let n = ep.episode;
+		for (const s of seasons) {
+			if (s < 1 || s >= ep.season) continue;
+			n += Math.max(0, ...episodes.filter((e) => e.season === s).map((e) => e.episode));
+		}
+		return n;
+	}
+
+	async function loadSkipTimes(ep: Episode, length: number) {
+		const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
+		const key = `${baseTitle}:${ep.season}:${ep.episode}`;
+		if (key === skipLookupKey) return;
+		skipLookupKey = key;
+		skipSegments = [];
+		try {
+			const params = new URLSearchParams({
+				title: baseTitle,
+				episode: String(overallEpisodeNumber(ep)),
+				duration: String(Math.round(length))
+			});
+			const resp = await fetch(`/api/watch/skip-times?${params}`);
+			if (!resp.ok) return;
+			const segments = await resp.json() as SkipSegment[];
+			if (key === skipLookupKey) skipSegments = segments;
+		} catch {}
 	}
 
 	function handleBeforeUnload() {
@@ -931,9 +1175,9 @@
 		try {
 			const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
 			const params = new URLSearchParams({ title: baseTitle, type: showType });
-			if (showType === 'tv') {
-				if (activeSeason) params.set('season', String(activeSeason));
-				if (activeEpisode) params.set('episode', String(activeEpisode.episode));
+			if (showType === 'tv' && activeEpisode) {
+				params.set('season', String(activeEpisode.season));
+				params.set('episode', String(activeEpisode.episode));
 			}
 			const resp = await fetch(`/api/watch/subtitles?${params}`);
 			if (resp.ok) febboxSubs = await resp.json();
@@ -986,16 +1230,17 @@
 
 	async function loadCast(title: string, type: 'movie' | 'tv', season = 0, episode = 0) {
 		const key = `${title}:${season}:${episode}`;
-		if (key === lastCastKey && castMembers.length > 0) return;
+		// Once per episode, even when the answer is empty — re-asking on empty looped forever.
+		if (key === lastCastKey) return;
 		lastCastKey = key;
 		loadingCast = true;
 		try {
 			let url = `/api/watch/cast?title=${encodeURIComponent(title)}&type=${type}`;
 			if (type === 'tv' && season > 0 && episode > 0) url += `&season=${season}&episode=${episode}`;
 			const resp = await fetch(url);
-			if (resp.ok) castMembers = await resp.json();
+			if (resp.ok && key === lastCastKey) castMembers = await resp.json();
 		} catch {}
-		loadingCast = false;
+		if (key === lastCastKey) loadingCast = false;
 	}
 
 	function applyPreferredAudio() {
@@ -1108,6 +1353,8 @@
 
 	$effect(() => {
 		if (!videoEl || !streamUrl) return;
+		void streamNonce;
+		clearStallWatch();
 
 		if (hlsInstance) {
 			hlsInstance.destroy();
@@ -1140,11 +1387,13 @@
 				fragLoadingRetryDelay: 1000,
 				abrEwmaDefaultEstimate: 50_000_000,
 				xhrSetup: (xhr: XMLHttpRequest) => {
+					xhr.addEventListener('progress', markBytes);
 					try { xhr.setRequestHeader('Referer', 'https://www.febbox.com/'); } catch {}
 				}
 			});
 			hls.loadSource(streamUrl);
 			hls.attachMedia(videoEl);
+			hls.on(Hls.Events.FRAG_LOADED, markBytes);
 			hls.on(Hls.Events.MANIFEST_PARSED, () => {
 				hlsLevels = hls.levels.map((l, i) => ({
 					index: i, height: l.height, bitrate: l.bitrate
@@ -1152,7 +1401,7 @@
 				const lvlInfo = hls.levels.map((l: { height: number; codecSet?: string; videoCodec?: string }) =>
 					`${l.height}p/${l.codecSet || l.videoCodec || '?'}`
 				).join(', ');
-				debugInfo = (debugInfo ? debugInfo + ' | ' : '') + `hls: ${hls.levels.length} lvl (${lvlInfo})`;
+				debugInfo = (debugInfo ? debugInfo + ' | ' : '') + `hls: ${hls.levels.length} lvl (${lvlInfo}), ${hls.subtitleTracks.length} sub tracks`;
 				if (hls.levels.length > 1) {
 					let best = hls.levels.length - 1;
 					for (let i = hls.levels.length - 1; i >= 0; i--) {
@@ -1192,7 +1441,7 @@
 			hls.on(Hls.Events.LEVEL_SWITCHED, (_e, data) => {
 				hlsActiveLevel = data.level;
 			});
-			hls.on(Hls.Events.ERROR, async (_e, data) => {
+			hls.on(Hls.Events.ERROR, (_e, data) => {
 				const errDetail = `${data.type}/${data.details}` +
 					((data as any).response?.code ? ` http=${(data as any).response.code}` : '') +
 					((data as any).reason ? ` reason=${(data as any).reason}` : '') +
@@ -1203,15 +1452,15 @@
 					}
 					if (data.type === 'networkError' && (data.details === 'fragLoadError' || data.details === 'fragLoadTimeOut')) {
 						if ((data as any).response?.code === 403 || (data as any).response?.code === 410) {
-							refreshStaleStream();
+							refreshStream();
 						}
 					}
 					return;
 				}
+				debugInfo = (debugInfo ? debugInfo + ' | ' : '') + 'fatal: ' + errDetail;
 				if (prevStreamUrl) {
 					if (qualityTimer) { clearTimeout(qualityTimer); qualityTimer = null; }
 					showQualityToast('That file could not be played. Try a different one.');
-					debugInfo = (debugInfo ? debugInfo + ' | ' : '') + 'fatal: ' + errDetail;
 					const t = videoEl?.currentTime ?? 0;
 					seekAfterLoad = t;
 					streamUrl = prevStreamUrl;
@@ -1220,41 +1469,37 @@
 					prevStreamUrl = '';
 					return;
 				}
-				const fid = activeFile?.fid;
-				if (!fid || !shareKey) {
-					problem = `Video failed to load (${data.details}).`;
-					debugInfo = (debugInfo ? debugInfo + ' | ' : '') + 'fatal: ' + errDetail;
+				// A decode hiccup isn't fixed by a new link; hls.js can rebuild the decoder in place.
+				if (data.type === Hls.ErrorTypes.MEDIA_ERROR && performance.now() - mediaRecoveredAt > 10_000) {
+					mediaRecoveredAt = performance.now();
+					hls.recoverMediaError();
 					return;
 				}
-				const savedTime = videoEl?.currentTime ?? 0;
-				if (subtitlesOn && activeSubFileName) {
-					restoreSub = {
-						fileName: activeSubFileName,
-						language: febboxSubs.find(s => s.url === activeSubUrl)?.language ?? '',
-						delay: subtitleDelay
-					};
+				if (!activeFile?.fid || !shareKey) {
+					problem = `Video failed to load (${data.details}).`;
+					return;
 				}
-				try {
-					const resp = await fetch(`/api/watch/stream?share_key=${shareKey}&fid=${fid}&refresh=1`);
-					if (!resp.ok) throw new Error();
-					const result = await resp.json();
-					if (result.url) {
-						streamUrl = result.url;
-						seekAfterLoad = savedTime;
-						return;
-					}
-				} catch {}
-				problem = `Video failed to load (${data.details}).`;
-				debugInfo = (debugInfo ? debugInfo + ' | ' : '') + 'fatal: ' + errDetail;
+				refreshStream();
 			});
 			hlsInstance = hls;
 		} else {
 			videoEl.src = streamUrl;
 			videoEl.play().catch(() => {});
 			hlsAudioTracks = [];
-			videoEl.addEventListener('loadedmetadata', () => { switchingEpisode = false; autoplayFired = false; loadAndResumeProgress(); }, { once: true });
+			videoEl.addEventListener('loadedmetadata', () => {
+				switchingEpisode = false;
+				autoplayFired = false;
+				if (seekAfterLoad > 0) {
+					const t = seekAfterLoad;
+					seekAfterLoad = 0;
+					if (videoEl) videoEl.currentTime = t;
+				} else {
+					loadAndResumeProgress();
+				}
+			}, { once: true });
 		}
 
+		watchForStall();
 		startProgressSaving();
 		window.addEventListener('beforeunload', handleBeforeUnload);
 	});
@@ -1291,7 +1536,8 @@
 		const track = videoEl.addTextTrack('subtitles', 'Subtitles', 'en');
 		track.mode = 'showing';
 		for (const c of subtitleCues) {
-			const cue = new VTTCue(c.start + subtitleDelay, c.end + subtitleDelay, c.text.replace(/<[^>]*>/g, ''));
+			const cue = new VTTCue(c.start + subtitleDelay, c.end + subtitleDelay, plainSubText(c.text));
+			if (c.top) cue.line = 0;
 			track.addCue(cue);
 		}
 	});
@@ -1324,8 +1570,9 @@
 			hlsInstance = null;
 		}
 		if (controlsTimer) clearTimeout(controlsTimer);
+		if (cursorTimer) clearTimeout(cursorTimer);
 		if (clickTimeout) clearTimeout(clickTimeout);
-		if (bufferTimer) clearTimeout(bufferTimer);
+		clearStallWatch();
 		if (qualityTimer) clearTimeout(qualityTimer);
 		if (qualityToastTimer) clearTimeout(qualityToastTimer);
 		stopProgressSaving();
@@ -1337,7 +1584,7 @@
 		if ((streamUrl || useIframe) && videoTitle) {
 			const sub = restoreSub;
 			restoreSub = null;
-			fetchSubtitles(sub ?? undefined);
+			untrack(() => fetchSubtitles(sub ?? undefined));
 		}
 	});
 
@@ -1346,7 +1593,8 @@
 			const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
 			const s = activeEpisode?.season ?? 0;
 			const e = activeEpisode?.episode ?? 0;
-			loadCast(baseTitle, showType, s, e);
+			const type = showType;
+			untrack(() => loadCast(baseTitle, type, s, e));
 		}
 	});
 
@@ -1359,6 +1607,13 @@
 			const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
 			loadEpisodeNames(baseTitle, activeSeason);
 		}
+	});
+
+	$effect(() => {
+		const ep = activeEpisode;
+		const length = duration;
+		if (showType !== 'tv' || !ep || !streamUrl || length < 60) return;
+		untrack(() => loadSkipTimes(ep, length));
 	});
 
 	$effect(() => {
@@ -1408,31 +1663,20 @@
 		}
 	});
 
-	function pickFile(files: FileOption[], wanted: string): FileOption | null {
-		if (!files.length) return null;
-		const exact = files.find((f) => f.quality === wanted);
-		if (exact) return exact;
-		const sorted = [...files].sort((a, b) => {
-			const aq = parseInt(a.quality) || 0;
-			const bq = parseInt(b.quality) || 0;
-			if (bq !== aq) return bq - aq;
-			const aSize = parseFloat(a.size) || 0;
-			const bSize = parseFloat(b.size) || 0;
-			return bSize - aSize;
-		});
-		return sorted[0];
-	}
-
 	async function resolve(title: string, type: string, year: string) {
 		loading = true;
 		loadingStatus = pm ? pRandom() : 'Searching for title...';
 		problem = '';
 		debugInfo = '';
 		needsLogin = false;
+		resolveFailed = false;
+		stalledOut = false;
+		streamRefreshes = 0;
 		lastResolveArgs = { title, type, year };
 
 		try {
-			const params = new URLSearchParams({ title });
+			// A series asks for no stream here; it fetches only the episode it ends up playing.
+			const params = new URLSearchParams({ title, nostream: '1' });
 			if (type) params.set('type', type);
 			if (year) params.set('year', year);
 
@@ -1517,26 +1761,39 @@
 
 			if (data.debug) debugInfo = data.debug;
 
-			if (needsResume && activeEpisode) {
-				const resumeFile = pickFile(activeEpisode.files, preferredQuality);
-				if (resumeFile) {
-					loadingStatus = pm ? "PAPA'S BACK resuming..." : `Resuming S${activeEpisode.season}E${activeEpisode.episode}...`;
-					videoTitle = `${data.title} S${activeEpisode.season}E${activeEpisode.episode}`;
-					try {
-						const sResp = await fetch(`/api/watch/stream?share_key=${shareKey}&fid=${resumeFile.fid}`);
-						if (sResp.ok) {
-							const sData = await sResp.json();
-							if (sData.url) {
-								streamUrl = sData.url;
-								activeQuality = resumeFile.quality;
-								activeFileFid = resumeFile.fid;
-								fetchSubtitles();
-								loading = false;
-								return;
-							}
-						}
-					} catch {}
+			if (data.episodes) {
+				const ep = activeEpisode;
+				const file = ep ? pickFile(ep.files, preferredQuality) : null;
+				if (!ep || !file) {
+					problem = 'No video file found for this title.';
+					return;
 				}
+				videoTitle = `${data.title} S${ep.season}E${ep.episode}`;
+				activeQuality = file.quality;
+				activeFileFid = file.fid;
+				if (!data.hasToken) {
+					needsLogin = true;
+					return;
+				}
+				loadingStatus = needsResume
+					? (pm ? "PAPA'S BACK resuming..." : `Resuming S${ep.season}E${ep.episode}...`)
+					: (pm ? pRandom() : 'Getting stream...');
+				let url = '';
+				try {
+					const sResp = await fetch(`/api/watch/stream?share_key=${shareKey}&fid=${file.fid}`);
+					if (sResp.ok) {
+						const sData = await sResp.json();
+						url = sData.url ?? '';
+						if (sData.debug) debugInfo = sData.debug;
+					}
+				} catch {}
+				if (url) {
+					streamUrl = url;
+				} else {
+					useIframe = true;
+					iframeFid = file.fid;
+				}
+				return;
 			}
 
 			if (data.streamUrl) {
@@ -1558,19 +1815,13 @@
 				}
 			}
 		} catch {
-			problem = 'Could not load that title. Try again in a moment.';
+			problem = 'Could not load that title.';
+			resolveFailed = true;
 		} finally {
 			loading = false;
 			loadingStatus = '';
 			fetchWatchedEpisodes();
-			if (shareKey && currentFiles.length > 1) {
-				const otherFids = currentFiles.filter(f => f.fid !== activeFileFid).map(f => f.fid);
-				fetch('/api/watch/prefetch', {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ share_key: shareKey, fids: otherFids })
-				}).catch(() => {});
-			}
+			if (shareKey) queueQualityPrefetch(currentFiles, activeFileFid);
 		}
 	}
 
@@ -1583,6 +1834,8 @@
 	async function changeToFile(file: FileOption) {
 		if (!file || file.fid === activeFileFid) return;
 		preferredQuality = file.quality;
+		streamRefreshes = 0;
+		if (stalledOut) { stalledOut = false; problem = ''; }
 		if (qualityToast) { qualityToast = ''; if (qualityToastTimer) { clearTimeout(qualityToastTimer); qualityToastTimer = null; } }
 
 		if (useIframe) {
@@ -1606,6 +1859,7 @@
 			if (data.url) {
 				seekAfterLoad = savedTime;
 				streamUrl = data.url;
+				streamNonce++;
 				activeQuality = file.quality;
 				activeFileFid = file.fid;
 				if (data.debug) debugInfo = data.debug;
@@ -1648,6 +1902,10 @@
 		activeEpisode = ep;
 		if (ep.season !== activeSeason) activeSeason = ep.season;
 		problem = '';
+		stalledOut = false;
+		streamRefreshes = 0;
+		skipSegments = [];
+		skipLookupKey = '';
 		const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
 		const file = pickFile(ep.files, preferredQuality);
 		if (!file) {
@@ -1684,6 +1942,7 @@
 			const data = await resp.json();
 			if (data.url) {
 				streamUrl = data.url;
+				streamNonce++;
 				videoTitle = `${baseTitle} S${ep.season}E${ep.episode}`;
 				activeQuality = file.quality;
 				activeFileFid = file.fid;
@@ -1697,14 +1956,7 @@
 		} finally {
 			loadingEpisode = false;
 			fetchWatchedEpisodes();
-			if (shareKey && ep.files.length > 1) {
-				const otherFids = ep.files.filter(f => f.fid !== file.fid).map(f => f.fid);
-				fetch('/api/watch/prefetch', {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ share_key: shareKey, fids: otherFids })
-				}).catch(() => {});
-			}
+			if (shareKey) queueQualityPrefetch(ep.files, file.fid);
 		}
 	}
 
@@ -1814,7 +2066,9 @@
 	<div
 		class="player-page"
 		class:has-sidebar={castOpen || (showType === 'tv' && seasons.length > 0 && sidebarOpen)}
+		class:hide-cursor={isFullscreen && cursorIdle && !showControls && playing}
 		bind:this={playerPageEl}
+		onmousemove={wakeCursor}
 	>
 		<div
 			class="player-bar"
@@ -1914,7 +2168,12 @@
 		</div>
 
 		{#if problem}
-			<p class="player-error">{problem}</p>
+			<p class="player-error">
+				{problem}
+				{#if stalledOut}
+					<button type="button" class="retry-btn" onclick={retryStream}>Retry</button>
+				{/if}
+			</p>
 		{/if}
 
 		<div class="player-body">
@@ -1961,7 +2220,6 @@
 
 			<div
 				class="video-area"
-				class:hide-cursor={isFullscreen && !showControls && playing}
 				onmousemove={showControlsBriefly}
 				ontouchstart={showControlsBriefly}
 				onmouseleave={() => {
@@ -2000,13 +2258,7 @@
 						playsinline
 						style:object-fit={videoFit}
 						class:buffering={loadingEpisode || changingQuality}
-						ontimeupdate={() => {
-							if (videoEl && !seeking && !isVideoSeeking && !switchingEpisode) currentTime = videoEl.currentTime;
-							if (autoplayNext && !autoplayFired && !loadingEpisode && showType === 'tv' && duration > 0 && (duration - currentTime) <= 5) {
-								const next = nextEpisode();
-								if (next) { autoplayFired = true; playEpisode(next); }
-							}
-						}}
+						ontimeupdate={onTimeUpdate}
 						ondurationchange={() => {
 							if (videoEl && !switchingEpisode) duration = videoEl.duration;
 						}}
@@ -2026,25 +2278,18 @@
 							}
 						}}
 						onprogress={() => {
+							markBytes();
 							if (videoEl && videoEl.buffered.length > 0)
 								bufferedEnd = videoEl.buffered.end(videoEl.buffered.length - 1);
 						}}
 						onwaiting={() => {
 							buffering = true;
-							if (bufferTimer) clearTimeout(bufferTimer);
-							bufferTimer = setTimeout(() => {
-								if (videoEl && buffering && !loadingEpisode) {
-									const pos = videoEl.currentTime;
-									videoEl.currentTime = Math.max(0, pos - 1);
-								}
-							}, 12000);
+							if (!stalledOut) watchForStall();
 						}}
-						oncanplay={() => {
-							buffering = false;
-							if (bufferTimer) { clearTimeout(bufferTimer); bufferTimer = null; }
-						}}
+						oncanplay={() => { buffering = false; }}
+						onplaying={() => { buffering = false; clearStallWatch(); }}
 						onseeking={() => { buffering = true; isVideoSeeking = true; }}
-						onseeked={() => { buffering = false; isVideoSeeking = false; if (bufferTimer) { clearTimeout(bufferTimer); bufferTimer = null; } }}
+						onseeked={() => { buffering = false; isVideoSeeking = false; }}
 						onended={() => {
 							playing = false;
 							showControls = true;
@@ -2091,25 +2336,37 @@
 					{/if}
 
 					<!-- subtitle overlay -->
-					{#if currentSub && !inPiP}
-						<div class="subtitle-display">{@html currentSub.replace(/\n/g, '<br>')}</div>
+					{#if !inPiP}
+						<!-- cue text is escaped by safeSubHtml(), so only i/b/u tags can reach the page -->
+						{#if activeSubs.top}
+							<div class="subtitle-display top">{@html activeSubs.top.replace(/\n/g, '<br>')}</div>
+						{/if}
+						{#if activeSubs.bottom}
+							<div class="subtitle-display">{@html activeSubs.bottom.replace(/\n/g, '<br>')}</div>
+						{/if}
 					{/if}
 
-					<!-- next episode overlay -->
-					{#if nextEp}
+					<!-- skip intro / next episode -->
+					{#if activeSkip || nextEp}
 						<div class="next-ep-overlay">
-							<button type="button" class="next-ep-btn" onclick={() => playEpisode(nextEp)}>
-								<span class="next-ep-label">
-									{#if autoplayNext && duration > 0 && (duration - currentTime) <= 5}
-										Auto-playing...
-									{:else if autoplayNext}
-										{pm ? p('Next Episode') : 'Next Episode'} (auto)
-									{:else}
-										{pm ? p('Next Episode') : 'Next Episode'}
-									{/if}
-								</span>
-								<span class="next-ep-title">S{nextEp.season}E{nextEp.episode}{episodeNames[nextEp.episode] ? ` — ${episodeNames[nextEp.episode]}` : ''}</span>
-							</button>
+							{#if activeSkip}
+								{@const seg = activeSkip}
+								<button type="button" class="skip-btn" onclick={() => skipSegment(seg)}>{SKIP_LABELS[seg.type]}</button>
+							{/if}
+							{#if nextEp}
+								<button type="button" class="next-ep-btn" onclick={() => playEpisode(nextEp)}>
+									<span class="next-ep-label">
+										{#if autoplayNext && duration > 0 && (duration - currentTime) <= 5}
+											Auto-playing...
+										{:else if autoplayNext}
+											{pm ? p('Next Episode') : 'Next Episode'} (auto)
+										{:else}
+											{pm ? p('Next Episode') : 'Next Episode'}
+										{/if}
+									</span>
+									<span class="next-ep-title">S{nextEp.season}E{nextEp.episode}{episodeNames[nextEp.episode] ? ` — ${episodeNames[nextEp.episode]}` : ''}</span>
+								</button>
+							{/if}
 						</div>
 					{/if}
 
@@ -2120,6 +2377,15 @@
 							<div class="progress-bar" bind:this={progressBarEl}>
 								<div class="prog-buffered" style:width="{bufferedPct}%"></div>
 								<div class="prog-played" style:width="{displayPct}%"></div>
+								{#if duration > 0}
+									{#each skipSegments as seg (seg.type)}
+										<div
+											class="prog-segment"
+											style:left="{(seg.start / duration) * 100}%"
+											style:width="{((Math.min(seg.end, duration) - seg.start) / duration) * 100}%"
+										></div>
+									{/each}
+								{/if}
 								<div class="prog-handle" style:left="{displayPct}%" class:dragging={seeking}></div>
 							</div>
 						</div>
@@ -2147,6 +2413,18 @@
 									<text x="12" y="16" text-anchor="middle" font-size="7" font-weight="700" font-family="sans-serif">10</text>
 								</svg>
 							</button>
+
+							{#if upcomingEp}
+								{@const next = upcomingEp}
+								<button
+									class="ctrl-btn"
+									disabled={loadingEpisode}
+									onclick={() => playEpisode(next)}
+									title="Next episode: S{next.season}E{next.episode}"
+								>
+									<svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+								</button>
+							{/if}
 
 							<div class="vol-group">
 								<button class="ctrl-btn" onclick={toggleMute} title={muted ? 'Unmute (m)' : 'Mute (m)'}>
@@ -2179,15 +2457,13 @@
 									</button>
 									{#if showDelay}
 										<div class="delay-popup">
-											<button class="sub-delay-btn" onclick={() => subtitleDelay = Math.round((subtitleDelay - 0.5) * 10) / 10} title="Subs appear before audio — push them later">
-												<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M19 13H5v-2h14v2z"/></svg>
-											</button>
+											<button class="sub-delay-jump" onclick={() => subtitleDelay = Math.round((subtitleDelay - 5) * 10) / 10} title="Push subs 5 seconds later">−5s</button>
+											<button class="sub-delay-jump" onclick={() => subtitleDelay = Math.round((subtitleDelay - 0.5) * 10) / 10} title="Subs appear before audio — push them later">−0.5s</button>
 											<span class="delay-label">Before audio</span>
 											<span class="sub-delay-value">{subtitleDelay > 0 ? '+' : ''}{subtitleDelay.toFixed(1)}s</span>
 											<span class="delay-label">After audio</span>
-											<button class="sub-delay-btn" onclick={() => subtitleDelay = Math.round((subtitleDelay + 0.5) * 10) / 10} title="Subs appear after audio — push them earlier">
-												<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-											</button>
+											<button class="sub-delay-jump" onclick={() => subtitleDelay = Math.round((subtitleDelay + 0.5) * 10) / 10} title="Subs appear after audio — push them earlier">+0.5s</button>
+											<button class="sub-delay-jump" onclick={() => subtitleDelay = Math.round((subtitleDelay + 5) * 10) / 10} title="Push subs 5 seconds earlier">+5s</button>
 											<button class="sub-delay-reset" onclick={() => subtitleDelay = 0}>Reset</button>
 										</div>
 									{/if}
@@ -2416,6 +2692,10 @@
 	{#if problem}
 		<div class="problem-page">
 			<p class="msg bad" role="alert">{problem}</p>
+			{#if resolveFailed && lastResolveArgs}
+				{@const args = lastResolveArgs}
+				<button type="button" class="btn" onclick={() => resolve(args.title, args.type, args.year)}>Try again</button>
+			{/if}
 			{#if debugInfo}
 				<details class="debug-details">
 					<summary>Details</summary>
@@ -2507,7 +2787,9 @@
 	.bar-btn { flex: none; font-size: 0.82rem; font-weight: 600; padding: 5px 12px; border-radius: var(--radius-sm); border: 1px solid rgba(255, 255, 255, 0.15); background: rgba(255, 255, 255, 0.06); color: #e0e0e0; cursor: pointer; text-decoration: none; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
 	.bar-btn:hover { border-color: rgba(255, 255, 255, 0.3); color: #fff; }
 	.player-title { flex: 1; font-size: 1rem; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #fff; }
-	.player-error { margin: 0; padding: 6px 16px; font-size: 0.82rem; color: var(--accent); background: rgba(140, 47, 57, 0.2); border-bottom: 1px solid rgba(255, 255, 255, 0.06); flex: none; }
+	.player-error { position: absolute; top: 45px; left: 0; right: 0; z-index: 15; margin: 0; padding: 6px 16px; font-size: 0.82rem; color: var(--accent); background: rgba(24, 8, 11, 0.9); border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
+	.retry-btn { margin-left: 10px; padding: 2px 12px; font-size: 0.78rem; font-weight: 600; border: 1px solid var(--accent); border-radius: var(--radius-sm); background: none; color: var(--accent); cursor: pointer; }
+	.retry-btn:hover { background: rgba(255, 255, 255, 0.06); }
 	.quality-toast { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 80; padding: 14px 28px; border-radius: 10px; background: rgba(0, 0, 0, 0.85); color: #fff; font-size: 1rem; text-align: center; pointer-events: none; animation: toast-fade 5s ease-in-out forwards; }
 	@keyframes toast-fade { 0% { opacity: 0; } 8% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
 	.file-pick-wrap { position: relative; flex: none; }
@@ -2570,7 +2852,7 @@
 
 	/* --------------------------------------------------------- video area */
 	.video-area { position: relative; flex: 1; background: #000; min-height: 0; min-width: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-	.video-area.hide-cursor, .video-area.hide-cursor * { cursor: none !important; }
+	.player-page.hide-cursor, .player-page.hide-cursor * { cursor: none !important; }
 
 	.video-area video { width: 100%; height: 100%; display: block; outline: none; }
 	.video-area video.buffering { opacity: 0.3; }
@@ -2588,6 +2870,7 @@
 
 	/* --------------------------------------------------------- subtitle overlay */
 	.subtitle-display { position: absolute; bottom: 80px; left: 10%; right: 10%; text-align: center; color: #fff; font-size: 1.4rem; line-height: 1.5; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 0, 0, 0.7); pointer-events: none; z-index: 5; background: rgba(0, 0, 0, 0.5); padding: 6px 16px; border-radius: 4px; width: fit-content; margin: 0 auto; }
+	.subtitle-display.top { top: 60px; bottom: auto; }
 
 	/* --------------------------------------------------------- PiP placeholder */
 	.pip-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--ink-faint); font-size: 1.1rem; pointer-events: none; z-index: 2; background: #000; }
@@ -2602,6 +2885,7 @@
 	.progress-wrap:hover .progress-bar { height: 5px; }
 	.prog-buffered { position: absolute; top: 0; left: 0; bottom: 0; background: rgba(255, 255, 255, 0.25); border-radius: inherit; pointer-events: none; }
 	.prog-played { position: absolute; top: 0; left: 0; bottom: 0; background: var(--accent, #d97a83); border-radius: inherit; pointer-events: none; }
+	.prog-segment { position: absolute; top: 0; bottom: 0; background: rgba(255, 210, 90, 0.8); pointer-events: none; }
 	.prog-handle { position: absolute; top: 50%; width: 14px; height: 14px; background: var(--accent, #d97a83); border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; opacity: 0; transition: opacity 0.15s; }
 	.prog-handle.dragging { opacity: 1; }
 	.progress-wrap:hover .prog-handle { opacity: 1; }
@@ -2652,9 +2936,9 @@
 
 	/* --------------------------------------------------------- subtitle delay */
 	.delay-wrap { position: relative; }
-	.delay-popup { position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: rgba(20, 20, 20, 0.95); border-radius: 8px; white-space: nowrap; }
-	.sub-delay-btn { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.1); border: none; border-radius: 50%; color: white; cursor: pointer; }
-	.sub-delay-btn:hover { background: rgba(255, 255, 255, 0.2); }
+	.delay-popup { position: absolute; bottom: calc(100% + 10px); right: -60px; display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: rgba(20, 20, 20, 0.95); border-radius: 8px; white-space: nowrap; }
+	.sub-delay-jump { padding: 4px 8px; font-size: 0.72rem; font-weight: 600; background: rgba(255, 255, 255, 0.1); border: none; border-radius: 12px; color: white; cursor: pointer; }
+	.sub-delay-jump:hover { background: rgba(255, 255, 255, 0.2); }
 	.sub-delay-value { font-size: 0.82rem; font-variant-numeric: tabular-nums; min-width: 48px; text-align: center; color: rgba(255, 255, 255, 0.85); }
 	.sub-delay-reset { background: none; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 4px; color: rgba(255, 255, 255, 0.6); font-size: 0.72rem; padding: 2px 8px; cursor: pointer; }
 	.sub-delay-reset:hover { color: white; border-color: rgba(255, 255, 255, 0.4); }
@@ -2664,7 +2948,9 @@
 	.buffering-overlay { position: absolute; inset: 0; display: grid; place-items: center; z-index: 4; pointer-events: none; }
 	.quality-toast { position: absolute; top: 60px; left: 50%; transform: translateX(-50%); padding: 6px 16px; border-radius: 6px; background: rgba(0, 0, 0, 0.75); color: rgba(255, 255, 255, 0.85); font-size: 0.82rem; z-index: 9; pointer-events: none; backdrop-filter: blur(6px); }
 
-	.next-ep-overlay { position: absolute; bottom: 100px; right: 24px; z-index: 8; animation: fadeSlideIn 0.4s ease; }
+	.next-ep-overlay { position: absolute; bottom: 100px; right: 24px; z-index: 8; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; animation: fadeSlideIn 0.4s ease; }
+	.skip-btn { padding: 11px 22px; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 6px; background: rgba(0, 0, 0, 0.75); color: #fff; font-size: 0.95rem; font-weight: 600; cursor: pointer; backdrop-filter: blur(8px); transition: background 0.2s, border-color 0.2s; }
+	.skip-btn:hover { background: rgba(30, 30, 30, 0.95); border-color: var(--accent); }
 	.next-ep-btn { display: flex; flex-direction: column; gap: 4px; padding: 14px 22px; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px; background: rgba(0, 0, 0, 0.75); color: #fff; cursor: pointer; backdrop-filter: blur(8px); transition: background 0.2s, border-color 0.2s; }
 	.next-ep-btn:hover { background: rgba(30, 30, 30, 0.95); border-color: var(--accent); }
 	.next-ep-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: rgba(255, 255, 255, 0.6); }

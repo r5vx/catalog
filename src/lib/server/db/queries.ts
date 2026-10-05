@@ -677,6 +677,43 @@ export function getWatchProgress(
 	return row ? { ...row } : null;
 }
 
+export interface SavedShowboxMatch {
+	showboxId: number;
+	title: string;
+	type: string;
+	posterUrl: string;
+	shareKey: string;
+	startSeason: number;
+}
+
+/** A remembered Showbox match, if it's under 30 days old. */
+export function getSavedShowboxMatch(lookup: string): SavedShowboxMatch | null {
+	const row = db
+		.prepare(`
+			SELECT showbox_id AS showboxId, title, type, poster_url AS posterUrl,
+			       share_key AS shareKey, start_season AS startSeason
+			FROM showbox_matches
+			WHERE lookup = ? AND saved_at > datetime('now', '-30 days')
+		`)
+		.get(lookup);
+	return row ? plain<SavedShowboxMatch>(row) : null;
+}
+
+export function saveShowboxMatch(lookup: string, match: SavedShowboxMatch) {
+	db.prepare(`
+		INSERT INTO showbox_matches (lookup, showbox_id, title, type, poster_url, share_key, start_season, saved_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		ON CONFLICT(lookup) DO UPDATE SET
+			showbox_id = excluded.showbox_id, title = excluded.title, type = excluded.type,
+			poster_url = excluded.poster_url, share_key = excluded.share_key,
+			start_season = excluded.start_season, saved_at = excluded.saved_at
+	`).run(lookup, match.showboxId, match.title, match.type, match.posterUrl, match.shareKey, match.startSeason);
+}
+
+export function forgetShowboxMatch(lookup: string) {
+	db.prepare('DELETE FROM showbox_matches WHERE lookup = ?').run(lookup);
+}
+
 export function getCachedStreamInfo(title: string, type: string): { shareKey: string; fid: number } | null {
 	const row = db
 		.prepare("SELECT share_key AS shareKey, fid FROM watch_progress WHERE title = ? AND type = ? AND share_key != '' AND fid != 0 ORDER BY updated_at DESC LIMIT 1")
