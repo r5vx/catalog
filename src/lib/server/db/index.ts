@@ -213,6 +213,20 @@ db.exec(`
 	)
 `);
 
+// Which Showbox entry a title opened as, so the slow search is skipped after a restart.
+db.exec(`
+	CREATE TABLE IF NOT EXISTS showbox_matches (
+		lookup TEXT PRIMARY KEY,
+		showbox_id INTEGER NOT NULL,
+		title TEXT NOT NULL,
+		type TEXT NOT NULL,
+		poster_url TEXT NOT NULL DEFAULT '',
+		share_key TEXT NOT NULL,
+		start_season INTEGER NOT NULL DEFAULT 0,
+		saved_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)
+`);
+
 try { db.exec("ALTER TABLE watch_progress ADD COLUMN sub_url TEXT NOT NULL DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE watch_progress ADD COLUMN sub_delay REAL NOT NULL DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE watch_progress ADD COLUMN sub_file_name TEXT NOT NULL DEFAULT ''"); } catch {}

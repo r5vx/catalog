@@ -2,12 +2,46 @@
 
 Notes for the next release go under **Unreleased**, as short bullets aimed at
 whoever is using the app — what changed for them, not what changed in the code.
+Name the update on the heading line: `## Unreleased — Skip Intro and faster loading`.
 `npm run release` takes that section, publishes it as the release description,
-and stamps it with the version number.
+and stamps it with the version number, date and that name. It refuses to run
+without both.
 
 ## Unreleased
 
-## 2.1.9 — 2026-10-04
+## 2.1.10 — 2026-10-05 — Skip Intro and smoother playback
+
+- **Skip Intro for anime.** A Skip Intro button appears during the
+  opening, and Skip Recap during recaps, using community-submitted
+  timestamps. When the end credits start, Next Episode shows up right
+  away. The intro and credits are marked in yellow on the progress bar.
+- **Next episode button.** A ⏭ button in the player controls jumps to
+  the next episode without opening the episode list.
+- **Bigger subtitle delay steps.** The delay menu has labelled −5s,
+  −0.5s, +0.5s and +5s buttons for subtitles that are way off.
+- **Continue Watching opens faster.** Hovering a card starts finding
+  the episode in the background, so it's usually ready by the time you
+  click.
+- **Shows are remembered between sessions.** After restarting Catalog,
+  shows you've watched open without searching Showbox again.
+- **No more endless loading.** If a video stalls or its link goes stale,
+  the player gets a fresh one by itself. If that keeps failing it stops
+  and shows a Retry button instead of spinning forever.
+- **Next episode loads ahead.** Near the end of an episode, the next
+  one's link is fetched in the background, so autoplay starts faster.
+- **Faster resume.** Continuing a series no longer fetches episode 1
+  first before the episode you're actually on.
+- **Player errors are visible.** Messages in the player were hidden
+  behind the top bar; they now show below it.
+- **Cleaner subtitles.** Tags like `\an8` no longer show up in the text;
+  lines meant for the top of the screen now appear there, and
+  overlapping lines show together.
+- **Cursor hides properly in fullscreen**, wherever the mouse is resting
+  — including over the episode list.
+- **Lighter on the network while watching.** The cast panel was asking
+  for the same cast over and over for shows with no cast listed.
+
+## 2.1.9 — 2026-10-04 — Better search and Browse
 
 - **Search results rank by popularity.** Searching "Die Hard" now puts
   the 1988 classic and its sequels at the top, not obscure foreign films

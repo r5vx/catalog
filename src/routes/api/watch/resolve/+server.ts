@@ -10,7 +10,12 @@ import {
 	resolveSlugId
 } from '$lib/server/showbox';
 import { readSettings } from '$lib/server/settings';
-import { findEntryByTitle } from '$lib/server/db/queries';
+import {
+	findEntryByTitle,
+	getSavedShowboxMatch,
+	saveShowboxMatch,
+	forgetShowboxMatch
+} from '$lib/server/db/queries';
 import { fetchAlternativeTitles } from '$lib/server/metadata/tmdb';
 import { fetchRomajiTitle } from '$lib/server/metadata/anilist';
 import type { RequestHandler } from './$types';
@@ -26,6 +31,7 @@ interface ResolveCache {
 	shareKey: string;
 	episodes?: unknown;
 	files?: unknown[];
+	startSeason: number;
 	time: number;
 }
 const resolveCache = new Map<string, ResolveCache>();
@@ -35,16 +41,18 @@ export const GET: RequestHandler = async ({ url }) => {
 	const title = url.searchParams.get('title')?.trim();
 	const type = url.searchParams.get('type') ?? '';
 	const year = url.searchParams.get('year') ?? '';
+	// For series the player picks the episode itself, then asks for that stream.
+	const skipEpisodeStream = url.searchParams.get('nostream') === '1';
 
 	if (!title) return error(400, 'Missing title');
 
 	const cacheKey = `${title.toLowerCase()}:${type}:${year}`;
 	const cached = resolveCache.get(cacheKey);
-	let matchTitle: string;
-	let matchId: number;
-	let matchType: string;
+	let matchTitle = '';
+	let matchId = 0;
+	let matchType = '';
 	let matchPosterUrl: string | undefined;
-	let shareKey: string;
+	let shareKey = '';
 	let episodeData: unknown | undefined;
 	let movieFileList: unknown[] | undefined;
 	let startSeason = 0;
@@ -57,67 +65,105 @@ export const GET: RequestHandler = async ({ url }) => {
 		shareKey = cached.shareKey;
 		episodeData = cached.episodes;
 		movieFileList = cached.files;
+		startSeason = cached.startSeason;
 	} else {
-		let match = await findOnShowbox(title, type, year);
+		// Remembered from an earlier session: skips the Showbox search, but re-lists so new episodes show.
+		const saved = getSavedShowboxMatch(cacheKey);
+		let restored = false;
+		if (saved) {
+			const shareUrl = `https://www.febbox.com/share/${saved.shareKey}`;
+			if (saved.type === 'tv') {
+				const listed = await listEpisodes(shareUrl);
+				if (listed.episodes.length) { episodeData = listed; restored = true; }
+			} else {
+				const files = await listMovieFiles(shareUrl);
+				if (files.length) { movieFileList = files; restored = true; }
+			}
+			if (restored) {
+				matchTitle = saved.title;
+				matchId = saved.showboxId;
+				matchType = saved.type;
+				matchPosterUrl = saved.posterUrl || undefined;
+				shareKey = saved.shareKey;
+				startSeason = saved.startSeason;
+			} else {
+				forgetShowboxMatch(cacheKey);
+			}
+		}
 
-		if (!match) {
-			const seasonPart = title.match(/\s+(season|s)\s*(\d+)\s*$/i);
-			const partPart = title.match(/\s+(part)\s*(\d+)\s*$/i);
-			if (seasonPart || partPart) {
-				const cleaned = title.replace(/\s+(season|part|s)\s*\d+\s*$/i, '').trim();
-				if (cleaned.length >= 2) {
-					const forceType = seasonPart ? 'tv' : type;
-					match = await findOnShowbox(cleaned, forceType, year);
-					if (match && seasonPart) startSeason = Number(seasonPart[2]);
+		if (!restored) {
+			let match = await findOnShowbox(title, type, year);
+
+			if (!match) {
+				const seasonPart = title.match(/\s+(season|s)\s*(\d+)\s*$/i);
+				const partPart = title.match(/\s+(part)\s*(\d+)\s*$/i);
+				if (seasonPart || partPart) {
+					const cleaned = title.replace(/\s+(season|part|s)\s*\d+\s*$/i, '').trim();
+					if (cleaned.length >= 2) {
+						const forceType = seasonPart ? 'tv' : type;
+						match = await findOnShowbox(cleaned, forceType, year);
+						if (match && seasonPart) startSeason = Number(seasonPart[2]);
+					}
 				}
 			}
-		}
 
-		if (!match) {
-			const altTitles: string[] = [];
-			const tmdbType = type === 'movie' ? 'movie' as const : 'tv' as const;
-			const tmdbAlts = await fetchAlternativeTitles(title, tmdbType);
-			altTitles.push(...tmdbAlts);
-			if (type === 'tv' || !type) {
-				const romaji = await fetchRomajiTitle(title);
-				if (romaji && !altTitles.includes(romaji)) altTitles.push(romaji);
+			if (!match) {
+				const altTitles: string[] = [];
+				const tmdbType = type === 'movie' ? 'movie' as const : 'tv' as const;
+				const tmdbAlts = await fetchAlternativeTitles(title, tmdbType);
+				altTitles.push(...tmdbAlts);
+				if (type === 'tv' || !type) {
+					const romaji = await fetchRomajiTitle(title);
+					if (romaji && !altTitles.includes(romaji)) altTitles.push(romaji);
+				}
+				const origWords = new Set(title.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(w => w.length > 1));
+				for (const alt of altTitles) {
+					const candidate = await findOnShowbox(alt, type, year);
+					if (!candidate) continue;
+					const matchWords = candidate.title.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(w => w.length > 1);
+					const altWords = alt.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(w => w.length > 1);
+					const related = matchWords.some(w => origWords.has(w)) || altWords.some(w => origWords.has(w));
+					if (related) { match = candidate; break; }
+				}
 			}
-			const origWords = new Set(title.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(w => w.length > 1));
-			for (const alt of altTitles) {
-				const candidate = await findOnShowbox(alt, type, year);
-				if (!candidate) continue;
-				const matchWords = candidate.title.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(w => w.length > 1);
-				const altWords = alt.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(w => w.length > 1);
-				const related = matchWords.some(w => origWords.has(w)) || altWords.some(w => origWords.has(w));
-				if (related) { match = candidate; break; }
+
+			if (!match) return json({ error: 'not_found' });
+
+			if (match.id === 0 && match.slug) {
+				match.id = await resolveSlugId(match.slug, match.type);
+				if (match.id === 0) return json({ error: 'no_link' });
 			}
-		}
 
-		if (!match) return json({ error: 'not_found' });
+			const link = await getFebboxLink(match.id, match.type);
+			if (!link) return json({ error: 'no_link' });
 
-		if (match.id === 0 && match.slug) {
-			match.id = await resolveSlugId(match.slug, match.type);
-			if (match.id === 0) return json({ error: 'no_link' });
-		}
+			const sk = extractShareKey(link);
+			if (!sk) return json({ error: 'no_link' });
 
-		const link = await getFebboxLink(match.id, match.type);
-		if (!link) return json({ error: 'no_link' });
+			matchTitle = match.title;
+			matchId = match.id;
+			matchType = match.type;
+			matchPosterUrl = match.posterUrl;
+			shareKey = sk;
 
-		const sk = extractShareKey(link);
-		if (!sk) return json({ error: 'no_link' });
+			if (match.type === 'tv') {
+				const listed = await listEpisodes(link);
+				episodeData = listed;
+				if (!listed.episodes.length) return json({ error: 'no_file' });
+			} else {
+				const files = await listMovieFiles(link);
+				if (!files.length) return json({ error: 'no_file' });
+				movieFileList = files;
+			}
 
-		matchTitle = match.title;
-		matchId = match.id;
-		matchType = match.type;
-		matchPosterUrl = match.posterUrl;
-		shareKey = sk;
-
-		if (match.type === 'tv') {
-			episodeData = await listEpisodes(link);
-		} else {
-			const files = await listMovieFiles(link);
-			if (!files.length) return json({ error: 'no_file' });
-			movieFileList = files;
+			saveShowboxMatch(cacheKey, {
+				showboxId: matchId,
+				title: matchTitle,
+				type: matchType,
+				posterUrl: matchPosterUrl ?? '',
+				shareKey,
+				startSeason
+			});
 		}
 
 		resolveCache.set(cacheKey, {
@@ -125,6 +171,7 @@ export const GET: RequestHandler = async ({ url }) => {
 			shareKey,
 			episodes: episodeData,
 			files: movieFileList,
+			startSeason,
 			time: Date.now()
 		});
 	}
@@ -144,7 +191,7 @@ export const GET: RequestHandler = async ({ url }) => {
 		let streamUrl = '';
 		let streamDebug: string | undefined;
 
-		if (firstFile && febboxToken) {
+		if (firstFile && febboxToken && !skipEpisodeStream) {
 			const result = await getStreamUrl(shareKey, firstFile.fid, febboxToken);
 			streamUrl = result.url ?? '';
 			streamDebug = result.debug;

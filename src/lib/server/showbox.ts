@@ -220,13 +220,25 @@ function sortByRelevance(results: ShowboxResult[], query: string): ShowboxResult
 	return results.sort((a, b) => searchRelevance(b.title, query) - searchRelevance(a.title, query));
 }
 
+/** JSON from a URL, or null on a non-OK reply. Throws only if both attempts fail to connect. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function getJson(url: string, init: RequestInit = {}, timeoutMs = 10000): Promise<any> {
+	const attempt = async () => {
+		const resp = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+		if (!resp.ok) return null;
+		return await resp.json();
+	};
+	try {
+		return await attempt();
+	} catch {
+		// A dead keep-alive connection hangs until restart without this second, fresh try.
+		return await attempt();
+	}
+}
+
 export async function getFebboxLink(id: number, type: 'movie' | 'tv'): Promise<string | null> {
 	const typeNum = type === 'movie' ? 1 : 2;
-	const resp = await fetch(`${BASE}/index/share_link?id=${id}&type=${typeNum}`);
-
-	if (!resp.ok) return null;
-
-	const data = await resp.json();
+	const data = await getJson(`${BASE}/index/share_link?id=${id}&type=${typeNum}`);
 	return data?.data?.link ?? null;
 }
 
@@ -250,7 +262,7 @@ export async function listFebboxFiles(
 	const key = extractShareKey(shareUrl);
 	if (!key) return [];
 
-	const resp = await fetch(
+	const data = await getJson(
 		`https://www.febbox.com/file/file_share_list?share_key=${key}&pwd=&parent_id=${parentId}`,
 		{
 			headers: {
@@ -260,9 +272,6 @@ export async function listFebboxFiles(
 			}
 		}
 	);
-	if (!resp.ok) return [];
-
-	const data = await resp.json();
 	const list = data?.data?.file_list;
 	if (!Array.isArray(list)) return [];
 

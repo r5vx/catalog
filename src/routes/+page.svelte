@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
+	import { warmUpTitle } from '$lib/watch';
 	import { STATUSES, statusLabel, sortBadge } from '$lib/constants';
 	import SortPicker from '$lib/SortPicker.svelte';
 	import { episodesBehind } from '$lib/progress';
@@ -63,6 +64,16 @@
 			.filter((w) => w.title && !dismissed.has(`${w.title}:${w.type}`))
 			.filter((w, i, arr) => arr.findIndex(x => x.title === w.title && x.type === w.type) === i)
 	);
+
+	// A short pause so sweeping the mouse across the row doesn't look up every card.
+	let warmTimer: ReturnType<typeof setTimeout> | null = null;
+	function scheduleWarm(item: { title: string; type: string; season: number; episode: number }) {
+		cancelWarm();
+		warmTimer = setTimeout(() => warmUpTitle(item), 250);
+	}
+	function cancelWarm() {
+		if (warmTimer) { clearTimeout(warmTimer); warmTimer = null; }
+	}
 
 	async function removeContinue(title: string, type: string) {
 		dismissed = new Set([...dismissed, `${title}:${type}`]);
@@ -214,6 +225,9 @@
 					<a
 						href="/watch?title={encodeURIComponent(item.title)}&type={item.type}&auto=1{item.type === 'tv' ? `&resume_s=${item.season}&resume_e=${item.episode}` : ''}"
 						class="card"
+						onpointerenter={() => scheduleWarm(item)}
+						onpointerleave={cancelWarm}
+						onfocus={() => scheduleWarm(item)}
 					>
 						<div class="poster">
 							{#if item.posterUrl}
