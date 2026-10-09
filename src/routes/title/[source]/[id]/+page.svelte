@@ -113,17 +113,17 @@
 							class="btn btn-watch"
 						>▶ Watch</a>
 					{:else if watchAvailable === false}
-						<span class="btn btn-watch unavailable">Not available on Showbox</span>
+						<span class="btn btn-watch unavailable">Not available</span>
 					{:else}
 						<span class="btn btn-watch checking">Checking availability…</span>
 					{/if}
 				{/if}
 
 				{#if data.ownedEntryId}
-					<a href="/entry/{data.ownedEntryId}" class="btn btn-primary">View in library</a>
+					<a href="/entry/{data.ownedEntryId}{data.back ? `?back=${encodeURIComponent(data.back)}` : ''}" class="btn btn-primary">View in library</a>
 				{:else if addedId}
 					<span class="add-done">
-						Added! <a href="/entry/{addedId}">View entry</a>
+						Added! <a href="/entry/{addedId}{data.back ? `?back=${encodeURIComponent(data.back)}` : ''}">View entry</a>
 					</span>
 				{:else}
 					<div class="add">

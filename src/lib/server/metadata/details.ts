@@ -1,3 +1,4 @@
+import { anilistSaidWait } from './anilistNodes';
 import { env } from '$env/dynamic/private';
 import { readSettings } from '../settings';
 import { plainText } from './types';
@@ -331,9 +332,11 @@ async function fromAniList(id: string): Promise<TitleDetails> {
 
 	let response = await fetch('https://graphql.anilist.co', opts);
 
+	// A title's own page is worth one short wait; the rest of the app is told to back off.
 	if (response.status === 429) {
+		anilistSaidWait(response);
 		const wait = Number(response.headers.get('Retry-After') ?? '2');
-		await new Promise((r) => setTimeout(r, Math.min(wait, 10) * 1000));
+		await new Promise((r) => setTimeout(r, Math.min(wait, 4) * 1000));
 		response = await fetch('https://graphql.anilist.co', opts);
 	}
 

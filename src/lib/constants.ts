@@ -7,6 +7,9 @@ export const STATUSES = [
 	{ value: 'dropped', label: 'Dropped' }
 ] as const;
 
+/** Library choices that are remembered between visits (see the library's page.server.ts). */
+export const KEPT_FILTERS = ['status', 'sort', 'tag', 'yearFrom', 'yearTo'] as const;
+
 export type StatusValue = (typeof STATUSES)[number]['value'];
 
 export const statusLabel = (value: string) =>

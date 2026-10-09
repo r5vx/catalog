@@ -38,6 +38,14 @@ export type Settings = {
 	updatePromptOff?: string;
 	/** Sort options you've turned off, comma separated. */
 	hiddenSorts?: string;
+	/** The library's status, sort, tag and year choices, as a query string — kept until changed. */
+	libraryView?: string;
+	/** Tabs you've hidden (category slugs, "watching", "friends", "orders", "notes"), comma separated. */
+	hiddenTabs?: string;
+	/** The library tabs in the order you dragged them into, comma separated. */
+	tabOrder?: string;
+	/** How the notes list is ordered: updated (default), created or title. */
+	notesSort?: string;
 	/** Two-letter country for "where to watch". Blank means use this PC's. */
 	watchRegion?: string;
 	/** Theme override: light, dark, black. Empty means follow the OS. */

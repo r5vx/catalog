@@ -1,13 +1,44 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import { beforeNavigate, goto } from '$app/navigation';
 
 	type Props = {
 		initialTitle: string;
 		initialBody: string;
 		onsave: (title: string, body: string) => Promise<void>;
+		/** Must finish before the page changes, so it can't be the async onsave. */
+		onleave: (title: string, body: string, unloading: boolean) => void;
 	};
 
-	let { initialTitle, initialBody, onsave }: Props = $props();
+	let { initialTitle, initialBody, onsave, onleave }: Props = $props();
+	let dirty = false;
+	let editedThisVisit = false;
+	let rerouting = false;
+
+	function saveBeforeLeaving(unloading: boolean) {
+		if (!dirty) return;
+		clearTimeout(timer);
+		dirty = false;
+		onleave(title, editor?.innerHTML ?? '', unloading);
+	}
+
+	// Leaving straight after typing showed a stale notes list and could drop the last edit.
+	beforeNavigate((nav) => {
+		if (rerouting) return;
+		// Forms (lock, unlock) and back/forward must go ahead as they are, so they just save first.
+		if (nav.willUnload || !nav.to || (nav.type !== 'link' && nav.type !== 'goto')) {
+			saveBeforeLeaving(nav.willUnload);
+			return;
+		}
+		if (!editedThisVisit) return;
+		// Hovering the link has usually preloaded the next page already — from before this edit.
+		nav.cancel();
+		rerouting = true;
+		const target = nav.to.url;
+		(async () => {
+			try { await save(); } finally { await goto(target, { invalidateAll: true }); }
+		})();
+	});
 
 	let title = $state(untrack(() => initialTitle));
 	let editor = $state<HTMLDivElement | null>(null);
@@ -59,15 +90,24 @@
 
 	function queueSave() {
 		status = 'Unsaved';
+		dirty = true;
+		editedThisVisit = true;
+		edits++;
 		clearTimeout(timer);
 		timer = setTimeout(save, 900);
 	}
 
+	let edits = 0;
+
 	async function save() {
 		clearTimeout(timer);
+		if (!dirty) return;
 		status = 'Saving…';
+		const saving = edits;
 		try {
 			await onsave(title, editor?.innerHTML ?? '');
+			// Still "dirty" until confirmed, so leaving mid-save saves again rather than racing it.
+			if (saving === edits) dirty = false;
 			status = 'Saved';
 		} catch {
 			status = "Couldn't save";

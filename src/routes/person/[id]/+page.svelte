@@ -1,4 +1,6 @@
 <script lang="ts">
+	import MoreButton from '$lib/MoreButton.svelte';
+	import { goto } from '$app/navigation';
 	import BackBar from '$lib/BackBar.svelte';
 	import type { PageData } from './$types';
 
@@ -12,7 +14,7 @@
 	let justAdded = $state<Record<string, number>>({});
 	let adding = $state<string | null>(null);
 
-	async function addToWatchlist(credit: {
+	type Credit = {
 		title: string;
 		year: string;
 		poster: string | null;
@@ -22,7 +24,9 @@
 		categorySlug: string;
 		rating: number | null;
 		votes: number | null;
-	}) {
+	};
+
+	async function addToWatchlist(credit: Credit, status: 'planned' | 'watching' | 'completed' = 'planned') {
 		const key = `${credit.source}:${credit.sourceId}`;
 		adding = key;
 
@@ -49,9 +53,9 @@
 						externalVotes: credit.votes,
 						popularity: 0
 					},
-					// Something you haven't seen goes on the list, not into history.
-					status: 'planned',
-					markWatchedToday: false
+					// From the + button, something you haven't seen goes on the list, not into history.
+					status,
+					markWatchedToday: status === 'completed'
 				})
 			});
 
@@ -59,6 +63,43 @@
 		} finally {
 			adding = null;
 		}
+	}
+
+	/* ------------------------------------------------ right-click menu */
+
+	let menu = $state<{ x: number; y: number; credit: Credit } | null>(null);
+
+	function openMenu(e: MouseEvent, credit: Credit) {
+		e.preventDefault();
+		menu = { x: Math.min(e.clientX, window.innerWidth - 220), y: Math.min(e.clientY, window.innerHeight - 230), credit };
+	}
+
+	function watch(credit: Credit) {
+		menu = null;
+		const params = new URLSearchParams({ title: credit.title, type: credit.categorySlug === 'movies' ? 'movie' : 'tv', auto: '1' });
+		if (credit.year) params.set('year', credit.year);
+		goto(`/watch?${params}`);
+	}
+
+	/** Your own entries this person is in: watch or open. */
+	type Owned = (typeof data.entries)[number];
+	let ownedMenu = $state<{ x: number; y: number; item: Owned } | null>(null);
+
+	function openOwnedMenu(e: MouseEvent, item: Owned) {
+		e.preventDefault();
+		ownedMenu = { x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 110), item };
+	}
+
+	function watchOwned(item: Owned) {
+		ownedMenu = null;
+		const params = new URLSearchParams({ title: item.title, type: item.categorySlug === 'movies' ? 'movie' : 'tv', auto: '1' });
+		if (item.year) params.set('year', String(item.year));
+		goto(`/watch?${params}`);
+	}
+
+	function addAs(credit: Credit, status: 'planned' | 'watching' | 'completed') {
+		menu = null;
+		addToWatchlist(credit, status);
 	}
 
 	const PAGE = 20;
@@ -93,7 +134,8 @@
 
 <ul class="grid">
 	{#each data.entries as item (item.id)}
-		<li>
+		<li class="has-more owned" oncontextmenu={(e) => openOwnedMenu(e, item)}>
+			<MoreButton onopen={(e) => openOwnedMenu(e, item)} />
 			<a href="/entry/{item.id}" class="card">
 				<div class="poster">
 					{#if item.posterUrl}
@@ -120,7 +162,8 @@
 		<ul class="grid">
 			{#each visible as credit (credit.title + credit.year)}
 				{@const key = `${credit.source}:${credit.sourceId}`}
-				<li>
+				<li class="has-more" oncontextmenu={(e) => openMenu(e, credit)}>
+					<MoreButton corner="left" onopen={(e) => openMenu(e, credit)} />
 					<!-- Read about it first; the + adds it without leaving the page. -->
 					<a
 						class="card"
@@ -170,7 +213,82 @@
 	</section>
 {/if}
 
+{#if ownedMenu}
+	{@const item = ownedMenu.item}
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+	<div class="ctx-backdrop" onclick={() => (ownedMenu = null)} oncontextmenu={(e) => { e.preventDefault(); ownedMenu = null; }}></div>
+	<div class="ctx-menu" style="left: {ownedMenu.x}px; top: {ownedMenu.y}px;">
+		<button type="button" onclick={() => watchOwned(item)}>▶ Watch</button>
+		<button type="button" onclick={() => { ownedMenu = null; goto(`/entry/${item.id}`); }}>View entry</button>
+	</div>
+{/if}
+
+{#if menu}
+	{@const credit = menu.credit}
+	{@const key = `${credit.source}:${credit.sourceId}`}
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+	<div class="ctx-backdrop" onclick={() => (menu = null)} oncontextmenu={(e) => { e.preventDefault(); menu = null; }}></div>
+	<div class="ctx-menu" style="left: {menu.x}px; top: {menu.y}px;">
+		<button type="button" onclick={() => watch(credit)}>▶ Watch</button>
+		<button type="button" onclick={() => { menu = null; goto(`/title/${credit.source}/${credit.sourceId}?back=${encodeURIComponent(here)}`); }}>
+			View details
+		</button>
+		<hr />
+		{#if justAdded[key]}
+			<button type="button" onclick={() => { menu = null; goto(`/entry/${justAdded[key]}`); }}>View entry</button>
+		{:else}
+			<button type="button" onclick={() => addAs(credit, 'completed')}>✓ Add as completed</button>
+			<button type="button" onclick={() => addAs(credit, 'watching')}>Add as watching</button>
+			<button type="button" onclick={() => addAs(credit, 'planned')}>Add as want to watch</button>
+		{/if}
+	</div>
+{/if}
+
 <style>
+	.owned {
+		position: relative;
+	}
+
+	.ctx-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 900;
+	}
+
+	.ctx-menu {
+		position: fixed;
+		z-index: 901;
+		min-width: 200px;
+		padding: 4px 0;
+		background: var(--surface);
+		border: 1px solid var(--rule-firm);
+		border-radius: var(--radius);
+		box-shadow: var(--shadow);
+	}
+
+	.ctx-menu button {
+		display: block;
+		width: 100%;
+		padding: 8px 14px;
+		border: none;
+		background: none;
+		color: var(--ink);
+		text-align: left;
+		font-size: 0.88rem;
+		cursor: pointer;
+	}
+
+	.ctx-menu button:hover {
+		background: var(--accent);
+		color: var(--accent-ink, #fff);
+	}
+
+	.ctx-menu hr {
+		border: none;
+		border-top: 1px solid var(--rule);
+		margin: 4px 0;
+	}
+
 	header {
 		display: flex;
 		align-items: center;

@@ -1,4 +1,4 @@
-import { getNote, setNoteLocked } from '$lib/server/db/notes';
+import { getNote, setNoteLocked, listVersions, KEEP_DELETED_DAYS } from '$lib/server/db/notes';
 import { checkPin, pinIsSet, notesToken } from '$lib/server/settings';
 import { error, fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
@@ -18,13 +18,22 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 	// leaves the server until the PIN has been entered.
 	if (!open) {
 		return {
-			note: { id: note.id, title: note.title, body: '', locked: true },
+			note: { id: note.id, title: note.title, body: '', locked: true, createdAt: note.createdAt, updatedAt: note.updatedAt, deletedAt: note.deletedAt },
 			locked: true,
-			pinSet: pinIsSet()
+			pinSet: pinIsSet(),
+			versionCount: 0,
+			erasedOn: null
 		};
 	}
 
-	return { note, locked: false, pinSet: pinIsSet() };
+	return {
+		note,
+		locked: false,
+		pinSet: pinIsSet(),
+		versionCount: listVersions(note.id).length,
+		// When a page in Recently deleted goes for good.
+		erasedOn: note.deletedAt ? new Date(Date.parse(note.deletedAt) + KEEP_DELETED_DAYS * 86_400_000).toISOString() : null
+	};
 };
 
 export const actions: Actions = {

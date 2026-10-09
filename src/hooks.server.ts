@@ -12,8 +12,15 @@ import { recategorizeAnime } from '$lib/server/recategorize';
 scheduleBackfill();
 recategorizeAnime();
 
+// Started by the desktop app: when that app goes — closed, updated, crashed — go with it.
+// A server left behind keeps port 4173, so the next Catalog either can't start its own or
+// ends up showing the old version's pages through this one. (Database writes are
+// synchronous, so this can't land in the middle of one.)
+if (typeof process.send === 'function') process.on('disconnect', () => process.exit(0));
+
 /** Icons and the web manifest stay reachable so "Add to Home Screen" works. */
-const PUBLIC_PATHS = ['/manifest.webmanifest', '/favicon.ico', '/api/diagnostics', '/api/watch/save-token', '/api/watch/debug'];
+// catalog-tv.apk: the TV's Downloader app fetches it before the TV could ever enter a PIN.
+const PUBLIC_PATHS = ['/manifest.webmanifest', '/favicon.ico', '/api/diagnostics', '/api/watch/save-token', '/api/watch/debug', '/catalog-tv.apk'];
 const isPublic = (path: string) => PUBLIC_PATHS.includes(path) || path.startsWith('/icon');
 
 const FORM_TYPES = ['application/x-www-form-urlencoded', 'multipart/form-data', 'text/plain'];

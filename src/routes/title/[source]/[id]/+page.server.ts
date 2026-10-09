@@ -1,6 +1,9 @@
 import { fetchDetails } from '$lib/server/metadata/details';
+import { anilistResting } from '$lib/server/metadata/anilistNodes';
+import { isAvailable } from '$lib/server/availability';
 import { fetchScores, omdbConfigured } from '$lib/server/metadata/omdb';
-import { entryIdForSource } from '$lib/server/db/queries';
+import { entryIdForSource, entryIdForShow } from '$lib/server/db/queries';
+import { showRoots } from '$lib/server/metadata/franchise';
 import { knownPeople } from '$lib/server/db/people';
 import { addFromSource } from '$lib/server/entries';
 import { safeBack } from '$lib/back';
@@ -20,10 +23,23 @@ export const load: PageServerLoad = async ({ params, url }) => {
 
 	if (source !== 'tmdb' && source !== 'anilist') error(404, 'Unknown source.');
 
-	const ownedEntryId = entryIdForSource(source, id);
+	let ownedEntryId = entryIdForSource(source, id);
+	// Owning any season of the show counts as owning this one.
+	if (!ownedEntryId && source === 'anilist') {
+		const root = (await showRoots([Number(id)])).get(Number(id));
+		if (root) ownedEntryId = entryIdForShow(root);
+	}
 
-	const details = await fetchDetails(source, id);
+	let details = await fetchDetails(source, id);
+	// A hiccup gets one more try; AniList asking Catalog to slow down isn't "nothing found".
+	if (!details.title && !anilistResting()) details = await fetchDetails(source, id);
+	if (!details.title && source === 'anilist' && anilistResting()) error(503, 'AniList is busy. Try again in a few seconds.');
 	if (!details.title) error(404, 'Nothing found for that.');
+
+	// Started now, so the Watch button's own check (sent once the page shows) finds it under way.
+	if (!details.unreleased) {
+		isAvailable(details.title, details.categorySlug === 'movies' ? 'movie' : 'tv', details.year ? String(details.year) : '').catch(() => {});
+	}
 
 	// Anyone in the cast you've already seen elsewhere gets a link.
 	const known = knownPeople(details.cast.map((person) => person.sourceId));
@@ -54,7 +70,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
 };
 
 export const actions: Actions = {
-	add: async ({ params, request }) => {
+	add: async ({ params, request, url }) => {
 		const { source, id } = params;
 
 		const form = await request.formData();
@@ -62,6 +78,8 @@ export const actions: Actions = {
 
 		if (!added) error(404, 'Nothing found for that.');
 
-		redirect(303, `/entry/${added.id}`);
+		// Keep the way back (to a watch order, say) after adding.
+		const back = safeBack(url.searchParams.get('back'));
+		redirect(303, back ? `/entry/${added.id}?back=${encodeURIComponent(back)}` : `/entry/${added.id}`);
 	}
 };

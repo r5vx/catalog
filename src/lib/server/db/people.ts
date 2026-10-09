@@ -67,11 +67,12 @@ export function entriesWithPerson(personId: number) {
 		character: string | null;
 		categoryName: string;
 		categoryEmoji: string;
+		categorySlug: string;
 	}>(
 		db
 			.prepare(
 				`SELECT e.id, e.title, e.year, e.poster_url AS posterUrl, ec.character,
-				        c.name AS categoryName, c.emoji AS categoryEmoji
+				        c.name AS categoryName, c.emoji AS categoryEmoji, c.slug AS categorySlug
 				 FROM entry_cast ec
 				 JOIN entries e ON e.id = ec.entry_id
 				 JOIN categories c ON c.id = e.category_id

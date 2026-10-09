@@ -48,6 +48,20 @@ function authorize(url: URL, key: string): RequestInit {
 	return { headers: { Accept: 'application/json' } };
 }
 
+/** A plain TMDB GET, or null without a key or on any failure. */
+export async function tmdbGet<T>(path: string, params: Record<string, string> = {}): Promise<T | null> {
+	const key = tmdbKey();
+	if (!key) return null;
+	const url = new URL(`${BASE}${path}`);
+	for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+	try {
+		const resp = await fetch(url, { ...authorize(url, key), signal: AbortSignal.timeout(10000) });
+		return resp.ok ? ((await resp.json()) as T) : null;
+	} catch {
+		return null;
+	}
+}
+
 type TmdbItem = {
 	id: number;
 	media_type: 'movie' | 'tv' | 'person';

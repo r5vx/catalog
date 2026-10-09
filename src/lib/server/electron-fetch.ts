@@ -72,6 +72,14 @@ try {
 					});
 					pending.delete(m.id);
 				}
+				if (m.type === 'page-answer-result') {
+					pending.get(m.id)!({
+						body: (m.body as string) ?? '',
+						status: m.status as number | undefined,
+						error: m.error as string | undefined
+					});
+					pending.delete(m.id);
+				}
 				if (m.type === 'debug-cookies-result') {
 					pending.get(m.id)!({
 						cookies: (m.cookies as CookieDetail[]) ?? [],
@@ -197,5 +205,37 @@ export function electronGetSubtitles(
 				resolve({ data: '', error: 'timeout' });
 			}
 		}, 15000);
+	});
+}
+
+/**
+ * Opens a page out of sight in the "sources" session (muted, pop-ups blocked), waits for the
+ * page's own lookup whose address contains `answerFrom`, and hands back what it answered.
+ * The page is closed as soon as it has. Desktop app only.
+ *
+ * `status` 403 means the site wants its human check first. With `visible`, its page is shown
+ * so the owner can pass it, and this waits (up to three minutes) for the lookup to go through.
+ */
+export function electronPageAnswer(
+	pageUrl: string,
+	answerFrom: string,
+	visible = false
+): Promise<{ body: string; status?: number; error?: string }> {
+	if (typeof process.send !== 'function') {
+		return Promise.resolve({ body: '', error: 'not in Electron' });
+	}
+	const id = String(++counter);
+	return new Promise((resolve) => {
+		pending.set(id, resolve);
+		process.send!({ type: 'page-answer', id, url: pageUrl, answerFrom, visible });
+		setTimeout(
+			() => {
+				if (pending.has(id)) {
+					pending.delete(id);
+					resolve({ body: '', error: 'timeout' });
+				}
+			},
+			visible ? 200000 : 30000
+		);
 	});
 }

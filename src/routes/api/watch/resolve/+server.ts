@@ -18,12 +18,29 @@ import {
 } from '$lib/server/db/queries';
 import { fetchAlternativeTitles } from '$lib/server/metadata/tmdb';
 import { fetchRomajiTitle } from '$lib/server/metadata/anilist';
+import { combineEpisodes, tmdbShow, type EpisodeList } from '$lib/server/combinedEpisodes';
 import type { RequestHandler } from './$types';
 
 async function findOnShowbox(title: string, type: string, year: string) {
 	const results = await searchShowbox(title);
 	if (!results.length) return null;
 	return bestMatch(results, title, type, year);
+}
+
+/**
+ * Not on Showbox at all: an anime another source (Aniwave) has. Same one-list-per-show
+ * numbering as everything else. Null when no source has it.
+ */
+async function fromOtherSources(title: string, year: string) {
+	const seasonPart = title.match(/\s+(season|s)\s*(\d+)\s*$/i);
+	const base = seasonPart ? title.replace(/\s+(season|s)\s*\d+\s*$/i, '').trim() : title;
+	// A later season's year isn't the year the show started.
+	const showYear = seasonPart ? '' : year;
+	const show = await tmdbShow(base, showYear);
+	if (!show?.anime) return null;
+	const episodes = await combineEpisodes({ seasons: [], episodes: [], qualities: [] }, base, 0, showYear);
+	if (!episodes.episodes.some((e) => e.available !== false && e.files.length)) return null;
+	return { title: base, episodes, startSeason: seasonPart ? Number(seasonPart[2]) : 0 };
 }
 
 interface ResolveCache {
@@ -127,46 +144,63 @@ export const GET: RequestHandler = async ({ url }) => {
 				}
 			}
 
-			if (!match) return json({ error: 'not_found' });
+			if (!match) {
+				const other = type === 'movie' ? null : await fromOtherSources(title, year);
+				if (!other) return json({ error: 'not_found' });
+				matchTitle = other.title;
+				matchType = 'tv';
+				episodeData = other.episodes;
+				startSeason = other.startSeason;
+			}
 
-			if (match.id === 0 && match.slug) {
+			if (match && match.id === 0 && match.slug) {
 				match.id = await resolveSlugId(match.slug, match.type);
 				if (match.id === 0) return json({ error: 'no_link' });
 			}
 
-			const link = await getFebboxLink(match.id, match.type);
-			if (!link) return json({ error: 'no_link' });
+			if (match) {
+				const link = await getFebboxLink(match.id, match.type);
+				if (!link) return json({ error: 'no_link' });
 
-			const sk = extractShareKey(link);
-			if (!sk) return json({ error: 'no_link' });
+				const sk = extractShareKey(link);
+				if (!sk) return json({ error: 'no_link' });
 
-			matchTitle = match.title;
-			matchId = match.id;
-			matchType = match.type;
-			matchPosterUrl = match.posterUrl;
-			shareKey = sk;
+				matchTitle = match.title;
+				matchId = match.id;
+				matchType = match.type;
+				matchPosterUrl = match.posterUrl;
+				shareKey = sk;
 
-			if (match.type === 'tv') {
-				const listed = await listEpisodes(link);
-				episodeData = listed;
-				if (!listed.episodes.length) return json({ error: 'no_file' });
-			} else {
-				const files = await listMovieFiles(link);
-				if (!files.length) return json({ error: 'no_file' });
-				movieFileList = files;
+				if (match.type === 'tv') {
+					const listed = await listEpisodes(link);
+					episodeData = listed;
+					if (!listed.episodes.length) return json({ error: 'no_file' });
+				} else {
+					const files = await listMovieFiles(link);
+					if (!files.length) return json({ error: 'no_file' });
+					movieFileList = files;
+				}
+
+				saveShowboxMatch(cacheKey, {
+					showboxId: matchId,
+					title: matchTitle,
+					type: matchType,
+					posterUrl: matchPosterUrl ?? '',
+					shareKey,
+					startSeason
+				});
 			}
-
-			saveShowboxMatch(cacheKey, {
-				showboxId: matchId,
-				title: matchTitle,
-				type: matchType,
-				posterUrl: matchPosterUrl ?? '',
-				shareKey,
-				startSeason
-			});
 		}
 
-		resolveCache.set(cacheKey, {
+		// Other Showbox entries for the same show (JoJo's Steel Ball Run) and other sources join
+		// the list, and episodes no one has yet show greyed out. (Already done for a show only
+		// other sources have.)
+		if (matchType === 'tv' && episodeData && shareKey) {
+			episodeData = await combineEpisodes(episodeData as EpisodeList, matchTitle, matchId, year);
+		}
+
+		// Not kept when another source was too slow this time, so it joins on the next visit.
+		if (!(episodeData as EpisodeList | undefined)?.partial) resolveCache.set(cacheKey, {
 			match: { id: matchId, title: matchTitle, type: matchType, posterUrl: matchPosterUrl },
 			shareKey,
 			episodes: episodeData,
@@ -178,21 +212,28 @@ export const GET: RequestHandler = async ({ url }) => {
 
 	const { febboxToken } = readSettings();
 	const libraryEntry = findEntryByTitle(matchTitle);
-	const posterUrl = libraryEntry?.posterUrl || matchPosterUrl || '';
+	// The library's poster, else TMDB's (Showbox's can be missing or broken, and a show only
+	// another source has has none) — it's what Continue Watching shows.
+	const tmdbPoster = matchType === 'tv' && !libraryEntry?.posterUrl ? (await tmdbShow(matchTitle, year))?.poster : null;
+	const posterUrl = libraryEntry?.posterUrl || tmdbPoster || matchPosterUrl || '';
 
 	if (matchType === 'tv') {
-		const epData = episodeData as { episodes: { season: number; episode: number; files: { fid: number; quality: string }[] }[]; seasons: number[]; qualities?: string[] };
-		let targetEp = epData.episodes[0];
+		const epData = episodeData as EpisodeList;
+		// The first episode that can be played, specials aside.
+		const playable = epData.episodes.filter((ep) => ep.available !== false && ep.files.length > 0);
+		let targetEp = playable.find((ep) => ep.season > 0) ?? playable[0];
 		if (startSeason > 0) {
-			const seasonEp = epData.episodes.find(ep => ep.season === startSeason);
+			const seasonEp = playable.find(ep => ep.season === startSeason);
 			if (seasonEp) targetEp = seasonEp;
 		}
 		const firstFile = targetEp?.files[0];
+		// An episode from another Showbox entry plays from that entry's share.
+		const targetShare = targetEp?.shareKey ?? shareKey;
 		let streamUrl = '';
 		let streamDebug: string | undefined;
 
-		if (firstFile && febboxToken && !skipEpisodeStream) {
-			const result = await getStreamUrl(shareKey, firstFile.fid, febboxToken);
+		if (firstFile && !firstFile.source && febboxToken && !skipEpisodeStream) {
+			const result = await getStreamUrl(targetShare, firstFile.fid, febboxToken);
 			streamUrl = result.url ?? '';
 			streamDebug = result.debug;
 		}

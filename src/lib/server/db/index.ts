@@ -182,6 +182,41 @@ if (!noteColumns.has('locked')) {
 	db.exec('ALTER TABLE notes ADD COLUMN locked INTEGER NOT NULL DEFAULT 0');
 }
 
+// Deleting a note moves it to Recently deleted for 7 days instead of erasing it.
+if (!noteColumns.has('deleted_at')) {
+	db.exec('ALTER TABLE notes ADD COLUMN deleted_at TEXT');
+}
+
+// Pinned notes stay at the top of the list, whatever the sort.
+if (!noteColumns.has('pinned')) {
+	db.exec('ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
+}
+
+// Tags for notes ("School", "Work"…). Separate from the library's tags, which are genres.
+db.exec(`
+	CREATE TABLE IF NOT EXISTS note_tags (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL UNIQUE COLLATE NOCASE
+	);
+	CREATE TABLE IF NOT EXISTS note_tag_links (
+		note_id INTEGER NOT NULL,
+		tag_id INTEGER NOT NULL,
+		PRIMARY KEY (note_id, tag_id)
+	);
+`);
+
+// Earlier versions of each note, so a page wiped by accident can be brought back.
+db.exec(`
+	CREATE TABLE IF NOT EXISTS note_versions (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		note_id INTEGER NOT NULL,
+		title TEXT NOT NULL,
+		body TEXT NOT NULL,
+		saved_at TEXT NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS note_versions_note_idx ON note_versions(note_id, saved_at);
+`);
+
 // `tags` predates the kind column, so add it to an existing table too.
 const tagColumns = new Set(
 	(db.prepare('PRAGMA table_info(tags)').all() as { name: string }[]).map((c) => c.name)
@@ -212,6 +247,85 @@ db.exec(`
 		imported_at TEXT NOT NULL DEFAULT (datetime('now'))
 	)
 `);
+
+// Removing a card from Continue Watching hides it here; the episode progress (the green ticks) is kept.
+db.exec(`
+	CREATE TABLE IF NOT EXISTS continue_hidden (
+		title TEXT NOT NULL,
+		type TEXT NOT NULL,
+		hidden_at TEXT NOT NULL DEFAULT (datetime('now')),
+		PRIMARY KEY (title, type)
+	)
+`);
+
+// Something on your watchlist that you then start or finish counts as newly added, so it
+// comes up at the top of "Recently added" rather than wherever it was put on the list.
+db.exec(`
+	CREATE TRIGGER IF NOT EXISTS planned_to_watched
+	AFTER UPDATE OF status ON entries
+	WHEN OLD.status = 'planned' AND NEW.status IN ('completed', 'watching')
+	BEGIN
+		UPDATE entries SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = NEW.id;
+	END
+`);
+
+// Watch orders you've added: a hand-made list ("mcu") or a TMDB film collection ("collection-10").
+db.exec(`
+	CREATE TABLE IF NOT EXISTS my_watch_orders (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		added_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)
+`);
+
+// What TMDB said about each watch-order title and film series, so opening a watch order
+// doesn't wait on a hundred lookups every time the app starts. JSON, keyed by lookup.
+db.exec(`
+	CREATE TABLE IF NOT EXISTS watch_order_cache (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL,
+		saved_at INTEGER NOT NULL
+	)
+`);
+
+// Watch-order extras (Marvel One-Shots and the like) you've seen. Kept out of the library
+// on purpose, so a five-minute short doesn't turn up under Movies. Keyed by "movie:76122".
+db.exec(`
+	CREATE TABLE IF NOT EXISTS watched_extras (
+		source_id TEXT PRIMARY KEY,
+		watched_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)
+`);
+
+// Watch-list titles you've chosen to skip: no longer "up next", and not counted. Keyed like
+// the list items, "movie:1726:1" (type, TMDB id, season).
+db.exec(`
+	CREATE TABLE IF NOT EXISTS skipped_titles (
+		item_key TEXT PRIMARY KEY,
+		skipped_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)
+`);
+
+// Which AniList entry is the first season of the show an entry belongs to (itself, if none).
+db.exec(`
+	CREATE TABLE IF NOT EXISTS anime_roots (
+		id INTEGER PRIMARY KEY,
+		root INTEGER NOT NULL,
+		checked_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)
+`);
+
+// Fixes that should run once on an existing library, by name.
+db.exec('CREATE TABLE IF NOT EXISTS one_time_fixes (name TEXT PRIMARY KEY, done_at TEXT NOT NULL)');
+function once(name: string, fix: () => void): void {
+	if (db.prepare('SELECT 1 FROM one_time_fixes WHERE name = ?').get(name)) return;
+	fix();
+	db.prepare("INSERT INTO one_time_fixes (name, done_at) VALUES (?, datetime('now'))").run(name);
+}
+
+// Shows are now also grouped the way TMDB groups them (JoJo's parts are one show), so the
+// saved groupings from before need working out again.
+once('anime-roots-tmdb-seasons', () => db.exec('DELETE FROM anime_roots'));
 
 // Which Showbox entry a title opened as, so the slow search is skipped after a restart.
 db.exec(`
