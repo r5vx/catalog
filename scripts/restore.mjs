@@ -94,6 +94,15 @@ db.exec(`
 		character TEXT, ord INTEGER NOT NULL DEFAULT 0,
 		PRIMARY KEY (entry_id, person_id)
 	);
+	CREATE TABLE note_tags (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL UNIQUE COLLATE NOCASE
+	);
+	CREATE TABLE note_tag_links (
+		note_id INTEGER NOT NULL,
+		tag_id INTEGER NOT NULL,
+		PRIMARY KEY (note_id, tag_id)
+	);
 	CREATE TABLE entry_tags (
 		entry_id INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
 		tag_id   INTEGER NOT NULL REFERENCES tags(id)    ON DELETE CASCADE,
@@ -106,6 +115,14 @@ function restore(table, records) {
 	if (records.length === 0) return;
 
 	const columns = Object.keys(records[0]);
+
+	// Columns added since the tables above were written (notes' locked/deleted_at, entries'
+	// last_season…): add them, or every insert fails. The app fills in the rest on start.
+	const existing = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+	for (const column of columns) {
+		if (!existing.has(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN "${column}"`);
+	}
+
 	const statement = db.prepare(
 		`INSERT INTO ${table} (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`
 	);
@@ -120,6 +137,8 @@ restore('entries', backup.entries);
 restore('tags', backup.tags);
 restore('entry_tags', backup.entryTags);
 restore('notes', backup.notes ?? []);
+restore('note_tags', backup.noteTags ?? []);
+restore('note_tag_links', backup.noteTagLinks ?? []);
 restore('people', backup.people ?? []);
 restore('entry_cast', backup.entryCast ?? []);
 

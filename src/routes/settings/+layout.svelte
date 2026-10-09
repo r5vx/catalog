@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
+	import { beforeSettings } from '$lib/nav';
 	import type { Snippet } from 'svelte';
 	import { p, pHint } from '$lib/poison';
 	import type { LayoutData } from './$types';
@@ -26,6 +28,7 @@
 		},
 		{ href: '/settings/watch-progress', label: 'Watch Progress', hint: 'Saved positions and history' },
 		{ href: '/settings/privacy', label: 'Privacy', hint: 'PIN lock' },
+		{ href: '/settings/tv', label: 'Watch on TV', hint: 'Catalog on a Fire TV' },
 		{ href: '/settings/updates', label: 'Updates', hint: 'Keep Catalog current', flag: 'updates' }
 	];
 
@@ -41,11 +44,34 @@
 	const atIndex = $derived(page.url.pathname === '/settings');
 
 	const current = $derived(sections.find((one) => page.url.pathname.startsWith(one.href)));
+
+	/** Back to the page Settings was opened from, at the same scroll position. */
+	let backTo = $state({ url: '/', scrollY: 0 });
+	$effect(() => {
+		backTo = beforeSettings();
+	});
+
+	async function goBack(e: MouseEvent) {
+		if (e.ctrlKey || e.metaKey || e.shiftKey) return; // let "open in new tab" work
+		e.preventDefault();
+		const { url, scrollY } = backTo;
+		await goto(url, { noScroll: true });
+		setTimeout(() => window.scrollTo(0, scrollY), 0);
+	}
+
+	const backLabel = $derived.by(() => {
+		const path = backTo.url.split('?')[0];
+		if (path.startsWith('/browse')) return 'Browse';
+		if (path.startsWith('/notes')) return 'Notes';
+		if (path.startsWith('/orders')) return 'Watch list';
+		if (path === '/') return 'Library';
+		return 'Back';
+	});
 </script>
 
 <header>
 	{#if atIndex}
-		<a href="/" class="back faint">&larr; {pm ? p('Library') : 'Library'}</a>
+		<a href={backTo.url} class="back faint" onclick={goBack}>&larr; {pm ? p(backLabel) : backLabel}</a>
 	{:else}
 		<a href="/settings" class="back faint">&larr; {pm ? p('Settings') : 'Settings'}</a>
 	{/if}

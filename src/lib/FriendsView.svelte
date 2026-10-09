@@ -1,4 +1,5 @@
 <script lang="ts">
+	import MoreButton from '$lib/MoreButton.svelte';
 	import { goto, invalidateAll, beforeNavigate } from '$app/navigation';
 	import { statusLabel, sortBadge } from '$lib/constants';
 	import { onMount, tick } from 'svelte';
@@ -335,7 +336,7 @@
 		{:else}
 			<ul class="grid">
 				{#each rows as row, index (keyOf(row) + index)}
-					<li class="card" class:mine={row.owned} oncontextmenu={(e) => onCardContext(e, row)}>
+					<li class="card has-more" class:mine={row.owned} oncontextmenu={(e) => onCardContext(e, row)}>
 						{#if link(row)}
 							<a href={link(row)} class="card-link" aria-label={row.title}></a>
 						{/if}
@@ -346,6 +347,7 @@
 								<span class="fallback" aria-hidden="true">?</span>
 							{/if}
 							{#if row.owned}<span class="tick" title="In your library">&check;</span>{/if}
+							<MoreButton onopen={(e) => onCardContext(e, row)} top={row.owned ? 36 : 6} />
 							{#if row.owned}
 								<button type="button" class="hover-remove" title="Remove from library" onclick={(e) => { e.preventDefault(); e.stopPropagation(); removeFromLibrary(row); }}>&times;</button>
 							{/if}

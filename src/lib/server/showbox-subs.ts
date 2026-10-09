@@ -107,13 +107,20 @@ async function querySubDL(
 	if (type === 'tv' && season) base.season_number = String(season);
 	if (type === 'tv' && episode) base.episode_number = String(episode);
 
+	// English asked for on its own: SubDL hands back 30 at most, and for some shows (anime)
+	// those are nearly all other languages.
+	const ask = async (which: Record<string, string>) => {
+		const [english, any] = await Promise.all([
+			fetchSubDL(new URLSearchParams({ ...base, ...which, languages: 'EN' })),
+			fetchSubDL(new URLSearchParams({ ...base, ...which }))
+		]);
+		const seen = new Set(english.map((s) => s.url));
+		return [...english, ...any.filter((s) => !seen.has(s.url))];
+	};
+
 	let results: SubtitleOption[] = [];
-	if (imdbId) {
-		results = await fetchSubDL(new URLSearchParams({ ...base, imdb_id: imdbId }));
-	}
-	if (results.length === 0) {
-		results = await fetchSubDL(new URLSearchParams({ ...base, film_name: title }));
-	}
+	if (imdbId) results = await ask({ imdb_id: imdbId });
+	if (results.length === 0) results = await ask({ film_name: title });
 
 	if (type === 'tv' && episode) {
 		results = results.filter(s => {
@@ -290,8 +297,60 @@ export async function fetchSubtitlesForTitle(
 	}
 }
 
-function extractFromZip(buf: Buffer): string {
-	const SUB_EXTS = ['.srt', '.ass', '.ssa', '.vtt', '.sub'];
+const SUB_EXTS = ['.srt', '.ass', '.ssa', '.vtt', '.sub'];
+
+/** 2 = names this season and episode, 1 = names this episode, 0 = another episode or no telling. */
+function episodeScore(name: string, season?: number, episode?: number): number {
+	if (!episode) return 0;
+	const base = name.split('/').pop() ?? name;
+	const se = base.match(/s(\d{1,2})[ ._-]*e(\d{1,3})/i) ?? base.match(/\b(\d{1,2})x(\d{2,3})\b/i);
+	if (se) return +se[2] === episode && (!season || +se[1] === season) ? 2 : 0;
+	const ep =
+		base.match(/(?:\be|\bep|episode)[ ._-]*(\d{1,3})\b/i) ??
+		base.match(/^(\d{1,3})[ ._-]/) ?? //  "02 Breaking Brad.en.srt"
+		base.match(/[ ._-](\d{2,3})[ ._\-[(]/);
+	return ep && +ep[1] === episode ? 1 : 0;
+}
+
+function inflate(raw: Buffer, method: number): string {
+	if (method === 0) return raw.toString('utf-8');
+	if (method === 8) return inflateRawSync(raw).toString('utf-8');
+	return '';
+}
+
+/**
+ * Season packs hold every episode, so the file has to be chosen by episode — taking the first
+ * one gave episode 1's captions on every episode. Reads the zip's central directory, which
+ * always has the sizes; the per-file headers can leave them blank.
+ */
+function extractFromZip(buf: Buffer, season?: number, episode?: number): string {
+	let eocd = -1;
+	for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65_557); i--) {
+		if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+	}
+	if (eocd < 0) return extractFromZipScan(buf);
+
+	const files: { name: string; method: number; size: number; at: number }[] = [];
+	let p = buf.readUInt32LE(eocd + 16);
+	const count = buf.readUInt16LE(eocd + 10);
+	for (let n = 0; n < count && p + 46 <= buf.length && buf.readUInt32LE(p) === 0x02014b50; n++) {
+		const nameLen = buf.readUInt16LE(p + 28);
+		const name = buf.toString('utf-8', p + 46, p + 46 + nameLen);
+		if (SUB_EXTS.some((ext) => name.toLowerCase().endsWith(ext))) {
+			files.push({ name, method: buf.readUInt16LE(p + 10), size: buf.readUInt32LE(p + 20), at: buf.readUInt32LE(p + 42) });
+		}
+		p += 46 + nameLen + buf.readUInt16LE(p + 30) + buf.readUInt16LE(p + 32);
+	}
+	if (files.length === 0) return '';
+
+	const pick = files
+		.map((f, i) => ({ f, score: episodeScore(f.name, season, episode), i }))
+		.sort((a, b) => b.score - a.score || a.i - b.i)[0].f;
+	const dataStart = pick.at + 30 + buf.readUInt16LE(pick.at + 26) + buf.readUInt16LE(pick.at + 28);
+	return inflate(buf.subarray(dataStart, dataStart + pick.size), pick.method);
+}
+
+function extractFromZipScan(buf: Buffer): string {
 	let offset = 0;
 	while (offset + 30 < buf.length) {
 		if (buf.readUInt32LE(offset) !== 0x04034b50) break;
@@ -314,7 +373,7 @@ function extractFromZip(buf: Buffer): string {
 	return '';
 }
 
-export async function downloadSubtitle(url: string): Promise<string> {
+export async function downloadSubtitle(url: string, season?: number, episode?: number): Promise<string> {
 	try {
 		const resp = await fetch(url, {
 			headers: { 'User-Agent': UA },
@@ -323,7 +382,7 @@ export async function downloadSubtitle(url: string): Promise<string> {
 		if (!resp.ok) return '';
 
 		const buf = Buffer.from(await resp.arrayBuffer());
-		if (buf[0] === 0x50 && buf[1] === 0x4b) return extractFromZip(buf);
+		if (buf[0] === 0x50 && buf[1] === 0x4b) return extractFromZip(buf, season, episode);
 		if (buf[0] === 0x1f && buf[1] === 0x8b) {
 			return gunzipSync(buf).toString('utf-8');
 		}

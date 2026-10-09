@@ -184,6 +184,8 @@ export function fullExport() {
 		tags: allRows('SELECT * FROM tags ORDER BY id'),
 		entryTags: allRows('SELECT * FROM entry_tags ORDER BY entry_id, tag_id'),
 		notes: allRows('SELECT * FROM notes ORDER BY id'),
+		noteTags: allRows('SELECT * FROM note_tags ORDER BY id'),
+		noteTagLinks: allRows('SELECT * FROM note_tag_links ORDER BY note_id, tag_id'),
 		people: allRows('SELECT * FROM people ORDER BY id'),
 		entryCast: allRows('SELECT * FROM entry_cast ORDER BY entry_id, ord')
 	};

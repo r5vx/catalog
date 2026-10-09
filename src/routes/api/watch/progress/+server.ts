@@ -1,5 +1,5 @@
 import { json, error, type RequestHandler } from '@sveltejs/kit';
-import { saveWatchProgress, getWatchProgress, listAllWatchProgress, listAllWatchProgressFull, clearAllWatchProgress, deleteWatchProgress, deleteTitleProgress, watchedEpisodesForTitle } from '$lib/server/db/queries';
+import { markEpisodes, saveWatchProgress, getWatchProgress, listAllWatchProgress, listAllWatchProgressFull, clearAllWatchProgress, deleteWatchProgress, deleteTitleProgress, hideFromContinueWatching, watchedEpisodesForTitle } from '$lib/server/db/queries';
 
 export const GET: RequestHandler = async ({ url }) => {
 	const title = url.searchParams.get('title')?.trim();
@@ -41,11 +41,25 @@ export const POST: RequestHandler = async ({ request }) => {
 	return json({ ok: true });
 };
 
+/** Mark episodes watched or not, by hand. Body: { title, episodes: [{ season, episode }], watched }. */
+export const PATCH: RequestHandler = async ({ request }) => {
+	const { title, episodes, watched } = await request.json();
+	const valid =
+		Array.isArray(episodes) &&
+		episodes.length <= 2000 &&
+		episodes.every((e) => Number.isInteger(e?.season) && Number.isInteger(e?.episode));
+	if (!title || !valid) return error(400, 'Missing title or episodes');
+	markEpisodes(String(title), episodes, Boolean(watched));
+	return json({ ok: true });
+};
+
 export const DELETE: RequestHandler = async ({ url }) => {
 	const title = url.searchParams.get('title')?.trim();
 	if (title) {
 		const type = url.searchParams.get('type') ?? 'movie';
-		if (url.searchParams.get('all_episodes') === '1') {
+		if (url.searchParams.get('hide') === '1') {
+			hideFromContinueWatching(title, type);
+		} else if (url.searchParams.get('all_episodes') === '1') {
 			deleteTitleProgress(title, type);
 		} else {
 			const season = Number(url.searchParams.get('season') ?? 0);

@@ -1,4 +1,5 @@
 import { electronFetch, electronGetVideoUrl, electronGetSubtitles } from './electron-fetch';
+import { withoutQualifier } from './metadata/types';
 
 const BASE = 'https://showbox.media';
 
@@ -168,6 +169,7 @@ function searchRelevance(title: string, query: string): number {
 }
 
 export async function searchShowbox(query: string): Promise<ShowboxResult[]> {
+	query = withoutQualifier(query);
 	const seenTitles = new Set<string>();
 	const merged: ShowboxResult[] = [];
 	const addResults = (rs: ShowboxResult[]) => {
@@ -289,6 +291,12 @@ export interface FileOption {
 	quality: string;
 	name: string;
 	size: string;
+	/** Where the file comes from, when it isn't Showbox ("Aniwave"). */
+	source?: string;
+	/** What another source's file plays from (`aniwave:<id>:<episode>:<ssub|dub>`). */
+	shareKey?: string;
+	/** "Japanese" or "English", when the source says. */
+	audio?: string;
 }
 
 export interface EpisodeInfo {
@@ -305,15 +313,19 @@ export async function listEpisodes(
 	shareUrl: string
 ): Promise<{ seasons: number[]; episodes: EpisodeInfo[]; qualities: string[] }> {
 	const folders = await listFebboxFiles(shareUrl);
+	// "Season 1", or just "S01".
 	const seasonFolders = folders
-		.filter((f) => f.isDir && /season\s*\d+/i.test(f.name))
+		.filter((f) => f.isDir && /season\s*\d+|^s\d{1,2}$/i.test(f.name.trim()))
 		.sort((a, b) => {
 			const aNum = Number(a.name.match(/\d+/)?.[0] ?? 0);
 			const bNum = Number(b.name.match(/\d+/)?.[0] ?? 0);
 			return aNum - bNum;
 		});
 
-	if (!seasonFolders.length) return { seasons: [], episodes: [], qualities: [] };
+	// A brand-new show sometimes has its episodes loose at the top, with no season folder yet.
+	const looseEpisodes = folders.filter((f) => !f.isDir && VIDEO_EXTS.test(f.name) && EP_PATTERN.test(f.name));
+
+	if (!seasonFolders.length && !looseEpisodes.length) return { seasons: [], episodes: [], qualities: [] };
 
 	const episodes: EpisodeInfo[] = [];
 	const seasons: number[] = [];
@@ -326,6 +338,15 @@ export async function listEpisodes(
 			return { seasonNum, files };
 		})
 	);
+	if (!seasonFolders.length) {
+		// Each loose file says its own season (S01E03); group them like folders would be.
+		const bySeason = new Map<number, FebboxFile[]>();
+		for (const file of looseEpisodes) {
+			const season = Number(file.name.match(EP_PATTERN)![1]);
+			bySeason.set(season, [...(bySeason.get(season) ?? []), file]);
+		}
+		for (const [seasonNum, files] of [...bySeason].sort((a, b) => a[0] - b[0])) seasonResults.push({ seasonNum, files });
+	}
 
 	for (const { seasonNum, files } of seasonResults) {
 		seasons.push(seasonNum);
@@ -796,6 +817,7 @@ export function bestMatch(
 	wantYear: string
 ): ShowboxResult | null {
 	if (!items.length) return null;
+	query = withoutQualifier(query);
 	const want = query.toLowerCase().trim();
 	const wantWords = titleWords(query);
 	const wantNum = trailingNumber(want);

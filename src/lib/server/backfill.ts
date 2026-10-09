@@ -1,3 +1,6 @@
+import { mergeAnimeSeasons } from './seasonMerge';
+import { warmWatchOrders } from './watchOrders';
+import { eraseExpiredNotes } from './db/notes';
 import { db } from './db';
 import { getEntry, saveScores, saveOverview, saveFacts } from './db/queries';
 import { setTags } from './db/tags';
@@ -222,6 +225,23 @@ let scheduled = false;
 export function scheduleBackfill(delayMs = 8000): void {
 	if (scheduled) return;
 	scheduled = true;
+
+	// Later than the rest, so its AniList lookups don't land on top of Browse warming up.
+	setTimeout(() => {
+		mergeAnimeSeasons().catch((error) => console.error('[season-merge]', error));
+	}, 45_000).unref?.();
+
+	// Notes that have sat in Recently deleted for a week go for good.
+	try {
+		eraseExpiredNotes();
+	} catch (error) {
+		console.error('[notes]', error);
+	}
+
+	// Watch orders open from saved answers; this refreshes old ones before you get there.
+	setTimeout(() => {
+		warmWatchOrders().catch((error) => console.error('[watch-orders]', error));
+	}, 15_000).unref?.();
 
 	const timer = setTimeout(() => {
 		try {

@@ -33,3 +33,11 @@ dist-app/
 dist-release/
 # Where an update is built while the app is still running
 dist-staged/
+
+# Fire TV app build output
+build-tv/
+dist-tv/
+source-probe-*.txt
+
+# The Fire TV app's signing key: kept on this PC only (anyone with it could sign a fake update).
+android/*.keystore

@@ -83,7 +83,10 @@ throws at runtime. Put helpers in `$lib/server/`.
 Its winCodeSign bundle fails to unpack (macOS symlinks need Developer Mode) and
 it calls that fatal, so the exe kept the default icon for days. `npm run pack`
 is now `scripts/pack.mjs`, which judges success by whether the exe appeared and
-then sets the icon itself with rcedit from that same cache.
+then sets the icon itself with rcedit from that same cache. If rcedit says
+"Unable to commit changes", something (usually antivirus scanning the new exe)
+has it open for a moment: everything else is built, so just run
+`node scripts/set-exe-icon.mjs` again.
 
 **9. Svelte inputs bound to props reset while you type.**
 `EntryForm` used `value={entry.title}`. Any refresh of the page data reset every
@@ -604,7 +607,28 @@ before the app kept them, and **returns the tags and cast** rather than letting
 the page reload — a reload would throw away anything half-typed in the edit
 form.
 
+### Library view that sticks
+Status, sort, tags and years are remembered in the `libraryView` setting
+(`KEPT_FILTERS` in `constants.ts`). The URL wins and is saved; anything it
+leaves out comes from the setting. Clearing one writes it **empty**
+(`?status=`), because leaving it out would bring the saved one back. Tabs hidden
+by right-click live in `hiddenTabs`. Library, Notes and Watch list share
+`LibraryHeader.svelte` so switching tabs never moves the layout.
+
 ### Notes
+Deleting is soft: `deleted_at` is set and the page sits in Recently deleted
+(`/notes/deleted`) for 7 days, erased by `eraseExpiredNotes()` at start-up and
+on the notes pages. `note_versions` keeps the text *before* a save when it's
+worth it (first save after 10 quiet minutes, or when over half the text just
+went), 50 per note; restoring a version keeps the current text as one first.
+`scripts/restore.mjs` adds any column a backup has that its fresh tables lack.
+Pinned (`notes.pinned`) always sorts first; the sort is the `notesSort` setting.
+Tags are `note_tags` / `note_tag_links` (not the library's genre tags); the list
+filters with `?tag=<id>` client-side.
+
+Confirm boxes: never `confirm()` — use `confirmAction()` / `askText()` from
+`$lib/confirm.svelte.ts`; `<ConfirmDialog />` sits in the root layout.
+
 `notes` table; rich text via `contenteditable` + `execCommand` (still the only
 thing browsers implement consistently). Images upload to
 `%APPDATA%\Catalog\media\` and are served by `/media/[file]`. Saved HTML is
@@ -617,6 +641,130 @@ Svelte marker comments removed.
 per-season counts and reports how many episodes are waiting.
 **Imports always land as Completed** — a marker often records where a finished
 show ended, so status is the user's to set.
+
+### One card per anime show
+AniList lists every season as its own title. Besides the season-suffix rule, a
+sequel whose name *starts with* the show's name ("JoJo's Bizarre Adventure:
+Stardust Crusaders") joins when TMDB — which Showbox follows — has a season of
+that show starting or running then. That keeps Naruto Shippuden separate.
+AniList's "(TV)"/year qualifiers are stripped (`withoutQualifier`) before any
+Showbox or TMDB lookup. `one_time_fixes` in `db/index.ts` runs a named fix once;
+it cleared `anime_roots` when this rule arrived.
+
+ `metadata/franchise.ts` folds them:
+it climbs PREQUEL/PARENT relations to the oldest ancestor, and a title only
+joins that root if its name is the root's name plus a season-like suffix
+("2nd Season", "Part 2", "Season 3"…). **Films, OVAs and specials are always
+their own card** (the owner wants them separate) but still count as links in
+the chain, so a season after an OVA still finds its root. Roots are saved in
+`anime_roots` for 30 days, because AniList rate-limits hard (429 → a cool-down
+via `quietUntil`). `seasonMerge.ts` runs 45 s after start-up and merges
+same-show entries already in the library, after a `VACUUM INTO` backup in
+`backups/`.
+
+### Catalog on a Fire TV
+`android/` (see its README) builds a 25 KB Android TV app with `npm run tv` — SDK tools only,
+no Gradle. It's a full-screen WebView of Catalog on a computer in the same house (the owner's
+mum: her laptop runs Catalog, her Fire TV shows it). Pieces:
+- The computer answers UDP `CATALOG_DISCOVER` on port 41734 (`electron/main.cjs`), so the TV
+  finds it; Settings → Watch on TV shows the address to type if not, and the Downloader URL
+  (`/catalog-tv.apk`, served from `static/`, public even behind the PIN).
+- Video: the app adds Febbox's Referer/Origin to requests leaving the house, the same trick
+  as Electron's `onBeforeSendHeaders`, so the computer doesn't relay the video.
+- TV mode (`src/lib/tv.ts`, on when the user agent has `CatalogTV/`): arrows move focus to the
+  nearest element (left/right stay on the row), the menu key opens the focused card's ⋯, and
+  `window.__catalogTv` takes play/pause and seek from the remote. The player keeps the arrows
+  while a video is showing and nothing in its controls is focused (`data-tv-player`).
+- The signing key `android/catalog-tv.keystore` must be kept, and `versionCode` bumped, for updates.
+
+### Other sources: Aniwave video, anime.nexus subtitles
+`src/lib/server/sources/`. Only for anime (TMDB: Japanese + Animation). The owner says both
+sites' developers gave permission. Found with `npm run probe -- <site>` (`scripts/source-probe.cjs`),
+which records what a site's page loads while the owner browses it.
+- **Aniwave** (aniwaves.ru) answers plain requests: search → episode list → servers → the
+  player's `getSources` → an .m3u8. Only "S-Sub" (Japanese, clean picture) and "Dub" are used;
+  plain "Sub" has subtitles burned in. Its video servers only answer Referer
+  `https://play.echovideo.ru/` and won't let another page read the video (CORS), so Catalog's
+  server relays it (`/api/watch/relay`, only to hosts Aniwave sent us to): playlists rewritten
+  to point back at the relay, video streamed through. That's why it plays on the phone and the
+  TV too. Its labels lie — playlists say video, video says image/jpeg — so the relay goes by
+  the first bytes (`#EXTM3U`). Its own subtitle server often doesn't answer; its tracks sit last.
+- **anime.nexus**: its video can't be used — its player signs every request after a human
+  check, and copying that is off-limits. Its subtitle files are plain downloads, but the list of
+  them is only given to its own page, so `readPageAnswer` (main.cjs) opens the episode page out
+  of sight, reads that one answer from Chromium's network log, and closes it (~2 s, cached a
+  week). It ignores the browser's CORS preflight to the same address (an empty 204 — grabbing
+  it was the first bug). A profile that never passed their check gets 403: the subtitle menu
+  then offers "Get anime.nexus subtitles", which shows their page until the lookup goes through.
+  "English CC" is the dub-accurate one. Every line in it is bold, which the player drops.
+- **Placing seasons** (`sources/index.ts`): these sites list each season (or half-season) as its
+  own show. Each is put in the TMDB season that started within 60 days before it, the next
+  ones in that season following on. Search with AniList's romaji exactly ("JoJo no Kimyou na
+  Bouken (TV)") — their quick search only shows five results. When Showbox numbers seasons its
+  own way (Re:Zero: TMDB one season of 85, Showbox four), episodes are matched by counting from
+  the show's first, only if every Showbox season begins where an Aniwave series does. The list
+  waits 6 s for Aniwave at most (`partial`, not cached, so it joins next time). anime.nexus is
+  looked up through the episode's Aniwave copy (`ref`), which gives TMDB's numbering.
+- The Watch button's check (`src/lib/server/availability.ts`) asks Showbox and Aniwave at once,
+  first "yes" wins, answers kept (yes a day, no an hour); the title page starts it during load.
+- An Aniwave file carries its own `shareKey` (`aniwave:<id>:<episode>:<ssub|dub>`) and
+  `source`; `pickFile` takes Showbox's first. Don't hammer these sites while testing either.
+
+### AniList's rate limit
+AniList allows few requests a minute (Retry-After often 30–40 s), shared by
+everything on the owner's connection. `anilistResting()` / `anilistSaidWait()`
+in `anilistNodes.ts` are the one switch: on a 429 every AniList caller backs
+off for as long as it asked, and search shows TMDB's results meanwhile. Never
+wait-and-retry inside a search — that is what made typing "jojo" take 4 s.
+`searchAniList` also remembers each query for 10 minutes.
+
+### One episode list per show
+`src/lib/server/combinedEpisodes.ts`, called from `/api/watch/resolve`. TMDB's
+numbering is the master. Other Showbox entries for the same show join only when
+TMDB agrees (a season is named after them — JoJo S6 "STEEL BALL RUN" — or TMDB's
+search for them finds the same show); Four Knights of the Apocalypse and AoT
+Junior High are separate shows there and stay out. Joined episodes carry their
+own `shareKey`, and the player switches `shareKey` per episode (`mainShareKey`
+is the show's). Greyed placeholders (`available: false`, `airDate`) fill
+seasons up to TMDB's count, but only when Showbox numbers seasons the same way.
+Specials (season 0) sort last and autoplay never runs into them. The companion
+lookup is saved for 3 days in `watch_order_cache` (a general JSON cache).
+
+**Febbox's `file_share_list` is behind Cloudflare and rate-limits:** a burst of
+listings (testing several shows back to back) gets 429 "Just a moment…" pages
+for a while, which read as empty folders. Don't hammer it while testing.
+
+### Watch orders
+Shown to the owner as **"Watch list"** (renamed at their request); the code,
+URLs (`/orders`) and tables still say watch orders. "Watchlist" elsewhere in
+the app still means the Want to watch status.
+
+The 🗂️ tab. Two sources, both resolved through TMDB for dates and posters:
+- **Hand-made lists** in `src/lib/watchOrders.ts` (MCU, Ultimate Marvel, Star
+  Wars) for franchises that mix films and series — TMDB has no grouping for
+  those. Each title is just name + year + type; later seasons get their own
+  line. `short()` marks optional extras (Marvel One-Shots): hidden unless "Show
+  extras" is on, not counted in progress, and ticked off in `watched_extras`
+  rather than the library, so a five-minute short never lands in Movies.
+- **TMDB collections** (`collection-<id>`) for film-only series — every one of
+  them is searchable, nothing to maintain. Search results are ranked by the
+  collection's total vote count (TMDB's own order is useless: "Harry Friberg"
+  above Harry Potter). `POPULAR_COLLECTIONS` is the grid shown before typing.
+
+TMDB's answers are kept in `watch_order_cache` (JSON) and served straight
+from there, refreshed in the background when old (released titles 30 days,
+upcoming ones daily) — an in-memory cache alone meant ~130 lookups and a
+5-second wait on every app start. `scheduleBackfill` warms them 15 s after
+start-up.
+
+Skipped titles are `skipped_titles` (keyed `movie:<id>:<season>`); `counts()`
+says what goes into "x of y watched" — released, not extra, not skipped.
+
+Title lookups match by name only, never "first result" — a wrong film silently
+in a watch order is worse than a missing one (it logs `[watch-orders] not on
+TMDB`). The user's chosen lists are `my_watch_orders`. The list page is awaited,
+not streamed, so the scroll position can be restored on coming back; links out
+carry `?back=` so title and entry pages return to the list.
 
 ---
 
@@ -741,8 +889,9 @@ what changed. Both the installed and the new version need one, so it only
 starts paying off from 1.2.1 onwards.
 
 ### Release notes
-`RELEASE_NOTES.md` is the source. Write bullets under `## Unreleased`;
-`npm run release` **refuses to run without them**, publishes them as the GitHub
+`RELEASE_NOTES.md` is the source. Write bullets under
+`## Unreleased — <title>` (the title is shown in Settings → Updates);
+`npm run release` **refuses to run without the bullets or the title**, publishes them as the GitHub
 release description, and stamps the heading with the version and date. The file
 ships inside the app (it's in `build.files`), and Settings → Updates renders it
 — so "what's new" works offline and always describes the version installed

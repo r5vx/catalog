@@ -10,6 +10,8 @@ const { fork } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
 const http = require('node:http');
+const dgram = require('node:dgram');
+const os = require('node:os');
 
 app.commandLine.appendSwitch('enable-features', 'PlatformHEVCDecoderSupport,PlatformHEVCEncoderSupport');
 
@@ -43,6 +45,143 @@ function projectRoot() {
  * The presence of the batch file two folders up is what tells them apart.
  */
 const SOURCE_MODE = fs.existsSync(path.join(projectRoot(), 'Update Catalog.bat'));
+
+/**
+ * Lets Catalog on a TV find this computer. The TV app shouts "CATALOG_DISCOVER" across the
+ * Wi-Fi (UDP 41734); this answers with where Catalog is, so nobody has to type an address.
+ * The first time, Windows asks whether to let Catalog use the network — say yes for
+ * private networks, or the TV can't reach it.
+ */
+const TV_DISCOVERY_PORT = 41734;
+let tvDiscovery = null;
+
+function startTvDiscovery() {
+	try {
+		tvDiscovery = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+		tvDiscovery.on('message', (message, from) => {
+			if (message.toString('utf8').trim() !== 'CATALOG_DISCOVER') return;
+			const reply = JSON.stringify({ app: 'catalog', name: os.hostname(), port: PORT });
+			tvDiscovery.send(reply, from.port, from.address);
+		});
+		tvDiscovery.on('error', (error) => {
+			console.warn('[tv] discovery off:', error.message);
+			tvDiscovery?.close();
+			tvDiscovery = null;
+		});
+		tvDiscovery.bind(TV_DISCOVERY_PORT);
+	} catch (error) {
+		console.warn('[tv] discovery off:', error.message);
+	}
+}
+
+/**
+ * Another site's pages (anime.nexus) open out of sight in their own session, the one the source
+ * probe uses too, with a plain Chrome identity.
+ */
+function sourcesSession() {
+	const sources = session.fromPartition('persist:sources');
+	const plain = sources.getUserAgent().replace(/\s*Electron\/\S+/, '').replace(/\s*catalog\/\S+/i, '');
+	if (sources.getUserAgent() !== plain) sources.setUserAgent(plain);
+	return sources;
+}
+
+let pageAnswerQueue = Promise.resolve();
+
+/**
+ * Opens `url` out of sight (muted, no pop-ups), waits for the page's own lookup whose address
+ * contains `answerFrom`, and returns what it answered — read from Chromium's network log, the
+ * same one the developer tools show. The page closes straight after.
+ * A site that wants its human check first refuses the lookup: `{ status: 403 }`.
+ */
+function readPageAnswerOnce(url, answerFrom) {
+	return new Promise((resolve) => {
+		let win = null;
+		let finished = false;
+		const finish = (result) => {
+			if (finished) return;
+			finished = true;
+			clearTimeout(timer);
+			try {
+				if (win && !win.isDestroyed()) win.destroy();
+			} catch {}
+			resolve(result);
+		};
+		const timer = setTimeout(() => finish({ body: '', error: 'timeout' }), 20000);
+		try {
+			sourcesSession();
+			win = new BrowserWindow({
+				show: false,
+				webPreferences: { partition: 'persist:sources', contextIsolation: true, nodeIntegration: false }
+			});
+			win.webContents.setAudioMuted(true);
+			win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+			const dbg = win.webContents.debugger;
+			dbg.attach('1.3');
+			dbg.sendCommand('Network.enable').catch(() => {});
+			const wanted = new Set();
+			dbg.on('message', (_event, method, params) => {
+				const isAnswer =
+					method === 'Network.responseReceived' &&
+					params.response.url.includes(answerFrom) &&
+					// Not the browser's permission check: a "preflight" with an empty reply.
+					params.type !== 'Preflight';
+				if (isAnswer && params.response.status === 200) {
+					wanted.add(params.requestId);
+				} else if (isAnswer && params.response.status >= 400) {
+					finish({ body: '', status: params.response.status });
+				} else if (method === 'Network.loadingFinished' && wanted.has(params.requestId)) {
+					dbg.sendCommand('Network.getResponseBody', { requestId: params.requestId })
+						.then(({ body, base64Encoded }) => {
+							const text = base64Encoded ? Buffer.from(body, 'base64').toString('utf8') : body;
+							if (text.trim()) finish({ body: text });
+						})
+						.catch(() => {});
+				}
+			});
+			win.loadURL(url).catch(() => {});
+		} catch (e) {
+			finish({ body: '', error: e.message });
+		}
+	});
+}
+
+/**
+ * The same, one page at a time. With `visible`, when the site wants its human check, its page
+ * is shown so the owner can pass it, and the lookup is tried again out of sight every few
+ * seconds; the shown page closes by itself once it goes through (or after three minutes).
+ */
+function readPageAnswer(url, answerFrom, visible = false) {
+	const run = async () => {
+		const first = await readPageAnswerOnce(url, answerFrom);
+		if (first.body || !visible) return first;
+
+		sourcesSession();
+		const shown = new BrowserWindow({
+			width: 1100,
+			height: 760,
+			title: 'anime.nexus',
+			autoHideMenuBar: true,
+			webPreferences: { partition: 'persist:sources', contextIsolation: true, nodeIntegration: false }
+		});
+		shown.webContents.setAudioMuted(true);
+		shown.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+		shown.loadURL(url).catch(() => {});
+
+		const until = Date.now() + 180000;
+		let result = first;
+		while (!shown.isDestroyed() && Date.now() < until) {
+			await new Promise((r) => setTimeout(r, 8000));
+			if (shown.isDestroyed()) break;
+			result = await readPageAnswerOnce(url, answerFrom);
+			if (result.body) break;
+		}
+		if (!shown.isDestroyed()) shown.destroy();
+		return result;
+	};
+	const next = pageAnswerQueue.then(run, run);
+	pageAnswerQueue = next.then(() => {}, () => {});
+	return next;
+}
 
 function startServer() {
 	const entry = path.join(__dirname, '..', 'build', 'index.js');
@@ -79,6 +218,12 @@ function startServer() {
 		if (message?.type === 'print-pdf') makePdf(message.id, message.path);
 
 		if (message?.type === 'check-for-updates') checkForUpdates();
+
+		if (message?.type === 'page-answer') {
+			readPageAnswer(String(message.url), String(message.answerFrom), Boolean(message.visible)).then((result) =>
+				server?.send({ type: 'page-answer-result', id: message.id, ...result })
+			);
+		}
 
 		if (message?.type === 'install-update') {
 			if (window) {
@@ -534,7 +679,26 @@ function startServer() {
 
 	server.stdout?.on('data', (chunk) => console.log('[server]', String(chunk).trim()));
 	server.stderr?.on('data', (chunk) => console.error('[server]', String(chunk).trim()));
+
+	// Straight after an update, the old server can still hold the port for a moment and the
+	// new one exits at once. Try again a few times rather than open a window onto nothing.
+	const startedAt = Date.now();
+	const child = server;
+	child.once('exit', (code) => {
+		if (quitting || server !== child) return;
+		if (Date.now() - startedAt < 15000 && serverRestarts < 5) {
+			serverRestarts += 1;
+			console.warn(`[server] stopped early (code ${code}); starting it again`);
+			setTimeout(() => {
+				if (!quitting) startServer();
+			}, 1500);
+		}
+	});
 }
+
+let serverRestarts = 0;
+/** Set once Catalog starts closing, so a server stopping on purpose isn't restarted. */
+let quitting = false;
 
 /**
  * Renders one of our own pages to a PDF.
@@ -669,6 +833,23 @@ function createWindow() {
 
 	window.once('ready-to-show', () => window.show());
 	window.loadURL(ORIGIN);
+
+	// "ready-to-show" never comes if the first load fails (the server not quite up yet,
+	// straight after an update), which left Catalog running with no window at all.
+	// Show it regardless, and keep trying the page until the server answers.
+	const shown = window;
+	setTimeout(() => {
+		if (!shown.isDestroyed() && !shown.isVisible()) shown.show();
+	}, 4000);
+	let reloads = 0;
+	shown.webContents.on('did-fail-load', (_event, _code, _description, url, isMainFrame) => {
+		if (!isMainFrame || !url.startsWith(ORIGIN) || reloads >= 30 || shown.isDestroyed()) return;
+		reloads += 1;
+		if (!shown.isVisible()) shown.show();
+		setTimeout(() => {
+			if (!shown.isDestroyed()) shown.loadURL(ORIGIN);
+		}, 1000);
+	});
 
 	// Febbox login needs its own window — Google OAuth blocks iframes.
 	// The child window shares the default session, so cookies carry over.
@@ -972,6 +1153,7 @@ if (!app.requestSingleInstanceLock()) {
 		}
 
 		startServer();
+		startTvDiscovery();
 
 		try {
 			await waitForServer();
@@ -1211,7 +1393,11 @@ if (!app.requestSingleInstanceLock()) {
 		if (pending) startHelper(pending.staged);
 	}
 
-	app.on('before-quit', stopServer);
+	app.on('before-quit', () => {
+		quitting = true;
+		tvDiscovery?.close();
+		stopServer();
+	});
 	app.on('quit', () => {
 		stopServer();
 		applyPendingUpdate();

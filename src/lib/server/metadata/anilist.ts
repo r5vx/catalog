@@ -1,4 +1,6 @@
+import { rememberAnime, anilistResting, anilistSaidWait } from './anilistNodes';
 import { plainText, fameScore, type SearchResult } from './types';
+import { getOrderCache, saveOrderCache } from '../db/queries';
 
 const ENDPOINT = 'https://graphql.anilist.co';
 
@@ -8,22 +10,23 @@ query ($search: String, $perPage: Int) {
     media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
       id
       title { romaji english }
-      startDate { year }
+      startDate { year month day }
       episodes
       duration
       format
       popularity
       averageScore
       coverImage { large }
+      relations { edges { relationType node { id format } } }
       description(asHtml: false)
     }
   }
 }`;
 
-type AniListMedia = {
+export type AniListMedia = {
 	id: number;
 	title: { romaji: string | null; english: string | null };
-	startDate: { year: number | null };
+	startDate: { year: number | null; month?: number | null; day?: number | null };
 	episodes: number | null;
 	duration: number | null;
 	format: string | null;
@@ -41,12 +44,13 @@ type AniListMedia = {
 const scalePopularity = (members: number) => fameScore(members, 1_000, 400_000);
 
 const FORMAT_LABELS: Record<string, string> = {
+	// Short-episode and web-released series are still just series to whoever's watching.
 	TV: 'Anime',
-	TV_SHORT: 'TV Short',
+	TV_SHORT: 'Anime',
 	MOVIE: 'Movie',
 	SPECIAL: 'Special',
 	OVA: 'OVA',
-	ONA: 'ONA',
+	ONA: 'Anime',
 	MUSIC: 'Music'
 };
 
@@ -55,27 +59,29 @@ const FORMAT_LABELS: Record<string, string> = {
  * confidently an anime — this is what makes "Darling in the Franxx" land in
  * the right category without you telling it.
  */
+/** Recent searches, so typing "jojo", deleting and retyping it doesn't ask again. */
+const recentSearches = new Map<string, { results: SearchResult[]; at: number }>();
+const SEARCH_MEMORY = 10 * 60 * 1000;
+
 export async function searchAniList(query: string, perPage = 20): Promise<SearchResult[]> {
+	const key = `${query.toLowerCase()}|${perPage}`;
+	const recent = recentSearches.get(key);
+	if (recent && Date.now() - recent.at < SEARCH_MEMORY) return recent.results;
+	// Told to slow down: skip it for now. TMDB's results still show.
+	if (anilistResting()) return [];
+
 	try {
-		let response = await fetch(ENDPOINT, {
+		const response = await fetch(ENDPOINT, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-			body: JSON.stringify({ query: QUERY, variables: { search: query, perPage } })
+			body: JSON.stringify({ query: QUERY, variables: { search: query, perPage } }),
+			signal: AbortSignal.timeout(8000)
 		});
 
-		// AniList caps requests per minute. On a big import we'd rather wait a
-		// moment and get the match than silently drop the title.
 		if (response.status === 429) {
-			const wait = Number(response.headers.get('Retry-After') ?? '2');
-			await new Promise((resolve) => setTimeout(resolve, Math.min(wait, 10) * 1000));
-
-			response = await fetch(ENDPOINT, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-				body: JSON.stringify({ query: QUERY, variables: { search: query, perPage } })
-			});
+			anilistSaidWait(response);
+			return [];
 		}
-
 		if (!response.ok) return [];
 
 		const payload = (await response.json()) as {
@@ -83,8 +89,12 @@ export async function searchAniList(query: string, perPage = 20): Promise<Search
 		};
 
 		const media = payload.data?.Page?.media ?? [];
+		rememberAnime(media);
 
-		return media.map(toResult);
+		const results = media.map(toResult);
+		recentSearches.set(key, { results, at: Date.now() });
+		if (recentSearches.size > 200) recentSearches.delete(recentSearches.keys().next().value!);
+		return results;
 	} catch {
 		// Offline, or AniList is having a moment. Search still works via TMDB.
 		return [];
@@ -92,7 +102,7 @@ export async function searchAniList(query: string, perPage = 20): Promise<Search
 }
 
 /** One AniList record in the shape the rest of the app uses. */
-function toResult(item: AniListMedia): SearchResult {
+export function toResult(item: AniListMedia): SearchResult {
 	const title = item.title.english || item.title.romaji || 'Untitled';
 	const alt =
 		item.title.english && item.title.romaji !== item.title.english ? item.title.romaji : null;
@@ -125,13 +135,14 @@ query ($perPage: Int, $page: Int, $sort: [MediaSort], $yearGreater: FuzzyDateInt
     media(type: ANIME, sort: $sort, isAdult: false, startDate_greater: $yearGreater, startDate_lesser: $yearLesser, genre: $genre, status_not: $statusNot) {
       id
       title { romaji english }
-      startDate { year }
+      startDate { year month day }
       episodes
       duration
       format
       popularity
       averageScore
       coverImage { large }
+      relations { edges { relationType node { id format } } }
       description(asHtml: false)
     }
   }
@@ -186,22 +197,18 @@ export async function trendingAniList(
 			variables.statusNot = 'NOT_YET_RELEASED';
 		}
 
-		let response = await fetch(ENDPOINT, {
+		if (anilistResting()) return [];
+		const response = await fetch(ENDPOINT, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-			body: JSON.stringify({ query: TRENDING, variables })
+			body: JSON.stringify({ query: TRENDING, variables }),
+			signal: AbortSignal.timeout(8000)
 		});
 
 		if (response.status === 429) {
-			const wait = Number(response.headers.get('Retry-After') ?? '2');
-			await new Promise((resolve) => setTimeout(resolve, Math.min(wait, 10) * 1000));
-			response = await fetch(ENDPOINT, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-				body: JSON.stringify({ query: TRENDING, variables })
-			});
+			anilistSaidWait(response);
+			return [];
 		}
-
 		if (!response.ok) return [];
 
 		const payload = (await response.json()) as {
@@ -209,6 +216,7 @@ export async function trendingAniList(
 		};
 
 		const isDateSort = filters?.sort === 'release_date_desc' || filters?.sort === 'release_date_asc';
+		rememberAnime(payload.data?.Page?.media ?? []);
 		const results = (payload.data?.Page?.media ?? [])
 			.filter((m) => !isDateSort || m.startDate?.year != null)
 			.map(toResult);
@@ -223,24 +231,35 @@ export async function trendingAniList(
 	}
 }
 
+/**
+ * AniList's other name for a title: the Japanese one in letters, or the English one.
+ * Remembered for a month, and not asked while AniList wants Catalog to slow down (so title
+ * pages and search, which need AniList most, aren't turned away because of this).
+ */
 export async function fetchRomajiTitle(title: string): Promise<string | null> {
+	const key = `anilist-romaji|${title.toLowerCase()}`;
+	const known = getOrderCache(key);
+	if (known && Date.now() - known.at < 30 * 24 * 60 * 60 * 1000) return known.value as string | null;
+	if (anilistResting()) return null;
 	try {
 		const response = await fetch(ENDPOINT, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
 			body: JSON.stringify({ query: QUERY, variables: { search: title, perPage: 1 } })
 		});
+		if (response.status === 429) anilistSaidWait(response);
 		if (!response.ok) return null;
 		const payload = (await response.json()) as {
 			data?: { Page?: { media?: AniListMedia[] } };
 		};
 		const media = payload.data?.Page?.media?.[0];
-		if (!media) return null;
-		const romaji = media.title.romaji;
-		if (romaji && romaji.toLowerCase() !== title.toLowerCase()) return romaji;
-		const english = media.title.english;
-		if (english && english.toLowerCase() !== title.toLowerCase()) return english;
-		return null;
+		let other: string | null = null;
+		const romaji = media?.title.romaji;
+		const english = media?.title.english;
+		if (romaji && romaji.toLowerCase() !== title.toLowerCase()) other = romaji;
+		else if (english && english.toLowerCase() !== title.toLowerCase()) other = english;
+		saveOrderCache(key, other, Date.now());
+		return other;
 	} catch {
 		return null;
 	}

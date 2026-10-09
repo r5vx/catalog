@@ -1,4 +1,5 @@
-import { insertEntry, categoryIdForSlug, saveFacts, entryIdForSource } from './db/queries';
+import { insertEntry, categoryIdForSlug, saveFacts, entryIdForSource, entryIdForShow } from './db/queries';
+import { showRoots } from './metadata/franchise';
 import { setTags } from './db/tags';
 import { setCast } from './db/people';
 import { fetchDetails } from './metadata/details';
@@ -86,6 +87,13 @@ export async function addFromSource(
 
 	const existing = entryIdForSource(source, sourceId);
 	if (existing) return { id: existing, already: true };
+
+	// Season 2 of a show you already have isn't a new entry — it's the same show.
+	if (source === 'anilist') {
+		const root = (await showRoots([Number(sourceId)])).get(Number(sourceId));
+		const sameShow = root ? entryIdForShow(root) : null;
+		if (sameShow) return { id: sameShow, already: true };
+	}
 
 	const details = await fetchDetails(source, sourceId);
 	if (!details.title) return null;

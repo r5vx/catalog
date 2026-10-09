@@ -14,10 +14,14 @@
 	import { statusLabel } from '$lib/constants';
 	import { money } from '$lib/format';
 	import { p } from '$lib/poison';
+	import { confirmAction } from '$lib/confirm.svelte';
 	import type { SearchResult } from '$lib/server/metadata/types';
 	import type { PageData, ActionData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
+
+	/** Set once the remove question has been answered yes, so the resubmitted form goes through. */
+	let confirmedDelete = false;
 	const pm = $derived(page.data.poisonMode);
 
 	let busyKey = $state<string | null>(null);
@@ -165,7 +169,7 @@
 
 <svelte:head><title>{entry.title} · {pm ? "Papa's Giblets" : 'Catalog'}</title></svelte:head>
 
-<BackBar />
+<BackBar href={data.back} />
 
 {#if form?.error}
 	<p class="notice error" role="alert">{form.error}</p>
@@ -313,8 +317,14 @@
 				method="POST"
 				action="?/delete"
 				class="sub-tool danger"
-				onsubmit={(event) => {
-					if (!confirm(`Remove "${entry.title}" from your library?`)) event.preventDefault();
+				onsubmit={async (event) => {
+					if (confirmedDelete) return;
+					event.preventDefault();
+					const form = event.currentTarget;
+					if (await confirmAction({ title: `Remove "${entry.title}" from your library?`, confirmLabel: 'Remove' })) {
+						confirmedDelete = true;
+						form.requestSubmit();
+					}
 				}}
 			>
 				<div>

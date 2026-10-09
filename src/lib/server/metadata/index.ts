@@ -1,8 +1,9 @@
 import { searchAniList, trendingAniList } from './anilist';
 import { searchTmdb, trendingTmdb, trendingPeopleTmdb, hasTmdbKey, type BrowseFilters } from './tmdb';
 export { trendingPeopleTmdb };
-import { normalizeTitle, type SearchResult } from './types';
+import { normalizeTitle, withoutQualifier, type SearchResult } from './types';
 import { watchRegion as getWatchRegion } from './providers';
+import { groupByShow } from './franchise';
 
 export { hasTmdbKey };
 export type { SearchResult, BrowseFilters };
@@ -100,18 +101,23 @@ function matchScore(result: SearchResult, query: string, fuzzy = false): number 
  * why "Iron Man" gives you the film rather than the obscure anime of the same
  * name. A year you supplied breaks the remaining ties.
  */
-const DEPRIORITIZED_KINDS = new Set(['Music', 'Special', 'OVA', 'TV Short']);
+const DEPRIORITIZED_KINDS = new Set(['Music', 'Special', 'OVA']);
+
+const LATER_SEASON = /\b(season|part|cour)\s*([2-9]|\d{2})\b|\b([2-9]|\d{2})(nd|rd|th) season\b/i;
 
 function scoreOf(result: SearchResult, query: string, year: number | null, fuzzy = false): number {
 	const yearMatches = year !== null && result.year === year;
 	const match = matchScore(result, query, fuzzy);
 	const quality = result.posterUrl ? 1 : 0.4;
 	const kindPenalty = DEPRIORITIZED_KINDS.has(result.kind) ? 0.15 : 1;
+	// "Saiki K." should open on the show itself, not its season 2 — unless you asked for a season.
+	const laterSeason = LATER_SEASON.test(result.title) && !/\d/.test(query) ? 3 : 0;
 
 	return (
 		match * 10 * quality * kindPenalty + //  music/specials sink to the bottom
 		(yearMatches ? 4 : 0) + //               a nudge, never enough to jump a tier
-		result.popularity * 20 //                0 to 20, separates blockbusters from obscurities within a tier
+		result.popularity * 20 - //              0 to 20, separates blockbusters from obscurities within a tier
+		laterSeason
 	);
 }
 
@@ -172,10 +178,30 @@ export async function searchAll(
 		score: scoreOf(result, trimmed, year, fuzzy)
 	}));
 
-	return dedupe(scored)
+	const ranked = dedupe(scored)
 		.sort((a, b) => b.score - a.score)
-		.slice(0, limit)
-		.map((item) => item.result);
+		.map((item) => item.result)
+		.slice(0, limit * 3);
+
+	return sameShowOnce(await groupByShow(ranked)).slice(0, limit);
+}
+
+/** After seasons fold into a first-season card, TMDB's copy of that same show can be left over. */
+function sameShowOnce(results: SearchResult[]): SearchResult[] {
+	const seen = new Map<string, number>();
+	const out: SearchResult[] = [];
+	for (const result of results) {
+		// AniList's "(TV)" on the end mustn't stop it matching TMDB's copy of the same show.
+		const fingerprint = [normalizeTitle(withoutQualifier(result.title)), result.year ?? '?', result.categorySlug].join('|');
+		const at = seen.get(fingerprint);
+		if (at === undefined) {
+			seen.set(fingerprint, out.length);
+			out.push(result);
+		} else if (result.source === 'anilist' && out[at].source !== 'anilist' && result.categorySlug === 'anime') {
+			out[at] = result;
+		}
+	}
+	return out;
 }
 
 /** The handful of best guesses for a title, used by the bulk importer. */
@@ -221,7 +247,10 @@ export async function browsePage(
 	if (cached && Date.now() - cached.time < BROWSE_TTL) return cached.data;
 
 	let data: SearchResult[];
-	if (category === 'anime') data = await trendingAniList(50, page, mode, filters);
+	if (category === 'anime') {
+		const dateSorted = filters?.sort === 'release_date_desc' || filters?.sort === 'release_date_asc';
+		data = await groupByShow(await trendingAniList(50, page, mode, filters), dateSorted);
+	}
 	else if (category === 'movies') data = await trendingTmdb('movie', page, mode, region, filters);
 	else if (category === 'tv') data = await trendingTmdb('tv', page, mode, region, filters);
 	else data = [];

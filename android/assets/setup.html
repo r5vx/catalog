@@ -1,0 +1,208 @@
+<!doctype html>
+<!--
+	First screen of Catalog on a TV: find the computer running Catalog on this Wi-Fi, or type its
+	address. The remote's arrows move between the buttons; OK presses one.
+-->
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Catalog</title>
+		<style>
+			:root {
+				--paper: #111614;
+				--surface: #181f1c;
+				--ink: #e7ede9;
+				--soft: #a3b0a8;
+				--rule: #3c4a43;
+				--accent: #e994c2;
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				min-height: 100vh;
+				background: var(--paper);
+				color: var(--ink);
+				font-family: system-ui, sans-serif;
+				display: grid;
+				place-items: center;
+			}
+			main {
+				width: min(640px, 90vw);
+				display: flex;
+				flex-direction: column;
+				gap: 18px;
+			}
+			h1 {
+				margin: 0;
+				font-family: Georgia, serif;
+				font-size: 2.6rem;
+			}
+			p {
+				margin: 0;
+				color: var(--soft);
+				font-size: 1.1rem;
+				line-height: 1.5;
+			}
+			.problem {
+				color: var(--accent);
+			}
+			ul {
+				list-style: none;
+				margin: 0;
+				padding: 0;
+				display: flex;
+				flex-direction: column;
+				gap: 10px;
+			}
+			button,
+			input {
+				font: inherit;
+				font-size: 1.15rem;
+				padding: 14px 18px;
+				border-radius: 10px;
+				border: 2px solid var(--rule);
+				background: var(--surface);
+				color: var(--ink);
+			}
+			button {
+				width: 100%;
+				text-align: left;
+				cursor: pointer;
+			}
+			button small {
+				display: block;
+				color: var(--soft);
+				font-size: 0.85rem;
+				margin-top: 2px;
+			}
+			button:focus,
+			input:focus {
+				outline: none;
+				border-color: var(--accent);
+				box-shadow: 0 0 0 4px rgb(233 148 194 / 30%);
+			}
+			.row {
+				display: flex;
+				gap: 10px;
+			}
+			.row input {
+				flex: 1;
+				min-width: 0;
+			}
+			.row button {
+				width: auto;
+			}
+			.small {
+				font-size: 0.95rem;
+			}
+		</style>
+	</head>
+	<body>
+		<main>
+			<h1>Catalog</h1>
+			<p id="problem" class="problem" hidden></p>
+			<p id="status">Looking for Catalog on this Wi-Fi…</p>
+			<ul id="found"></ul>
+			<button id="again" type="button" hidden>Look again</button>
+			<p class="small">Or type the address shown in Catalog on the computer, under Settings → Watch on TV:</p>
+			<div class="row">
+				<input id="address" type="text" inputmode="url" placeholder="192.168.1.20:4173" />
+				<button id="go" type="button">Connect</button>
+			</div>
+		</main>
+		<script>
+			var bridge = window.CatalogTV;
+			var foundList = document.getElementById('found');
+			var status = document.getElementById('status');
+			var again = document.getElementById('again');
+
+			function connect(url) {
+				status.textContent = 'Connecting…';
+				bridge.connect(url);
+			}
+
+			function look() {
+				status.textContent = 'Looking for Catalog on this Wi-Fi…';
+				foundList.innerHTML = '';
+				again.hidden = true;
+				// Let the message show before the (few seconds') search starts.
+				setTimeout(function () {
+					var computers = [];
+					try {
+						computers = JSON.parse(bridge.discover());
+					} catch (e) {}
+					if (computers.length === 0) {
+						status.textContent = "Couldn't find it. Make sure Catalog is open on the computer, and that both are on the same Wi-Fi.";
+						again.hidden = false;
+						again.focus();
+						return;
+					}
+					status.textContent = computers.length === 1 ? 'Found it:' : 'Pick the computer:';
+					computers.forEach(function (c, i) {
+						var li = document.createElement('li');
+						var b = document.createElement('button');
+						b.type = 'button';
+						b.innerHTML = '';
+						b.appendChild(document.createTextNode(c.name));
+						var small = document.createElement('small');
+						small.textContent = c.url.replace('http://', '');
+						b.appendChild(small);
+						b.onclick = function () {
+							connect(c.url);
+						};
+						li.appendChild(b);
+						foundList.appendChild(li);
+						if (i === 0) b.focus();
+					});
+					again.hidden = false;
+				}, 50);
+			}
+
+			document.getElementById('go').onclick = function () {
+				var typed = document.getElementById('address').value.trim();
+				if (!typed) return;
+				if (!/^https?:\/\//.test(typed)) typed = 'http://' + typed;
+				if (!/:\d+/.test(typed.replace(/^https?:\/\//, ''))) typed += ':4173';
+				connect(typed);
+			};
+			again.onclick = look;
+
+			// Arrows move between everything focusable, top to bottom.
+			document.addEventListener('keydown', function (e) {
+				if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+				var all = Array.prototype.slice.call(document.querySelectorAll('button:not([hidden]), input'));
+				var at = all.indexOf(document.activeElement);
+				var next = e.key === 'ArrowDown' ? Math.min(all.length - 1, at + 1) : Math.max(0, at - 1);
+				if (all[next]) {
+					all[next].focus();
+					e.preventDefault();
+				}
+			});
+
+			var unreachable = new URLSearchParams(location.search).get('unreachable');
+			if (unreachable) {
+				var problem = document.getElementById('problem');
+				problem.hidden = false;
+				problem.textContent =
+					"Couldn't reach Catalog at " + unreachable.replace('http://', '').replace(/\/$/, '') + '. Is the computer on, with Catalog open?';
+				var retry = document.createElement('li');
+				var b = document.createElement('button');
+				b.type = 'button';
+				b.textContent = 'Try that computer again';
+				b.onclick = function () {
+					connect(unreachable);
+				};
+				retry.appendChild(b);
+				foundList.appendChild(retry);
+				b.focus();
+				status.textContent = 'Or pick another:';
+				again.hidden = false;
+			} else {
+				look();
+			}
+		</script>
+	</body>
+</html>

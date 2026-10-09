@@ -296,7 +296,94 @@ export function existingSourceKeysWithIds(): Record<string, number> {
 
 	const map: Record<string, number> = {};
 	for (const row of rows) map[`${row.source}:${row.sourceId}`] = row.id;
+
+	// Browse and search show one card per show (its first season), so owning any season counts.
+	const roots = db
+		.prepare(`
+			SELECT e.id, r.root FROM entries e
+			JOIN anime_roots r ON r.id = CAST(e.source_id AS INTEGER)
+			WHERE e.source = 'anilist' AND r.root != r.id
+		`)
+		.all() as { id: number; root: number }[];
+	for (const row of roots) map[`anilist:${row.root}`] ??= row.id;
 	return map;
+}
+
+/** Owned entry for any season of the same show, if there is one. */
+export function entryIdForShow(rootId: number): number | null {
+	const row = db
+		.prepare(`
+			SELECT e.id FROM entries e
+			LEFT JOIN anime_roots r ON r.id = CAST(e.source_id AS INTEGER)
+			WHERE e.source = 'anilist' AND (e.source_id = ? OR r.root = ?)
+			ORDER BY (e.source_id = ?) DESC, e.id
+			LIMIT 1
+		`)
+		.get(String(rootId), rootId, String(rootId)) as { id: number } | undefined;
+	return row?.id ?? null;
+}
+
+export function myWatchOrders(): { id: string; name: string }[] {
+	return db.prepare('SELECT id, name FROM my_watch_orders ORDER BY added_at').all() as { id: string; name: string }[];
+}
+
+export function addWatchOrder(id: string, name: string): void {
+	db.prepare('INSERT INTO my_watch_orders (id, name) VALUES (?, ?) ON CONFLICT(id) DO NOTHING').run(id, name);
+}
+
+export function removeWatchOrder(id: string): void {
+	db.prepare('DELETE FROM my_watch_orders WHERE id = ?').run(id);
+}
+
+export function getOrderCache(key: string): { value: unknown; at: number } | undefined {
+	const row = db.prepare('SELECT value, saved_at AS at FROM watch_order_cache WHERE key = ?').get(key) as
+		| { value: string; at: number }
+		| undefined;
+	return row ? { value: JSON.parse(row.value), at: row.at } : undefined;
+}
+
+export function saveOrderCache(key: string, value: unknown, at: number): void {
+	db.prepare(
+		'INSERT INTO watch_order_cache (key, value, saved_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, saved_at = excluded.saved_at'
+	).run(key, JSON.stringify(value), at);
+}
+
+export function skippedTitles(): Set<string> {
+	const rows = db.prepare('SELECT item_key AS itemKey FROM skipped_titles').all() as { itemKey: string }[];
+	return new Set(rows.map((r) => r.itemKey));
+}
+
+export function setTitleSkipped(itemKey: string, skipped: boolean): void {
+	if (skipped) db.prepare('INSERT INTO skipped_titles (item_key) VALUES (?) ON CONFLICT DO NOTHING').run(itemKey);
+	else db.prepare('DELETE FROM skipped_titles WHERE item_key = ?').run(itemKey);
+}
+
+export function watchedExtras(): Set<string> {
+	const rows = db.prepare('SELECT source_id AS sourceId FROM watched_extras').all() as { sourceId: string }[];
+	return new Set(rows.map((r) => r.sourceId));
+}
+
+export function setExtraWatched(sourceId: string, watched: boolean): void {
+	if (watched) db.prepare('INSERT INTO watched_extras (source_id) VALUES (?) ON CONFLICT DO NOTHING').run(sourceId);
+	else db.prepare('DELETE FROM watched_extras WHERE source_id = ?').run(sourceId);
+}
+
+export function savedAnimeRoots(ids: number[]): Map<number, number> {
+	const map = new Map<number, number>();
+	if (ids.length === 0) return map;
+	const rows = db
+		.prepare(`SELECT id, root FROM anime_roots WHERE checked_at > datetime('now', '-30 days') AND id IN (${ids.map(() => '?').join(',')})`)
+		.all(...ids) as { id: number; root: number }[];
+	for (const row of rows) map.set(row.id, row.root);
+	return map;
+}
+
+export function saveAnimeRoots(roots: Map<number, number>) {
+	const insert = db.prepare(`
+		INSERT INTO anime_roots (id, root, checked_at) VALUES (?, ?, datetime('now'))
+		ON CONFLICT(id) DO UPDATE SET root = excluded.root, checked_at = excluded.checked_at
+	`);
+	for (const [id, root] of roots) insert.run(id, root);
 }
 
 /* -------------------------------------------------------------------- writing */
@@ -769,6 +856,11 @@ export function continueWatchingList(): (WatchProgress & { updatedAt: string; po
 					w.type = 'tv'
 					OR (w.type = 'movie' AND w.duration > 0 AND w."current_time" > 30 AND (CAST(w."current_time" AS REAL) / w.duration) < 0.95)
 				)
+				-- Hidden until it's watched again after being removed.
+				AND NOT EXISTS (
+					SELECT 1 FROM continue_hidden h
+					WHERE h.title = w.title AND h.type = w.type AND h.hidden_at >= w.updated_at
+				)
 				ORDER BY w.updated_at DESC
 				LIMIT 20
 			`)
@@ -779,8 +871,41 @@ export function continueWatchingList(): (WatchProgress & { updatedAt: string; po
 	}
 }
 
+export function hideFromContinueWatching(title: string, type: string): void {
+	db.prepare(`
+		INSERT INTO continue_hidden (title, type, hidden_at) VALUES (?, ?, datetime('now'))
+		ON CONFLICT (title, type) DO UPDATE SET hidden_at = excluded.hidden_at
+	`).run(title, type);
+}
+
 export function deleteTitleProgress(title: string, type: string): void {
 	db.prepare('DELETE FROM watch_progress WHERE title = ? AND type = ?').run(title, type);
+}
+
+/**
+ * Ticks episodes off (or back on) by hand, from the player's episode list. Only the position
+ * changes — subtitles and delay saved for an episode stay. "Not watched" keeps the row at the
+ * start rather than deleting it, so nothing else saved for it is lost.
+ */
+export function markEpisodes(title: string, episodes: { season: number; episode: number }[], watched: boolean): void {
+	const upsert = db.prepare(`
+		INSERT INTO watch_progress (title, type, season, episode, current_time, duration, sub_url, sub_delay, sub_file_name, poster_url, share_key, fid, updated_at)
+		VALUES (?, 'tv', ?, ?, ?, 1, '', 0, '', '', '', 0, datetime('now'))
+		ON CONFLICT (title, type, season, episode)
+		DO UPDATE SET current_time = CASE WHEN ? THEN MAX(watch_progress.duration, 1) ELSE 0 END,
+			duration = MAX(watch_progress.duration, 1),
+			updated_at = CASE WHEN ? THEN datetime('now') ELSE watch_progress.updated_at END
+	`);
+	db.exec('BEGIN');
+	try {
+		for (const { season, episode } of episodes) {
+			upsert.run(title, season, episode, watched ? 1 : 0, watched ? 1 : 0, watched ? 1 : 0);
+		}
+		db.exec('COMMIT');
+	} catch (error) {
+		db.exec('ROLLBACK');
+		throw error;
+	}
 }
 
 export function watchedEpisodesForTitle(title: string): { season: number; episode: number; pct: number }[] {

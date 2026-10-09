@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+	Catalog for Fire TV: a full-screen view of the Catalog running on a computer in the house.
+	Built by scripts/build-tv.mjs (no Gradle). See android/README.md.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+	package="app.catalog.tv"
+	android:versionCode="1"
+	android:versionName="1.0">
+
+	<uses-sdk android:minSdkVersion="22" android:targetSdkVersion="34" />
+
+	<uses-permission android:name="android.permission.INTERNET" />
+	<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+	<uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+	<!-- Some TVs drop Wi-Fi broadcasts unless the app holds this while it looks for the computer. -->
+	<uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+
+	<!-- A TV app: no touchscreen needed, and it goes in the TV's app row. -->
+	<uses-feature android:name="android.software.leanback" android:required="false" />
+	<uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
+	<application
+		android:label="Catalog"
+		android:icon="@drawable/icon"
+		android:banner="@drawable/banner"
+		android:usesCleartextTraffic="true"
+		android:hardwareAccelerated="true"
+		android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+
+		<activity
+			android:name=".MainActivity"
+			android:exported="true"
+			android:configChanges="orientation|screenSize|keyboard|keyboardHidden|navigation"
+			android:screenOrientation="landscape">
+			<intent-filter>
+				<action android:name="android.intent.action.MAIN" />
+				<category android:name="android.intent.category.LAUNCHER" />
+				<category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+			</intent-filter>
+		</activity>
+	</application>
+</manifest>

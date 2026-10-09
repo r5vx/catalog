@@ -1,4 +1,5 @@
 <script lang="ts">
+	import MoreButton from '$lib/MoreButton.svelte';
 	import { page } from '$app/state';
 	import { beforeNavigate } from '$app/navigation';
 	import { onMount, onDestroy, tick, untrack } from 'svelte';
@@ -6,6 +7,7 @@
 	import BackBar from '$lib/BackBar.svelte';
 	import { p, pRandom } from '$lib/poison';
 	import { pickFile, PREFERRED_QUALITY } from '$lib/watch';
+	import { isTv, tvPlayer } from '$lib/tv';
 
 	const pm = $derived(page.data.poisonMode);
 
@@ -22,13 +24,49 @@
 		quality: string;
 		name: string;
 		size: string;
+		/** Where it comes from when it isn't Showbox ("Aniwave"). */
+		source?: string;
+		/** What another source's file plays from. */
+		shareKey?: string;
+		/** "Japanese" or "English", when the source says. */
+		audio?: string;
 	}
+
+	/** Where a file plays from: its own source, or the episode's Showbox share. */
+	const shareOf = (f: FileOption | null | undefined) => f?.shareKey || shareKey;
+
+	/* Japanese audio or the English dub, for files from another source: the last one picked. */
+	const ANIME_AUDIO = 'catalog:animeAudio';
+
+	function animeAudio(): string {
+		try {
+			return localStorage.getItem(ANIME_AUDIO) ?? 'Japanese';
+		} catch {
+			return 'Japanese';
+		}
+	}
+
+	/** "1080p · 2.1 GB", or for another source's file "Japanese audio" / "English dub". */
+	function fileLabel(f: FileOption): string {
+		if (f.audio) return f.audio === 'English' ? 'English dub' : `${f.audio} audio`;
+		return f.size ? `${f.quality} · ${f.size}` : f.quality;
+	}
+
+	/** Showbox's best file; another source's only when Showbox has none for this episode. */
+	const pickFor = (files: FileOption[]) => pickFile(files, preferredQuality, animeAudio());
 
 	interface Episode {
 		season: number;
 		episode: number;
 		files: FileOption[];
+		/** The share it plays from, when it comes from another Showbox entry for this show. */
+		shareKey?: string;
+		/** False for an episode TMDB lists but no source has (shown greyed out). */
+		available?: boolean;
+		airDate?: string | null;
 	}
+
+	const playable = (ep: Episode | null | undefined): ep is Episode => Boolean(ep && ep.available !== false && ep.files.length);
 
 	interface SubOption {
 		id: string;
@@ -37,6 +75,10 @@
 		language: string;
 		fileName: string;
 		source?: string;
+		/** Turns itself on when nothing was chosen before (anime in Japanese). */
+		default?: boolean;
+		/** Not a subtitle: passing anime.nexus's human check gets its subtitles. */
+		check?: boolean;
 	}
 
 	/* --------------------------------------------------------------- content state */
@@ -49,6 +91,8 @@
 	let videoTitle = $state('');
 	let showType = $state<'movie' | 'tv'>('movie');
 	let shareKey = $state('');
+	/** The show's own share. `shareKey` follows the episode playing, which may come from another. */
+	let mainShareKey = '';
 	let useIframe = $state(false);
 	let iframeFid = $state(0);
 	let needsLogin = $state(false);
@@ -65,6 +109,31 @@
 	let activeFileFid = $state(0);
 	let preferredQuality = $state(PREFERRED_QUALITY);
 	let sidebarOpen = $state(true);
+
+	/* Shows whose episode list you closed: it stays closed next time you open them. */
+	const EPISODES_HIDDEN = 'catalog:episodesHidden';
+
+	function episodesHiddenFor(): Set<string> {
+		try {
+			return new Set(JSON.parse(localStorage.getItem(EPISODES_HIDDEN) ?? '[]'));
+		} catch {
+			return new Set();
+		}
+	}
+
+	function toggleEpisodes() {
+		sidebarOpen = !sidebarOpen;
+		if (sidebarOpen) castOpen = false;
+		const show = videoTitle.replace(/ S\d+E\d+$/, '');
+		if (!show) return;
+		const hidden = episodesHiddenFor();
+		if (sidebarOpen) hidden.delete(show);
+		else hidden.add(show);
+		try {
+			// Newest last; a few hundred shows is plenty.
+			localStorage.setItem(EPISODES_HIDDEN, JSON.stringify([...hidden].slice(-300)));
+		} catch {}
+	}
 	let loadingEpisode = $state(false);
 	let changingQuality = $state(false);
 	let qualityTimer: ReturnType<typeof setTimeout> | null = null;
@@ -86,7 +155,17 @@
 	let castOpen = $state(false);
 	let loadingCast = $state(false);
 	let preferredAudioName = $state('');
-	let videoFit = $state<'contain' | 'cover'>('contain');
+	/* Fill (the picture fills the screen) unless you picked Fit; your pick sticks for everything. */
+	const VIDEO_FIT = 'catalog:videoFit';
+	let videoFit = $state<'contain' | 'cover'>('cover');
+
+	function chooseFit(fit: 'contain' | 'cover') {
+		videoFit = fit;
+		try { localStorage.setItem(VIDEO_FIT, fit); } catch {}
+	}
+
+
+
 	let libraryEntryId = $state<number | null>(null);
 	let libraryEntryStatus = $state('');
 	let libLastSeason = $state(0);
@@ -157,7 +236,6 @@
 	let showCaptions = $state(false);
 	let showDelay = $state(false);
 	let showAudioPicker = $state(false);
-	let showFileName = $state(false);
 	let showFilePicker = $state(false);
 	let inPiP = $state(false);
 	let seeking = $state(false);
@@ -529,9 +607,79 @@
 		toggleFS();
 	}
 
+	/* --------------------------------------------------------------- on a TV */
+
+	const tvMode = isTv();
+	let tvFullscreenTried = false;
+
+	/** The controls' first button, for when the remote's up or down brings them up. */
+	function focusControls() {
+		const button = playerPageEl?.querySelector<HTMLElement>('.controls button');
+		button?.focus({ preventScroll: true });
+	}
+
+	onMount(() => {
+		if (!tvMode) return;
+		tvPlayer.playPause = () => {
+			togglePlay();
+			showControlsBriefly();
+		};
+		tvPlayer.seek = (seconds) => {
+			skip(seconds);
+			showControlsBriefly();
+		};
+	});
+	onDestroy(() => {
+		tvPlayer.playPause = undefined;
+		tvPlayer.seek = undefined;
+	});
+
+	// When the controls fade, let go of the highlighted button so the arrows skip again.
+	$effect(() => {
+		if (!tvMode || showControls) return;
+		const current = document.activeElement as HTMLElement | null;
+		if (current && playerPageEl?.querySelector('.controls')?.contains(current)) current.blur();
+	});
+
+	// Fill the TV once it starts playing. (Needs the press that opened it to still count;
+	// if not, the full-screen button in the controls does it.)
+	$effect(() => {
+		if (!tvMode || !playing || tvFullscreenTried || document.fullscreenElement) return;
+		tvFullscreenTried = true;
+		playerPageEl?.requestFullscreen().catch(() => {});
+	});
+
+	/** On a TV, with nothing in the controls highlighted: OK plays/pauses, up/down bring the controls. */
+	function tvKey(e: KeyboardEvent): boolean {
+		const current = document.activeElement as HTMLElement | null;
+		const onControl = current && current !== document.body && current.tagName !== 'VIDEO';
+		if (onControl) {
+			// The highlight moves between the controls (src/lib/tv.ts); keep them up meanwhile.
+			if (e.key.startsWith('Arrow') || e.key === 'Enter') {
+				showControlsBriefly();
+				return true;
+			}
+			return false;
+		}
+		if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+			e.preventDefault();
+			showControlsBriefly();
+			focusControls();
+			return true;
+		}
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			togglePlay();
+			showControlsBriefly();
+			return true;
+		}
+		return false; // left and right skip, as on a keyboard
+	}
+
 	function handleKeyDown(e: KeyboardEvent) {
 		if (!streamUrl && !useIframe) return;
 		if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+		if (tvMode && tvKey(e)) return;
 		if (e.key === 'Escape') {
 			if (showSettings) {
 				showSettings = false;
@@ -658,6 +806,12 @@
 			if (!isFinite(s) || !isFinite(e)) continue;
 			const cue = cleanCue(parts.slice(9).join(','));
 			if (cue) cues.push({ start: s, end: e, ...cue });
+		}
+		// Some files (anime.nexus's English CC) make every line bold; that's their style, not
+		// emphasis, so it's dropped and the player's own subtitle style shows.
+		const bold = cues.filter((c) => c.text.startsWith('<b>')).length;
+		if (cues.length && bold / cues.length > 0.8) {
+			for (const c of cues) c.text = c.text.replace(/<\/?b>/g, '');
 		}
 		return cues;
 	}
@@ -911,7 +1065,8 @@
 	async function refreshStream() {
 		if (refreshingStream) return;
 		const fid = activeFile?.fid;
-		if (!fid || !shareKey || !videoEl) return;
+		const share = shareOf(activeFile);
+		if (!fid || !share || !videoEl) return;
 
 		const now = performance.now();
 		if (now - lastRefreshAt > 120_000) streamRefreshes = 0;
@@ -927,7 +1082,7 @@
 		refreshingStream = true;
 		const savedTime = videoEl.currentTime || seekAfterLoad;
 		try {
-			const resp = await fetch(`/api/watch/stream?share_key=${shareKey}&fid=${fid}&refresh=1`);
+			const resp = await fetch(`/api/watch/stream?share_key=${share}&fid=${fid}&refresh=1`);
 			if (!resp.ok) throw new Error();
 			const result = await resp.json();
 			if (!result.url) throw new Error();
@@ -1010,21 +1165,22 @@
 		if (remaining > 180) return;
 		if (remaining > 60 && bufferedAhead() < remaining - 2) return;
 		const next = nextEpisode();
-		const file = next ? pickFile(next.files, preferredQuality) : null;
-		if (!file) return;
-		const key = `${shareKey}:${file.fid}`;
+		const file = next ? pickFor(next.files) : null;
+		if (!next || !file || file.source) return;
+		const share = next.shareKey || mainShareKey;
+		const key = `${share}:${file.fid}`;
 		if (key === nextPrefetchKey) return;
 		nextPrefetchKey = key;
 		fetch('/api/watch/prefetch', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ share_key: shareKey, fids: [file.fid] })
+			body: JSON.stringify({ share_key: share, fids: [file.fid] })
 		}).catch(() => {});
 	}
 
 	/** Links for the other qualities, held back until playback is settled so they never compete with it. */
 	function queueQualityPrefetch(files: FileOption[], activeFid: number) {
-		pendingQualityPrefetch = files.filter((f) => f.fid !== activeFid).map((f) => f.fid);
+		pendingQualityPrefetch = files.filter((f) => f.fid !== activeFid && !f.source).map((f) => f.fid);
 	}
 
 	function flushQualityPrefetch() {
@@ -1040,10 +1196,8 @@
 
 	function onTimeUpdate() {
 		if (videoEl && !seeking && !isVideoSeeking && !switchingEpisode) currentTime = videoEl.currentTime;
-		if (autoplayNext && !autoplayFired && !loadingEpisode && showType === 'tv' && duration > 0 && (duration - currentTime) <= 5) {
-			const next = nextEpisode();
-			if (next) { autoplayFired = true; playEpisode(next); return; }
-		}
+		if (currentTime >= 60) autosyncEpisode();
+		if (duration > 0 && currentTime >= duration - Math.min(120, duration * 0.1)) autosyncFinished();
 		flushQualityPrefetch();
 		prefetchNextEpisode();
 	}
@@ -1110,10 +1264,58 @@
 		watchedEpisodeMap = map;
 	}
 
+	/* --------------------------------------------------------------- episode list menu */
+
+	let epMenu = $state<{ x: number; y: number; ep: Episode } | null>(null);
+
+	function openEpMenu(e: MouseEvent, ep: Episode) {
+		e.preventDefault();
+		epMenu = { x: Math.min(e.clientX, window.innerWidth - 230), y: Math.min(e.clientY, window.innerHeight - 200), ep };
+	}
+
+	/** What a greyed-out episode says: when it airs, or that no source has it. */
+	function notAvailableText(ep: Episode): string {
+		const today = new Date().toISOString().slice(0, 10);
+		if (ep.airDate && ep.airDate > today) {
+			const day = new Date(`${ep.airDate}T00:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+			return `Airs ${day}`;
+		}
+		return 'Not available yet';
+	}
+
+	/** Ticks episodes on or off by hand. Shown straight away, saved behind. */
+	async function markEps(list: Episode[], watched: boolean) {
+		epMenu = null;
+		if (!videoTitle || list.length === 0) return;
+		const map = new Map(watchedEpisodeMap);
+		for (const ep of list) map.set(`${ep.season}-${ep.episode}`, watched ? 1 : 0);
+		watchedEpisodeMap = map;
+		await fetch('/api/watch/progress', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				title: videoTitle.replace(/ S\d+E\d+$/, ''),
+				episodes: list.map((ep) => ({ season: ep.season, episode: ep.episode })),
+				watched
+			})
+		});
+	}
+
+	/** This one and every episode before it, earlier seasons included. */
+	function upTo(ep: Episode): Episode[] {
+		const at = episodes.indexOf(ep);
+		return at === -1 ? [ep] : episodes.slice(0, at + 1);
+	}
+
+	/** The next episode that can be played. The show's last episode doesn't run on into its specials. */
 	function nextEpisode(): Episode | null {
 		if (!activeEpisode) return null;
-		const idx = episodes.findIndex(ep => ep.season === activeEpisode!.season && ep.episode === activeEpisode!.episode);
-		return idx >= 0 && idx + 1 < episodes.length ? episodes[idx + 1] : null;
+		const current = activeEpisode;
+		const idx = episodes.findIndex(ep => ep.season === current.season && ep.episode === current.episode);
+		if (idx < 0) return null;
+		const next = episodes.slice(idx + 1).find(playable) ?? null;
+		if (next && next.season === 0 && current.season !== 0) return null;
+		return next;
 	}
 
 	async function addToLibraryQuick() {
@@ -1151,6 +1353,75 @@
 		try { localStorage.setItem('catalog-autoplay', autoplayNext ? '1' : '0'); } catch {}
 	}
 
+	/*
+	 * Autosync keeps the library up to date as you watch a show:
+	 *   - a minute into an episode, a show not in the library is added as watching, and the
+	 *     entry's episode reached moves forward to this one (never back);
+	 *   - finishing the show's last episode (no later one listed, not even one still to air)
+	 *     marks it completed.
+	 */
+	let autosync = $state(true);
+	let autosyncedKey = '';
+	let autosyncedEnd = '';
+
+	function toggleAutosync() {
+		autosync = !autosync;
+		try { localStorage.setItem('catalog-autosync', autosync ? '1' : '0'); } catch {}
+		if (autosync && currentTime >= 60) autosyncEpisode();
+	}
+
+	async function autosyncEpisode() {
+		const ep = activeEpisode;
+		if (!autosync || !ep || ep.season < 1 || showType !== 'tv') return;
+		const key = `${videoTitle}:${ep.season}-${ep.episode}`;
+		if (key === autosyncedKey) return;
+		autosyncedKey = key;
+		if (!libraryEntryId) {
+			try {
+				const resp = await fetch('/api/watch/add-to-library', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						title: videoTitle.replace(/ S\d+E\d+$/, ''),
+						type: 'tv',
+						watching: true,
+						season: ep.season,
+						episode: ep.episode
+					})
+				});
+				const data = resp.ok ? await resp.json() : null;
+				if (!data?.id) return;
+				libraryEntryId = data.id;
+				libraryEntryStatus = data.already ? libraryEntryStatus : 'watching';
+				if (!data.already) {
+					libLastSeason = ep.season;
+					libLastEpisode = ep.episode;
+					return;
+				}
+			} catch {
+				return;
+			}
+		}
+		const ahead = ep.season > libLastSeason || (ep.season === libLastSeason && ep.episode > libLastEpisode);
+		if (!ahead) return;
+		libLastSeason = ep.season;
+		libLastEpisode = ep.episode;
+		await syncProgressToEntry();
+	}
+
+	/** Near the end of the show's very last episode: completed. */
+	async function autosyncFinished() {
+		const ep = activeEpisode;
+		if (!autosync || !ep || ep.season < 1 || showType !== 'tv' || libraryEntryStatus === 'completed') return;
+		const key = `${videoTitle}:${ep.season}-${ep.episode}`;
+		if (key === autosyncedEnd) return;
+		const later = episodes.some((e) => e.season > ep.season || (e.season === ep.season && e.episode > ep.episode));
+		if (later) return;
+		autosyncedEnd = key;
+		await autosyncEpisode();
+		await markEntryWatched();
+	}
+
 	async function syncProgressToEntry() {
 		if (!libraryEntryId || !activeEpisode) return;
 		try {
@@ -1169,41 +1440,129 @@
 
 	/* --------------------------------------------------------------- febbox subtitles */
 
+	let subsKey = '';
+	let subsInFlight = false;
+
+	/** The English dub or not: another source says, otherwise the audio track playing does. */
+	function hearingDub(): boolean {
+		const audio = activeFile?.audio ?? hlsAudioTracks.find((t) => t.id === hlsActiveAudio)?.name ?? '';
+		return /^(english|eng)\b/i.test(audio);
+	}
+
 	async function fetchSubtitles(autoMatch?: { fileName: string; language: string; delay: number }) {
 		if (!videoTitle) return;
+		const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
+		const ep = showType === 'tv' ? activeEpisode : null;
+		const dub = hearingDub();
+		const share = activeFile?.source ? shareOf(activeFile) : '';
+		const key = `${baseTitle}:${showType}:${ep?.season ?? 0}:${ep?.episode ?? 0}:${dub ? 'dub' : ''}:${share}`;
+		// Two overlapping lookups used to race, and a throttled empty answer could wipe a good list.
+		if (key === subsKey && !autoMatch && (subsInFlight || febboxSubs.length > 0)) return;
+		subsKey = key;
+		subsInFlight = true;
 		loadingSubs = true;
+		let list: SubOption[] = [];
 		try {
-			const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
 			const params = new URLSearchParams({ title: baseTitle, type: showType });
-			if (showType === 'tv' && activeEpisode) {
-				params.set('season', String(activeEpisode.season));
-				params.set('episode', String(activeEpisode.episode));
+			if (ep) {
+				params.set('season', String(ep.season));
+				params.set('episode', String(ep.episode));
 			}
+			if (lastResolveArgs?.year) params.set('year', lastResolveArgs.year);
+			if (dub) params.set('audio', 'dub');
+			if (share) params.set('share', share);
+			// Which Aniwave episode this is, so other sources line up even when Showbox numbers
+			// the seasons its own way.
+			const aniwaveRef = ep?.files.find((f) => f.source === 'Aniwave')?.shareKey;
+			if (aniwaveRef) params.set('ref', aniwaveRef);
 			const resp = await fetch(`/api/watch/subtitles?${params}`);
-			if (resp.ok) febboxSubs = await resp.json();
+			if (resp.ok) list = await resp.json();
 		} catch {}
+		if (key !== subsKey) return;
+		subsInFlight = false;
+		febboxSubs = list;
 		loadingSubs = false;
 
 		if (autoMatch && febboxSubs.length > 0) {
 			const stripEp = (n: string) => n.replace(/\.?S\d+\.?E\d+\.?/i, '.').replace(/\.?E\d+\.?/i, '.');
 			const prevPattern = stripEp(autoMatch.fileName);
-			const match = febboxSubs.find(s => s.fileName === autoMatch.fileName)
-				?? febboxSubs.find(s => stripEp(s.fileName) === prevPattern)
-				?? febboxSubs.find(s => s.language === autoMatch.language);
+			// A file named for another episode is never the right pick, even in the right language.
+			const otherEpisode = (n: string) => {
+				const m = n.match(/S(\d{1,2})[ .]?E(\d{1,3})/i);
+				return Boolean(ep && m && (+m[1] !== ep.season || +m[2] !== ep.episode));
+			};
+			const candidates = febboxSubs.filter((s) => !otherEpisode(s.fileName));
+			const match = candidates.find(s => s.fileName === autoMatch.fileName)
+				?? candidates.find(s => stripEp(s.fileName) === prevPattern)
+				?? candidates.find(s => s.language === autoMatch.language && /S\d+[ .]?E\d+/i.test(s.fileName))
+				?? candidates.find(s => s.language === autoMatch.language);
 			if (match) {
 				await loadSub(match);
 				subtitleDelay = autoMatch.delay;
 			}
+		} else if (!autoMatch && !subtitlesOn) {
+			// Anime in Japanese starts with subtitles on: the chosen one, or the next English
+			// ones if it won't download.
+			const pick = febboxSubs.find((s) => s.default);
+			if (pick) {
+				const tries = [pick, ...febboxSubs.filter((s) => s !== pick && !s.check && s.language === 'English')].slice(0, 4);
+				for (const sub of tries) {
+					if (key !== subsKey || subtitlesOn) break;
+					if (await loadSub(sub)) break;
+				}
+			}
 		}
 	}
 
-	async function loadSub(sub: SubOption) {
+	let nexusChecking = $state(false);
+
+	/**
+	 * anime.nexus wants its human check before handing over its subtitles: its page opens in a
+	 * window for that and closes by itself, then its subtitles join the list and the right one
+	 * goes on (English CC on the dub, English otherwise).
+	 */
+	async function passNexusCheck() {
+		const ep = activeEpisode;
+		if (nexusChecking || !ep) return;
+		nexusChecking = true;
+		try {
+			const resp = await fetch('/api/watch/nexus-check', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					title: videoTitle.replace(/ S\d+E\d+$/, ''),
+					year: lastResolveArgs?.year ?? '',
+					season: ep.season,
+					episode: ep.episode,
+					ref: ep.files.find((f) => f.source === 'Aniwave')?.shareKey
+				})
+			});
+			const data = await resp.json();
+			if (!data.ok || ep !== activeEpisode) return;
+			subsKey = '';
+			febboxSubs = [];
+			await fetchSubtitles();
+			const wanted = hearingDub() ? 'English CC' : 'English';
+			const pick = febboxSubs.find((s) => s.source === 'anime.nexus' && s.fileName === wanted);
+			if (pick) await loadSub(pick);
+		} catch {
+		} finally {
+			nexusChecking = false;
+		}
+	}
+
+	/** Downloads and shows a subtitle. False if it couldn't be had. */
+	async function loadSub(sub: SubOption): Promise<boolean> {
 		showCaptions = false;
 		try {
-			const resp = await fetch(
-				`/api/watch/subtitle-content?url=${encodeURIComponent(sub.url)}`
-			);
-			if (!resp.ok) return;
+			const params = new URLSearchParams({ url: sub.url });
+			// Season packs are a zip of every episode; this says which one to take.
+			if (showType === 'tv' && activeEpisode) {
+				params.set('season', String(activeEpisode.season));
+				params.set('episode', String(activeEpisode.episode));
+			}
+			const resp = await fetch(`/api/watch/subtitle-content?${params}`);
+			if (!resp.ok) return false;
 			const data = await resp.json();
 			if (data.content) {
 				subtitleCues = parseSrt(data.content);
@@ -1211,17 +1570,23 @@
 				activeSubFid = sub.id;
 				activeSubUrl = sub.url;
 				activeSubFileName = sub.fileName || sub.language;
+				return true;
 			}
 		} catch {}
+		return false;
 	}
 
 	/* --------------------------------------------------------------- episode names */
 
 	async function loadEpisodeNames(title: string, season: number) {
+		// How many episodes come before this season, and how many it has: TMDB may number the
+		// show as one long season (Re:Zero), and these find this season's stretch of it.
+		const lastOf = (n: number) => Math.max(0, ...untrack(() => episodes).filter((e) => e.season === n).map((e) => e.episode));
+		let before = 0;
+		for (let n = 1; n < season; n++) before += lastOf(n);
+		const params = new URLSearchParams({ title, season: String(season), before: String(before), count: String(lastOf(season)) });
 		try {
-			const resp = await fetch(
-				`/api/watch/episode-names?title=${encodeURIComponent(title)}&season=${season}`
-			);
+			const resp = await fetch(`/api/watch/episode-names?${params}`);
 			if (resp.ok) episodeNames = await resp.json();
 		} catch {}
 	}
@@ -1644,6 +2009,8 @@
 
 	onMount(async () => {
 		try { autoplayNext = localStorage.getItem('catalog-autoplay') === '1'; } catch {}
+		try { autosync = localStorage.getItem('catalog-autosync') !== '0'; } catch {}
+		try { if (localStorage.getItem(VIDEO_FIT) === 'contain') videoFit = 'contain'; } catch {}
 		const title = page.url.searchParams.get('title');
 		isAuto = page.url.searchParams.get('auto') === '1';
 		const type = page.url.searchParams.get('type') ?? '';
@@ -1686,9 +2053,9 @@
 
 			if (data.error) {
 				if (data.error === 'not_found') {
-					problem = 'This title is unavailable on Showbox.';
-				} else if (data.error === 'no_link') problem = 'This title is unavailable on Showbox.';
-				else if (data.error === 'no_file') problem = 'This title is on Showbox but has no video file.';
+					problem = 'This title is unavailable.';
+				} else if (data.error === 'no_link') problem = 'This title is unavailable.';
+				else if (data.error === 'no_file') problem = 'This title has no video file.';
 				else problem = 'Something went wrong.';
 				loading = false;
 				return;
@@ -1696,7 +2063,9 @@
 
 			videoTitle = data.title;
 			showType = data.type;
+			sidebarOpen = !episodesHiddenFor().has(data.title);
 			shareKey = data.shareKey;
+			mainShareKey = data.shareKey;
 			libraryEntryId = data.libraryEntry?.id ?? null;
 			libraryEntryStatus = data.libraryEntry?.status ?? '';
 			libLastSeason = data.libraryEntry?.lastSeason ?? 0;
@@ -1762,8 +2131,14 @@
 			if (data.debug) debugInfo = data.debug;
 
 			if (data.episodes) {
+				// Resuming can land on a greyed-out episode: take the first one that plays instead.
+				if (!playable(activeEpisode)) {
+					activeEpisode = episodes.find((e) => e.season === activeSeason && playable(e)) ?? episodes.find(playable) ?? null;
+					if (activeEpisode) activeSeason = activeEpisode.season;
+				}
 				const ep = activeEpisode;
-				const file = ep ? pickFile(ep.files, preferredQuality) : null;
+				if (ep) shareKey = ep.shareKey || mainShareKey;
+				const file = ep ? pickFor(ep.files) : null;
 				if (!ep || !file) {
 					problem = 'No video file found for this title.';
 					return;
@@ -1771,7 +2146,8 @@
 				videoTitle = `${data.title} S${ep.season}E${ep.episode}`;
 				activeQuality = file.quality;
 				activeFileFid = file.fid;
-				if (!data.hasToken) {
+				// Another source's file needs no Febbox sign-in.
+				if (!data.hasToken && !file.source) {
 					needsLogin = true;
 					return;
 				}
@@ -1780,7 +2156,7 @@
 					: (pm ? pRandom() : 'Getting stream...');
 				let url = '';
 				try {
-					const sResp = await fetch(`/api/watch/stream?share_key=${shareKey}&fid=${file.fid}`);
+					const sResp = await fetch(`/api/watch/stream?share_key=${shareOf(file)}&fid=${file.fid}`);
 					if (sResp.ok) {
 						const sData = await sResp.json();
 						url = sData.url ?? '';
@@ -1789,6 +2165,8 @@
 				} catch {}
 				if (url) {
 					streamUrl = url;
+				} else if (file.source) {
+					problem = `${file.source} couldn't play this episode right now.`;
 				} else {
 					useIframe = true;
 					iframeFid = file.fid;
@@ -1804,7 +2182,7 @@
 			} else if (!data.hasToken) {
 				needsLogin = true;
 			} else {
-				const defaultFile = pickFile(currentFiles, preferredQuality);
+				const defaultFile = pickFor(currentFiles);
 				if (defaultFile) {
 					useIframe = true;
 					iframeFid = defaultFile.fid;
@@ -1838,13 +2216,21 @@
 		if (stalledOut) { stalledOut = false; problem = ''; }
 		if (qualityToast) { qualityToast = ''; if (qualityToastTimer) { clearTimeout(qualityToastTimer); qualityToastTimer = null; } }
 
-		if (useIframe) {
+		// Picking another source's copy remembers its audio for the next episodes.
+		if (file.audio) {
+			try {
+				localStorage.setItem(ANIME_AUDIO, file.audio);
+			} catch {}
+		}
+
+		if (useIframe && !file.source) {
 			iframeFid = file.fid;
 			activeQuality = file.quality;
 			activeFileFid = file.fid;
 			reloadWebview();
 			return;
 		}
+		useIframe = false;
 
 		if (qualityTimer) { clearTimeout(qualityTimer); qualityTimer = null; }
 		prevStreamUrl = streamUrl;
@@ -1853,7 +2239,7 @@
 		changingQuality = true;
 		const savedTime = videoEl?.currentTime ?? 0;
 		try {
-			const resp = await fetch(`/api/watch/stream?share_key=${shareKey}&fid=${file.fid}`);
+			const resp = await fetch(`/api/watch/stream?share_key=${shareOf(file)}&fid=${file.fid}`);
 			if (!resp.ok) throw new Error();
 			const data = await resp.json();
 			if (data.url) {
@@ -1876,7 +2262,7 @@
 				}, 20000);
 			} else {
 				prevStreamUrl = '';
-				problem = 'Could not get that quality.';
+				problem = file.source ? `${file.source} couldn't play this one right now.` : 'Could not get that quality.';
 				if (data.debug) debugInfo = data.debug;
 			}
 		} catch {
@@ -1888,7 +2274,7 @@
 	}
 
 	async function playEpisode(ep: Episode) {
-		if (loadingEpisode || ep === activeEpisode) return;
+		if (loadingEpisode || ep === activeEpisode || !playable(ep)) return;
 		saveProgress();
 		skipResume = true;
 		switchingEpisode = true;
@@ -1907,11 +2293,13 @@
 		skipSegments = [];
 		skipLookupKey = '';
 		const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
-		const file = pickFile(ep.files, preferredQuality);
+		const file = pickFor(ep.files);
 		if (!file) {
 			problem = 'No video file for that episode.';
 			return;
 		}
+		// From here on everything (stream, qualities, subtitles) uses this episode's share.
+		shareKey = ep.shareKey || mainShareKey;
 
 		currentTime = 0;
 		duration = 0;
@@ -1925,7 +2313,7 @@
 		subtitleCues = [];
 		subtitlesOn = false;
 
-		if (useIframe) {
+		if (useIframe && !file.source) {
 			iframeFid = file.fid;
 			activeQuality = file.quality;
 			activeFileFid = file.fid;
@@ -1935,9 +2323,10 @@
 			return;
 		}
 
+		useIframe = false;
 		loadingEpisode = true;
 		try {
-			const resp = await fetch(`/api/watch/stream?share_key=${shareKey}&fid=${file.fid}`);
+			const resp = await fetch(`/api/watch/stream?share_key=${shareOf(file)}&fid=${file.fid}`);
 			if (!resp.ok) throw new Error();
 			const data = await resp.json();
 			if (data.url) {
@@ -1948,7 +2337,7 @@
 				activeFileFid = file.fid;
 				fetchSubtitles(prevSub);
 			} else {
-				problem = 'Could not get a link for that episode.';
+				problem = file.source ? `${file.source} couldn't play this episode right now.` : 'Could not get a link for that episode.';
 				if (data.debug) debugInfo = data.debug;
 			}
 		} catch {
@@ -2051,7 +2440,6 @@
 		showSettings = false;
 		showCaptions = false;
 		showAudioPicker = false;
-		showFileName = false;
 		febboxSubs = [];
 		activeSubFid = '';
 		episodeNames = {};
@@ -2068,6 +2456,7 @@
 		class:has-sidebar={castOpen || (showType === 'tv' && seasons.length > 0 && sidebarOpen)}
 		class:hide-cursor={isFullscreen && cursorIdle && !showControls && playing}
 		bind:this={playerPageEl}
+		data-tv-player={streamUrl || useIframe ? '' : undefined}
 		onmousemove={wakeCursor}
 	>
 		<div
@@ -2086,10 +2475,13 @@
 						class="bar-btn file-pick-btn"
 						disabled={changingQuality}
 						onclick={() => { showFilePicker = !showFilePicker; }}
-					>{activeFile?.quality ?? ''} · {activeFile?.size ?? ''}</button>
+					>
+						{activeFile ? fileLabel(activeFile) : ''} · {activeFile?.source ?? 'Showbox'}
+						<svg class="file-arrow" class:open={showFilePicker} viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
+					</button>
 					{#if showFilePicker}
 						<div class="popup popup-files">
-							<p class="popup-label">Quality</p>
+							<p class="popup-label">Files</p>
 							{#each currentFiles as f (f.fid)}
 								<button
 									class="popup-item"
@@ -2097,29 +2489,15 @@
 									onclick={() => { changeToFile(f); showFilePicker = false; }}
 								>
 									{#if activeFileFid === f.fid}<span class="popup-check">&#10003;</span>{/if}
-									{f.quality} · {f.size}
+									<span class="sub-name-row">
+										<span class="sub-name-text">{fileLabel(f)}</span>
+										<span class="sub-source-badge">{f.source ?? 'Showbox'}</span>
+									</span>
 								</button>
 							{/each}
 						</div>
 					{/if}
 				</div>
-			{/if}
-
-			{#if activeFile}
-				<button
-					type="button"
-					class="bar-btn file-btn"
-					class:expanded={showFileName}
-					onclick={() => (showFileName = !showFileName)}
-					title={showFileName ? '' : 'Show file info'}
-				>
-					{#if showFileName}
-						<span class="file-name-text">{#each parseFileTokens(activeFile.name) as tok}{#if tok.tip}<span class="file-token" data-tip={tok.tip}>{tok.text}</span>{:else}{tok.text}{/if}{/each} ({activeFile.size})</span>
-					{:else}
-						<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 2l5 5h-5V4zM6 20V4h5v7h7v9H6z"/></svg>
-						File
-					{/if}
-				</button>
 			{/if}
 
 			<button
@@ -2133,7 +2511,7 @@
 				<button
 					type="button"
 					class="bar-btn episodes-btn"
-					onclick={() => { sidebarOpen = !sidebarOpen; if (sidebarOpen) castOpen = false; }}
+					onclick={toggleEpisodes}
 				>{sidebarOpen ? (pm ? 'Hide' : 'Hide episodes') : (pm ? p('Episodes') : 'Episodes')}</button>
 			{/if}
 
@@ -2141,6 +2519,13 @@
 				<button type="button" class="bar-btn autoplay-btn" class:active={autoplayNext} onclick={toggleAutoplay}>
 					{autoplayNext ? '⏭ Autoplay: On' : '⏭ Autoplay: Off'}
 				</button>
+				<button
+					type="button"
+					class="bar-btn autoplay-btn"
+					class:active={autosync}
+					onclick={toggleAutosync}
+					title="Adds the show to your library as you watch, keeps its episode up to date, and marks it completed after the last one"
+				>{autosync ? '↑ Autosync: On' : '↑ Autosync: Off'}</button>
 			{/if}
 
 			{#if !loggedIn}
@@ -2149,13 +2534,8 @@
 
 			{#if libraryEntryId}
 				<a href="/entry/{libraryEntryId}" class="bar-btn in-library-btn">{pm ? 'Giblet claimed' : 'In library'}</a>
-				{#if libraryEntryStatus === 'want to watch'}
-					<button type="button" class="bar-btn mark-watched-btn" onclick={markEntryWatched}>✓ Watched</button>
-				{/if}
-				{#if showType === 'tv' && activeEpisode}
-					<button type="button" class="bar-btn sync-btn" onclick={syncProgressToEntry}
-						title="Update season/episode reached to S{activeEpisode.season}E{activeEpisode.episode}"
-					>↑ Sync S{activeEpisode.season}E{activeEpisode.episode}</button>
+				{#if libraryEntryStatus && libraryEntryStatus !== 'completed'}
+					<button type="button" class="bar-btn mark-watched-btn" onclick={markEntryWatched}>✓ Mark as completed</button>
 				{/if}
 			{:else}
 				<button
@@ -2186,36 +2566,61 @@
 								class="season-tab"
 								class:active={activeSeason === s}
 								onclick={() => (activeSeason = s)}
-							>S{s}</button>
+							>{s === 0 ? 'Specials' : `S${s}`}</button>
 						{/each}
 					</div>
 					<ul class="episode-list">
 						{#each seasonEpisodes as ep (`${ep.season}-${ep.episode}`)}
 							{@const epPct = watchedEpisodeMap.get(`${ep.season}-${ep.episode}`) ?? 0}
-							<li>
+							<li class="has-more ep-li">
 								<button
 									type="button"
 									class="ep-btn"
 									class:playing={activeEpisode === ep}
 									class:watched={epPct >= 0.9}
 									class:partial={epPct > 0.02 && epPct < 0.9}
-									disabled={loadingEpisode}
+									class:unavailable={!playable(ep)}
+									title={playable(ep) ? undefined : notAvailableText(ep)}
+									disabled={loadingEpisode || !playable(ep)}
 									onclick={() => playEpisode(ep)}
+									oncontextmenu={(e) => openEpMenu(e, ep)}
 								>
 									<span class="ep-num">E{ep.episode}</span>
 									{#if episodeNames[ep.episode]}
 										<span class="ep-name">{episodeNames[ep.episode]}</span>
 									{/if}
-									<span class="ep-meta">
-										{#each ep.files as f (f.fid)}
-											<span class="ep-quality">{f.quality || 'SD'}</span>
-										{/each}
-									</span>
+									{#if !playable(ep)}
+										<span class="ep-missing">{notAvailableText(ep)}</span>
+									{/if}
 								</button>
+								<MoreButton onopen={(e) => openEpMenu(e, ep)} label="Episode options" />
 							</li>
 						{/each}
 					</ul>
 				</aside>
+				{#if epMenu}
+					{@const ep = epMenu.ep}
+					{@const seen = (watchedEpisodeMap.get(`${ep.season}-${ep.episode}`) ?? 0) >= 0.9}
+					<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+					<div class="ep-ctx-backdrop" onclick={() => (epMenu = null)} oncontextmenu={(e) => { e.preventDefault(); epMenu = null; }}></div>
+					<div class="ep-ctx-menu" style="left: {epMenu.x}px; top: {epMenu.y}px;">
+						<button type="button" onclick={() => { epMenu = null; playEpisode(ep); }}>▶ Play S{ep.season}E{ep.episode}</button>
+						<hr />
+						{#if seen}
+							<button type="button" onclick={() => markEps([ep], false)}>Mark as not watched</button>
+						{:else}
+							<button type="button" onclick={() => markEps([ep], true)}>✓ Mark as watched</button>
+						{/if}
+						<button type="button" onclick={() => markEps(upTo(ep), true)}>✓ Mark watched up to here</button>
+						<button type="button" onclick={() => markEps(episodes.filter((x) => x.season === ep.season), true)}>
+							✓ Mark season {ep.season} watched
+						</button>
+						<hr />
+						<button type="button" onclick={() => markEps(episodes.filter((x) => x.season === ep.season), false)}>
+							Mark season {ep.season} not watched
+						</button>
+					</div>
+				{/if}
 			{/if}
 
 			<div
@@ -2304,6 +2709,11 @@
 									posterUrl: watchPosterUrl
 								});
 								navigator.sendBeacon('/api/watch/progress', new Blob([payload], { type: 'application/json' }));
+								// Only once the last frame has played — firing early cut off endings.
+								if (autoplayNext && !autoplayFired && !loadingEpisode) {
+									autoplayFired = true;
+									playEpisode(next);
+								}
 							}
 						}}
 					>
@@ -2356,7 +2766,7 @@
 							{#if nextEp}
 								<button type="button" class="next-ep-btn" onclick={() => playEpisode(nextEp)}>
 									<span class="next-ep-label">
-										{#if autoplayNext && duration > 0 && (duration - currentTime) <= 5}
+										{#if autoplayNext && duration > 0 && (duration - currentTime) <= 0.5}
 											Auto-playing...
 										{:else if autoplayNext}
 											{pm ? p('Next Episode') : 'Next Episode'} (auto)
@@ -2484,7 +2894,11 @@
 							<button
 								class="ctrl-btn"
 								class:active={subtitlesOn}
-								onclick={() => { showCaptions = !showCaptions; showSettings = false; showDelay = false; showAudioPicker = false; }}
+								onclick={() => {
+									// An empty list is usually a lookup that failed; opening the menu asks again.
+									if (!showCaptions && febboxSubs.length === 0 && !loadingSubs) fetchSubtitles();
+									showCaptions = !showCaptions; showSettings = false; showDelay = false; showAudioPicker = false;
+								}}
 								title="Subtitles"
 							>
 								<svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><path d="M19 4H5c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1c0 .55-.45 1-1 1h-3c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1z"/></svg>
@@ -2540,6 +2954,11 @@
 								</p>
 								<p class="popup-item popup-info" style="font-size:0.72rem;word-break:break-all">{debugInfo.length > 80 ? debugInfo.slice(0, 80) + '…' : debugInfo}</p>
 							{/if}
+							{#if activeFile}
+								<hr class="popup-divider" />
+								<p class="popup-label">File</p>
+								<p class="popup-item popup-info file-name-info">{#each parseFileTokens(activeFile.name) as tok}{#if tok.tip}<span class="file-token" data-tip={tok.tip}>{tok.text}</span>{:else}{tok.text}{/if}{/each} ({activeFile.size ? `${activeFile.size} · ` : ''}{activeFile.source ?? 'Showbox'})</p>
+							{/if}
 							<hr class="popup-divider" />
 							<p class="popup-label">Speed</p>
 							{#each SPEEDS as s (s.value)}
@@ -2554,12 +2973,12 @@
 							{/each}
 							<hr class="popup-divider" />
 							<p class="popup-label">Aspect ratio</p>
-							<button class="popup-item" class:active={videoFit === 'contain'} onclick={() => (videoFit = 'contain')}>
+							<button class="popup-item" class:active={videoFit === 'contain'} onclick={() => chooseFit('contain')}>
 								{#if videoFit === 'contain'}<span class="popup-check">&#10003;</span>{/if}
 								Fit
 								<span class="popup-sub">Black bars on sides</span>
 							</button>
-							<button class="popup-item" class:active={videoFit === 'cover'} onclick={() => (videoFit = 'cover')}>
+							<button class="popup-item" class:active={videoFit === 'cover'} onclick={() => chooseFit('cover')}>
 								{#if videoFit === 'cover'}<span class="popup-check">&#10003;</span>{/if}
 								Fill
 								<span class="popup-sub">Fills the screen, may crop</span>
@@ -2623,12 +3042,12 @@
 											<button
 												class="popup-item"
 												class:active={activeSubFid === sub.id && subtitlesOn}
-												onclick={() => loadSub(sub)}
+												onclick={() => (sub.check ? passNexusCheck() : loadSub(sub))}
 												title={sub.fileName || sub.language}
 											>
 												{#if activeSubFid === sub.id && subtitlesOn}<span class="popup-check">&#10003;</span>{/if}
 												<span class="sub-name-row">
-													<span class="sub-name-text">{sub.fileName || sub.language}</span>
+													<span class="sub-name-text">{sub.check && nexusChecking ? 'Waiting for anime.nexus…' : sub.fileName || sub.language}</span>
 													{#if sub.source}<span class="sub-source-badge">{sub.source}</span>{/if}
 												</span>
 											</button>
@@ -2793,12 +3212,12 @@
 	.quality-toast { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 80; padding: 14px 28px; border-radius: 10px; background: rgba(0, 0, 0, 0.85); color: #fff; font-size: 1rem; text-align: center; pointer-events: none; animation: toast-fade 5s ease-in-out forwards; }
 	@keyframes toast-fade { 0% { opacity: 0; } 8% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
 	.file-pick-wrap { position: relative; flex: none; }
-	.file-pick-btn { font-weight: 600; }
-	.popup-files.popup-files { position: absolute; top: calc(100% + 4px); left: 0; right: auto; bottom: auto; min-width: 160px; z-index: 25; }
+	.file-pick-btn { font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
+	.file-arrow { flex: none; opacity: 0.7; transition: transform 0.15s; }
+	.file-arrow.open { transform: rotate(180deg); }
+	.popup-files.popup-files { position: absolute; top: calc(100% + 4px); left: 0; right: auto; bottom: auto; min-width: 180px; z-index: 25; }
+	.file-name-info { font-size: 0.7rem; white-space: normal; word-break: break-all; overflow: visible; }
 
-	.file-btn { font-size: 0.76rem; max-width: 350px; overflow: hidden; text-overflow: ellipsis; }
-	.file-btn.expanded { max-width: none; overflow: visible; }
-	.file-name-text { font-weight: 400; font-size: 0.74rem; opacity: 0.85; }
 	.episodes-btn { font-size: 0.78rem; }
 	.login-btn { color: var(--accent); border-color: var(--accent); font-size: 0.78rem; }
 	.add-btn { background: var(--good); color: #fff; border-color: var(--good); cursor: pointer; }
@@ -2809,14 +3228,40 @@
 	.autoplay-btn { font-size: 0.78rem; cursor: pointer; }
 	.autoplay-btn.active { color: var(--accent); border-color: var(--accent); }
 	.autoplay-btn:hover { background: rgba(255, 255, 255, 0.06); }
+	.ep-ctx-backdrop { position: fixed; inset: 0; z-index: 900; }
+	.ep-ctx-menu {
+		position: fixed;
+		z-index: 901;
+		min-width: 210px;
+		padding: 4px 0;
+		background: #1c1c1e;
+		border: 1px solid rgba(255, 255, 255, 0.14);
+		border-radius: 8px;
+		box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+	}
+	.ep-ctx-menu button {
+		display: block;
+		width: 100%;
+		padding: 8px 14px;
+		border: none;
+		background: none;
+		color: #eee;
+		text-align: left;
+		font-size: 0.86rem;
+		cursor: pointer;
+	}
+	.ep-ctx-menu button:hover { background: var(--accent); color: var(--accent-ink, #fff); }
+	.ep-ctx-menu hr { border: none; border-top: 1px solid rgba(255, 255, 255, 0.1); margin: 4px 0; }
 	.mark-watched-btn { color: var(--accent); border-color: var(--accent); cursor: pointer; }
 	.mark-watched-btn:hover { background: rgba(255, 255, 255, 0.06); }
 
 	/* --------------------------------------------------------- player body */
-	.player-body { display: flex; flex: 1; min-height: 0; padding-top: 45px; }
+	/* The video uses the whole screen, under the top bar (which hides while playing); only the
+	   side panels start below the bar. */
+	.player-body { display: flex; flex: 1; min-height: 0; }
 
 	/* --------------------------------------------------------- sidebar */
-	.sidebar { width: 240px; flex: none; display: flex; flex-direction: column; background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(8px); border-right: 1px solid rgba(255, 255, 255, 0.06); overflow: hidden; }
+	.sidebar { margin-top: 45px; width: 240px; flex: none; display: flex; flex-direction: column; background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(8px); border-right: 1px solid rgba(255, 255, 255, 0.06); overflow: hidden; }
 	.season-tabs { display: flex; flex-wrap: wrap; gap: 2px; padding: 8px 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
 	.season-tab { padding: 4px 10px; font-size: 0.76rem; font-weight: 600; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.04); color: rgba(255, 255, 255, 0.6); cursor: pointer; }
 	.season-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
@@ -2829,8 +3274,10 @@
 	.ep-btn.partial { border-left: 3px solid var(--accent); }
 	.ep-btn:disabled { opacity: 0.5; cursor: wait; }
 	.ep-num { font-weight: 700; min-width: 2.2em; }
-	.ep-meta { display: flex; gap: 4px; margin-left: auto; font-size: 0.68rem; color: rgba(255, 255, 255, 0.4); }
-	.ep-quality { text-transform: uppercase; font-weight: 600; padding: 1px 4px; border-radius: 3px; background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.08); }
+	.ep-li { position: relative; }
+	.ep-btn.unavailable { opacity: 0.4; cursor: default; }
+	.ep-btn.unavailable:hover { background: none; }
+	.ep-missing { margin-left: auto; font-size: 0.72rem; white-space: nowrap; }
 
 	/* --------------------------------------------------------- cast sidebar */
 	.cast-sidebar { padding: 0; }
@@ -2957,8 +3404,6 @@
 	.next-ep-title { font-size: 0.95rem; font-weight: 600; }
 	@keyframes fadeSlideIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
 
-	.sync-btn { color: var(--accent); border-color: var(--accent); font-size: 0.72rem; }
-	.sync-btn:hover { background: rgba(255, 255, 255, 0.06); }
 	.buffering-spinner { width: 48px; height: 48px; border: 4px solid rgba(255, 255, 255, 0.15); border-top-color: rgba(255, 255, 255, 0.8); border-radius: 50%; animation: spin 0.8s linear infinite; }
 
 	/* --------------------------------------------------------- responsive */

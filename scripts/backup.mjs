@@ -49,6 +49,9 @@ const db = new DatabaseSync(source);
 db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
 
 const rows = (sql) => db.prepare(sql).all().map((row) => ({ ...row }));
+/** For tables an older library may not have yet. */
+const rowsIfAny = (table, sql) =>
+	db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) ? rows(sql) : [];
 
 const snapshot = {
 	exportedAt: new Date().toISOString(),
@@ -58,6 +61,8 @@ const snapshot = {
 	tags: rows('SELECT * FROM tags ORDER BY id'),
 	entryTags: rows('SELECT * FROM entry_tags ORDER BY entry_id, tag_id'),
 	notes: rows('SELECT * FROM notes ORDER BY id'),
+	noteTags: rowsIfAny('note_tags', 'SELECT * FROM note_tags ORDER BY id'),
+	noteTagLinks: rowsIfAny('note_tag_links', 'SELECT * FROM note_tag_links ORDER BY note_id, tag_id'),
 	people: rows('SELECT * FROM people ORDER BY id'),
 	entryCast: rows('SELECT * FROM entry_cast ORDER BY entry_id, ord')
 	// NOTE: the `settings` table is deliberately NOT exported — it holds your

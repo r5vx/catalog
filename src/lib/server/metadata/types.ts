@@ -61,7 +61,15 @@ export function plainText(input: string | null | undefined): string | null {
 /** Normalised form used for matching and de-duplicating titles. */
 export function normalizeTitle(title: string): string {
 	return title
+		.normalize('NFKD')
+		.replace(/[̀-ͯ]/g, '') // "Shippūden" → "Shippuden", "Pokémon" → "Pokemon"
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/g, ' ')
 		.trim();
 }
+
+/**
+ * AniList adds "(TV)" or a year to tell a remake from the original ("JoJo's Bizarre Adventure
+ * (TV)"); Showbox and TMDB don't, so it's taken off before searching them.
+ */
+export const withoutQualifier = (title: string) => title.replace(/\s*\((?:tv|ova|ona|movie|\d{4})\)\s*$/i, '');

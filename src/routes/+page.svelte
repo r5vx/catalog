@@ -1,12 +1,14 @@
 <script lang="ts">
+	import MoreButton from '$lib/MoreButton.svelte';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { warmUpTitle } from '$lib/watch';
-	import { STATUSES, statusLabel, sortBadge } from '$lib/constants';
+	import { STATUSES, statusLabel, sortBadge, KEPT_FILTERS } from '$lib/constants';
 	import SortPicker from '$lib/SortPicker.svelte';
 	import { episodesBehind } from '$lib/progress';
 	import { page } from '$app/state';
 	import { rememberLibrary } from '$lib/nav';
 	import CategoryTabs from '$lib/CategoryTabs.svelte';
+	import LibraryHeader from '$lib/LibraryHeader.svelte';
 	import FillingIn from '$lib/FillingIn.svelte';
 	import TagFilter from '$lib/TagFilter.svelte';
 	import FriendsView from '$lib/FriendsView.svelte';
@@ -18,9 +20,13 @@
 
 	// The current filters live in the URL, so every view you land on is a link
 	// you can bookmark or send to yourself.
+	// A remembered choice that's cleared stays in the address empty, so the server knows
+	// it was cleared on purpose rather than left out.
+	const kept = (key: string) => (KEPT_FILTERS as readonly string[]).includes(key);
+
 	function setParam(key: string, value: string) {
 		const params = new URLSearchParams(window.location.search);
-		if (value) params.set(key, value);
+		if (value || kept(key)) params.set(key, value);
 		else params.delete(key);
 		goto(`?${params.toString()}`, { keepFocus: true, noScroll: true });
 	}
@@ -30,6 +36,7 @@
 		const params = new URLSearchParams(window.location.search);
 		params.delete('tag');
 		for (const id of ids) params.append('tag', String(id));
+		if (ids.length === 0) params.set('tag', '');
 		goto(`?${params.toString()}`, { keepFocus: true, noScroll: true });
 	}
 
@@ -77,7 +84,8 @@
 
 	async function removeContinue(title: string, type: string) {
 		dismissed = new Set([...dismissed, `${title}:${type}`]);
-		await fetch(`/api/watch/progress?title=${encodeURIComponent(title)}&type=${type}&all_episodes=1`, { method: 'DELETE' });
+		// Hide only — deleting here wiped every episode's green tick for the show.
+		await fetch(`/api/watch/progress?title=${encodeURIComponent(title)}&type=${type}&hide=1`, { method: 'DELETE' });
 	}
 
 	async function markCompleted(entryId: number | null, title: string, type: string, posterUrl?: string | null) {
@@ -183,22 +191,14 @@
 	}
 </script>
 
-<header class="masthead">
-	<div class="title-row">
-		<h1>{pm ? p('Catalog') : 'Catalog'}</h1>
-		<div class="header-actions">
-			<a href="/settings" class="btn" title="Settings" aria-label="Settings">⚙</a>
-			<a href="/browse" class="btn">{pm ? p('Browse') : 'Browse'}</a>
-			<a href="/entry/new" class="btn btn-primary">{pm ? '+ Claim giblet' : '+ Add'}</a>
-		</div>
-	</div>
-	<p class="muted count stats-line">
-		<span class="stat">{data.completed} {pm ? 'consumed' : 'watched'} / {data.total} in library</span>
-		{#each data.categories as cat}
-			<span class="stat">{data.completedByCategory[cat.id] ?? 0} / {data.countByCategory[cat.id] ?? 0} {cat.name}</span>
-		{/each}
-	</p>
-</header>
+<LibraryHeader
+	categories={data.categories}
+	countByCategory={data.countByCategory}
+	total={data.total}
+	completed={data.completed}
+	completedByCategory={data.completedByCategory}
+	poisonMode={pm}
+/>
 
 <CategoryTabs
 	categories={data.categories}
@@ -242,7 +242,7 @@
 						<div class="meta">
 							<h3 class="card-title">{item.title}</h3>
 							<p class="sub faint tabular">
-								{#if item.type === 'tv'}S{item.season}E{item.episode} · {/if}{formatProgress(item.currentTime, item.duration)}
+								{item.type === 'tv' ? `S${item.season}E${item.episode} · ` : ''}{formatProgress(item.currentTime, item.duration)}
 							</p>
 						</div>
 					</a>
@@ -262,6 +262,17 @@
 								onclick={() => markCompleted(item.entryId, item.title, item.type, item.posterUrl)}
 							>✓</button>
 						{/if}
+						<button
+							type="button"
+							class="watching-action"
+							title="More options"
+							aria-label="More options"
+							onclick={(e) => onWatchingContext(e, item)}
+						>
+							<svg viewBox="0 0 16 4" width="12" height="4" fill="currentColor" aria-hidden="true">
+								<circle cx="2" cy="2" r="1.6" /><circle cx="8" cy="2" r="1.6" /><circle cx="14" cy="2" r="1.6" />
+							</svg>
+						</button>
 						<button
 							type="button"
 							class="watching-dismiss"
@@ -298,8 +309,8 @@
 				yearTo={data.filters.yearTo}
 				onyearchange={(from, to) => {
 					const params = new URLSearchParams(window.location.search);
-					if (from) params.set('yearFrom', from); else params.delete('yearFrom');
-					if (to) params.set('yearTo', to); else params.delete('yearTo');
+					params.set('yearFrom', from || '');
+					params.set('yearTo', to || '');
 					goto(`?${params.toString()}`, { keepFocus: true, noScroll: true });
 				}}
 			/>
@@ -329,7 +340,7 @@
 			{#if isFiltered}
 				<h2>Nothing matches</h2>
 				<p class="muted">Try a different search, or clear the filters.</p>
-				<a href="/" class="btn">Clear filters</a>
+				<a href="/?status=&tag=&yearFrom=&yearTo=" class="btn">Clear filters</a>
 			{:else}
 				<h2>{pm ? "no giblets here... im hungry" : 'Your library is empty'}</h2>
 				<p class="muted">{pm ? "claim your first giblet and it starts here." : "Add the first thing you've watched and it starts here."}</p>
@@ -339,7 +350,7 @@
 	{:else}
 		<ul class="grid">
 			{#each data.entries as entry (entry.id)}
-				<li oncontextmenu={(e) => onEntryContext(e, entry)}>
+				<li class="has-more" oncontextmenu={(e) => onEntryContext(e, entry)}>
 					<a href="/entry/{entry.id}" class="card">
 						<div class="poster">
 							{#if entry.posterUrl}
@@ -347,6 +358,7 @@
 							{:else}
 								<span class="poster-fallback" aria-hidden="true">{entry.categoryEmoji}</span>
 							{/if}
+							<MoreButton onopen={(e) => onEntryContext(e, entry)} top={entry.favorite ? 30 : 6} />
 							{#if entry.favorite}
 								<span class="fav" title="Favourite" aria-label="Favourite">★</span>
 							{/if}
@@ -453,59 +465,8 @@
 {/if}
 
 <style>
-	.masthead {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-		margin-bottom: 22px;
-	}
-
-	.title-row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		flex-wrap: wrap;
-		gap: 10px 16px;
-	}
-
-	h1 {
-		font-size: clamp(1.8rem, 5vw, 2.4rem);
-	}
-
-	.header-actions {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 8px;
-	}
-
-	/* On a phone the buttons get their own row rather than running off the
-	   right edge, and share the width evenly. */
-	@media (max-width: 460px) {
-		.header-actions {
-			width: 100%;
-		}
-
-		.header-actions a:not([aria-label='Settings']) {
-			flex: 1;
-			justify-content: center;
-		}
-	}
-
 	.count {
 		font-size: 0.85rem;
-	}
-
-	.stats-line {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 4px 16px;
-		font-variant-numeric: tabular-nums;
-	}
-
-	.stats-line .stat + .stat::before {
-		content: '·';
-		margin-right: 16px;
-		opacity: 0.4;
 	}
 
 	.count-breakdown {

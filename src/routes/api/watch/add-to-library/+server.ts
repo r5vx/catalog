@@ -4,8 +4,18 @@ import { createFromResult } from '$lib/server/entries';
 import { entryIdForSource } from '$lib/server/db/queries';
 import type { RequestHandler } from './$types';
 
+/**
+ * Adds what's playing to the library: as completed (the player's "+ Add to library"), or as
+ * watching at the episode reached (Autosync, a minute into a show that isn't in it yet).
+ */
 export const POST: RequestHandler = async ({ request }) => {
-	const { title, type } = (await request.json()) as { title: string; type: string };
+	const { title, type, watching, season, episode } = (await request.json()) as {
+		title: string;
+		type: string;
+		watching?: boolean;
+		season?: number;
+		episode?: number;
+	};
 	if (!title) return error(400, 'Missing title');
 
 	const results = await searchAll(title, { limit: 5 });
@@ -19,10 +29,9 @@ export const POST: RequestHandler = async ({ request }) => {
 	const existing = entryIdForSource(best.source, best.sourceId);
 	if (existing) return json({ id: existing, already: true });
 
-	const id = createFromResult(best, {
-		status: 'completed',
-		markWatchedToday: true
-	});
+	const id = watching
+		? createFromResult(best, { status: 'watching', lastSeason: season ?? null, lastEpisode: episode ?? null })
+		: createFromResult(best, { status: 'completed', markWatchedToday: true });
 
-	return json({ id, title: best.title });
+	return json({ id, title: best.title, status: watching ? 'watching' : 'completed' });
 };

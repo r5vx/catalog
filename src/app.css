@@ -290,3 +290,22 @@ textarea {
 		animation: none !important;
 	}
 }
+
+/* ---------------------------------------------------------------- on a TV
+   The Fire TV app (src/lib/tv.ts). The remote moves a highlight, so it has to be
+   impossible to miss from across the room. */
+html.tv :focus {
+	outline: 3px solid var(--accent);
+	outline-offset: 3px;
+}
+
+html.tv a:focus img,
+html.tv .card:focus .poster {
+	transform: scale(1.04);
+	transition: transform 0.12s ease;
+}
+
+/* Nothing hovers on a TV: what hover would show, the highlight shows. */
+html.tv .has-more:focus-within .more {
+	opacity: 1;
+}

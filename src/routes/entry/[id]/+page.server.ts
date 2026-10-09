@@ -15,6 +15,7 @@ import { searchAll } from '$lib/server/metadata';
 import { omdbConfigured } from '$lib/server/metadata/omdb';
 import { parseEntryForm } from '$lib/server/form';
 import { error, fail, redirect } from '@sveltejs/kit';
+import { safeBack } from '$lib/back';
 import type { PageServerLoad, Actions } from './$types';
 
 const verifiedSources = new Set<number>();
@@ -36,13 +37,15 @@ async function verifySource(entry: { id: number; title: string; source: string; 
 	} catch {}
 }
 
-export const load: PageServerLoad = async ({ params }) => {
+export const load: PageServerLoad = async ({ params, url }) => {
 	const entry = getEntry(Number(params.id));
 	if (!entry) error(404, 'That entry does not exist.');
 
 	await verifySource(entry);
 
 	return {
+		// Set when opened from somewhere other than the library (a watch order, say).
+		back: safeBack(url.searchParams.get('back')),
 		entry,
 		categories: listCategories(),
 		cast: castForEntry(entry.id),

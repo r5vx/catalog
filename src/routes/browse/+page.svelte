@@ -1,4 +1,5 @@
 <script lang="ts">
+	import MoreButton from '$lib/MoreButton.svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import BackBar from '$lib/BackBar.svelte';
@@ -473,7 +474,7 @@
 {/if}
 
 {#snippet card(result: SearchResult)}
-	<li class="card" class:mine={have(result)} oncontextmenu={(e) => onCardContext(e, result)}>
+	<li class="card has-more" class:mine={have(result)} oncontextmenu={(e) => onCardContext(e, result)}>
 		<a href={link(result)} class="card-link" aria-label={result.title} onclick={saveScroll}></a>
 		<div class="poster">
 			{#if result.posterUrl}
@@ -482,6 +483,7 @@
 				<span class="fallback" aria-hidden="true">?</span>
 			{/if}
 			{#if have(result)}<span class="tick" title="In your library">&check;</span>{/if}
+			<MoreButton onopen={(e) => onCardContext(e, result)} top={have(result) ? 36 : 6} />
 			{#if have(result)}
 				<button type="button" class="hover-remove" title="Remove from library" onclick={(e) => { e.preventDefault(); e.stopPropagation(); remove(result); }}>&times;</button>
 			{:else}

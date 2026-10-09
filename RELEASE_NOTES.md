@@ -9,6 +9,179 @@ without both.
 
 ## Unreleased
 
+## 3.0.0 — 2026-10-09 — Catalog 3.0: a second source, dub captions, watch lists and TV
+
+- **A second place to watch anime: Aniwave.** Episodes Showbox doesn't
+  have now play from Aniwave in Catalog's own player, in the same episode
+  list, on the computer, your phone and the TV. A show that isn't on
+  Showbox at all, like Kaiju Girl Caramelise, plays straight from Aniwave.
+  Shows Showbox splits into different seasons than usual, like Re:Zero,
+  get Aniwave's copies too.
+- **Every copy in one place.** The file button lists each episode's
+  Showbox files and Aniwave's Japanese-audio and English-dub versions, with
+  where each comes from. Showbox's play first; picking an Aniwave version
+  keeps that audio for the next episodes.
+- **Accurate English dub captions.** Anime gets anime.nexus's subtitles at
+  the top of the list: on the English dub, its "English CC", which follows
+  the dub word for word; on Japanese audio, its English translation.
+- **Anime in Japanese starts with subtitles on**, using Catalog's own
+  subtitles, so the size, style and delay are yours to change.
+- **"Not available" instead of "Not on Showbox"**, now that there's more
+  than one source.
+- **The picture fills the screen.** The video now uses the whole screen,
+  under the top bar (which hides while playing), so there's no black strip
+  at the top or bars at the sides. Fill is the new default; picking Fit
+  in the player's settings makes Fit your default for everything.
+- **The file button has an arrow**, so it's clear it opens a list. The
+  full file name is in the player's settings, under Stream info.
+- **Autosync** replaces the Sync button, next to Autoplay. While it's on,
+  a minute into an episode a show that isn't in your library is added as
+  watching, your entry moves forward to the episode you're on (never
+  back), and finishing the last episode marks it completed.
+- **The Watch button turns green much sooner**: Showbox and Aniwave are
+  asked at the same time, from the moment the page opens, and the answer
+  is remembered.
+- **Episode names for every season** of shows TMDB counts as one long
+  season, like Re:Zero.
+- **Posters in Continue Watching** for shows that had none.
+- **A title page says when AniList is busy** instead of "Nothing found".
+- **More English subtitles from SubDL.** It's now asked for English on its
+  own, so shows where it had mostly other languages show its English ones.
+
+- **Search your notes.** A search box on the Notes page finds pages by
+  title or by what's written in them. Locked pages only match on their
+  title — what's inside stays hidden.
+- **Edited notes go to the top right away.** Leaving a note straight
+  after typing no longer shows the old order, and the last few
+  keystrokes are never lost.
+- **Autoplay waits for the very end.** The next episode starts only once
+  the last frame has played, so endings aren't cut off.
+- **Removing a show from Continue Watching keeps its progress.** The
+  card is hidden, but the green ticks on watched episodes stay. Watching
+  it again brings the card back.
+- **Searching a show finds the show first.** "saiki k" now puts the
+  main series ahead of its season 2.
+- **Tidier episode list.** Quality labels no longer crowd the episode
+  names.
+- **Library stats as tiles.** The numbers at the top of the library are
+  now a row of tiles — watched overall, then each category.
+- **Right captions for the right episode.** Season-pack subtitles now
+  give you the episode you're on instead of always episode 1, and the
+  automatic caption pick no longer grabs a file for a different episode.
+- **Captions don't go missing.** An episode could end up with an empty
+  caption list; it now asks once per episode, and opening the captions
+  menu tries again if the list is empty.
+- **Pages show they're loading.** A thin bar at the top appears while a
+  page loads, so a click never looks ignored.
+- **Anime series are labelled Anime.** Shows like Saiki K. no longer say
+  "TV Short" or "ONA".
+- **Continue Watching text lines up.** The spacing around the dots is
+  the same on every card.
+- **One card per anime, not one per season.** Search and Browse show a
+  show once — later seasons fold into it; films, OVAs and specials keep
+  their own cards.
+  Owning any season counts as owning the show, and adding season 2 of
+  something you have opens the one you already have.
+- **Seasons in your library are merged.** If an anime was added season
+  by season, those entries become one (keeping your status, rating and
+  notes). A backup of the library is saved first.
+- **Watch list.** A new tab where you add franchises and see them in
+  release order: how far through you are and what's up next. Search for
+  any film series (Harry Potter, John Wick, Fast & Furious…), or pick a
+  full list that mixes films and series: the MCU, Ultimate Marvel (with
+  X-Men, the Spider-Man films, the Netflix shows and more) or Star Wars.
+  Search puts the most popular series first, and the add panel opens on
+  a grid of popular franchises. Each list has an Up next card, a
+  timeline by year or a poster wall, and a progress ring.
+  Right-click a title to watch it or add it to your library, and coming
+  back from a title returns you to where you were in the list.
+  Marvel's One-Shots are optional extras, hidden unless you turn on
+  "Show extras", and ticking one off keeps it out of Movies.
+- **Notes list shows when each page was last edited**; the date it was
+  created is inside the note.
+- **Watch lists open instantly.** Release dates and posters are saved,
+  so they no longer have to be looked up each time the app starts.
+- **Library, Notes and Watch list share one header**, so switching
+  between those tabs no longer makes everything jump. Settings and
+  Browse are there on every one of them.
+- **Search bar with the button beside it** on Notes (+ New page) and
+  Watch list (+ Add watch list). On Watch list the same bar filters
+  your lists, or finds franchises while adding.
+- **"✓ Mark as completed" in the player** for anything in your library
+  that isn't completed yet. It used to just say "In library".
+- **Finishing something you'd marked Want to watch moves it to the top
+  of Recently added**, instead of leaving it where it was when you listed it.
+- **Hide tabs you don't use.** Right-click a tab (Movies, Notes,
+  Friends…) to hide it; right-click the empty space beside the tabs to
+  bring it back. A hidden category's count box goes too.
+- **Settings' back link returns you to where you were**: the same page,
+  scrolled to the same spot.
+- **"↑ Back to top" on the library, Notes and Watch list pages**, like
+  Browse has.
+- **Library filters stay put.** The status, sort, tags and years you
+  choose are kept, even after closing the app, until you change them.
+- **Drag the tabs to reorder them.** Movies, Anime, Notes and the rest
+  stay in the order you put them.
+- **Recently deleted for notes.** A deleted page waits there for 7 days
+  before it's gone, so it can be restored, or deleted for good sooner.
+- **Version history for notes.** Earlier versions are kept as you edit,
+  and always just before most of a page is deleted, so a wiped page can
+  be brought back.
+- **Pin notes to the top**, whatever order the list is in.
+- **Sort notes** by last edited, date created or name A–Z, next to
+  + New page. The choice is remembered.
+- **Tags for notes.** Tag pages ("School", "Work"…) and pick a tag above
+  the list to see only those. A page made while a tag is picked gets it.
+  Right-click a tag to rename or delete it.
+- **Right-click a note** to open, pin, tag or delete it.
+- **Catalog's own confirm box** instead of the plain Windows-style one,
+  for deleting notes and library entries.
+- **Reset tab order** when right-clicking the tabs.
+- **Skip a title in a watch list**, from the Up next card or by
+  right-clicking it. Skipped titles aren't counted and are remembered.
+  **"↓ Jump to it"** scrolls the list to where you're up to.
+- **Specials are extras too**: Werewolf by Night and the Guardians
+  Holiday Special are optional, like the One-Shots.
+- **DC watch lists**: DC Universe (the new James Gunn universe) and
+  Ultimate DC, everything DC on screen since 2000 — the films, the
+  Arrowverse, Smallville, Gotham, Titans, Peacemaker and the rest.
+- **Right-click on a person's page** to watch or add their films and
+  shows, and in Recently deleted to restore or delete for good.
+- **Anime split into parts with different names are one show**, the way
+  Showbox has them: JoJo's Bizarre Adventure's Stardust Crusaders,
+  Diamond is Unbreakable and so on are now seasons of one card.
+- **Fixed: JoJo's Bizarre Adventure said it wasn't on Showbox.** Titles
+  with "(TV)" on the end are now found.
+- **Right-click an episode in the player** to mark it watched or not,
+  mark everything up to it, or a whole season.
+- **Watch lists count a show once**: its seasons together are one title
+  in "x of y watched".
+- **"⋯" buttons** on library cards, Browse, Friends, notes, watch lists,
+  people's pages and the player's episode list open the same options as
+  right-clicking. They appear when you hover over something. One at the
+  end of the tabs shows how to hide and move them.
+- **Shows Showbox splits in two are one list.** JoJo's Bizarre Adventure's
+  separate Steel Ball Run entry now fills in season 6, so the newest
+  episodes are in the same place as the rest.
+- **Episodes that aren't out yet show in the list, greyed out**, with the
+  date they air (or "Not on Showbox yet").
+- **Catalog reopens after updating.** Its window shows even if the first
+  page load fails, and the background server no longer lingers after
+  Catalog closes (which could leave an old version answering).
+- **A closed episode list stays closed** the next time you open that show.
+- **Catalog on a Fire TV.** A small TV app shows the Catalog that's open
+  on a computer in the same house, driven by the remote: arrows move
+  around, OK opens, Back goes back, the menu button opens a title's
+  options, and play/pause and fast-forward/rewind work in the player.
+  Settings → Watch on TV has the setup steps and the address to type into
+  Downloader on the TV.
+- **Search no longer stalls for seconds** when AniList is busy: it shows
+  what TMDB has straight away and leaves AniList alone until it's ready,
+  and repeat searches are remembered for a few minutes.
+- **OVAs and specials are part of their show's card** in search and
+  Browse, under a Specials season in the player when Showbox has them.
+  Films still have their own cards.
+
 ## 2.1.10 — 2026-10-05 — Skip Intro and smoother playback
 
 - **Skip Intro for anime.** A Skip Intro button appears during the
