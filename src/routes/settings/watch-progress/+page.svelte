@@ -57,6 +57,19 @@
 		return `${Math.round((current / total) * 100)}%`;
 	}
 
+	/** Watched to the end (90%, as the player's ticks count it). These rows are the ticks, so they stay. */
+	const finished = (e: ProgressEntry) => e.duration > 0 && e.currentTime / e.duration >= 0.9;
+
+	/** Shows whose watched episodes are listed too, not just counted. */
+	let showFinished = $state<Set<string>>(new Set());
+
+	function toggleFinished(key: string) {
+		const next = new Set(showFinished);
+		if (next.has(key)) next.delete(key);
+		else next.add(key);
+		showFinished = next;
+	}
+
 	function toggle(key: string) {
 		const next = new Set(expanded);
 		if (next.has(key)) next.delete(key);
@@ -136,19 +149,25 @@
 				{:else}
 					{@const key = group.title + ':' + group.type}
 					{@const open = expanded.has(key)}
+					{@const watching = group.entries.filter((e) => !finished(e))}
+					{@const watched = group.entries.filter(finished)}
 					<li class="group">
 						<button class="group-header" onclick={() => toggle(key)}>
 							<div class="info">
 								<span class="title">{group.title}</span>
 								<span class="details muted">
-									{group.type === 'tv' ? 'TV' : group.type} · {group.entries.length} {group.entries.length === 1 ? 'episode' : 'episodes'}
+									{[
+										group.type === 'tv' ? 'TV' : group.type,
+										watching.length ? `${watching.length} in progress` : '',
+										watched.length ? `${watched.length} watched` : ''
+									].filter(Boolean).join(' · ')}
 								</span>
 							</div>
 							<span class="chevron" class:open>▸</span>
 						</button>
 						{#if open}
 							<ul class="episodes">
-								{#each group.entries as e (e.season + ':' + e.episode)}
+								{#each watching as e (e.season + ':' + e.episode)}
 									<li class="ep-row">
 										<div class="info">
 											<span class="ep-label">S{e.season}E{e.episode}</span>
@@ -160,6 +179,24 @@
 										<button class="btn-remove" onclick={() => deleteOne(e)} title="Remove">✕</button>
 									</li>
 								{/each}
+								{#if watched.length}
+									<li class="ep-row ep-watched-toggle">
+										<button class="btn-link" onclick={() => toggleFinished(key)}>
+											{showFinished.has(key) ? 'Hide' : 'Show'} {watched.length} watched {watched.length === 1 ? 'episode' : 'episodes'}
+										</button>
+									</li>
+									{#if showFinished.has(key)}
+										{#each watched as e (e.season + ':' + e.episode)}
+											<li class="ep-row">
+												<div class="info">
+													<span class="ep-label">S{e.season}E{e.episode}</span>
+													<span class="details muted">Watched</span>
+												</div>
+												<button class="btn-remove" onclick={() => deleteOne(e)} title="Remove (takes its tick off)">✕</button>
+											</li>
+										{/each}
+									{/if}
+								{/if}
 								<li class="ep-row ep-actions">
 									<button class="btn-remove-all" onclick={() => deleteTitle(group)}>Remove all episodes</button>
 								</li>
@@ -301,6 +338,20 @@
 	.ep-actions {
 		justify-content: flex-end;
 		padding: 6px 14px;
+	}
+
+	.btn-link {
+		padding: 0;
+		border: none;
+		background: none;
+		color: var(--ink-soft);
+		font-size: 0.8rem;
+		cursor: pointer;
+		text-decoration: underline;
+	}
+
+	.btn-link:hover {
+		color: var(--ink);
 	}
 
 	.btn-remove-all {

@@ -6,11 +6,26 @@ import '$lib/server/updater';
 import { consumePdfToken } from '$lib/server/pdf';
 import { scheduleBackfill } from '$lib/server/backfill';
 import { recategorizeAnime } from '$lib/server/recategorize';
+import { watchOutsideRequests } from '$lib/server/slowRequests';
+import { forgetFinishedSubtitles } from '$lib/server/db/queries';
+import { keepShowboxSigninFresh } from '$lib/server/showboxSignin';
+
+// Before anything asks another site for something: a time limit for every outside request,
+// and a note of the slow ones (on /api/diagnostics).
+watchOutsideRequests();
 
 // Runtimes, synopses and outside scores that the search results never carried
 // get filled in shortly after the app opens, without anyone asking.
 scheduleBackfill();
 recategorizeAnime();
+
+// Subtitles kept for shows that are done with go now, and every hour after.
+forgetFinishedSubtitles();
+setInterval(forgetFinishedSubtitles, 60 * 60 * 1000).unref?.();
+
+// A renewed Showbox sign-in in the app's window is saved, shortly after opening and twice a day.
+setTimeout(keepShowboxSigninFresh, 30 * 1000).unref?.();
+setInterval(keepShowboxSigninFresh, 12 * 60 * 60 * 1000).unref?.();
 
 // Started by the desktop app: when that app goes — closed, updated, crashed — go with it.
 // A server left behind keeps port 4173, so the next Catalog either can't start its own or

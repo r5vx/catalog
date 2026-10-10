@@ -3,6 +3,7 @@ import { existsSync, statSync } from 'node:fs';
 import { dbPath, dataDir } from '$lib/server/db';
 import { settingsPath, readSettings } from '$lib/server/settings';
 import type { RequestHandler } from './$types';
+import { slowRequests } from '$lib/server/slowRequests';
 
 const describe = (path: string) => {
 	if (!existsSync(path)) return { path, exists: false };
@@ -21,6 +22,8 @@ export const GET: RequestHandler = async () => {
 	const settings = readSettings();
 
 	return json({
+		// Outside requests that took over two seconds or were refused, newest first (site and path only).
+		slowRequests: slowRequests(),
 		settingsStoredIn: 'settings table inside library.db',
 		cwd: process.cwd(),
 		appdata: process.env.APPDATA ?? null,

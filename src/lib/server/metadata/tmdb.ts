@@ -1,6 +1,6 @@
 import { env } from '$env/dynamic/private';
 import { readSettings } from '../settings';
-import { plainText, fameScore, type SearchResult } from './types';
+import { plainText, fameScore, normalizeTitle, type SearchResult } from './types';
 
 const BASE = 'https://api.themoviedb.org/3';
 const IMAGE = 'https://image.tmdb.org/t/p/w342';
@@ -480,8 +480,11 @@ export async function fetchImdbId(
 		const searchResp = await fetch(searchUrl, authorize(searchUrl, key));
 		if (!searchResp.ok) return null;
 
-		const searchData = (await searchResp.json()) as { results?: { id: number }[] };
-		const item = searchData.results?.[0];
+		const searchData = (await searchResp.json()) as { results?: { id: number; title?: string; name?: string }[] };
+		// The one named exactly that, else the top one: TMDB's top hit for "Re:ZERO … The Frozen
+		// Bond" is the better-known Memory Snow.
+		const same = (t?: string) => Boolean(t) && normalizeTitle(t!) === normalizeTitle(title);
+		const item = searchData.results?.find((r) => same(r.title ?? r.name)) ?? searchData.results?.[0];
 		if (!item) return null;
 
 		if (type === 'movie') {

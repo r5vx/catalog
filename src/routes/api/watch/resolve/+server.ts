@@ -16,10 +16,35 @@ import {
 	saveShowboxMatch,
 	forgetShowboxMatch
 } from '$lib/server/db/queries';
-import { fetchAlternativeTitles } from '$lib/server/metadata/tmdb';
+import { fetchAlternativeTitles, tmdbGet } from '$lib/server/metadata/tmdb';
 import { fetchRomajiTitle } from '$lib/server/metadata/anilist';
 import { combineEpisodes, tmdbShow, type EpisodeList } from '$lib/server/combinedEpisodes';
+import { aniwaveFilm } from '$lib/server/sources';
+import { aniwaveStream, parseAniwaveShareKey } from '$lib/server/sources/aniwave';
 import type { RequestHandler } from './$types';
+
+/**
+ * A show's Showbox episodes. Showbox's file host sometimes refuses or doesn't answer for a
+ * moment, which reads as an empty folder, so an empty answer is asked again once, shortly after.
+ */
+async function listShowboxEpisodes(shareUrl: string) {
+	const listed = await listEpisodes(shareUrl);
+	if (listed.episodes.length) return listed;
+	await new Promise((resolve) => setTimeout(resolve, 1500));
+	return listEpisodes(shareUrl);
+}
+
+/** TMDB's poster for a film, for one only another source has (no Showbox poster). */
+async function tmdbFilmPoster(title: string, year: string): Promise<string | null> {
+	const found = await tmdbGet<{ results: { title?: string; poster_path?: string | null }[] }>('/search/movie', {
+		query: title,
+		...(year ? { year } : {})
+	});
+	// The one named exactly that: TMDB's top hit for one Re:Zero film can be the other.
+	const film = found?.results.find((r) => r.title?.toLowerCase() === title.toLowerCase()) ?? found?.results[0];
+	const path = film?.poster_path;
+	return path ? `https://image.tmdb.org/t/p/w342${path}` : null;
+}
 
 async function findOnShowbox(title: string, type: string, year: string) {
 	const results = await searchShowbox(title);
@@ -87,10 +112,12 @@ export const GET: RequestHandler = async ({ url }) => {
 		// Remembered from an earlier session: skips the Showbox search, but re-lists so new episodes show.
 		const saved = getSavedShowboxMatch(cacheKey);
 		let restored = false;
+		/** Playing from another source because Showbox's folder came back empty this time. */
+		let otherInstead = false;
 		if (saved) {
 			const shareUrl = `https://www.febbox.com/share/${saved.shareKey}`;
 			if (saved.type === 'tv') {
-				const listed = await listEpisodes(shareUrl);
+				const listed = await listShowboxEpisodes(shareUrl);
 				if (listed.episodes.length) { episodeData = listed; restored = true; }
 			} else {
 				const files = await listMovieFiles(shareUrl);
@@ -103,12 +130,24 @@ export const GET: RequestHandler = async ({ url }) => {
 				matchPosterUrl = saved.posterUrl || undefined;
 				shareKey = saved.shareKey;
 				startSeason = saved.startSeason;
+			} else if (saved.type === 'tv') {
+				// An empty folder is almost always Showbox's file host refusing for a while (too many
+				// listings), not the show being gone — so the match is kept, and another source plays
+				// it in the meantime if it has it.
+				const other = await fromOtherSources(saved.title, year);
+				if (other) {
+					matchTitle = other.title;
+					matchType = 'tv';
+					episodeData = other.episodes;
+					startSeason = other.startSeason;
+					otherInstead = true;
+				}
 			} else {
 				forgetShowboxMatch(cacheKey);
 			}
 		}
 
-		if (!restored) {
+		if (!restored && !otherInstead) {
 			let match = await findOnShowbox(title, type, year);
 
 			if (!match) {
@@ -144,8 +183,15 @@ export const GET: RequestHandler = async ({ url }) => {
 				}
 			}
 
-			if (!match) {
-				const other = type === 'movie' ? null : await fromOtherSources(title, year);
+			if (!match && type === 'movie') {
+				// An anime film Showbox doesn't have (Re:Zero's Memory Snow): from Aniwave.
+				const film = await aniwaveFilm(title, year);
+				if (!film) return json({ error: 'not_found' });
+				matchTitle = title;
+				matchType = 'movie';
+				movieFileList = film;
+			} else if (!match) {
+				const other = await fromOtherSources(title, year);
 				if (!other) return json({ error: 'not_found' });
 				matchTitle = other.title;
 				matchType = 'tv';
@@ -172,16 +218,25 @@ export const GET: RequestHandler = async ({ url }) => {
 				shareKey = sk;
 
 				if (match.type === 'tv') {
-					const listed = await listEpisodes(link);
+					const listed = await listShowboxEpisodes(link);
 					episodeData = listed;
-					if (!listed.episodes.length) return json({ error: 'no_file' });
+					if (!listed.episodes.length) {
+						// Same as above: another source plays it while Showbox's folder comes back empty.
+						const other = await fromOtherSources(match.title, year);
+						if (!other) return json({ error: 'no_file' });
+						matchTitle = other.title;
+						episodeData = other.episodes;
+						startSeason = other.startSeason;
+						shareKey = '';
+						otherInstead = true;
+					}
 				} else {
 					const files = await listMovieFiles(link);
 					if (!files.length) return json({ error: 'no_file' });
 					movieFileList = files;
 				}
 
-				saveShowboxMatch(cacheKey, {
+				if (!otherInstead) saveShowboxMatch(cacheKey, {
 					showboxId: matchId,
 					title: matchTitle,
 					type: matchType,
@@ -199,8 +254,9 @@ export const GET: RequestHandler = async ({ url }) => {
 			episodeData = await combineEpisodes(episodeData as EpisodeList, matchTitle, matchId, year);
 		}
 
-		// Not kept when another source was too slow this time, so it joins on the next visit.
-		if (!(episodeData as EpisodeList | undefined)?.partial) resolveCache.set(cacheKey, {
+		// Not kept when another source was too slow this time (so it joins on the next visit), or
+		// when Showbox's folder came back empty (so Showbox is back as soon as it answers again).
+		if (!(episodeData as EpisodeList | undefined)?.partial && !otherInstead) resolveCache.set(cacheKey, {
 			match: { id: matchId, title: matchTitle, type: matchType, posterUrl: matchPosterUrl },
 			shareKey,
 			episodes: episodeData,
@@ -214,7 +270,13 @@ export const GET: RequestHandler = async ({ url }) => {
 	const libraryEntry = findEntryByTitle(matchTitle);
 	// The library's poster, else TMDB's (Showbox's can be missing or broken, and a show only
 	// another source has has none) — it's what Continue Watching shows.
-	const tmdbPoster = matchType === 'tv' && !libraryEntry?.posterUrl ? (await tmdbShow(matchTitle, year))?.poster : null;
+	const tmdbPoster = libraryEntry?.posterUrl
+		? null
+		: matchType === 'tv'
+			? (await tmdbShow(matchTitle, year))?.poster
+			: !matchPosterUrl
+				? await tmdbFilmPoster(matchTitle, year)
+				: null;
 	const posterUrl = libraryEntry?.posterUrl || tmdbPoster || matchPosterUrl || '';
 
 	if (matchType === 'tv') {
@@ -254,7 +316,7 @@ export const GET: RequestHandler = async ({ url }) => {
 		});
 	}
 
-	const files = movieFileList as { fid: number; quality: string; name: string; size: string }[];
+	const files = movieFileList as { fid: number; quality: string; name: string; size: string; shareKey?: string }[];
 	const defaultFile =
 		files.find((f) => f.quality === '1080p') ??
 		files.find((f) => f.quality === '720p') ??
@@ -262,7 +324,12 @@ export const GET: RequestHandler = async ({ url }) => {
 
 	let streamUrl = '';
 	let streamDebug: string | undefined;
-	if (febboxToken) {
+	const aniwave = parseAniwaveShareKey(defaultFile.shareKey ?? '');
+	if (aniwave) {
+		// Another source's film plays through Catalog's relay, like its episodes.
+		const stream = await aniwaveStream(aniwave.id, aniwave.episode, aniwave.kind);
+		if (stream) streamUrl = `/api/watch/relay?u=${encodeURIComponent(stream.url)}`;
+	} else if (febboxToken) {
 		const result = await getStreamUrl(shareKey, defaultFile.fid, febboxToken);
 		streamUrl = result.url ?? '';
 		streamDebug = result.debug;

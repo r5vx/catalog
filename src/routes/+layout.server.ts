@@ -1,6 +1,7 @@
 import { readSettings } from '$lib/server/settings';
 import { DEFAULT_ACCENT, isHexColour } from '$lib/accent';
 import { warmBrowseCache } from '$lib/server/metadata';
+import { showboxSignin } from '$lib/server/showboxSignin';
 import type { LayoutServerLoad } from './$types';
 
 let browseWarmed = false;
@@ -22,6 +23,7 @@ export const load: LayoutServerLoad = async () => {
 		tabOrder: (settings.tabOrder ?? '').split(',').filter(Boolean),
 		theme: settings.theme ?? '',
 		wideLayout: settings.wideLayout === '1',
-		poisonMode: settings.poisonMode === '1'
+		poisonMode: settings.poisonMode === '1',
+		showboxSignin: showboxSignin()
 	};
 };

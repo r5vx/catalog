@@ -697,16 +697,60 @@ which records what a site's page loads while the owner browses it.
   it was the first bug). A profile that never passed their check gets 403: the subtitle menu
   then offers "Get anime.nexus subtitles", which shows their page until the lookup goes through.
   "English CC" is the dub-accurate one. Every line in it is bold, which the player drops.
+- **AnimeTosho** (`sources/animetosho.ts`, animetosho.net — the old feed.animetosho.org is gone;
+  the feed is feed.animetosho.net/json): automatic official subtitles, no check. Searches
+  "<name> S01E05" / "<name> 05" (player's numbering), prefers Crunchyroll multi-sub releases
+  (VARYG, ToonsHub), reads the release page's `/download/<id>/subs/file/<n>` links. Files come
+  xz-compressed (`xz-decompress` in `downloadSubtitle`). "English (SDH)" = dub CC; unnamed older
+  releases: the English SRT next to an English ASS is the CC, otherwise the unnamed tracks are
+  downloaded and the one full of sound cues ("[gasps]", ♪) is the CC. Picture subtitles (PGS,
+  VobSub) are skipped. AnimeTosho comes first; anime.nexus is only asked when it has nothing.
+  Season packs: each file inside has its own page (`/file/<name>.<id>`, listed on the pack's
+  /view page) with that episode's subtitle links — used when no single-episode copy has CC.
+  Search terms lose their punctuation ("-word" means NOT in AnimeTosho's search). Names like
+  "Season 2 - 03" / "2nd Season - 03" count as S02E03. Unnamed tracks are always looked inside:
+  under 40 lines = signs, none = dropped, full of sound cues = CC.
+- Kept subtitles: table `saved_subtitles` (url → show, content). `/api/watch/subtitle-content`
+  serves a kept copy first and keeps new ones (key `url#SxE` for season packs); opening an
+  anime episode keeps the rest of its season from AnimeTosho in the background
+  (`keepSeasonSubtitles`). `forgetFinishedSubtitles` (startup, hourly, home page) drops shows
+  completed, unwatched 7 days, or hidden from Continue Watching. Not in backups or exports.
 - **Placing seasons** (`sources/index.ts`): these sites list each season (or half-season) as its
   own show. Each is put in the TMDB season that started within 60 days before it, the next
   ones in that season following on. Search with AniList's romaji exactly ("JoJo no Kimyou na
   Bouken (TV)") — their quick search only shows five results. When Showbox numbers seasons its
   own way (Re:Zero: TMDB one season of 85, Showbox four), episodes are matched by counting from
-  the show's first, only if every Showbox season begins where an Aniwave series does. The list
-  waits 6 s for Aniwave at most (`partial`, not cached, so it joins next time). anime.nexus is
-  looked up through the episode's Aniwave copy (`ref`), which gives TMDB's numbering.
+  the show's first, only if every Showbox season begins where an Aniwave series does, or
+  Showbox's seasons add up to exactly where a TMDB season ends (Black Clover: 51+51+52+16 =
+  TMDB's 170; TMDB's later seasons then follow as new ones). Showbox sometimes files episodes
+  under whole-series numbers (Black Clover's "season 1" is S01E52–S01E128): `wholeSeriesNumbers`
+  moves those first, under the same add-up rule. Episode names only use TMDB's same-numbered
+  season when it starts at the same episode. The list waits 6 s for Aniwave at most (`partial`,
+  not cached, so it joins next time). anime.nexus is looked up through the episode's Aniwave copy
+  (`ref`), which gives TMDB's numbering; AnimeTosho also searches the whole-series number.
+- Aniwave's "sub" flag means Japanese audio, often only with burned-in subtitles. The Japanese
+  file plays S-Sub when the series has it (`aniwaveHasSoftSub`, checked on its first episode,
+  kept a week), otherwise the burned-in "sub" copy (`burnedIn`, kind `sub`; Catalog's own
+  subtitles don't switch on over it). Black Clover and Memory Snow have only burned-in + dub.
+- **Showbox folders come 50 files a page** (`file_share_list&page=N`); `listFebboxFiles` reads
+  every page. Before 2026-10-10 only page 1 was read, so long seasons lost episodes.
+- Films: TMDB lists anime films under Anime, so the title page works out `watchType` (TMDB
+  `movie:` id, AniList MOVIE, one-episode OVA) — sending them as "tv" opened the show. A film
+  Showbox lacks plays from Aniwave (`aniwaveFilm`, exact name + year, needs AniList to know it).
+  A show's films (TMDB `/search/movie` by its name, animated, name starts with the show's) are
+  searched on Aniwave by their own names and go in Specials, in release order, "· Movie".
+  Subtitles for a film (or a film in Specials, via `aniwaveExtra`) are looked up by its name
+  (`toshoFilmSubtitles`, OpenSubtitles as a movie). TMDB's top hit for one Re:Zero film is the
+  other: `fetchImdbId` prefers the exact title.
 - The Watch button's check (`src/lib/server/availability.ts`) asks Showbox and Aniwave at once,
   first "yes" wins, answers kept (yes a day, no an hour); the title page starts it during load.
+- OVAs/specials (Aniwave types OVA, Special, TV Special, named after the show) go to season 0
+  in release order, after Showbox's own specials, with their own names (`ListedEpisode.name`;
+  TMDB's season 0 is too cluttered to match). Kept even when the seasons can't be lined up.
+- Waiting on other sites: subtitle sites are asked at once (2.5 s after OpenSubtitles, 6 s max;
+  late answers kept an hour); search gives AniList and its season grouping 3 s each; Browse
+  shows stale rows and refreshes behind. Every outside fetch gets a 15 s limit unless it has one,
+  and ones over 2 s are listed in /api/diagnostics `slowRequests` (`src/lib/server/slowRequests.ts`).
 - An Aniwave file carries its own `shareKey` (`aniwave:<id>:<episode>:<ssub|dub>`) and
   `source`; `pickFile` takes Showbox's first. Don't hammer these sites while testing either.
 

@@ -164,6 +164,14 @@ function dedupe(scored: Scored[]): Scored[] {
 type SearchOptions = { year?: number | null; limit?: number; fuzzy?: boolean };
 
 /** Search both providers at once and return one merged, ranked list. */
+/**
+ * `work`'s answer if it comes within `ms`, otherwise `fallback`. The work carries on either way,
+ * so what it learns (AniList's answers are kept) is there the next time.
+ */
+function within<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
+	return Promise.race([work, new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))]);
+}
+
 export async function searchAll(
 	query: string,
 	{ year = null, limit = 12, fuzzy = false }: SearchOptions = {}
@@ -171,7 +179,9 @@ export async function searchAll(
 	const trimmed = query.trim();
 	if (trimmed.length < 2) return [];
 
-	const [anime, other] = await Promise.all([searchAniList(trimmed), searchTmdb(trimmed, fuzzy)]);
+	// AniList can take several seconds to answer; TMDB has the anime too, so search doesn't
+	// wait more than three for it.
+	const [anime, other] = await Promise.all([within(searchAniList(trimmed), 3000, []), searchTmdb(trimmed, fuzzy)]);
 
 	const scored = [...anime, ...other].map((result) => ({
 		result,
@@ -183,7 +193,9 @@ export async function searchAll(
 		.map((item) => item.result)
 		.slice(0, limit * 3);
 
-	return sameShowOnce(await groupByShow(ranked)).slice(0, limit);
+	// Folding seasons into one card asks AniList about each; three seconds at most, then the
+	// cards as they are (the answers it gets are kept, so next time they're folded).
+	return sameShowOnce(await within(groupByShow(ranked), 3000, ranked)).slice(0, limit);
 }
 
 /** After seasons fold into a first-season card, TMDB's copy of that same show can be left over. */
@@ -245,7 +257,35 @@ export async function browsePage(
 	const key = `${category}:${mode}:${page}:${region ?? ''}:${filterKey}`;
 	const cached = browseCache.get(key);
 	if (cached && Date.now() - cached.time < BROWSE_TTL) return cached.data;
+	// Older than that: shown straight away, and fetched fresh behind it for next time — the
+	// anime row needs AniList, which can take seconds.
+	if (cached) {
+		if (!refreshing.has(key)) {
+			refreshing.add(key);
+			fetchBrowsePage(category, mode, page, region, filters)
+				.then((data) => {
+					if (data.length) browseCache.set(key, { data, time: Date.now() });
+				})
+				.catch(() => {})
+				.finally(() => refreshing.delete(key));
+		}
+		return cached.data;
+	}
 
+	const data = await fetchBrowsePage(category, mode, page, region, filters);
+	if (data.length > 0) browseCache.set(key, { data, time: Date.now() });
+	return data;
+}
+
+const refreshing = new Set<string>();
+
+async function fetchBrowsePage(
+	category: string,
+	mode: BrowseMode,
+	page: number,
+	region?: string,
+	filters?: BrowseFilters
+): Promise<SearchResult[]> {
 	let data: SearchResult[];
 	if (category === 'anime') {
 		const dateSorted = filters?.sort === 'release_date_desc' || filters?.sort === 'release_date_asc';
@@ -254,12 +294,6 @@ export async function browsePage(
 	else if (category === 'movies') data = await trendingTmdb('movie', page, mode, region, filters);
 	else if (category === 'tv') data = await trendingTmdb('tv', page, mode, region, filters);
 	else data = [];
-
-	if (data.length > 0) {
-		browseCache.set(key, { data, time: Date.now() });
-	} else if (cached) {
-		return cached.data;
-	}
 	return data;
 }
 

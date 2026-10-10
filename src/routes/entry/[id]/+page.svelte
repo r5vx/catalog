@@ -197,7 +197,7 @@
 				<span class="pill {entry.status}">{pm ? p(statusLabel(entry.status)) : statusLabel(entry.status)}</span>
 				{#if entry.favorite}<span class="pill fav">{pm ? '★ Finch approved' : '★ Favourite'}</span>{/if}
 				<a
-					href="/watch?title={encodeURIComponent(entry.title)}&type={category?.slug === 'movies' ? 'movie' : 'tv'}{entry.year ? `&year=${entry.year}` : ''}&auto=1"
+					href="/watch?title={encodeURIComponent(entry.title)}&type={category?.slug === 'movies' || entry.sourceId?.startsWith('movie:') ? 'movie' : 'tv'}{entry.year ? `&year=${entry.year}` : ''}&auto=1"
 					class="pill watch"
 					class:disabled={!showbox.up}
 					title={showbox.up ? 'Watch now' : 'showbox.media is down'}

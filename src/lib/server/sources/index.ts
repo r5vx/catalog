@@ -12,11 +12,19 @@
  */
 import { normalizeTitle, withoutQualifier } from '../metadata/types';
 import { fetchRomajiTitle } from '../metadata/anilist';
+import { tmdbGet } from '../metadata/tmdb';
 import { anilistResting } from '../metadata/anilistNodes';
 import { getOrderCache, saveOrderCache } from '../db/queries';
 import type { TmdbShow } from '../combinedEpisodes';
 import type { FileOption } from '../showbox';
-import { searchAniwave, aniwaveEpisodes, aniwaveShareKey, type AniwaveEntry } from './aniwave';
+import {
+	searchAniwave,
+	aniwaveEpisodes,
+	aniwaveShareKey,
+	aniwaveHasSoftSub,
+	type AniwaveEntry,
+	type AniwaveEpisode
+} from './aniwave';
 import { searchNexus, nexusEpisodes, nexusSubtitles, type NexusShow, type NexusSubtitle } from './animenexus';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -106,6 +114,8 @@ function searchTerms(show: TmdbShow, title: string, names: string[]): string[] {
 		const named = normalizeTitle(s.name);
 		terms.push(/^season \d+$/.test(named) ? `${show.name} season ${s.number}` : `${show.name} ${s.name}`);
 	}
+	// OVAs and specials rarely make a show's top five on their own.
+	terms.push(`${show.name} OVA`, ...names.filter((n) => n !== show.name).map((n) => `${withoutQualifier(n)} OVA`));
 	return [...new Set(terms.map((t) => t.trim()).filter(Boolean))];
 }
 
@@ -121,17 +131,42 @@ function saved<T>(key: string, maxAge: number): T | undefined {
 
 /* ------------------------------------------------ Aniwave */
 
-type AniwavePlaced = Placed & { id: number };
+/** `label`: an OVA, special or film's own name, for the Specials tab. `film`: it's a film. */
+type AniwavePlaced = Placed & { id: number; label?: string; film?: boolean };
+
+/**
+ * The show's films, from TMDB: animated films whose names start with the show's ("Re:ZERO
+ * -Starting Life in Another World- Memory Snow"), with when they came out. Kept a week.
+ */
+async function tmdbFilms(show: TmdbShow): Promise<{ title: string; date: string }[]> {
+	const key = `tmdb-films|${show.id}`;
+	const known = saved<{ title: string; date: string }[]>(key, 7 * DAY);
+	if (known) return known;
+	type Found = { results: { title: string; release_date?: string; genre_ids?: number[] }[] };
+	const found = await tmdbGet<Found>('/search/movie', { query: show.name });
+	if (!found) return [];
+	const showWords = words(show.name);
+	const films = found.results
+		// TMDB's "Animation" genre is 16.
+		.filter((r) => r.release_date && (r.genre_ids ?? []).includes(16))
+		.filter((r) => words(r.title).length > showWords.length && startsWith(words(r.title), showWords))
+		.map((r) => ({ title: r.title, date: r.release_date! }));
+	saveOrderCache(key, films, Date.now());
+	return films;
+}
 
 async function placeAniwave(show: TmdbShow, title: string): Promise<AniwavePlaced[]> {
-	const key = `aniwave-placed|${show.id}`;
+	const key = `aniwave-placed3|${show.id}`;
 	const known = saved<AniwavePlaced[]>(key, 6 * HOUR);
 	if (known) return known;
 
 	const found = new Map<number, AniwaveEntry>();
 	const names = await namesFor(show, title);
-	// All the searches at once, then every series' episode count at once.
-	for (const results of await Promise.all(searchTerms(show, title, names).map(searchAniwave))) {
+	// All the searches at once, then every series' episode count at once. The show's films are
+	// searched by their own names: a search for the show only shows its seasons.
+	const films = await tmdbFilms(show).catch(() => []);
+	const terms = [...searchTerms(show, title, names), ...films.map((f) => f.title)];
+	for (const results of await Promise.all(terms.map(searchAniwave))) {
 		for (const entry of results) found.set(entry.id, entry);
 	}
 	const series = [...found.values()].filter((e) => /^(tv|ona)$/i.test(e.type.trim()));
@@ -145,47 +180,140 @@ async function placeAniwave(show: TmdbShow, title: string): Promise<AniwavePlace
 		start: e.start,
 		count: async () => counts.get(e.id) ?? 0
 	}));
-	const placed = (await place(show, names, candidates)).map((p) => ({ ...p, id: Number(p.key) }));
+	const placed: AniwavePlaced[] = (await place(show, names, candidates)).map((p) => ({ ...p, id: Number(p.key) }));
+
+	// OVAs, specials and films: the Specials tab, in the order they came out, under their own names.
+	const titleWords = names.map(words);
+	const extras = [...found.values()]
+		.filter((e) => /^(ova|special|tv special|movie)$/i.test(e.type.trim()) && e.start)
+		.filter((e) => [e.name, e.jp].some((n) => n && titleWords.some((t) => startsWith(words(n), t))))
+		.sort((a, b) => Date.parse(a.start!) - Date.parse(b.start!));
+	const extraCounts = await Promise.all(extras.map(async (e) => (await aniwaveEpisodes(e.id)).length));
+	let next = 0;
+	extras.forEach((e, i) => {
+		if (!extraCounts[i]) return;
+		const film = /^movie$/i.test(e.type.trim());
+		placed.push({ key: String(e.id), season: 0, offset: next, id: e.id, label: e.name, ...(film ? { film } : {}) });
+		next += extraCounts[i];
+	});
+
 	// Matched without AniList's Japanese name (it was resting): good enough for now, redone next time.
 	if (!anilistResting()) saveOrderCache(key, placed, Date.now());
 	return placed;
 }
 
 /**
- * Aniwave's copies of a show's episodes, by "season-episode": a Japanese-audio file (S-Sub,
- * no subtitles in the picture) and an English dub, whichever the episode has.
+ * What an OVA's name adds to the show's: "Attack on Titan: No Regrets" → "No Regrets",
+ * "Attack on Titan OAD" → "OAD", "Haikyuu!! (OVA)" → "OVA".
  */
-export async function aniwaveFiles(show: TmdbShow, title: string): Promise<Map<string, FileOption[]>> {
-	const files = new Map<string, FileOption[]>();
+function ownPart(label: string, names: string[]): string {
+	const tokens = label.split(/\s+/);
+	for (const name of names) {
+		const count = name.split(/\s+/).length;
+		if (count < tokens.length && normalizeTitle(tokens.slice(0, count).join(' ')) === normalizeTitle(name)) {
+			return tokens.slice(count).join(' ').replace(/^[\s:\-–]+/, '').replace(/^\((.*)\)$/, '$1').trim();
+		}
+	}
+	return label;
+}
+
+/**
+ * A special's name in the Specials tab: its episode's title, with what the OVA's name adds when
+ * the title doesn't already say it ("OAD: Distress", "No Regrets: Part 1"), or the OVA's name and
+ * episode number when there's no title ("OVA · Episode 2").
+ */
+function specialName(label: string, names: string[], episodeTitle: string, number: number, count: number): string {
+	const own = ownPart(label, names) || label;
+	if (!episodeTitle) return count > 1 ? `${own} · Episode ${number}` : own;
+	const lastPart = own.split(/\s+-\s+|:\s*/).pop()!.toLowerCase();
+	return episodeTitle.toLowerCase().includes(lastPart) ? episodeTitle : `${own}: ${episodeTitle}`;
+}
+
+/**
+ * One episode's files on Aniwave: Japanese audio (without subtitles in the picture when the series
+ * has that, `clean`; otherwise with them) and the English dub, whichever it has.
+ */
+function copiesOf(id: number, e: AniwaveEpisode, name: string, clean: boolean): FileOption[] {
+	const list: FileOption[] = [];
+	if (e.sub) {
+		list.push({
+			fid: -1,
+			quality: '1080p',
+			name: `${name} · Japanese audio${clean ? '' : ', subtitles in the picture'}`,
+			size: '',
+			source: 'Aniwave',
+			audio: 'Japanese',
+			...(clean ? {} : { burnedIn: true }),
+			shareKey: aniwaveShareKey(id, e.number, clean ? 'ssub' : 'sub')
+		});
+	}
+	if (e.dub) {
+		list.push({
+			fid: -2,
+			quality: '720p',
+			name: `${name} · English dub`,
+			size: '',
+			source: 'Aniwave',
+			audio: 'English',
+			shareKey: aniwaveShareKey(id, e.number, 'dub')
+		});
+	}
+	return list;
+}
+
+/**
+ * A film (or one-off OVA or special) on Aniwave, by its exact name in English or Japanese and the
+ * year it came out: its files, for one Showbox doesn't have (Re:Zero's Memory Snow). Null when
+ * Aniwave has nothing that's certainly it.
+ */
+export async function aniwaveFilm(title: string, year: string): Promise<FileOption[] | null> {
+	// Only anime is on Aniwave: a film AniList doesn't know isn't looked for.
+	const romaji = await fetchRomajiTitle(title).catch(() => null);
+	if (!romaji) return null;
+	const asked = [title, ...(romaji !== title ? [romaji] : [])];
+	const wanted = new Set(asked.map((t) => words(t).join(' ')));
+	const results = (await Promise.all(asked.map(searchAniwave))).flat();
+	const entry = results.find(
+		(e) =>
+			/^(movie|ova|special|tv special|ona)$/i.test(e.type.trim()) &&
+			[e.name, e.jp].some((n) => n && wanted.has(words(n).join(' '))) &&
+			(!year || !e.start || Math.abs(Number(e.start.slice(0, 4)) - Number(year)) <= 1)
+	);
+	if (!entry) return null;
+	const first = (await aniwaveEpisodes(entry.id))[0];
+	if (!first) return null;
+	const files = copiesOf(entry.id, first, entry.name, await aniwaveHasSoftSub(entry.id));
+	return files.length ? files : null;
+}
+
+/** An episode's copies on Aniwave, and its name there (an OVA's own name, for the Specials tab). */
+export type AniwaveCopies = { files: FileOption[]; name?: string };
+
+/**
+ * Aniwave's copies of a show's episodes, by "season-episode": a Japanese-audio file (S-Sub,
+ * no subtitles in the picture) and an English dub, whichever the episode has. OVAs and
+ * specials are season 0, numbered in the order they came out.
+ */
+export async function aniwaveFiles(show: TmdbShow, title: string): Promise<Map<string, AniwaveCopies>> {
+	const files = new Map<string, AniwaveCopies>();
 	if (!show.anime) return files;
 	try {
-		for (const p of await placeAniwave(show, title)) {
-			for (const e of await aniwaveEpisodes(p.id)) {
+		const names = await namesFor(show, title);
+		const placed = await placeAniwave(show, title);
+		// Series with no Japanese copy free of burned-in subtitles offer the burned-in one instead.
+		const softSub = new Map(await Promise.all(placed.map(async (p) => [p.id, await aniwaveHasSoftSub(p.id)] as const)));
+		for (const p of placed) {
+			const episodes = await aniwaveEpisodes(p.id);
+			for (const e of episodes) {
 				const episode = p.offset + e.number;
-				const list: FileOption[] = [];
-				if (e.sub) {
-					list.push({
-						fid: -1,
-						quality: '1080p',
-						name: `${show.name} S${p.season}E${episode} · Japanese audio`,
-						size: '',
-						source: 'Aniwave',
-						audio: 'Japanese',
-						shareKey: aniwaveShareKey(p.id, e.number, 'ssub')
-					});
-				}
-				if (e.dub) {
-					list.push({
-						fid: -2,
-						quality: '720p',
-						name: `${show.name} S${p.season}E${episode} · English dub`,
-						size: '',
-						source: 'Aniwave',
-						audio: 'English',
-						shareKey: aniwaveShareKey(p.id, e.number, 'dub')
-					});
-				}
-				if (list.length) files.set(`${p.season}-${episode}`, list);
+				// A film is named as one ("Memory Snow · Movie").
+				const name = p.film
+					? `${ownPart(p.label!, names) || p.label} · Movie`
+					: p.label
+						? specialName(p.label, names, e.title, e.number, episodes.length)
+						: e.title || undefined;
+				const list = copiesOf(p.id, e, `${show.name} S${p.season}E${episode}`, softSub.get(p.id) ?? true);
+				if (list.length) files.set(`${p.season}-${episode}`, { files: list, name });
 			}
 		}
 	} catch (error) {
@@ -203,7 +331,15 @@ export function episodesBefore(show: TmdbShow, season: number): number {
 
 /** Where each of Aniwave's series for the show begins, counting from the show's first episode (1 = the first). */
 export async function aniwaveSeriesStarts(show: TmdbShow, title: string): Promise<number[]> {
-	return (await placeAniwave(show, title)).map((p) => episodesBefore(show, p.season) + p.offset + 1);
+	return (await placeAniwave(show, title))
+		.filter((p) => p.season > 0)
+		.map((p) => episodesBefore(show, p.season) + p.offset + 1);
+}
+
+/** An OVA, special or film's own name on Aniwave (a Specials episode), by its Aniwave series. */
+export async function aniwaveExtra(show: TmdbShow, title: string, aniwaveId: number): Promise<{ name: string; film: boolean } | null> {
+	const p = (await placeAniwave(show, title)).find((p) => p.id === aniwaveId && p.season === 0);
+	return p?.label ? { name: p.label, film: Boolean(p.film) } : null;
 }
 
 /** The TMDB season and episode of an Aniwave episode (its series and its own number there). */

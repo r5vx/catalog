@@ -5,6 +5,7 @@
 	import BackBar from '$lib/BackBar.svelte';
 	import { p, pRandom } from '$lib/poison';
 	import type { SearchResult } from '$lib/server/metadata/types';
+	import { titleKey } from '$lib/titleKey';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -95,7 +96,10 @@
 	/* ------------------------------------------------- what you already have */
 
 	const owned = $derived(data.owned as Record<string, number>);
+	const posters = $derived((data.posters ?? {}) as Record<number, string>);
 	const keyOf = (result: SearchResult) => `${result.source}:${result.sourceId}`;
+	/** In the library from the other site (an AniList result for a TMDB entry): same title and year. */
+	const ownedByTitle = (result: SearchResult) => (result.year ? owned[titleKey(result.title, result.year)] : undefined);
 
 	/** Added during this visit — the page doesn't reload, so it tracks its own. */
 	let justAdded = $state<Record<string, number>>({});
@@ -106,12 +110,18 @@
 	const have = (result: SearchResult) => {
 		const k = keyOf(result);
 		if (justRemoved.has(k)) return false;
-		return k in owned || k in justAdded;
+		return k in owned || k in justAdded || ownedByTitle(result) !== undefined;
 	};
+
+	/** In the library: its poster there, so the two match. */
+	function posterOf(result: SearchResult): string | null {
+		const id = entryIdOf(result);
+		return (id && posters[id]) || result.posterUrl || null;
+	}
 
 	function entryIdOf(result: SearchResult): number | null {
 		const k = keyOf(result);
-		return justAdded[k] ?? owned[k] ?? null;
+		return justAdded[k] ?? owned[k] ?? ownedByTitle(result) ?? null;
 	}
 
 	async function remove(result: SearchResult) {
@@ -477,8 +487,8 @@
 	<li class="card has-more" class:mine={have(result)} oncontextmenu={(e) => onCardContext(e, result)}>
 		<a href={link(result)} class="card-link" aria-label={result.title} onclick={saveScroll}></a>
 		<div class="poster">
-			{#if result.posterUrl}
-				<img src={result.posterUrl} alt="" loading="lazy" />
+			{#if posterOf(result)}
+				<img src={posterOf(result)} alt="" loading="lazy" />
 			{:else}
 				<span class="fallback" aria-hidden="true">?</span>
 			{/if}
@@ -564,7 +574,7 @@
 	<div class="ctx-menu" style="left: {ctxMenu.x}px; top: {ctxMenu.y}px;">
 		<button type="button" onclick={() => {
 			const r = ctxMenu!.result;
-			const t = r.kind === 'Movie' ? 'movie' : 'tv';
+			const t = r.kind === 'Movie' || r.sourceId.startsWith('movie:') ? 'movie' : 'tv';
 			goto(`/watch?title=${encodeURIComponent(r.title)}&type=${t}${r.year ? `&year=${r.year}` : ''}&auto=1`);
 			closeCtx();
 		}}>

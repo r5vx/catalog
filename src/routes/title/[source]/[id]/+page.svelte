@@ -44,8 +44,7 @@
 	$effect(() => {
 		if (details.unreleased) return;
 		checkingWatch = true;
-		const type = details.categorySlug === 'movies' ? 'movie' : 'tv';
-		const params = new URLSearchParams({ title: details.title ?? '', type });
+		const params = new URLSearchParams({ title: details.title ?? '', type: data.watchType });
 		if (details.year) params.set('year', String(details.year));
 		fetch(`/api/watch/available?${params}`)
 			.then((r) => r.json())
@@ -109,7 +108,7 @@
 				{#if !details.unreleased}
 					{#if watchAvailable === true}
 						<a
-							href="/watch?title={encodeURIComponent(details.title ?? '')}&type={details.categorySlug === 'movies' ? 'movie' : 'tv'}{details.year ? `&year=${details.year}` : ''}&auto=1"
+							href="/watch?title={encodeURIComponent(details.title ?? '')}&type={data.watchType}{details.year ? `&year=${details.year}` : ''}&auto=1"
 							class="btn btn-watch"
 						>▶ Watch</a>
 					{:else if watchAvailable === false}

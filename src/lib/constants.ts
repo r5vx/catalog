@@ -63,6 +63,8 @@ type Sortable = {
 	metascore?: number | null;
 	externalRating?: number | null;
 	externalVotes?: number | null;
+	rating?: number | null;
+	rewatches?: number | null;
 	createdAt?: string | null;
 	updatedAt?: string | null;
 	finishedOn?: string | null;
@@ -95,7 +97,7 @@ const cash = (amount: number | null | undefined) => {
  *
  * Sorting by box office and then having to open each title to see the figure
  * is no use — the number you sorted on should be the number on the card.
- * Returns null where the card already shows it (year, your rating) or where
+ * Returns null where the card already shows it (title, year) or where
  * there's nothing to show.
  */
 export function sortBadge(entry: Sortable, sort: string): string | null {
@@ -118,8 +120,14 @@ export function sortBadge(entry: Sortable, sort: string): string | null {
 			return shortDate(entry.updatedAt);
 		case 'finished':
 			return shortDate(entry.finishedOn);
+		case 'rating':
+			return entry.rating == null ? null : `★ ${entry.rating.toFixed(1)}`;
+		case 'public':
+			return entry.externalRating == null ? null : entry.externalRating.toFixed(1);
+		case 'rewatches':
+			return entry.rewatches ? `Watched ×${entry.rewatches + 1}` : null;
 		default:
-			// Title, year and the rating sorts are already on the card.
+			// Title and year are already on the card.
 			return null;
 	}
 }

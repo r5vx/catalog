@@ -153,6 +153,8 @@
 
 	const downloading = $derived(release.status === 'downloading');
 
+	const TAG = { new: 'New', improved: 'Improved', fixed: 'Fixed' } as const;
+
 	let expandedVersions = $state<Set<string>>(new Set());
 
 	function toggleVersion(version: string) {
@@ -281,19 +283,27 @@
 					<button class="release-toggle" onclick={() => toggle(rel.version, i)}>
 						<svg class="chevron" class:open viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg>
 						<span class="release-title">
-							{rel.version}
+							<span class="version">{rel.version === 'Unreleased' ? 'Coming next' : `Version ${rel.version}`}</span>
 							{#if rel.title}<span class="release-subtitle">{rel.title}</span>{/if}
 							{#if rel.version === data.appVersion}<span class="pill completed">Yours</span>{/if}
 						</span>
 						{#if rel.date}<span class="when faint tabular">{rel.date}</span>{/if}
 					</button>
 					{#if open}
-						<ul>
-							{#each rel.bullets as bullet, index (index)}
-								<li>
-									{#each bullet as run, part (part)}
-										{#if run.bold}<strong>{run.text}</strong>{:else}{run.text}{/if}
-									{/each}
+						<ul class="change-list">
+							{#each rel.changes as change, index (index)}
+								<li class="change">
+									<span class="tag tag-{change.kind}">{TAG[change.kind]}</span>
+									{#if change.area}
+										<div class="change-body">
+											<span class="area">{change.area}</span>
+											<ul class="area-items">
+												{#each change.items as item, n (n)}<li>{item}</li>{/each}
+											</ul>
+										</div>
+									{:else}
+										<span class="change-body">{change.items[0]}</span>
+									{/if}
 								</li>
 							{/each}
 						</ul>
@@ -440,13 +450,20 @@
 		font-size: 1.1rem;
 	}
 
-	.release {
-		width: 100%;
-		border-bottom: 1px solid var(--rule);
+	.changes {
+		gap: 12px;
 	}
 
-	.release:last-child {
-		border-bottom: none;
+	.release {
+		width: 100%;
+		background: var(--surface);
+		border: 1px solid var(--rule);
+		border-radius: var(--radius);
+		padding: 0 16px;
+	}
+
+	.release.collapsed .release-toggle {
+		padding-bottom: 12px;
 	}
 
 	.release-toggle {
@@ -454,7 +471,7 @@
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		padding: 14px 0;
+		padding: 12px 0 10px;
 		background: none;
 		border: none;
 		cursor: pointer;
@@ -469,6 +486,8 @@
 
 	.chevron {
 		flex: none;
+		align-self: flex-start;
+		margin-top: 4px;
 		transition: transform 0.2s ease;
 		transform: rotate(-90deg);
 		opacity: 0.5;
@@ -479,40 +498,92 @@
 	}
 
 	.release-title {
-		font-size: 0.95rem;
-		font-weight: 700;
 		display: flex;
-		align-items: center;
-		gap: 8px;
+		align-items: baseline;
+		flex-wrap: wrap;
+		gap: 4px 10px;
+	}
+
+	.version {
+		font-size: 1.05rem;
+		font-weight: 700;
+		color: var(--accent);
 	}
 
 	.release-subtitle {
-		font-weight: 600;
-		color: var(--ink);
-		font-size: 0.95rem;
-	}
-
-	.release-subtitle::before {
-		content: '— ';
+		font-weight: 500;
+		color: var(--ink-soft);
+		font-size: 0.88rem;
 	}
 
 	.when {
 		font-size: 0.78rem;
 		font-weight: 400;
 		margin-left: auto;
+		white-space: nowrap;
+		align-self: flex-start;
+		padding-top: 4px;
 	}
 
-	.changes ul {
+	/* One row per change: its tag, then what changed. */
+	.change-list {
+		list-style: none;
 		margin: 0;
+		padding: 2px 0 14px;
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.change {
+		display: flex;
+		align-items: flex-start;
+		gap: 12px;
+		font-size: 0.9rem;
+		line-height: 1.45;
+		color: var(--ink);
+	}
+
+	.tag {
+		flex: none;
+		width: 74px;
+		text-align: center;
+		padding: 2px 0;
+		border-radius: var(--radius-sm);
+		font-size: 0.62rem;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--surface);
+		margin-top: 1px;
+	}
+
+	.tag-new {
+		background: var(--good);
+	}
+
+	.tag-improved {
+		background: var(--warn);
+	}
+
+	.tag-fixed {
+		background: var(--accent);
+	}
+
+	.change-body {
+		min-width: 0;
+	}
+
+	.area {
+		font-weight: 600;
+	}
+
+	.area-items {
+		margin: 3px 0 0;
 		padding-left: 1.1em;
 		display: flex;
 		flex-direction: column;
-		gap: 5px;
-	}
-
-	.changes li {
-		font-size: 0.9rem;
-		line-height: 1.55;
+		gap: 2px;
 		color: var(--ink-soft);
 	}
 </style>

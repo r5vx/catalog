@@ -1,6 +1,7 @@
 <script lang="ts">
 	import '../app.css';
 	import UpdateBanner from '$lib/UpdateBanner.svelte';
+	import SigninBanner from '$lib/SigninBanner.svelte';
 	import ConfirmDialog from '$lib/ConfirmDialog.svelte';
 	import { navigating } from '$app/state';
 	import { beforeNavigate } from '$app/navigation';
@@ -62,6 +63,7 @@
 		<div class="nav-progress" aria-hidden="true"></div>
 	{/if}
 	<UpdateBanner />
+	<SigninBanner signin={data?.showboxSignin} />
 	{@render children()}
 	<ConfirmDialog />
 </div>

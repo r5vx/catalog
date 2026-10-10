@@ -10,7 +10,7 @@ import { searchShowbox, bestMatch } from './showbox';
 import { fetchAlternativeTitles } from './metadata/tmdb';
 import { fetchRomajiTitle } from './metadata/anilist';
 import { tmdbShow } from './combinedEpisodes';
-import { aniwaveFiles } from './sources';
+import { aniwaveFiles, aniwaveFilm } from './sources';
 import { getOrderCache, saveOrderCache } from './db/queries';
 
 const HOUR = 60 * 60 * 1000;
@@ -38,8 +38,8 @@ async function onShowbox(title: string, type: string, year: string): Promise<boo
 	return false;
 }
 
-async function onOtherSource(title: string, type: string): Promise<boolean> {
-	if (type === 'movie') return false;
+async function onOtherSource(title: string, type: string, year: string): Promise<boolean> {
+	if (type === 'movie') return Boolean(await aniwaveFilm(title, year));
 	const show = await tmdbShow(title.replace(/\s+(season|s)\s*\d+\s*$/i, '').trim(), '');
 	if (!show?.anime) return false;
 	return (await aniwaveFiles(show, title)).size > 0;
@@ -67,7 +67,7 @@ export function isAvailable(title: string, type: string, year: string): Promise<
 
 	const running = underWay.get(key);
 	if (running) return running;
-	const check = firstYes([onShowbox(title, type, year), onOtherSource(title, type)]).then((yes) => {
+	const check = firstYes([onShowbox(title, type, year), onOtherSource(title, type, year)]).then((yes) => {
 		saveOrderCache(key, yes, Date.now());
 		underWay.delete(key);
 		return yes;

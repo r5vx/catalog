@@ -30,6 +30,8 @@
 		shareKey?: string;
 		/** "Japanese" or "English", when the source says. */
 		audio?: string;
+		/** Subtitles are part of the picture. */
+		burnedIn?: boolean;
 	}
 
 	/** Where a file plays from: its own source, or the episode's Showbox share. */
@@ -48,7 +50,8 @@
 
 	/** "1080p · 2.1 GB", or for another source's file "Japanese audio" / "English dub". */
 	function fileLabel(f: FileOption): string {
-		if (f.audio) return f.audio === 'English' ? 'English dub' : `${f.audio} audio`;
+		if (f.audio === 'English') return 'English dub';
+		if (f.audio) return f.burnedIn ? `${f.audio} audio · burned-in subs` : `${f.audio} audio`;
 		return f.size ? `${f.quality} · ${f.size}` : f.quality;
 	}
 
@@ -63,8 +66,17 @@
 		shareKey?: string;
 		/** False for an episode TMDB lists but no source has (shown greyed out). */
 		available?: boolean;
+		/** Its name from another source: an OVA's own name in Specials, or when TMDB has none. */
+		name?: string;
 		airDate?: string | null;
 	}
+
+	/**
+	 * An episode's name. In Specials, Aniwave's OVAs carry their own names (TMDB numbers its
+	 * specials differently); elsewhere TMDB's, with the source's own as a fallback.
+	 */
+	const nameOf = (ep: Episode): string | undefined =>
+		ep.season === 0 ? (ep.name ?? episodeNames[ep.episode]) : (episodeNames[ep.episode] ?? ep.name);
 
 	const playable = (ep: Episode | null | undefined): ep is Episode => Boolean(ep && ep.available !== false && ep.files.length);
 
@@ -307,11 +319,43 @@
 		return seg;
 	});
 
-	const subsByLanguage = $derived.by(() => {
+	/* Subtitle languages. Sites name them differently ("Brazillian-portuguese", "European
+	   Spanish", "spa", "es"), so each is grouped under a plain name. Only English shows unless
+	   you add more under "More languages"; what you add shows for everything from then on. */
+	const LANGUAGE_CODES: Record<string, string> = {
+		en: 'English', eng: 'English', es: 'Spanish', spa: 'Spanish', fr: 'French', fre: 'French', fra: 'French',
+		de: 'German', ger: 'German', deu: 'German', it: 'Italian', ita: 'Italian', pt: 'Portuguese', por: 'Portuguese',
+		pob: 'Portuguese', ar: 'Arabic', ara: 'Arabic', ru: 'Russian', rus: 'Russian', ja: 'Japanese', jpn: 'Japanese',
+		ko: 'Korean', kor: 'Korean', zh: 'Chinese', chi: 'Chinese', zht: 'Chinese', pl: 'Polish', pol: 'Polish',
+		nl: 'Dutch', dut: 'Dutch', tr: 'Turkish', tur: 'Turkish', id: 'Indonesian', ind: 'Indonesian',
+		vi: 'Vietnamese', vie: 'Vietnamese', th: 'Thai', tha: 'Thai', hi: 'Hindi', hin: 'Hindi', fa: 'Persian', per: 'Persian'
+	};
+
+	function languageOf(sub: SubOption): string {
+		const byCode = LANGUAGE_CODES[(sub.lang ?? '').toLowerCase()];
+		if (byCode) return byCode;
+		const word = (sub.language || 'Other').split(/[\s_\-(]+/).find((w) => !/^(european|latin|american|brazilian|brazillian|canadian)$/i.test(w)) ?? sub.language;
+		return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+	}
+
+	const SUB_LANGUAGES = 'catalog:subLanguages';
+	let subLanguages = $state<string[]>(['English']);
+	let showMoreLanguages = $state(false);
+
+	function toggleSubLanguage(language: string) {
+		subLanguages = subLanguages.includes(language)
+			? subLanguages.filter((l) => l !== language)
+			: [...subLanguages, language];
+		try { localStorage.setItem(SUB_LANGUAGES, JSON.stringify(subLanguages)); } catch {}
+	}
+
+	/** Every language this video has subtitles in, English first. */
+	const subsByLanguageAll = $derived.by(() => {
 		const groups: Record<string, SubOption[]> = {};
 		for (const sub of febboxSubs) {
-			if (!groups[sub.language]) groups[sub.language] = [];
-			groups[sub.language].push(sub);
+			const language = sub.check ? 'English' : languageOf(sub);
+			if (!groups[language]) groups[language] = [];
+			groups[language].push(sub);
 		}
 		const entries = Object.entries(groups);
 		entries.sort((a, b) => {
@@ -321,6 +365,12 @@
 		});
 		return Object.fromEntries(entries);
 	});
+
+	/** The ones shown: English, and any languages you've added. */
+	const subsByLanguage = $derived(
+		Object.fromEntries(Object.entries(subsByLanguageAll).filter(([language]) => subLanguages.includes(language)))
+	);
+	const otherLanguages = $derived(Object.keys(subsByLanguageAll).filter((l) => l !== 'English'));
 
 	/* --------------------------------------------------------------- player control functions */
 
@@ -334,9 +384,23 @@
 			: `${m}:${String(sec).padStart(2, '0')}`;
 	}
 
+	/**
+	 * Paused on purpose. Nothing that reloads the video (a fresh link, a hiccup) starts it again,
+	 * and a paused video isn't "stuck".
+	 */
+	let userPaused = false;
+	/** The next load stays paused (a fresh link fetched while paused). */
+	let loadPaused = false;
+
 	function togglePlay() {
 		if (!videoEl) return;
-		videoEl.paused ? videoEl.play() : videoEl.pause();
+		if (videoEl.paused) {
+			userPaused = false;
+			videoEl.play();
+		} else {
+			userPaused = true;
+			videoEl.pause();
+		}
 	}
 
 	function seekTo(target: number) {
@@ -405,6 +469,7 @@
 			hlsActiveAudio = id;
 			const track = hlsInstance.audioTracks[id];
 			if (track) preferredAudioName = track.name || track.lang || '';
+			recheckSubsForAudio();
 		}
 	}
 
@@ -1041,7 +1106,9 @@
 				const pct = data.currentTime / data.duration;
 				if (pct >= 0.95 && showType === 'tv') {
 					const next = nextEpisode();
-					if (next) { playEpisode(next); return; }
+					// Finished already: on to the next one, leaving this one's finished place as it is
+					// (it has only just started playing, a few seconds in).
+					if (next) { playEpisode(next, true); return; }
 				}
 				if (pct < 0.95 || showType === 'tv') {
 					const seekTo = data.currentTime;
@@ -1054,7 +1121,10 @@
 					}
 				}
 			}
-			if (data && data.subUrl) {
+			// The subtitles that were on, back on. Not plain subtitles over the English dub: they were
+			// on for Japanese audio (captions, which follow the dub, still come back).
+			const forDub = /\bCC\b|SDH/i.test(data?.subFileName ?? '');
+			if (data && data.subUrl && (!hearingDub() || forDub)) {
 				loadSub({ id: '0', url: data.subUrl, lang: 'eng', language: 'English', fileName: data.subFileName || '' });
 				if (data.subDelay) subtitleDelay = data.subDelay;
 			}
@@ -1088,6 +1158,7 @@
 			if (!result.url) throw new Error();
 			if (result.debug) debugInfo = result.debug;
 			seekAfterLoad = savedTime;
+			loadPaused = userPaused;
 			streamUrl = result.url;
 			streamNonce++;
 		} catch {
@@ -1133,6 +1204,8 @@
 
 	function checkStall() {
 		if (!videoEl || loadingEpisode || changingQuality || refreshingStream) return;
+		// Paused on purpose: nothing downloading is normal, and a fresh link would start it playing.
+		if (userPaused) { clearStallWatch(); return; }
 		if (!videoEl.paused && videoEl.readyState >= 3) { clearStallWatch(); return; }
 
 		const now = performance.now();
@@ -1158,17 +1231,26 @@
 		}
 	}
 
-	/** Server-side link for the next episode, fetched while this one is already fully loaded. */
+	/** Server-side link for the next episode, fetched ahead so it starts at once. */
 	function prefetchNextEpisode() {
 		if (showType !== 'tv' || !shareKey || !videoEl || duration <= 0) return;
-		const remaining = duration - currentTime;
-		if (remaining > 180) return;
-		if (remaining > 60 && bufferedAhead() < remaining - 2) return;
 		const next = nextEpisode();
 		const file = next ? pickFor(next.files) : null;
-		if (!next || !file || file.source) return;
-		const share = next.shareKey || mainShareKey;
-		const key = `${share}:${file.fid}`;
+		if (!next || !file) return;
+		const remaining = duration - currentTime;
+		// Another source's link is a few quick lookups, so it's fetched early and kept fresh
+		// (asked again every four minutes; the server only re-fetches one that's getting old).
+		// Showbox's waits until this episode is fully loaded.
+		let round = '';
+		if (file.source) {
+			if (currentTime < 20) return;
+			round = `:${Math.floor(performance.now() / 240_000)}`;
+		} else {
+			if (remaining > 180) return;
+			if (remaining > 60 && bufferedAhead() < remaining - 2) return;
+		}
+		const share = file.source ? shareOf(file) : next.shareKey || mainShareKey;
+		const key = `${share}:${file.fid}${round}`;
 		if (key === nextPrefetchKey) return;
 		nextPrefetchKey = key;
 		fetch('/api/watch/prefetch', {
@@ -1200,6 +1282,7 @@
 		if (duration > 0 && currentTime >= duration - Math.min(120, duration * 0.1)) autosyncFinished();
 		flushQualityPrefetch();
 		prefetchNextEpisode();
+		autoSkipCheck();
 	}
 
 	function overallEpisodeNumber(ep: Episode): number {
@@ -1353,6 +1436,39 @@
 		try { localStorage.setItem('catalog-autoplay', autoplayNext ? '1' : '0'); } catch {}
 	}
 
+	/**
+	 * Auto-skip: intros and end credits are skipped without pressing anything. Credits that run to
+	 * the end go straight to the next episode (or past them, when there's a scene after). Each is
+	 * skipped once per episode, so going back into an intro on purpose lets it play. Only
+	 * shows with known intro times (anime) have anything to skip.
+	 */
+	let autoSkip = $state(false);
+	const autoSkipped = new Set<string>();
+
+	function toggleAutoSkip() {
+		autoSkip = !autoSkip;
+		try { localStorage.setItem('catalog-autoskip', autoSkip ? '1' : '0'); } catch {}
+	}
+
+	function autoSkipCheck() {
+		if (!autoSkip || !videoEl || videoEl.paused || seeking || isVideoSeeking || switchingEpisode || loadingEpisode) return;
+		const seg = skipSegments.find(
+			(s) => (s.type === 'intro' || s.type === 'credits') && currentTime >= s.start && currentTime < s.end - 1
+		);
+		if (!seg) return;
+		const key = `${skipLookupKey}|${seg.type}|${seg.start}`;
+		if (autoSkipped.has(key)) return;
+		autoSkipped.add(key);
+		const next = nextEpisode();
+		if (seg.type === 'credits' && seg.end >= duration - 20 && next && playable(next)) {
+			showQualityToast('Skipped the credits');
+			playEpisode(next);
+			return;
+		}
+		showQualityToast(seg.type === 'intro' ? 'Skipped the intro' : 'Skipped the credits');
+		skipSegment(seg);
+	}
+
 	/*
 	 * Autosync keeps the library up to date as you watch a show:
 	 *   - a minute into an episode, a show not in the library is added as watching, and the
@@ -1442,10 +1558,30 @@
 
 	let subsKey = '';
 	let subsInFlight = false;
+	/** Whether the last lookup was for the English dub. */
+	let subsForDub = false;
+	/** The subtitles showing went on by themselves (not picked), so a change to the dub can take them off. */
+	let subsAuto = false;
+
+	/**
+	 * A Showbox file's English audio track is only known once the video has loaded, after the
+	 * subtitles were looked up: on a switch to or from the dub they're looked up again, and ones
+	 * that went on by themselves for Japanese audio come off.
+	 */
+	function recheckSubsForAudio() {
+		if (!videoTitle || hearingDub() === subsForDub) return;
+		if (subsAuto && hearingDub()) {
+			subtitlesOn = false;
+			subsAuto = false;
+		}
+		fetchSubtitles();
+	}
 
 	/** The English dub or not: another source says, otherwise the audio track playing does. */
 	function hearingDub(): boolean {
-		const audio = activeFile?.audio ?? hlsAudioTracks.find((t) => t.id === hlsActiveAudio)?.name ?? '';
+		// Before a Showbox video has loaded its audio tracks, the one picked last time (it's put back on).
+		const track = hlsAudioTracks.find((t) => t.id === hlsActiveAudio)?.name ?? (activeFile?.source ? '' : preferredAudioName);
+		const audio = activeFile?.audio ?? track ?? '';
 		return /^(english|eng)\b/i.test(audio);
 	}
 
@@ -1454,6 +1590,7 @@
 		const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
 		const ep = showType === 'tv' ? activeEpisode : null;
 		const dub = hearingDub();
+		subsForDub = dub;
 		const share = activeFile?.source ? shareOf(activeFile) : '';
 		const key = `${baseTitle}:${showType}:${ep?.season ?? 0}:${ep?.episode ?? 0}:${dub ? 'dub' : ''}:${share}`;
 		// Two overlapping lookups used to race, and a throttled empty answer could wipe a good list.
@@ -1508,7 +1645,10 @@
 				const tries = [pick, ...febboxSubs.filter((s) => s !== pick && !s.check && s.language === 'English')].slice(0, 4);
 				for (const sub of tries) {
 					if (key !== subsKey || subtitlesOn) break;
-					if (await loadSub(sub)) break;
+					if (await loadSub(sub)) {
+						subsAuto = true;
+						break;
+					}
 				}
 			}
 		}
@@ -1554,8 +1694,10 @@
 	/** Downloads and shows a subtitle. False if it couldn't be had. */
 	async function loadSub(sub: SubOption): Promise<boolean> {
 		showCaptions = false;
+		subsAuto = false;
 		try {
-			const params = new URLSearchParams({ url: sub.url });
+			// The show's name lets the file be kept on this PC while you're watching it.
+			const params = new URLSearchParams({ url: sub.url, show: videoTitle.replace(/ S\d+E\d+$/, '') });
 			// Season packs are a zip of every episode; this says which one to take.
 			if (showType === 'tv' && activeEpisode) {
 				params.set('season', String(activeEpisode.season));
@@ -1733,12 +1875,21 @@
 		duration = 0;
 		bufferedEnd = 0;
 		playing = false;
+		// A fresh link fetched while paused stays paused.
+		const stayPaused = loadPaused;
+		loadPaused = false;
+		videoEl.autoplay = !stayPaused;
 		videoEl.pause();
 		videoEl.removeAttribute('src');
 		videoEl.load();
 
 		if (streamUrl.includes('.m3u8') && Hls.isSupported()) {
 			const hls = new Hls({
+				// Catalog draws its own subtitles: none of the browser's, from captions some videos
+				// carry inside them or a subtitle track their playlist lists.
+				enableCEA708Captions: false,
+				enableWebVTT: false,
+				enableIMSC1: false,
 				maxBufferLength: 300,
 				maxMaxBufferLength: 600,
 				maxBufferHole: 0.5,
@@ -1756,6 +1907,7 @@
 					try { xhr.setRequestHeader('Referer', 'https://www.febbox.com/'); } catch {}
 				}
 			});
+			hls.subtitleDisplay = false;
 			hls.loadSource(streamUrl);
 			hls.attachMedia(videoEl);
 			hls.on(Hls.Events.FRAG_LOADED, markBytes);
@@ -1780,13 +1932,14 @@
 				}
 				switchingEpisode = false;
 				autoplayFired = false;
-				videoEl?.play().catch(() => {});
+				if (!stayPaused) videoEl?.play().catch(() => {});
 				hlsAudioTracks = hls.audioTracks.map((t, i) => ({
 					id: i,
 					name: t.name || t.lang || `Track ${i + 1}`
 				}));
 				hlsActiveAudio = hls.audioTrack;
 				applyPreferredAudio();
+				recheckSubsForAudio();
 				if (seekAfterLoad > 0) {
 					const t = seekAfterLoad;
 					seekAfterLoad = 0;
@@ -1802,6 +1955,7 @@
 				}));
 				hlsActiveAudio = hls.audioTrack;
 				applyPreferredAudio();
+				recheckSubsForAudio();
 			});
 			hls.on(Hls.Events.LEVEL_SWITCHED, (_e, data) => {
 				hlsActiveLevel = data.level;
@@ -1849,7 +2003,7 @@
 			hlsInstance = hls;
 		} else {
 			videoEl.src = streamUrl;
-			videoEl.play().catch(() => {});
+			if (!stayPaused) videoEl.play().catch(() => {});
 			hlsAudioTracks = [];
 			videoEl.addEventListener('loadedmetadata', () => {
 				switchingEpisode = false;
@@ -2010,6 +2164,11 @@
 	onMount(async () => {
 		try { autoplayNext = localStorage.getItem('catalog-autoplay') === '1'; } catch {}
 		try { autosync = localStorage.getItem('catalog-autosync') !== '0'; } catch {}
+		try { autoSkip = localStorage.getItem('catalog-autoskip') === '1'; } catch {}
+		try {
+			const kept = JSON.parse(localStorage.getItem(SUB_LANGUAGES) ?? 'null');
+			if (Array.isArray(kept) && kept.length) subLanguages = kept;
+		} catch {}
 		try { if (localStorage.getItem(VIDEO_FIT) === 'contain') videoFit = 'contain'; } catch {}
 		const title = page.url.searchParams.get('title');
 		isAuto = page.url.searchParams.get('auto') === '1';
@@ -2040,6 +2199,15 @@
 		stalledOut = false;
 		streamRefreshes = 0;
 		lastResolveArgs = { title, type, year };
+		// Nothing of the last title's carries over (its subtitles stayed on after "Wrong one?").
+		febboxSubs = [];
+		subsKey = '';
+		subtitleCues = [];
+		subtitlesOn = false;
+		subsAuto = false;
+		activeSubFid = '';
+		activeSubUrl = '';
+		activeSubFileName = '';
 
 		try {
 			// A series asks for no stream here; it fetches only the episode it ends up playing.
@@ -2174,6 +2342,21 @@
 				return;
 			}
 
+			// A film from another source (Aniwave): the version in the audio picked last, no sign-in.
+			const film = pickFor(currentFiles);
+			if (film?.source) {
+				activeQuality = film.quality;
+				activeFileFid = film.fid;
+				let url = '';
+				try {
+					const sResp = await fetch(`/api/watch/stream?share_key=${shareOf(film)}&fid=${film.fid}`);
+					if (sResp.ok) url = (await sResp.json()).url ?? '';
+				} catch {}
+				if (url) streamUrl = url;
+				else problem = `${film.source} couldn't play this right now.`;
+				return;
+			}
+
 			if (data.streamUrl) {
 				streamUrl = data.streamUrl;
 				const af = currentFiles.find((f) => f.fid === data.fid);
@@ -2252,7 +2435,8 @@
 				qualityTimer = setTimeout(() => {
 					qualityTimer = null;
 					if (!prevStreamUrl) return;
-					if (playing && !buffering) { prevStreamUrl = ''; return; }
+					// Playing, or loaded and paused by hand: it works.
+					if ((playing && !buffering) || userPaused || (videoEl?.readyState ?? 0) >= 2) { prevStreamUrl = ''; return; }
 					showQualityToast('That file could not be played. Try a different one.');
 					seekAfterLoad = savedTime;
 					streamUrl = prevStreamUrl;
@@ -2273,15 +2457,17 @@
 		}
 	}
 
-	async function playEpisode(ep: Episode) {
+	async function playEpisode(ep: Episode, passingFinished = false) {
 		if (loadingEpisode || ep === activeEpisode || !playable(ep)) return;
-		saveProgress();
+		if (!passingFinished) saveProgress();
 		skipResume = true;
 		switchingEpisode = true;
 		if (inPiP) cleanupPiP();
 		lastCastKey = '';
 
-		const prevSub = subtitlesOn && activeSubFileName
+		// Subtitles picked by hand carry on to the next episode; ones that went on by themselves
+		// are decided again there (they don't go on over the dub).
+		const prevSub = subtitlesOn && activeSubFileName && !subsAuto
 			? { fileName: activeSubFileName, language: febboxSubs.find(s => s.url === activeSubUrl)?.language ?? '', delay: subtitleDelay }
 			: undefined;
 
@@ -2300,6 +2486,17 @@
 		}
 		// From here on everything (stream, qualities, subtitles) uses this episode's share.
 		shareKey = ep.shareKey || mainShareKey;
+
+		// Started: Continue Watching shows this episode from now, even if it's left straight away
+		// (a place already saved in it is kept).
+		if (showType === 'tv') {
+			fetch('/api/watch/progress', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ title: baseTitle, type: 'tv', season: ep.season, episode: ep.episode, currentTime: 0, duration: 0, posterUrl: watchPosterUrl }),
+				keepalive: true
+			}).catch(() => {});
+		}
 
 		currentTime = 0;
 		duration = 0;
@@ -2468,7 +2665,8 @@
 			<button type="button" class="bar-btn" onclick={goBack}>&larr; Back</button>
 			<h1 class="player-title">{videoTitle}</h1>
 
-			{#if currentFiles.length > 1}
+			<!-- Shown even with one file, so it always says where the video comes from. -->
+			{#if currentFiles.length > 0}
 				<div class="file-pick-wrap">
 					<button
 						type="button"
@@ -2526,6 +2724,13 @@
 					onclick={toggleAutosync}
 					title="Adds the show to your library as you watch, keeps its episode up to date, and marks it completed after the last one"
 				>{autosync ? '↑ Autosync: On' : '↑ Autosync: Off'}</button>
+				<button
+					type="button"
+					class="bar-btn autoplay-btn"
+					class:active={autoSkip}
+					onclick={toggleAutoSkip}
+					title="Skips intros and end credits by itself"
+				>{autoSkip ? '⏩ Auto-skip: On' : '⏩ Auto-skip: Off'}</button>
 			{/if}
 
 			{#if !loggedIn}
@@ -2586,8 +2791,8 @@
 									oncontextmenu={(e) => openEpMenu(e, ep)}
 								>
 									<span class="ep-num">E{ep.episode}</span>
-									{#if episodeNames[ep.episode]}
-										<span class="ep-name">{episodeNames[ep.episode]}</span>
+									{#if nameOf(ep)}
+										<span class="ep-name">{nameOf(ep)}</span>
 									{/if}
 									{#if !playable(ep)}
 										<span class="ep-missing">{notAvailableText(ep)}</span>
@@ -2669,9 +2874,12 @@
 						}}
 						onplay={() => {
 							playing = true;
+							userPaused = false;
 							scheduleHide();
 						}}
 						onpause={() => {
+							// Paused by hand (media keys, picture-in-picture), not by a reload clearing the old video.
+							if (videoEl && videoEl.readyState >= 2 && !switchingEpisode && !refreshingStream) userPaused = true;
 							playing = false;
 							showControls = true;
 							saveProgress();
@@ -2692,9 +2900,19 @@
 							if (!stalledOut) watchForStall();
 						}}
 						oncanplay={() => { buffering = false; }}
-						onplaying={() => { buffering = false; clearStallWatch(); }}
+						onplaying={() => {
+							buffering = false;
+							clearStallWatch();
+							// A file switched to has started: it works, so a later hiccup isn't a reason to switch back.
+							if (prevStreamUrl && !changingQuality) prevStreamUrl = '';
+						}}
 						onseeking={() => { buffering = true; isVideoSeeking = true; }}
-						onseeked={() => { buffering = false; isVideoSeeking = false; }}
+						onseeked={() => {
+							buffering = false;
+							isVideoSeeking = false;
+							// Paused, nothing else updates the bar after a jump (it waits for playback).
+							if (videoEl && !seeking && !switchingEpisode) currentTime = videoEl.currentTime;
+						}}
 						onended={() => {
 							playing = false;
 							showControls = true;
@@ -2774,7 +2992,7 @@
 											{pm ? p('Next Episode') : 'Next Episode'}
 										{/if}
 									</span>
-									<span class="next-ep-title">S{nextEp.season}E{nextEp.episode}{episodeNames[nextEp.episode] ? ` — ${episodeNames[nextEp.episode]}` : ''}</span>
+									<span class="next-ep-title">S{nextEp.season}E{nextEp.episode}{nameOf(nextEp) ? ` — ${nameOf(nextEp)}` : ''}</span>
 								</button>
 							{/if}
 						</div>
@@ -2786,7 +3004,7 @@
 						<div class="progress-wrap" onmousedown={onProgressDown}>
 							<div class="progress-bar" bind:this={progressBarEl}>
 								<div class="prog-buffered" style:width="{bufferedPct}%"></div>
-								<div class="prog-played" style:width="{displayPct}%"></div>
+								<!-- Intros and credits sit under the played part, so it shows how far into them you are. -->
 								{#if duration > 0}
 									{#each skipSegments as seg (seg.type)}
 										<div
@@ -2796,6 +3014,7 @@
 										></div>
 									{/each}
 								{/if}
+								<div class="prog-played" style:width="{displayPct}%"></div>
 								<div class="prog-handle" style:left="{displayPct}%" class:dragging={seeking}></div>
 							</div>
 						</div>
@@ -3055,6 +3274,21 @@
 									{/each}
 								{/if}
 							{/if}
+							{#if !loadingSubs && otherLanguages.length > 0}
+								<hr class="popup-divider" />
+								<button class="popup-item more-languages" onclick={() => (showMoreLanguages = !showMoreLanguages)}>
+									More languages
+									<svg class="file-arrow" class:open={showMoreLanguages} viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
+								</button>
+								{#if showMoreLanguages}
+									{#each otherLanguages as language (language)}
+										<button class="popup-item language-option" class:active={subLanguages.includes(language)} onclick={() => toggleSubLanguage(language)}>
+											{#if subLanguages.includes(language)}<span class="popup-check">&#10003;</span>{/if}
+											{language}
+										</button>
+									{/each}
+								{/if}
+							{/if}
 							<hr class="popup-divider" />
 							<button class="popup-item" onclick={uploadSubtitle}>
 								<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16" style="flex:none;opacity:0.6"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zM6 20V4h7v5h5v11H6z"/></svg>
@@ -3214,6 +3448,8 @@
 	.file-pick-wrap { position: relative; flex: none; }
 	.file-pick-btn { font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
 	.file-arrow { flex: none; opacity: 0.7; transition: transform 0.15s; }
+	.more-languages .file-arrow { margin-left: auto; }
+	.language-option { padding-left: 28px; }
 	.file-arrow.open { transform: rotate(180deg); }
 	.popup-files.popup-files { position: absolute; top: calc(100% + 4px); left: 0; right: auto; bottom: auto; min-width: 180px; z-index: 25; }
 	.file-name-info { font-size: 0.7rem; white-space: normal; word-break: break-all; overflow: visible; }
