@@ -1,12 +1,13 @@
 import { error } from '@sveltejs/kit';
 import { isAniwaveVideo, VIDEO_HEADERS } from '$lib/server/sources/aniwave';
+import { isVidriftVideo, playsDirect, VIDRIFT_HEADERS } from '$lib/server/sources/vidrift';
 import type { RequestHandler } from './$types';
 
 /** The relay address for a file on another source's video server. */
 const relayed = (url: string) => `/api/watch/relay?u=${encodeURIComponent(url)}`;
 
 /**
- * Passes another source's video (Aniwave) on to the player. Its servers only answer their own
+ * Passes another source's video (Aniwave, 7Movies) on to the player. Its servers only answer their own
  * player and won't let another page read the video, so Catalog's server asks for it and hands
  * it over: playlists with every address inside pointed back here, video pieces as they come.
  * Only the servers Aniwave sent us to are fetched from.
@@ -18,13 +19,14 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	} catch {
 		return error(400, 'Bad address');
 	}
-	if (!isAniwaveVideo(target)) return error(403, 'Not a video server Catalog was sent to');
+	const vidrift = isVidriftVideo(target);
+	if (!vidrift && !isAniwaveVideo(target)) return error(403, 'Not a video server Catalog was sent to');
 
 	const range = request.headers.get('range');
 	let upstream: Response;
 	try {
 		upstream = await fetch(target, {
-			headers: { ...VIDEO_HEADERS, ...(range ? { Range: range } : {}) },
+			headers: { ...(vidrift ? VIDRIFT_HEADERS : VIDEO_HEADERS), ...(range ? { Range: range } : {}) },
 			signal: AbortSignal.timeout(30000)
 		});
 	} catch {
@@ -68,8 +70,13 @@ export const GET: RequestHandler = async ({ url, request }) => {
 		if (r.value) parts.push(r.value);
 	}
 
-	// A playlist: every address in it pointed back here.
+	// A playlist: every address in it pointed back here — except video servers that let any
+	// page play their pieces (7Movies' Orion), which the player fetches itself.
 	const text = Buffer.concat(parts).toString('utf8');
+	const point = (address: string) => {
+		const full = new URL(address, target);
+		return playsDirect(full) ? full.href : relayed(full.href);
+	};
 	const pointed = text
 		.split('\n')
 		.map((line) => {
@@ -77,9 +84,9 @@ export const GET: RequestHandler = async ({ url, request }) => {
 			if (!trimmed) return line;
 			// Addresses inside tags: URI="…" (encryption keys, audio tracks, init pieces).
 			if (trimmed.startsWith('#')) {
-				return line.replace(/URI="([^"]+)"/g, (_m, uri) => `URI="${relayed(new URL(uri, target).href)}"`);
+				return line.replace(/URI="([^"]+)"/g, (_m, uri) => `URI="${point(uri)}"`);
 			}
-			return relayed(new URL(trimmed, target).href);
+			return point(trimmed);
 		})
 		.join('\n');
 	return new Response(pointed, {

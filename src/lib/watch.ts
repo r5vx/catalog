@@ -1,7 +1,25 @@
 /** The quality the player reaches for first. */
 export const PREFERRED_QUALITY = '1080p';
 
-type Pickable = { quality: string; size: string; source?: string; audio?: string };
+type Pickable = { quality: string; size: string; source?: string; audio?: string; hevc?: boolean };
+
+let hevcAnswer: boolean | null = null;
+
+/** Whether this TV or computer can play HEVC video (7Movies' Orion copies). */
+export function canPlayHevc(): boolean {
+	if (hevcAnswer === null) {
+		try {
+			hevcAnswer =
+				typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L120.90"');
+		} catch {
+			hevcAnswer = false;
+		}
+	}
+	return hevcAnswer;
+}
+
+/** A copy this device can play: anything but HEVC where HEVC can't be played. */
+export const playableHere = (file: { hevc?: boolean }) => !file.hevc || canPlayHevc();
 
 /**
  * The wanted quality if it's there, otherwise the highest (then largest) file.
@@ -9,6 +27,7 @@ type Pickable = { quality: string; size: string; source?: string; audio?: string
  * the one in the wanted audio ("Japanese" or "English") if there is one.
  */
 export function pickFile<T extends Pickable>(files: T[], wanted: string, audio = ''): T | null {
+	files = files.filter(playableHere);
 	if (!files.length) return null;
 	const showbox = files.filter((f) => !f.source);
 	if (!showbox.length) return files.find((f) => audio && f.audio === audio) ?? files[0];

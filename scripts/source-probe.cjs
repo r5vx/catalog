@@ -1,7 +1,7 @@
 /**
  * Watches how a streaming site loads its video, so Catalog can learn to play it.
  *
- *   npm run probe -- https://anime.nexus
+ *   npm run probe -- https://anime.nexus     (or just: npm run probe -- anime.nexus)
  *
  * Opens the site in a normal window. You browse it yourself — pass any "are you human" check,
  * open an episode, press play — and this writes down the requests that look like video,
@@ -22,7 +22,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
-const start = process.argv.find((a) => /^https?:\/\//.test(a)) || 'https://anime.nexus';
+// A full address, or just the site's name ("7movies.ac"); nothing given means anime.nexus.
+const given = process.argv.slice(2).find((a) => /^https?:\/\//.test(a) || /^[\w-]+(\.[\w-]+)+(\/.*)?$/.test(a));
+const start = given ? (/^https?:\/\//.test(given) ? given : `https://${given}`) : 'https://anime.nexus';
 // One log per site: source-probe-anime.nexus.txt, source-probe-aniwaves.ru.txt…
 const logFile = path.join(__dirname, '..', `source-probe-${new URL(start).hostname}.txt`);
 const lines = [];

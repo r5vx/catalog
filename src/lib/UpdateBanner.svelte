@@ -13,19 +13,23 @@
 	let offer = $state<Offer | null>(null);
 	let dismissed = $state(false);
 	let starting = $state(false);
-	let polling = $state(false);
+	// Plain variables, not state: when the effect below read them, every finished check (no
+	// update) set them back and started another straight away — hundreds a second, forever.
+	let polling = false;
+	let started = false;
 
 	const SESSION_KEY = 'catalog.updateDismissed';
 
+	// Asked once a launch, from the first page that isn't the PIN screen.
 	$effect(() => {
 		try {
 			if (sessionStorage.getItem(SESSION_KEY)) dismissed = true;
 		} catch {}
 
 		const path = page.url.pathname;
-		if (path === '/login') return;
-
-		if (!polling && !offer) startPolling();
+		if (path === '/login' || started) return;
+		started = true;
+		startPolling();
 	});
 
 	async function startPolling() {

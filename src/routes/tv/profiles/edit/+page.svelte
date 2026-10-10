@@ -22,7 +22,7 @@
 		color = editing?.color ?? '';
 	});
 
-	// Names start with capitals: "mum" is shown and saved as "Mum".
+	// Names start with capitals: "mom" is shown and saved as "Mom".
 	const name = $derived(typed.replace(/(^|\s)\S/g, (letter) => letter.toUpperCase()).slice(0, 20));
 
 	async function send(body: Record<string, unknown>) {
@@ -70,7 +70,7 @@
 
 	<div class="right">
 		{#if editing}
-			<p class="label">Colour</p>
+			<p class="label">Color</p>
 			<div class="colors" data-tv-row>
 				{#each COLORS as swatch (swatch)}
 					<button
@@ -79,7 +79,7 @@
 						class:on={color === swatch}
 						style:background={swatch}
 						data-tv-item
-						aria-label="Colour"
+						aria-label="Color"
 						onclick={() => (color = swatch)}
 					></button>
 				{/each}

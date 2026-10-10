@@ -315,6 +315,8 @@ export interface FileOption {
 	audio?: string;
 	/** English subtitles are part of the picture: Catalog's own aren't switched on over them. */
 	burnedIn?: boolean;
+	/** HEVC video, which not every TV or computer can play: skipped where it can't. */
+	hevc?: boolean;
 }
 
 export interface EpisodeInfo {

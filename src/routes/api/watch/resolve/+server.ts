@@ -21,6 +21,8 @@ import { fetchRomajiTitle } from '$lib/server/metadata/anilist';
 import { combineEpisodes, tmdbShow, type EpisodeList } from '$lib/server/combinedEpisodes';
 import { aniwaveFilm } from '$lib/server/sources';
 import { aniwaveStream, parseAniwaveShareKey } from '$lib/server/sources/aniwave';
+import { vidriftCopies } from '$lib/server/sources/vidrift';
+import type { FileOption } from '$lib/server/showbox';
 import type { RequestHandler } from './$types';
 
 /**
@@ -46,6 +48,21 @@ async function tmdbFilmPoster(title: string, year: string): Promise<string | nul
 	return path ? `https://image.tmdb.org/t/p/w342${path}` : null;
 }
 
+/** A film's TMDB id: the one named exactly that (in that year, when known), else TMDB's top hit. */
+async function tmdbFilmId(title: string, year: string): Promise<number | null> {
+	type Found = { results: { id: number; title?: string; release_date?: string }[] };
+	const found = await tmdbGet<Found>('/search/movie', { query: title, ...(year ? { year } : {}) });
+	const same = (t?: string) => t?.toLowerCase() === title.toLowerCase();
+	const film = found?.results.find((r) => same(r.title)) ?? found?.results[0];
+	return film?.id ?? null;
+}
+
+/** 7Movies' copies of a film, which play alongside (or instead of) Showbox's. */
+async function filmCopies(title: string, year: string): Promise<FileOption[]> {
+	const id = await tmdbFilmId(title, year).catch(() => null);
+	return id ? vidriftCopies({ type: 'movie', id, season: 0, episode: 0 }) : [];
+}
+
 async function findOnShowbox(title: string, type: string, year: string) {
 	const results = await searchShowbox(title);
 	if (!results.length) return null;
@@ -53,8 +70,8 @@ async function findOnShowbox(title: string, type: string, year: string) {
 }
 
 /**
- * Not on Showbox at all: an anime another source (Aniwave) has. Same one-list-per-show
- * numbering as everything else. Null when no source has it.
+ * Not on Showbox at all: a show other sources have (7Movies; Aniwave for anime). Same
+ * one-list-per-show numbering as everything else. Null when no source has it.
  */
 async function fromOtherSources(title: string, year: string) {
 	const seasonPart = title.match(/\s+(season|s)\s*(\d+)\s*$/i);
@@ -62,7 +79,7 @@ async function fromOtherSources(title: string, year: string) {
 	// A later season's year isn't the year the show started.
 	const showYear = seasonPart ? '' : year;
 	const show = await tmdbShow(base, showYear);
-	if (!show?.anime) return null;
+	if (!show) return null;
 	const episodes = await combineEpisodes({ seasons: [], episodes: [], qualities: [] }, base, 0, showYear);
 	if (!episodes.episodes.some((e) => e.available !== false && e.files.length)) return null;
 	return { title: base, episodes, startSeason: seasonPart ? Number(seasonPart[2]) : 0 };
@@ -120,8 +137,8 @@ export const GET: RequestHandler = async ({ url }) => {
 				const listed = await listShowboxEpisodes(shareUrl);
 				if (listed.episodes.length) { episodeData = listed; restored = true; }
 			} else {
-				const files = await listMovieFiles(shareUrl);
-				if (files.length) { movieFileList = files; restored = true; }
+				const [files, sevenMovies] = await Promise.all([listMovieFiles(shareUrl), filmCopies(title, year)]);
+				if (files.length) { movieFileList = [...files, ...sevenMovies]; restored = true; }
 			}
 			if (restored) {
 				matchTitle = saved.title;
@@ -184,9 +201,11 @@ export const GET: RequestHandler = async ({ url }) => {
 			}
 
 			if (!match && type === 'movie') {
-				// An anime film Showbox doesn't have (Re:Zero's Memory Snow): from Aniwave.
-				const film = await aniwaveFilm(title, year);
-				if (!film) return json({ error: 'not_found' });
+				// A film Showbox doesn't have: an anime one from Aniwave (Re:Zero's Memory Snow),
+				// any from 7Movies (Thor: Love and Thunder).
+				const [anime, sevenMovies] = await Promise.all([aniwaveFilm(title, year), filmCopies(title, year)]);
+				const film = [...(anime ?? []), ...sevenMovies];
+				if (!film.length) return json({ error: 'not_found' });
 				matchTitle = title;
 				matchType = 'movie';
 				movieFileList = film;
@@ -231,9 +250,10 @@ export const GET: RequestHandler = async ({ url }) => {
 						otherInstead = true;
 					}
 				} else {
-					const files = await listMovieFiles(link);
-					if (!files.length) return json({ error: 'no_file' });
-					movieFileList = files;
+					// Showbox's files, then 7Movies' (played when Showbox's won't, or picked).
+					const [files, sevenMovies] = await Promise.all([listMovieFiles(link), filmCopies(title, year)]);
+					if (!files.length && !sevenMovies.length) return json({ error: 'no_file' });
+					movieFileList = [...files, ...sevenMovies];
 				}
 
 				if (!otherInstead) saveShowboxMatch(cacheKey, {
@@ -316,10 +336,13 @@ export const GET: RequestHandler = async ({ url }) => {
 		});
 	}
 
-	const files = movieFileList as { fid: number; quality: string; name: string; size: string; shareKey?: string }[];
+	const files = movieFileList as FileOption[];
+	// Showbox's best file first; the player asks for another source's link itself.
+	const showboxFiles = files.filter((f) => !f.source);
 	const defaultFile =
-		files.find((f) => f.quality === '1080p') ??
-		files.find((f) => f.quality === '720p') ??
+		showboxFiles.find((f) => f.quality === '1080p') ??
+		showboxFiles.find((f) => f.quality === '720p') ??
+		showboxFiles[0] ??
 		files[0];
 
 	let streamUrl = '';
@@ -329,7 +352,7 @@ export const GET: RequestHandler = async ({ url }) => {
 		// Another source's film plays through Catalog's relay, like its episodes.
 		const stream = await aniwaveStream(aniwave.id, aniwave.episode, aniwave.kind);
 		if (stream) streamUrl = `/api/watch/relay?u=${encodeURIComponent(stream.url)}`;
-	} else if (febboxToken) {
+	} else if (febboxToken && !defaultFile.source) {
 		const result = await getStreamUrl(shareKey, defaultFile.fid, febboxToken);
 		streamUrl = result.url ?? '';
 		streamDebug = result.debug;

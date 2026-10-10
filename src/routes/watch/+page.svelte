@@ -6,7 +6,7 @@
 	import Hls from 'hls.js';
 	import BackBar from '$lib/BackBar.svelte';
 	import { p, pRandom } from '$lib/poison';
-	import { pickFile, PREFERRED_QUALITY } from '$lib/watch';
+	import { pickFile, playableHere, PREFERRED_QUALITY } from '$lib/watch';
 	import { isTv, tvPlayer } from '$lib/tv';
 
 	const pm = $derived(page.data.poisonMode);
@@ -32,7 +32,15 @@
 		audio?: string;
 		/** Subtitles are part of the picture. */
 		burnedIn?: boolean;
+		/** HEVC video: left out where it can't be played. */
+		hevc?: boolean;
 	}
+
+	/**
+	 * A streaming playlist rather than a whole file. Everything through Catalog's relay is one —
+	 * 7Movies' H.264 copy has no ".m3u8" in its address.
+	 */
+	const isPlaylist = (url: string) => url.includes('.m3u8') || url.startsWith('/api/watch/relay');
 
 	/** Where a file plays from: its own source, or the episode's Showbox share. */
 	const shareOf = (f: FileOption | null | undefined) => f?.shareKey || shareKey;
@@ -52,11 +60,31 @@
 	function fileLabel(f: FileOption): string {
 		if (f.audio === 'English') return 'English dub';
 		if (f.audio) return f.burnedIn ? `${f.audio} audio · burned-in subs` : `${f.audio} audio`;
+		if (f.hevc) return `${f.quality} · HEVC`;
 		return f.size ? `${f.quality} · ${f.size}` : f.quality;
 	}
 
 	/** Showbox's best file; another source's only when Showbox has none for this episode. */
 	const pickFor = (files: FileOption[]) => pickFile(files, preferredQuality, animeAudio());
+
+	/**
+	 * A link for this copy, or — when its source has nothing right now — for the next copy from
+	 * another source (Aniwave, 7Movies) this device can play. Empty `url` if none answers.
+	 */
+	async function linkFor(files: FileOption[], file: FileOption): Promise<{ file: FileOption; url: string; debug?: string }> {
+		const others = files.filter((f) => f !== file && f.source && playableHere(f));
+		let debug: string | undefined;
+		for (const copy of [file, ...others]) {
+			try {
+				const resp = await fetch(`/api/watch/stream?share_key=${shareOf(copy)}&fid=${copy.fid}`);
+				if (!resp.ok) continue;
+				const data = await resp.json();
+				if (data.url) return { file: copy, url: data.url, debug: data.debug };
+				debug = data.debug ?? debug;
+			} catch {}
+		}
+		return { file, url: '', debug };
+	}
 
 	interface Episode {
 		season: number;
@@ -223,8 +251,9 @@
 
 	const seasonEpisodes = $derived(episodes.filter((ep) => ep.season === activeSeason));
 
+	// HEVC copies only where this TV or computer can play them.
 	const currentFiles = $derived(
-		showType === 'tv' && activeEpisode ? activeEpisode.files : movieFiles
+		(showType === 'tv' && activeEpisode ? activeEpisode.files : movieFiles).filter(playableHere)
 	);
 
 	/* --------------------------------------------------------------- player control state */
@@ -304,6 +333,17 @@
 		showType === 'tv' && duration > 0 && ((duration - currentTime) < 90 || inEndCredits) && !loadingEpisode
 	);
 	const nextEp = $derived(nearEnd ? nextEpisode() : null);
+
+	/*
+	 * On the TV, as on Netflix: where the closing credits' start is known (anime), the next
+	 * episode follows ten seconds into them; otherwise at the very end. The Next Episode button
+	 * counts down to it and is highlighted when it appears, so OK plays it straight away.
+	 */
+	const creditsStart = $derived(skipSegments.find((s) => s.type === 'credits' && s.end >= duration - 20)?.start ?? null);
+	const advanceAt = $derived(creditsStart !== null ? Math.min(duration, creditsStart + 10) : duration);
+	const countdown = $derived(
+		isTv() && autoplayNext && nextEp && advanceAt - currentTime <= 30 ? Math.max(0, Math.ceil(advanceAt - currentTime)) : null
+	);
 	const upcomingEp = $derived(showType === 'tv' ? nextEpisode() : null);
 
 	const SKIP_LABELS: Record<SkipSegment['type'], string> = {
@@ -659,7 +699,7 @@
 		video.preload = 'auto';
 		video.addEventListener('seeked', drawThumb);
 		thumbVideo = video;
-		if (streamUrl.includes('.m3u8') && Hls.isSupported()) {
+		if (isPlaylist(streamUrl) && Hls.isSupported()) {
 			const hls = new Hls({ maxBufferLength: 2, maxMaxBufferLength: 4, backBufferLength: 0, startLevel: 0, enableWorker: true });
 			hls.on(Hls.Events.MANIFEST_PARSED, () => {
 				// The smallest picture there is: it's only drawn small.
@@ -784,18 +824,91 @@
 	onMount(() => {
 		if (!tvMode) return;
 		tvPlayer.playPause = () => {
+			if (stopScan()) return;
 			togglePlay();
 			showControlsBriefly();
 		};
-		tvPlayer.seek = (seconds) => {
-			skip(seconds);
-			showControlsBriefly();
-		};
+		// The TV app before 1.2 sends fast-forward and rewind as a 30-second skip.
+		tvPlayer.seek = (seconds) => scan(seconds > 0 ? 1 : -1);
+		tvPlayer.scan = scan;
+		tvPlayer.stopScan = stopScan;
 	});
 	onDestroy(() => {
 		tvPlayer.playPause = undefined;
 		tvPlayer.seek = undefined;
+		tvPlayer.scan = undefined;
+		tvPlayer.stopScan = undefined;
+		clearInterval(scanTimer);
 	});
+
+	// Ten seconds into the closing credits, on to the next episode (unless it's paused).
+	$effect(() => {
+		if (!tvMode || !autoplayNext || !nextEp || creditsStart === null || autoplayFired || loadingEpisode || !playing) return;
+		if (currentTime >= advanceAt - 0.25) {
+			autoplayFired = true;
+			playEpisode(nextEp);
+		}
+	});
+
+	let nextEpButton: HTMLButtonElement | undefined = $state();
+	$effect(() => {
+		if (tvMode && nextEpButton) nextEpButton.focus({ preventScroll: true });
+	});
+
+	/*
+	 * Fast-forward and rewind on the remote: one press scans through the video by itself, faster
+	 * with each press (8×, 16×, 32×, 64×), until play/pause or OK stops it there and plays on.
+	 * Held down, the button repeats; repeats closer together than a third of a second count once.
+	 */
+	const SCAN_SPEEDS = [8, 16, 32, 64];
+	let scanDir = $state(0);
+	let scanLevel = $state(0);
+	let scanTimer: ReturnType<typeof setInterval> | undefined;
+	let lastScanPress = 0;
+
+	function scan(direction: number) {
+		if (!videoEl || !(duration > 0)) return;
+		const now = Date.now();
+		if (now - lastScanPress < 350) return;
+		lastScanPress = now;
+		const dir = direction > 0 ? 1 : -1;
+		if (scanDir === dir) {
+			scanLevel = Math.min(SCAN_SPEEDS.length - 1, scanLevel + 1);
+		} else {
+			if (!scanDir) seekPreview = (videoEl.currentTime / duration) * 100;
+			scanDir = dir;
+			scanLevel = 0;
+			userPaused = true;
+			videoEl.pause();
+			clearInterval(scanTimer);
+			scanTimer = setInterval(scanTick, 250);
+		}
+		showControlsBriefly();
+	}
+
+	function scanTick() {
+		const end = Math.max(0, duration - 1);
+		const at = Math.max(0, Math.min(end, (seekPreview / 100) * duration + scanDir * SCAN_SPEEDS[scanLevel] * 0.25));
+		seekPreview = (at / duration) * 100;
+		showControlsBriefly();
+		if (at <= 0 || at >= end) stopScan();
+	}
+
+	/** Stops scanning and plays from where it got to. False if it wasn't scanning. */
+	function stopScan(): boolean {
+		if (!scanDir) return false;
+		clearInterval(scanTimer);
+		scanTimer = undefined;
+		const target = (seekPreview / 100) * duration;
+		scanDir = 0;
+		scanLevel = 0;
+		seekPreview = -1;
+		userPaused = false;
+		seekTo(target);
+		videoEl?.play().catch(() => {});
+		showControlsBriefly();
+		return true;
+	}
 
 	// When the controls fade, let go of the highlighted button so the arrows skip again.
 	$effect(() => {
@@ -832,7 +945,7 @@
 		}
 		if (e.key === 'Enter') {
 			e.preventDefault();
-			togglePlay();
+			if (!stopScan()) togglePlay();
 			showControlsBriefly();
 			return true;
 		}
@@ -1325,6 +1438,13 @@
 		if (userPaused) { clearStallWatch(); return; }
 		if (!videoEl.paused && videoEl.readyState >= 3) { clearStallWatch(); return; }
 
+		// Stuck in its last seconds: that's the end, not a broken link.
+		if (duration > 0 && videoEl.currentTime >= duration - 3) {
+			clearStallWatch();
+			episodeEnded();
+			return;
+		}
+
 		const now = performance.now();
 		const stuckFor = now - stallSince;
 		// Silence on the wire, not slowness: a slow download still delivers bytes.
@@ -1345,6 +1465,32 @@
 		if ((stallReloaded && quietFor > 12_000) || (!hlsInstance && stuckFor > 20_000)) {
 			clearStallWatch();
 			refreshStream();
+		}
+	}
+
+	/**
+	 * The end of the video: its last frame played, or it stuck for good in its last few seconds
+	 * (which used to fetch a fresh link and play the end again instead of moving on).
+	 */
+	function episodeEnded() {
+		playing = false;
+		showControls = true;
+		saveProgress();
+		const next = nextEpisode();
+		if (showType === 'tv' && next) {
+			const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
+			const payload = JSON.stringify({
+				title: baseTitle, type: 'tv',
+				season: next.season, episode: next.episode,
+				currentTime: 0, duration: 0,
+				posterUrl: watchPosterUrl
+			});
+			navigator.sendBeacon('/api/watch/progress', new Blob([payload], { type: 'application/json' }));
+			// Only once the last frame has played — firing early cut off endings.
+			if (autoplayNext && !autoplayFired && !loadingEpisode) {
+				autoplayFired = true;
+				playEpisode(next);
+			}
 		}
 	}
 
@@ -1700,7 +1846,8 @@
 	 */
 	function recheckSubsForAudio() {
 		if (!videoTitle || hearingDub() === subsForDub) return;
-		if (subsAuto && hearingDub()) {
+		// (On the TV they're picked again for the new audio instead.)
+		if (subsAuto && (hearingDub() || tvMode)) {
 			subtitlesOn = false;
 			subsAuto = false;
 		}
@@ -1770,7 +1917,12 @@
 		} else if (!autoMatch && !subtitlesOn) {
 			// Anime in Japanese starts with subtitles on: the chosen one, or the next English
 			// ones if it won't download.
-			const pick = febboxSubs.find((s) => s.default);
+			// On the TV, everything starts with captions on: English CC where there are some
+			// (they cover sounds too), else English.
+			const english = febboxSubs.filter((s) => !s.check && s.language === 'English');
+			const pick =
+				febboxSubs.find((s) => s.default) ??
+				(tvMode ? (english.find((s) => /\bCC\b|SDH/i.test(s.fileName)) ?? english[0]) : undefined);
 			if (pick) {
 				const tries = [pick, ...febboxSubs.filter((s) => s !== pick && !s.check && s.language === 'English')].slice(0, 4);
 				for (const sub of tries) {
@@ -2013,7 +2165,7 @@
 		videoEl.removeAttribute('src');
 		videoEl.load();
 
-		if (streamUrl.includes('.m3u8') && Hls.isSupported()) {
+		if (isPlaylist(streamUrl) && Hls.isSupported()) {
 			const hls = new Hls({
 				// Catalog draws its own subtitles: none of the browser's, from captions some videos
 				// carry inside them or a subtitle track their playlist lists.
@@ -2459,16 +2611,12 @@
 				loadingStatus = needsResume
 					? (pm ? "PAPA'S BACK resuming..." : `Resuming S${ep.season}E${ep.episode}...`)
 					: (pm ? pRandom() : 'Getting stream...');
-				let url = '';
-				try {
-					const sResp = await fetch(`/api/watch/stream?share_key=${shareOf(file)}&fid=${file.fid}`);
-					if (sResp.ok) {
-						const sData = await sResp.json();
-						url = sData.url ?? '';
-						if (sData.debug) debugInfo = sData.debug;
-					}
-				} catch {}
+				const got = await linkFor(ep.files, file);
+				const url = got.url;
+				if (got.debug) debugInfo = got.debug;
 				if (url) {
+					activeQuality = got.file.quality;
+					activeFileFid = got.file.fid;
 					streamUrl = url;
 				} else if (file.source) {
 					problem = `${file.source} couldn't play this episode right now.`;
@@ -2484,13 +2632,12 @@
 			if (film?.source) {
 				activeQuality = film.quality;
 				activeFileFid = film.fid;
-				let url = '';
-				try {
-					const sResp = await fetch(`/api/watch/stream?share_key=${shareOf(film)}&fid=${film.fid}`);
-					if (sResp.ok) url = (await sResp.json()).url ?? '';
-				} catch {}
-				if (url) streamUrl = url;
-				else problem = `${film.source} couldn't play this right now.`;
+				const got = await linkFor(currentFiles, film);
+				if (got.url) {
+					activeQuality = got.file.quality;
+					activeFileFid = got.file.fid;
+					streamUrl = got.url;
+				} else problem = `${film.source} couldn't play this right now.`;
 				return;
 			}
 
@@ -2503,7 +2650,13 @@
 				needsLogin = true;
 			} else {
 				const defaultFile = pickFor(currentFiles);
-				if (defaultFile) {
+				const other = currentFiles.find((f) => f.source && playableHere(f));
+				const got = other ? await linkFor(currentFiles, other) : null;
+				if (got?.url) {
+					activeQuality = got.file.quality;
+					activeFileFid = got.file.fid;
+					streamUrl = got.url;
+				} else if (defaultFile) {
 					useIframe = true;
 					iframeFid = defaultFile.fid;
 					activeQuality = defaultFile.quality;
@@ -2660,15 +2813,13 @@
 		useIframe = false;
 		loadingEpisode = true;
 		try {
-			const resp = await fetch(`/api/watch/stream?share_key=${shareOf(file)}&fid=${file.fid}`);
-			if (!resp.ok) throw new Error();
-			const data = await resp.json();
+			const data = await linkFor(ep.files, file);
 			if (data.url) {
 				streamUrl = data.url;
 				streamNonce++;
 				videoTitle = `${baseTitle} S${ep.season}E${ep.episode}`;
-				activeQuality = file.quality;
-				activeFileFid = file.fid;
+				activeQuality = data.file.quality;
+				activeFileFid = data.file.fid;
 				fetchSubtitles(prevSub);
 			} else {
 				problem = file.source ? `${file.source} couldn't play this episode right now.` : 'Could not get a link for that episode.';
@@ -3050,27 +3201,7 @@
 							// Paused, nothing else updates the bar after a jump (it waits for playback).
 							if (videoEl && !seeking && !switchingEpisode) currentTime = videoEl.currentTime;
 						}}
-						onended={() => {
-							playing = false;
-							showControls = true;
-							saveProgress();
-							const next = nextEpisode();
-							if (showType === 'tv' && next) {
-								const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
-								const payload = JSON.stringify({
-									title: baseTitle, type: 'tv',
-									season: next.season, episode: next.episode,
-									currentTime: 0, duration: 0,
-									posterUrl: watchPosterUrl
-								});
-								navigator.sendBeacon('/api/watch/progress', new Blob([payload], { type: 'application/json' }));
-								// Only once the last frame has played — firing early cut off endings.
-								if (autoplayNext && !autoplayFired && !loadingEpisode) {
-									autoplayFired = true;
-									playEpisode(next);
-								}
-							}
-						}}
+						onended={episodeEnded}
 					>
 						Your browser doesn't support video playback.
 					</video>
@@ -3087,6 +3218,11 @@
 						onclick={handleVideoClick}
 						ondblclick={handleVideoDblClick}
 					></div>
+
+					<!-- fast-forward / rewind on the remote -->
+					{#if scanDir}
+						<div class="scan-badge">{scanDir > 0 ? '▶▶' : '◀◀'} {SCAN_SPEEDS[scanLevel]}×</div>
+					{/if}
 
 					<!-- buffering spinner -->
 					{#if buffering && !loadingEpisode && !changingQuality}
@@ -3119,9 +3255,11 @@
 								<button type="button" class="skip-btn" onclick={() => skipSegment(seg)}>{SKIP_LABELS[seg.type]}</button>
 							{/if}
 							{#if nextEp}
-								<button type="button" class="next-ep-btn" onclick={() => playEpisode(nextEp)}>
+								<button type="button" class="next-ep-btn" bind:this={nextEpButton} onclick={() => playEpisode(nextEp)}>
 									<span class="next-ep-label">
-										{#if autoplayNext && duration > 0 && (duration - currentTime) <= 0.5}
+										{#if countdown !== null}
+											Next episode in {countdown}
+										{:else if autoplayNext && duration > 0 && (duration - currentTime) <= 0.5}
 											Auto-playing...
 										{:else if autoplayNext}
 											{pm ? p('Next Episode') : 'Next Episode'} (auto)
@@ -3793,6 +3931,8 @@
 	.buffering-overlay { position: absolute; inset: 0; display: grid; place-items: center; z-index: 4; pointer-events: none; }
 	.quality-toast { position: absolute; top: 60px; left: 50%; transform: translateX(-50%); padding: 6px 16px; border-radius: 6px; background: rgba(0, 0, 0, 0.75); color: rgba(255, 255, 255, 0.85); font-size: 0.82rem; z-index: 9; pointer-events: none; backdrop-filter: blur(6px); }
 
+	.scan-badge { position: absolute; top: 50%; left: 50%; z-index: 9; transform: translate(-50%, -50%); padding: 14px 26px; border-radius: 10px; background: rgba(0, 0, 0, 0.7); color: #fff; font-size: 2rem; font-weight: 700; pointer-events: none; }
+	:global(html.tv) .next-ep-btn:focus { border-color: #fff; background: #fff; color: #000; outline: none; }
 	.next-ep-overlay { position: absolute; bottom: 100px; right: 24px; z-index: 8; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; animation: fadeSlideIn 0.4s ease; }
 	.skip-btn { padding: 11px 22px; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 6px; background: rgba(0, 0, 0, 0.75); color: #fff; font-size: 0.95rem; font-weight: 600; cursor: pointer; backdrop-filter: blur(8px); transition: background 0.2s, border-color 0.2s; }
 	.skip-btn:hover { background: rgba(30, 30, 30, 0.95); border-color: var(--accent); }

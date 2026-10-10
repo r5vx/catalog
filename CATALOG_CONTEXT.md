@@ -665,7 +665,7 @@ same-show entries already in the library, after a `VACUUM INTO` backup in
 ### Catalog on a Fire TV
 `android/` (see its README) builds a 25 KB Android TV app with `npm run tv` — SDK tools only,
 no Gradle. It's a full-screen WebView of Catalog on a computer in the same house (the owner's
-mum: her laptop runs Catalog, her Fire TV shows it). Pieces:
+mom: her laptop runs Catalog, her Fire TV shows it). Pieces:
 - The computer answers UDP `CATALOG_DISCOVER` on port 41734 (`electron/main.cjs`), so the TV
   finds it; Settings → Watch on TV shows the address to type if not, and the Downloader URL
   (`/catalog-tv.apk`, served from `static/`, public even behind the PIN).
@@ -697,6 +697,18 @@ mum: her laptop runs Catalog, her Fire TV shows it). Pieces:
   `watch_progress` and `continue_hidden` were rebuilt with `profile` in the key (one-time fix
   `progress-per-profile`). Profile ids are AUTOINCREMENT so a deleted one's number isn't reused. The
   TV app opens at `/`, which goes to `/tv/profiles` when there's more than one profile.
+- **Back and fast-forward** (TV app 1.2, versionCode 3): Back asks `window.__catalogTv.back()` first
+  (`tvBack` in tvNav.ts: on a menu screen opens the menu, then Home, then "exit"; elsewhere
+  "default" = history back). Fast-forward/rewind send `scan(±1)` once per press (repeats dropped);
+  the player scans at 8/16/32/64× until play/pause or OK. The old app's `seek(±30)` also scans.
+- **Title screen episodes** (`src/lib/server/tvEpisodes.ts`, `/api/tv/season`): TMDB seasons and
+  episodes (the player's numbering), no Showbox calls; anime is found with `tmdbShow(name, '')`
+  and opens on the season that aired in the entry's year. Picking one opens
+  `/watch?...&resume_s=&resume_e=`.
+- In the player on the TV: captions go on by themselves (English CC first), Autosync is always on,
+  Autoplay has its own setting (`catalog-tv-autoplay`), the Next Episode button counts down its last
+  30 s and takes focus, and known closing credits move on 10 s in. A stall in the last 3 s counts as
+  the end (`episodeEnded`), not a reason to fetch a fresh link.
 
 ### Other sources: Aniwave video, anime.nexus subtitles
 `src/lib/server/sources/`. Only for anime (TMDB: Japanese + Animation). The owner says both
@@ -749,6 +761,20 @@ which records what a site's page loads while the owner browses it.
   season when it starts at the same episode. The list waits 6 s for Aniwave at most (`partial`,
   not cached, so it joins next time). anime.nexus is looked up through the episode's Aniwave copy
   (`ref`), which gives TMDB's numbering; AnimeTosho also searches the whole-series number.
+- **7Movies** (`sources/vidrift.ts`, 2026-10-10): 7movies.ac's player is embed.vidrift.net, asked by
+  TMDB id/season/episode, so no searching or lining up. `/api/boot/...` (plain request, no token
+  needed) gives the Orion playlist: HEVC only, its pieces on `*.hakunaymatata.com`, which allow
+  any page — the relay leaves those addresses alone (`playsDirect`), so Orion's video never goes
+  through the laptop. `/api/source/...?token=<boot's playbackToken>&hevc=0` gives an H.264 server
+  (Vela) through relay.vidrift.net, which wants Origin/Referer embed.vidrift.net, so all of it
+  goes through Catalog's relay (~8 Mbps at 1080p). Two copies per film/episode (fid -4 H.264
+  listed first so it's the default — Orion often tops out at 720p; -3 HEVC; quality "HD"); `playableHere` hides HEVC where `MediaSource.isTypeSupported` says no.
+  Added to every aired TMDB episode in `combineEpisodes` (only when Showbox numbers seasons like
+  TMDB) and to films in resolve (`filmCopies`); shows/films only 7Movies has resolve too.
+  Showbox stays the default pick; `linkFor` in the player tries the other sources' copies when
+  one gives no link. The relay's playlists have no ".m3u8" in their address, so the player treats
+  anything from `/api/watch/relay` as HLS (`isPlaylist`). No subtitles from 7Movies; Catalog's own
+  subtitle sites are used. Found with the probe while the owner played SVU S28E1.
 - Aniwave's "sub" flag means Japanese audio, often only with burned-in subtitles. The Japanese
   file plays S-Sub when the series has it (`aniwaveHasSoftSub`, checked on its first episode,
   kept a week), otherwise the burned-in "sub" copy (`burnedIn`, kind `sub`; Catalog's own

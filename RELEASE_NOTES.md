@@ -12,6 +12,32 @@ without both.
 
 ## Unreleased
 
+## 3.0.3 — 2026-10-10 — 7Movies, episodes and the remote on the TV
+
+### New
+- **7Movies**, a second place to watch films and TV
+  - Asked alongside Showbox for everything: its copies are in the file list for every film and episode
+  - Plays what Showbox doesn't have, or hasn't got yet (Thor: Love and Thunder, the newest SVU)
+  - When a copy won't play, the next source's is tried by itself
+  - HEVC copies only on TVs and computers that can play them
+- **TV**
+  - A show's seasons and episodes on its page: pick one to start there
+  - Fast-forward and rewind with one press; press again for faster, play/pause to stop
+  - The Next Episode button counts down and is highlighted, so OK plays it at once
+
+### Improved
+- **TV**
+  - Back on a menu screen opens the menu, then goes Home, instead of leaving Catalog
+  - Captions on from the start for everything
+  - Ten seconds into an anime's closing credits, the next episode starts
+  - TV app 1.2 for Back and fast-forward (reinstall it once from Downloader)
+
+### Fixed
+- Every open page asked for updates hundreds of times a second
+- **TV**
+  - A highlighted poster no longer covers its name in My Library and Search
+  - An episode that sticks in its last seconds moves on instead of starting again
+
 ## 3.0.2 — 2026-10-10 — TV layout and profiles
 
 ### New

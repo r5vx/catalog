@@ -12,6 +12,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
@@ -226,8 +227,32 @@ public class MainActivity extends Activity {
 				web.evaluateJavascript("document.exitFullscreen && document.exitFullscreen()", null);
 				return true;
 			}
-			if (web.canGoBack()) web.goBack();
-			else finish();
+			// Catalog decides first (on a screen from its menu, Back opens the menu, as on Netflix):
+			// "handled", "exit", or anything else for going back a page.
+			web.evaluateJavascript(
+				"(function(){try{return window.__catalogTv&&window.__catalogTv.back?window.__catalogTv.back():'default'}catch(e){return 'default'}})()",
+				new ValueCallback<String>() {
+					@Override
+					public void onReceiveValue(String answer) {
+						if ("\"handled\"".equals(answer)) return;
+						if ("\"exit\"".equals(answer)) {
+							finish();
+							return;
+						}
+						if (web.canGoBack()) web.goBack();
+						else finish();
+					}
+				});
+			return true;
+		}
+
+		// Fast-forward and rewind: one press scans until play/pause stops it, so the button's
+		// repeats while it's held aren't passed on.
+		if (code == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD || code == KeyEvent.KEYCODE_MEDIA_REWIND) {
+			if (down && event.getRepeatCount() == 0) {
+				int direction = code == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD ? 1 : -1;
+				web.evaluateJavascript("window.__catalogTv && window.__catalogTv.scan(" + direction + ")", null);
+			}
 			return true;
 		}
 
@@ -237,12 +262,6 @@ public class MainActivity extends Activity {
 			case KeyEvent.KEYCODE_MEDIA_PLAY:
 			case KeyEvent.KEYCODE_MEDIA_PAUSE:
 				call = "playPause()";
-				break;
-			case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
-				call = "seek(30)";
-				break;
-			case KeyEvent.KEYCODE_MEDIA_REWIND:
-				call = "seek(-30)";
 				break;
 			case KeyEvent.KEYCODE_MENU:
 				call = "menu()";
@@ -294,7 +313,7 @@ public class MainActivity extends Activity {
 						continue;
 					}
 					String text = new String(reply.getData(), 0, reply.getLength(), StandardCharsets.UTF_8);
-					// {"app":"catalog","name":"Mum's laptop","port":4173}
+					// {"app":"catalog","name":"Mom's laptop","port":4173}
 					if (!text.contains("\"app\":\"catalog\"")) continue;
 					String name = pick(text, "name");
 					String port = pickNumber(text, "port");

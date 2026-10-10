@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { getStreamUrl, invalidateStreamCache } from '$lib/server/showbox';
 import { readSettings } from '$lib/server/settings';
 import { aniwaveStream, parseAniwaveShareKey } from '$lib/server/sources/aniwave';
+import { vidriftStream, parseVidriftShareKey } from '$lib/server/sources/vidrift';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ url }) => {
@@ -18,6 +19,13 @@ export const GET: RequestHandler = async ({ url }) => {
 		const stream = await aniwaveStream(aniwave.id, aniwave.episode, aniwave.kind, refresh);
 		if (!stream) return json({ url: '', debug: 'Aniwave has no server for this version right now' });
 		return json({ url: `/api/watch/relay?u=${encodeURIComponent(stream.url)}` });
+	}
+
+	// 7Movies: its playlist comes through the relay too (the video pieces mostly don't).
+	if (parseVidriftShareKey(shareKey)) {
+		const playlist = await vidriftStream(shareKey, refresh);
+		if (!playlist) return json({ url: '', debug: '7Movies has nothing for this right now' });
+		return json({ url: `/api/watch/relay?u=${encodeURIComponent(playlist)}` });
 	}
 
 	const { febboxToken } = readSettings();
