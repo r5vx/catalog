@@ -1,7 +1,8 @@
 import { json, error } from '@sveltejs/kit';
 import { searchAll } from '$lib/server/metadata';
 import { createFromResult } from '$lib/server/entries';
-import { entryIdForSource } from '$lib/server/db/queries';
+import { entryIdForSource, profileTitleFor, saveProfileTitle } from '$lib/server/db/queries';
+import { currentProfile, MAIN_PROFILE } from '$lib/server/profile';
 import type { RequestHandler } from './$types';
 
 /**
@@ -25,6 +26,26 @@ export const POST: RequestHandler = async ({ request }) => {
 	const best = categoryMatch
 		? results.find(r => Array.isArray(categoryMatch) ? categoryMatch.includes(r.categorySlug) : r.categorySlug === categoryMatch) ?? results[0]
 		: results[0];
+
+	// Someone else's profile on the TV: their own list, not the library.
+	if (currentProfile() !== MAIN_PROFILE) {
+		const owned = profileTitleFor(best.source, best.sourceId);
+		if (owned) return json({ id: owned.id, already: true });
+		const status = watching ? 'watching' : 'completed';
+		const id = saveProfileTitle({
+			source: best.source,
+			sourceId: best.sourceId,
+			title: best.title,
+			year: best.year,
+			category: best.categorySlug,
+			posterUrl: best.posterUrl,
+			overview: best.overview,
+			status,
+			lastSeason: watching ? (season ?? null) : null,
+			lastEpisode: watching ? (episode ?? null) : null
+		});
+		return json({ id, title: best.title, status });
+	}
 
 	const existing = entryIdForSource(best.source, best.sourceId);
 	if (existing) return json({ id: existing, already: true });

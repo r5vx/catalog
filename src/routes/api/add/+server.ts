@@ -1,6 +1,8 @@
 import { json, error } from '@sveltejs/kit';
 import { addFromSource } from '$lib/server/entries';
 import { STATUSES } from '$lib/constants';
+import { currentProfile, MAIN_PROFILE } from '$lib/server/profile';
+import { addProfileTitleFromSource } from '$lib/server/profileTitles';
 import type { RequestHandler } from './$types';
 
 /**
@@ -17,6 +19,13 @@ export const POST: RequestHandler = async ({ request }) => {
 
 	// Never trust a status off the wire into the database.
 	const wanted = STATUSES.some((one) => one.value === status) ? status : 'planned';
+
+	// Someone else's profile on the TV: their own list, not the library.
+	if (currentProfile() !== MAIN_PROFILE) {
+		const id = await addProfileTitleFromSource(String(source), String(sourceId), wanted);
+		if (!id) error(502, 'Could not reach the database for that title.');
+		return json({ id });
+	}
 
 	const added = await addFromSource(String(source), String(sourceId), wanted);
 

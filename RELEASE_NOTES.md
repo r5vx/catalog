@@ -12,6 +12,38 @@ without both.
 
 ## Unreleased
 
+## 3.0.2 — 2026-10-10 — TV layout and profiles
+
+### New
+- **TV layout** on the Fire TV, like Netflix
+  - Menu down the side: Search, Home, Movies, TV Shows, Anime, My Library
+  - Rows of posters with a big banner about the highlighted one
+  - One big, bright highlight that's easy to follow from the sofa
+  - Its own on-screen keyboard for searching
+  - Title screens with Resume, From the start and My List
+- **Profiles** on the TV: "Who's watching?" when the TV app opens
+  - Everyone gets their own Continue Watching, episodes watched and My List
+  - Add, rename, recolour or delete them from the picture at the top of the menu
+  - The computer's own library stays the first profile's
+- Number keys for the PIN on the TV
+- Switch it on or off in Settings → Watch on TV, and preview it on the computer
+- A picture of where you are when hovering or dragging the progress bar
+- Rename a friend's catalog
+- Finishing a film from a show's Specials marks the film watched (with Autosync)
+
+### Improved
+- **Player on the TV**
+  - Only the buttons a remote needs
+  - Autoplay and Autosync on from the start
+  - The picture gets the whole screen; Episodes opens the list
+- The TV app's icon is a plain pink tile (reinstall it once from Downloader)
+
+### Fixed
+- Older series found on Showbox (Law & Order: Special Victims Unit)
+- A finished show leaves Continue Watching
+- Reopening a finished last episode starts it from the beginning, not the end
+- Episodes that arrive at 360p get a better-quality link
+
 ## 3.0.1 — 2026-10-10 — Official subtitles, films and fixes
 
 ### New

@@ -7,7 +7,8 @@ import { consumePdfToken } from '$lib/server/pdf';
 import { scheduleBackfill } from '$lib/server/backfill';
 import { recategorizeAnime } from '$lib/server/recategorize';
 import { watchOutsideRequests } from '$lib/server/slowRequests';
-import { forgetFinishedSubtitles } from '$lib/server/db/queries';
+import { forgetFinishedSubtitles, profileExists } from '$lib/server/db/queries';
+import { withProfile, MAIN_PROFILE } from '$lib/server/profile';
 import { keepShowboxSigninFresh } from '$lib/server/showboxSignin';
 
 // Before anything asks another site for something: a time limit for every outside request,
@@ -81,6 +82,29 @@ function checkSameOrigin(event: RequestEvent): void {
 }
 
 /**
+ * Who's watching: a TV's chosen profile (its catalog_profile cookie), in the TV layout only.
+ * The TV layout previewed on a computer counts as a TV until you leave it for another page, so
+ * the computer's own Catalog is always the owner's.
+ */
+function profileFor(event: RequestEvent): number {
+	const path = event.url.pathname;
+	const fromTv = /CatalogTV\//.test(event.request.headers.get('user-agent') ?? '');
+	let previewing = false;
+	if (!fromTv) {
+		if (path === '/tv' || path.startsWith('/tv/')) {
+			event.cookies.set('catalog_tv_preview', '1', { path: '/', httpOnly: true, sameSite: 'lax', secure: false });
+			previewing = true;
+		} else if (event.cookies.get('catalog_tv_preview')) {
+			if (path.startsWith('/api/') || path === '/watch') previewing = true;
+			else event.cookies.delete('catalog_tv_preview', { path: '/', secure: false });
+		}
+	}
+	if (!(fromTv || previewing) || readSettings().tvLayout === 'full') return MAIN_PROFILE;
+	const chosen = Number(event.cookies.get('catalog_profile') ?? MAIN_PROFILE);
+	return Number.isInteger(chosen) && profileExists(chosen) ? chosen : MAIN_PROFILE;
+}
+
+/**
  * Runs before every request: the cross-site check, then the PIN lock. When no
  * PIN is set the lock does nothing at all — it's opt-in from Settings.
  */
@@ -89,12 +113,14 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 	const theme = readSettings().theme;
 	const resolveWith = (e: typeof event) =>
-		resolve(e, {
-			transformPageChunk: ({ html }) =>
-				theme
-					? html.replace('<html lang="en">', `<html lang="en" data-theme="${theme}">`)
-					: html
-		});
+		withProfile(profileFor(e), () =>
+			resolve(e, {
+				transformPageChunk: ({ html }) =>
+					theme
+						? html.replace('<html lang="en">', `<html lang="en" data-theme="${theme}">`)
+						: html
+			})
+		);
 
 	// A brand-new copy of Catalog says hello before it shows an empty library.
 	// Answering the welcome screen is what turns this off, permanently.

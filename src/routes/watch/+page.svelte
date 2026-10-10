@@ -617,7 +617,104 @@
 		if (!progressBarEl) return;
 		const rect = progressBarEl.getBoundingClientRect();
 		seekPreview = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+		requestThumb(seekPreview);
 	}
+
+	/* --------------------------------------------------------------- scrubbing preview */
+
+	/**
+	 * A picture of the moment the mouse is over on the progress bar (hovering or dragging): a
+	 * second, unseen copy of the video at its lowest quality jumps there and its frame is drawn
+	 * above the bar. It's only loaded once the bar is used, and only small pieces of it.
+	 */
+	let hoverPct = $state(-1);
+	let thumbCanvas: HTMLCanvasElement | undefined = $state();
+	let thumbReady = $state(false);
+	let thumbVideo: HTMLVideoElement | null = null;
+	let thumbHls: Hls | null = null;
+	let thumbFor = '';
+	let thumbTimer: ReturnType<typeof setTimeout> | undefined;
+	const previewPct = $derived(seekPreview >= 0 ? seekPreview : hoverPct);
+
+	function stopThumbs() {
+		clearTimeout(thumbTimer);
+		thumbHls?.destroy();
+		thumbHls = null;
+		if (thumbVideo) {
+			thumbVideo.removeAttribute('src');
+			thumbVideo.load();
+		}
+		thumbVideo = null;
+		thumbFor = '';
+		thumbReady = false;
+	}
+
+	function startThumbs() {
+		const source = `${streamUrl}#${streamNonce}`;
+		if (!streamUrl || tvMode || thumbFor === source) return;
+		stopThumbs();
+		thumbFor = source;
+		const video = document.createElement('video');
+		video.muted = true;
+		video.preload = 'auto';
+		video.addEventListener('seeked', drawThumb);
+		thumbVideo = video;
+		if (streamUrl.includes('.m3u8') && Hls.isSupported()) {
+			const hls = new Hls({ maxBufferLength: 2, maxMaxBufferLength: 4, backBufferLength: 0, startLevel: 0, enableWorker: true });
+			hls.on(Hls.Events.MANIFEST_PARSED, () => {
+				// The smallest picture there is: it's only drawn small.
+				hls.currentLevel = 0;
+				hls.autoLevelCapping = 0;
+			});
+			hls.loadSource(streamUrl);
+			hls.attachMedia(video);
+			thumbHls = hls;
+		} else {
+			video.src = streamUrl;
+		}
+	}
+
+	/** Jumps the unseen copy there, once the mouse settles for a moment. */
+	function requestThumb(pct: number) {
+		if (tvMode || duration <= 0) return;
+		startThumbs();
+		clearTimeout(thumbTimer);
+		thumbTimer = setTimeout(() => {
+			if (thumbVideo && thumbVideo.readyState >= 1) thumbVideo.currentTime = (pct / 100) * duration;
+			else if (thumbVideo) thumbVideo.addEventListener('loadedmetadata', () => requestThumb(pct), { once: true });
+		}, 120);
+	}
+
+	function drawThumb() {
+		if (!thumbCanvas || !thumbVideo || !thumbVideo.videoWidth) return;
+		const ctx = thumbCanvas.getContext('2d');
+		if (!ctx) return;
+		try {
+			ctx.drawImage(thumbVideo, 0, 0, thumbCanvas.width, thumbCanvas.height);
+			thumbReady = true;
+		} catch {
+			thumbReady = false;
+		}
+	}
+
+	function onProgressHover(e: MouseEvent) {
+		if (!progressBarEl || seeking) return;
+		const rect = progressBarEl.getBoundingClientRect();
+		hoverPct = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+		requestThumb(hoverPct);
+	}
+
+	// Its box is made afresh each time the mouse comes back: blank until the next picture.
+	$effect(() => {
+		if (previewPct < 0) thumbReady = false;
+	});
+
+	// A new video (another file or episode): the old preview copy goes.
+	$effect(() => {
+		void streamUrl;
+		void streamNonce;
+		return () => stopThumbs();
+	});
 
 	function commitSeek(e: MouseEvent) {
 		if (!progressBarEl || !videoEl) return;
@@ -675,6 +772,7 @@
 	/* --------------------------------------------------------------- on a TV */
 
 	const tvMode = isTv();
+	const AUTOPLAY_KEY = tvMode ? 'catalog-tv-autoplay' : 'catalog-autoplay';
 	let tvFullscreenTried = false;
 
 	/** The controls' first button, for when the remote's up or down brings them up. */
@@ -1110,7 +1208,8 @@
 					// (it has only just started playing, a few seconds in).
 					if (next) { playEpisode(next, true); return; }
 				}
-				if (pct < 0.95 || showType === 'tv') {
+				// Finished with nothing after it (the last episode, a film): from the start, not the end.
+				if (pct < 0.95) {
 					const seekTo = data.currentTime;
 					if (videoEl.readyState >= 1) {
 						videoEl.currentTime = seekTo;
@@ -1129,6 +1228,24 @@
 				if (data.subDelay) subtitleDelay = data.subDelay;
 			}
 		} catch {}
+	}
+
+	/** Files that came at low quality and were given a fresh link (once each). */
+	const lowQualityRetried = new Set<number>();
+
+	/**
+	 * A 720p-or-better file whose picture arrives at 480p or less: Showbox sometimes hands over a
+	 * link held to low quality. A fresh one is fetched, once per file, so it never stays at 360p
+	 * unless that's the file picked.
+	 */
+	function checkLowQuality() {
+		const height = videoEl?.videoHeight ?? 0;
+		const fileQuality = parseInt(activeFile?.quality ?? '') || 0;
+		if (!activeFile || activeFile.source || fileQuality < 720 || !height || height > 480) return;
+		if (lowQualityRetried.has(activeFile.fid)) return;
+		lowQualityRetried.add(activeFile.fid);
+		debugInfo = (debugInfo ? debugInfo + ' | ' : '') + `low quality (${height}p): fresh link`;
+		refreshStream();
 	}
 
 	/** Gets a brand-new link for the current file and picks up where it left off. Capped so it can't loop forever. */
@@ -1433,7 +1550,7 @@
 
 	function toggleAutoplay() {
 		autoplayNext = !autoplayNext;
-		try { localStorage.setItem('catalog-autoplay', autoplayNext ? '1' : '0'); } catch {}
+		try { localStorage.setItem(AUTOPLAY_KEY, autoplayNext ? '1' : '0'); } catch {}
 	}
 
 	/**
@@ -1528,6 +1645,19 @@
 	/** Near the end of the show's very last episode: completed. */
 	async function autosyncFinished() {
 		const ep = activeEpisode;
+		// A film in the Specials tab ("Memory Snow · Movie"): the film itself is marked completed.
+		if (autosync && ep && ep.season === 0 && showType === 'tv' && / · Movie$/.test(ep.name ?? '')) {
+			const key = `${videoTitle}:film-${ep.episode}`;
+			const ref = ep.files.find((f) => f.source === 'Aniwave')?.shareKey;
+			if (key === autosyncedEnd || !ref) return;
+			autosyncedEnd = key;
+			fetch('/api/watch/finish-film', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ title: videoTitle.replace(/ S\d+E\d+$/, ''), year: lastResolveArgs?.year ?? '', ref })
+			}).catch(() => {});
+			return;
+		}
 		if (!autosync || !ep || ep.season < 1 || showType !== 'tv' || libraryEntryStatus === 'completed') return;
 		const key = `${videoTitle}:${ep.season}-${ep.episode}`;
 		if (key === autosyncedEnd) return;
@@ -1930,6 +2060,7 @@
 				} else {
 					hlsActiveLevel = 0;
 				}
+				videoEl?.addEventListener('loadedmetadata', checkLowQuality, { once: true });
 				switchingEpisode = false;
 				autoplayFired = false;
 				if (!stayPaused) videoEl?.play().catch(() => {});
@@ -2162,8 +2293,13 @@
 	/* --------------------------------------------------------------- content functions */
 
 	onMount(async () => {
-		try { autoplayNext = localStorage.getItem('catalog-autoplay') === '1'; } catch {}
-		try { autosync = localStorage.getItem('catalog-autosync') !== '0'; } catch {}
+		// On the TV, the next episode follows by itself unless it's been turned off there (its own
+		// setting, so turning it off on the computer doesn't carry over), and Autosync is always on.
+		try {
+			const saved = localStorage.getItem(AUTOPLAY_KEY);
+			autoplayNext = saved === null ? tvMode : saved === '1';
+		} catch {}
+		try { autosync = tvMode || localStorage.getItem('catalog-autosync') !== '0'; } catch {}
 		try { autoSkip = localStorage.getItem('catalog-autoskip') === '1'; } catch {}
 		try {
 			const kept = JSON.parse(localStorage.getItem(SUB_LANGUAGES) ?? 'null');
@@ -2231,7 +2367,8 @@
 
 			videoTitle = data.title;
 			showType = data.type;
-			sidebarOpen = !episodesHiddenFor().has(data.title);
+			// On the TV the picture gets the whole screen; the Episodes button opens the list.
+			sidebarOpen = !tvMode && !episodesHiddenFor().has(data.title);
 			shareKey = data.shareKey;
 			mainShareKey = data.shareKey;
 			libraryEntryId = data.libraryEntry?.id ?? null;
@@ -2719,7 +2856,7 @@
 				</button>
 				<button
 					type="button"
-					class="bar-btn autoplay-btn"
+					class="bar-btn autoplay-btn autosync-btn"
 					class:active={autosync}
 					onclick={toggleAutosync}
 					title="Adds the show to your library as you watch, keeps its episode up to date, and marks it completed after the last one"
@@ -3001,7 +3138,14 @@
 					<!-- custom controls overlay -->
 					<div class="controls" class:visible={showControls}>
 						<!-- progress bar -->
-						<div class="progress-wrap" onmousedown={onProgressDown}>
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<div class="progress-wrap" onmousedown={onProgressDown} onmousemove={onProgressHover} onmouseleave={() => (hoverPct = -1)}>
+							{#if previewPct >= 0 && duration > 0 && !tvMode}
+								<div class="scrub-preview" style:left="clamp(84px, {previewPct}%, calc(100% - 84px))">
+									<canvas bind:this={thumbCanvas} width="192" height="108" class:ready={thumbReady}></canvas>
+									<span class="scrub-time">{fmt((previewPct / 100) * duration)}</span>
+								</div>
+							{/if}
 							<div class="progress-bar" bind:this={progressBarEl}>
 								<div class="prog-buffered" style:width="{bufferedPct}%"></div>
 								<!-- Intros and credits sit under the played part, so it shows how far into them you are. -->
@@ -3131,11 +3275,11 @@
 								<svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6a3.6 3.6 0 110-7.2 3.6 3.6 0 010 7.2z"/></svg>
 							</button>
 
-							<button class="ctrl-btn" onclick={togglePiP} title="Picture in picture">
+							<button class="ctrl-btn pip-btn" onclick={togglePiP} title="Picture in picture">
 								<svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><path d="M19 11h-8v6h8v-6zm4 8V4.98C23 3.88 22.1 3 21 3H3c-1.1 0-2 .88-2 1.98V19c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2zm-2 .02H3V4.97h18v14.05z"/></svg>
 							</button>
 
-							<button class="ctrl-btn" onclick={toggleFS} title={isFullscreen ? 'Exit fullscreen (f)' : 'Fullscreen (f)'}>
+							<button class="ctrl-btn fs-btn" onclick={toggleFS} title={isFullscreen ? 'Exit fullscreen (f)' : 'Fullscreen (f)'}>
 								{#if isFullscreen}
 									<svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>
 								{:else}
@@ -3403,6 +3547,19 @@
 {/if}
 
 <style>
+	/* On the TV: only what a remote needs. The TV's own remote does the volume, the picture is
+	   always full screen, and Autosync keeps the library up to date by itself. */
+	:global(html.tv) .cast-btn,
+	:global(html.tv) .autosync-btn,
+	:global(html.tv) .in-library-btn,
+	:global(html.tv) .mark-watched-btn,
+	:global(html.tv) .add-btn,
+	:global(html.tv) .vol-group,
+	:global(html.tv) .pip-btn,
+	:global(html.tv) .fs-btn {
+		display: none;
+	}
+
 	/* --------------------------------------------------------- loading / search */
 	.loading-page { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 120px 20px; text-align: center; color: var(--ink-soft); }
 	.spinner { width: 36px; height: 36px; border: 3px solid var(--rule); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
@@ -3563,7 +3720,12 @@
 	.controls.visible { opacity: 1; pointer-events: auto; }
 
 	/* --------------------------------------------------------- progress bar */
-	.progress-wrap { padding: 8px 0; cursor: pointer; }
+	.progress-wrap { position: relative; padding: 8px 0; cursor: pointer; }
+	/* The picture of where the mouse is on the bar, with its time. */
+	.scrub-preview { position: absolute; bottom: calc(100% + 6px); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: none; z-index: 3; }
+	.scrub-preview canvas { width: 168px; height: 94.5px; border-radius: 4px; border: 2px solid rgba(255, 255, 255, 0.85); background: #000; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6); opacity: 0; transition: opacity 0.12s; }
+	.scrub-preview canvas.ready { opacity: 1; }
+	.scrub-time { padding: 2px 7px; border-radius: 4px; background: rgba(0, 0, 0, 0.8); color: #fff; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
 	.progress-bar { position: relative; height: 3px; background: rgba(255, 255, 255, 0.2); border-radius: 2px; transition: height 0.1s; }
 	.progress-wrap:hover .progress-bar { height: 5px; }
 	.prog-buffered { position: absolute; top: 0; left: 0; bottom: 0; background: rgba(255, 255, 255, 0.25); border-radius: inherit; pointer-events: none; }

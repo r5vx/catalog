@@ -1,4 +1,5 @@
 import { networkInterfaces, hostname } from 'node:os';
+import { readSettings } from '$lib/server/settings';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -17,5 +18,5 @@ export const load: PageServerLoad = async () => {
 		}
 	}
 	addresses.sort((a, b) => Number(a.tailscale) - Number(b.tailscale));
-	return { port, name: hostname(), addresses };
+	return { port, name: hostname(), addresses, tvLayout: readSettings().tvLayout !== 'full' };
 };

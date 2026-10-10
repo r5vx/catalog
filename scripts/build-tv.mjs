@@ -89,24 +89,14 @@ function png(width, height, pixel) {
 	]);
 }
 
-/** The pink circle from the desktop icon, on Catalog's dark green, sized for the TV's app row. */
-function banner() {
-	const [w, h] = [320, 180];
-	const [cx, cy, radius] = [w / 2, h / 2, 58];
-	const bg = [0x11, 0x16, 0x14];
-	const pink = [0xe9, 0x94, 0xc2];
-	return png(w, h, (x, y) => {
-		let inside = 0;
-		for (let sy = 0; sy < 4; sy++)
-			for (let sx = 0; sx < 4; sx++) {
-				const dx = x + (sx + 0.5) / 4 - cx;
-				const dy = y + (sy + 0.5) / 4 - cy;
-				if (dx * dx + dy * dy <= radius * radius) inside++;
-			}
-		const t = inside / 16;
-		return [0, 1, 2].map((i) => Math.round(bg[i] * (1 - t) + pink[i] * t)).concat(255);
-	});
-}
+/**
+ * Catalog's pink, filling the whole picture: the TV's app row crops and rounds pictures its own
+ * way, and a circle in the middle came out as a cut-off circle. `banner` for the app row,
+ * `icon` (square) for everywhere else.
+ */
+const PINK = [0xe9, 0x94, 0xc2, 255];
+const banner = () => png(320, 180, () => PINK);
+const icon = () => png(192, 192, () => PINK);
 
 /* ------------------------------------------------------------ build */
 
@@ -119,7 +109,7 @@ mkdirSync(join(work, 'dex'), { recursive: true });
 mkdirSync(out, { recursive: true });
 
 console.log('— Pictures —');
-copyFileSync(join(root, 'static', 'icon-192.png'), join(work, 'res', 'drawable', 'icon.png'));
+writeFileSync(join(work, 'res', 'drawable', 'icon.png'), icon());
 writeFileSync(join(work, 'res', 'drawable', 'banner.png'), banner());
 copyFileSync(join(app, 'res', 'values', 'strings.xml'), join(work, 'res', 'values', 'strings.xml'));
 

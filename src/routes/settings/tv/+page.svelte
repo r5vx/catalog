@@ -16,9 +16,43 @@
 	function changeComputer() {
 		(window as unknown as { CatalogTV: { forget: () => void } }).CatalogTV.forget();
 	}
+
+	/** The TV app's layout: big rows made for the remote (on), or the same screens as here. */
+	let tvLayout = $state(true);
+	$effect(() => {
+		tvLayout = data.tvLayout;
+	});
+
+	async function setTvLayout(on: boolean) {
+		tvLayout = on;
+		await fetch('/api/tv-layout', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ layout: on ? 'tv' : 'full' })
+		});
+		// On the TV itself, switch straight away.
+		if (onTv && on) window.location.href = '/tv';
+	}
 </script>
 
 <svelte:head><title>Watch on TV · Catalog</title></svelte:head>
+
+<section>
+	<h2>TV layout</h2>
+	<label class="toggle">
+		<input type="checkbox" checked={tvLayout} onchange={(e) => setTvLayout(e.currentTarget.checked)} />
+		Big rows made for the remote, like Netflix
+	</label>
+	<p class="muted">
+		The TV shows a menu down the side, rows of posters and its own on-screen keyboard. Off, it shows the same
+		screens as this computer.
+	</p>
+	{#if !onTv}
+		<p class="muted">
+			<a href="/tv">Preview the TV layout here</a> — the arrow keys move, Enter picks, Esc goes back.
+		</p>
+	{/if}
+</section>
 
 {#if onTv}
 	<section>
@@ -133,6 +167,18 @@
 
 	.small {
 		font-size: 0.85rem;
+	}
+
+	.toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 0.95rem;
+		cursor: pointer;
+	}
+
+	.toggle input {
+		width: auto;
 	}
 
 	.others {

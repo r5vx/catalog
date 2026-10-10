@@ -1,32 +1,11 @@
-import { listCategories, listEntries, countsByCategory, completedCount, completedByCategory, continueWatchingList, sharedCatalogCount, existingSourceKeys, existingSourceKeysWithIds, forgetFinishedSubtitles } from '$lib/server/db/queries';
+import { listProfiles, listCategories, listEntries, countsByCategory, completedCount, completedByCategory, sharedCatalogCount, existingSourceKeys, existingSourceKeysWithIds } from '$lib/server/db/queries';
 import { countNotes } from '$lib/server/db/notes';
 import { listTags } from '$lib/server/db/tags';
 import { SORTS, KEPT_FILTERS } from '$lib/constants';
 import { readSettings, updateSettings } from '$lib/server/settings';
-import { tmdbShow } from '$lib/server/combinedEpisodes';
+import { continueWatchingWithPosters } from '$lib/server/continueWatching';
+import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
-
-/**
- * Continue Watching, with TMDB's poster for shows that have none (one only another source has,
- * or one Showbox's poster didn't come through for). Saved TMDB answers make this instant after
- * the first time; it never holds the page up more than a second and a half.
- */
-async function continueWatchingWithPosters() {
-	// Anything just finished or taken off Continue Watching lets go of its kept subtitles.
-	forgetFinishedSubtitles();
-	const list = continueWatchingList();
-	const missing = list.filter((item) => !item.posterUrl && item.type === 'tv');
-	if (!missing.length) return list;
-	await Promise.race([
-		Promise.all(
-			missing.map(async (item) => {
-				item.posterUrl = (await tmdbShow(item.title, '').catch(() => null))?.poster ?? null;
-			})
-		),
-		new Promise((resolve) => setTimeout(resolve, 1500))
-	]);
-	return list;
-}
 
 /**
  * Status, sort, tags and years stay as you last set them, even after closing the app.
@@ -46,7 +25,12 @@ function keptView(url: URL): URLSearchParams {
 	return view;
 }
 
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = async ({ url, request }) => {
+	// The TV app opens the TV layout (big rows for the remote) unless it's been switched off.
+	// With more than one person set up, it starts at "Who's watching?".
+	if (/CatalogTV\//.test(request.headers.get('user-agent') ?? '') && readSettings().tvLayout !== 'full') {
+		redirect(303, listProfiles().length > 1 ? '/tv/profiles' : '/tv');
+	}
 	const view = keptView(url);
 	const q = (url.searchParams.get('q') ?? '').trim();
 	const cat = url.searchParams.get('cat') ?? '';
