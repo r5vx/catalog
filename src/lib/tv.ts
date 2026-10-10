@@ -12,6 +12,7 @@
  * controls up.
  */
 import { browser } from '$app/environment';
+import { tvBack } from './tvNav';
 
 /** On the TV app. (Or, to try it on a computer: localStorage "catalog:tv" set to "1".) */
 export function isTv(): boolean {
@@ -25,7 +26,14 @@ export function isTv(): boolean {
 }
 
 /** What the player registers while it's on screen. */
-export const tvPlayer: { playPause?: () => void; seek?: (seconds: number) => void } = {};
+export const tvPlayer: {
+	playPause?: () => void;
+	seek?: (seconds: number) => void;
+	/** Fast-forward (1) or rewind (-1): scans until stopped. */
+	scan?: (direction: number) => void;
+	/** Stops a scan where it got to. False if there wasn't one. */
+	stopScan?: () => boolean;
+} = {};
 
 const FOCUSABLE =
 	'a[href], button:not([disabled]), input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea, [tabindex]:not([tabindex="-1"])';
@@ -181,6 +189,10 @@ export function startTv(): void {
 	(window as unknown as { __catalogTv: unknown }).__catalogTv = {
 		playPause: () => tvPlayer.playPause?.(),
 		seek: (seconds: number) => tvPlayer.seek?.(seconds),
-		menu: openMenu
+		scan: (direction: number) => tvPlayer.scan?.(direction),
+		menu: openMenu,
+		// The remote's Back (TV app 1.2 and later asks first): "handled", "exit", or "default"
+		// for going back a page as usual.
+		back: (): string => (tvPlayer.stopScan?.() ? 'handled' : tvBack())
 	};
 }

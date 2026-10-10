@@ -47,6 +47,50 @@
 		}
 	}
 
+	/*
+	 * A show's episodes, under the buttons as on Netflix: down from the buttons goes to the
+	 * seasons, then the episodes (the page slides up to show them). OK on one plays it.
+	 */
+	type SeasonEpisode = {
+		episode: number;
+		name: string;
+		still: string | null;
+		airDate: string | null;
+		runtime: number | null;
+		overview: string | null;
+		progress: number;
+	};
+	let season = $state(0);
+	let seasonEps = $state<SeasonEpisode[]>([]);
+	let loadingEps = $state(false);
+	let down = $state(false);
+	$effect(() => {
+		season = data.show?.season ?? 0;
+	});
+	$effect(() => {
+		const show = data.show;
+		const wanted = season;
+		if (!show || !wanted) return;
+		loadingEps = true;
+		const params = new URLSearchParams({ show: String(show.showId), season: String(wanted), title: playTitle });
+		fetch(`/api/tv/season?${params}`)
+			.then((response) => response.json())
+			.then((result) => {
+				if (season === wanted) seasonEps = result.episodes ?? [];
+			})
+			.catch(() => {
+				if (season === wanted) seasonEps = [];
+			})
+			.finally(() => {
+				if (season === wanted) loadingEps = false;
+			});
+	});
+
+	const today = new Date().toISOString().slice(0, 10);
+	const aired = (ep: SeasonEpisode) => !ep.airDate || ep.airDate <= today;
+	const airsOn = (date: string) =>
+		new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+
 	let playButton: HTMLElement | undefined = $state();
 	$effect(() => {
 		if (playButton) requestAnimationFrame(() => tvFocus(playButton!));
@@ -55,13 +99,14 @@
 
 <svelte:head><title>{d.title} · Catalog</title></svelte:head>
 
-<div class="title-screen">
+<div class="title-screen" class:down>
 	{#if d.backdropUrl || d.posterUrl}
 		<img class="art" class:poster-art={!d.backdropUrl} src={d.backdropUrl ?? d.posterUrl} alt="" />
 	{/if}
 	<div class="shade"></div>
 
-	<div class="about">
+	<div class="slide">
+	<div class="about" onfocusin={() => (down = false)}>
 		<h1>{d.title}</h1>
 		{#if facts.length}<p class="facts">{facts.join(' · ')}</p>{/if}
 		{#if data.continuing?.progress}
@@ -95,6 +140,48 @@
 			</button>
 		</div>
 	</div>
+
+	{#if data.show && !d.unreleased}
+		<section class="episodes" onfocusin={() => (down = true)}>
+			{#if data.show.seasons.length > 1}
+				<div class="seasons" data-tv-row data-tv-strip>
+					{#each data.show.seasons as one (one.number)}
+						<button type="button" class="chip" class:on={season === one.number} data-tv-item onclick={() => (season = one.number)}>
+							Season {one.number}
+						</button>
+					{/each}
+				</div>
+			{:else}
+				<h2>Episodes</h2>
+			{/if}
+			{#if seasonEps.length}
+				<div class="eps" data-tv-row data-tv-strip>
+					{#each seasonEps as ep (ep.episode)}
+						{#if aired(ep)}
+							<a class="ep" data-tv-item href={playHref(playTitle, 'tv', data.continuing ? null : d.year, season, ep.episode)}>
+								<span class="still">
+									{#if ep.still}<img src={ep.still} alt="" loading="lazy" />{/if}
+									{#if ep.progress > 0}
+										<span class="ep-bar"><span class="ep-fill" style:width="{Math.max(4, ep.progress * 100)}%"></span></span>
+									{/if}
+								</span>
+								<span class="ep-name">{ep.episode}. {ep.name}</span>
+								{#if ep.runtime}<span class="ep-meta">{ep.runtime}m</span>{/if}
+							</a>
+						{:else}
+							<span class="ep later">
+								<span class="still"><span class="airs">{airsOn(ep.airDate!)}</span></span>
+								<span class="ep-name">{ep.episode}. {ep.name}</span>
+							</span>
+						{/if}
+					{/each}
+				</div>
+			{:else if loadingEps}
+				<p class="eps-note">Loading episodes…</p>
+			{/if}
+		</section>
+	{/if}
+	</div>
 </div>
 
 <style>
@@ -127,8 +214,20 @@
 			linear-gradient(0deg, var(--paper) 0%, transparent 40%);
 	}
 
+	/* Everything on the page; it slides up to show the episodes while they're highlighted. */
+	.slide {
+		position: relative;
+		transition: transform 0.25s ease;
+	}
+
+	.title-screen.down .slide {
+		transform: translateY(-52vh);
+	}
+
 	.about {
 		position: relative;
+		min-height: 80vh;
+		box-sizing: border-box;
 		max-width: 55%;
 		padding: 12vh 0 0 1vw;
 		display: flex;
@@ -221,6 +320,147 @@
 		background: var(--ink);
 		color: var(--paper);
 		transform: scale(1.06);
+	}
+
+	.episodes {
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		gap: 1vw;
+		padding: 0 0 0 1vw;
+	}
+
+	.episodes h2 {
+		margin: 0;
+		font-size: 1.7vw;
+	}
+
+	/* A long-running show's many seasons scroll along, like the episodes. */
+	.seasons {
+		display: flex;
+		gap: 1vw;
+		overflow: hidden;
+		padding: 0.4vw 3vw 0.4vw 0.8vw;
+		margin-left: -0.8vw;
+	}
+
+	.chip {
+		padding: 0.6vw 1.5vw;
+		border: none;
+		border-radius: 100vw;
+		background: rgb(255 255 255 / 10%);
+		color: var(--ink-soft);
+		font: inherit;
+		font-size: 1.35vw;
+		font-weight: 700;
+		white-space: nowrap;
+		flex: none;
+		cursor: pointer;
+		outline: none;
+	}
+
+	.chip.on {
+		color: var(--accent);
+		box-shadow: inset 0 0 0 0.15vw var(--accent);
+	}
+
+	.chip:focus,
+	.chip:global(.tv-focused) {
+		background: var(--ink);
+		color: var(--paper);
+	}
+
+	/* Room around for a highlighted episode to grow into; it scrolls by itself. */
+	.eps {
+		display: flex;
+		gap: 1.4vw;
+		overflow: hidden;
+		padding: 1.2vw 3vw 1.5vw 0.8vw;
+		margin-left: -0.8vw;
+	}
+
+	.ep {
+		flex: none;
+		width: 18vw;
+		display: flex;
+		flex-direction: column;
+		gap: 0.5vw;
+		color: var(--ink);
+		text-decoration: none;
+		outline: none;
+	}
+
+	.still {
+		position: relative;
+		display: grid;
+		place-items: center;
+		aspect-ratio: 16 / 9;
+		border-radius: 0.5vw;
+		overflow: hidden;
+		background: var(--surface-2);
+		transition: transform 0.15s ease, box-shadow 0.15s ease;
+		transform-origin: center bottom;
+	}
+
+	.still img {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+	}
+
+	.ep:focus .still,
+	.ep:global(.tv-focused) .still {
+		transform: scale(1.06);
+		box-shadow: 0 0 0 0.3vw var(--ink);
+	}
+
+	.ep:focus .ep-name,
+	.ep:global(.tv-focused) .ep-name {
+		color: var(--accent);
+	}
+
+	.ep-bar {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		height: 0.4vw;
+		background: rgb(255 255 255 / 25%);
+	}
+
+	.ep-fill {
+		display: block;
+		height: 100%;
+		background: var(--accent);
+	}
+
+	.ep-name {
+		font-size: 1.25vw;
+		font-weight: 600;
+		line-height: 1.25;
+		overflow: hidden;
+		display: -webkit-box;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+	}
+
+	.ep-meta,
+	.eps-note {
+		margin: 0;
+		font-size: 1.1vw;
+		color: var(--ink-soft);
+	}
+
+	/* Not out yet: shown, but nothing to pick. */
+	.ep.later {
+		opacity: 0.45;
+	}
+
+	.airs {
+		font-size: 1.3vw;
+		font-weight: 700;
+		color: var(--ink-soft);
 	}
 
 	.soon {

@@ -138,7 +138,7 @@
 		display: grid;
 		grid-template-columns: repeat(4, 12.5vw);
 		gap: 2.2vw 1.6vw;
-		padding: 1.2vw 0.8vw 30vh;
+		padding: 2vw 0.8vw 30vh;
 		height: 100%;
 		overflow: hidden;
 		align-content: start;

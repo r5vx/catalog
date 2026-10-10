@@ -16,6 +16,7 @@
  * The rest of the app keeps its own simpler remote handling (src/lib/tv.ts), which stands
  * aside while a TV screen ([data-tv-app]) is showing.
  */
+import { goto } from '$app/navigation';
 
 type Direction = 'up' | 'down' | 'left' | 'right';
 const DIRECTIONS: Record<string, Direction> = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
@@ -210,6 +211,28 @@ function move(app: HTMLElement, direction: Direction): boolean {
 	return true;
 }
 
+/** The screens the menu goes to. Back on them opens the menu rather than leaving. */
+const MENU_SCREENS = /^\/tv(\/(search|library|settings|browse\/[^/]+))?\/?$/;
+
+/**
+ * The remote's Back, as on Netflix. On a screen from the menu it opens the menu; with the menu
+ * open it goes Home; from Home with the menu open it leaves the app. Anywhere else (a title,
+ * the player) it goes back a page as usual ("default").
+ */
+export function tvBack(): 'handled' | 'exit' | 'default' {
+	const app = document.querySelector<HTMLElement>('[data-tv-app]');
+	if (!app || !MENU_SCREENS.test(location.pathname)) return 'default';
+	if (!app.classList.contains('nav-open')) {
+		openNav(app);
+		return 'handled';
+	}
+	if (location.pathname.replace(/\/$/, '') !== '/tv') {
+		goto('/tv');
+		return 'handled';
+	}
+	return 'exit';
+}
+
 /** Where a screen starts: what it marks [data-tv-autofocus], else the first thing on it. */
 function firstItem(app: Element): HTMLElement | null {
 	const main = app.querySelector('[data-tv-main]') ?? app;
@@ -227,7 +250,7 @@ function onKey(event: KeyboardEvent) {
 	// Trying the TV screens on a computer: Esc (or Backspace) is the remote's Back.
 	if (event.key === 'Escape' || event.key === 'Backspace') {
 		event.preventDefault();
-		history.back();
+		if (tvBack() === 'default') history.back();
 		return;
 	}
 	if (event.key === 'Enter') {

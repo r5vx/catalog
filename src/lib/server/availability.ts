@@ -1,5 +1,5 @@
 /**
- * Whether something can be watched: on Showbox, or (anime) on another source.
+ * Whether something can be watched: on Showbox, on 7Movies, or (anime) on Aniwave.
  *
  * Both are asked at once and the first "yes" answers, so the Watch button doesn't wait on the
  * slower one. Answers are kept (a "yes" for a day, a "no" for an hour), and a check already
@@ -11,6 +11,8 @@ import { fetchAlternativeTitles } from './metadata/tmdb';
 import { fetchRomajiTitle } from './metadata/anilist';
 import { tmdbShow } from './combinedEpisodes';
 import { aniwaveFiles, aniwaveFilm } from './sources';
+import { onVidrift } from './sources/vidrift';
+import { tmdbGet } from './metadata/tmdb';
 import { getOrderCache, saveOrderCache } from './db/queries';
 
 const HOUR = 60 * 60 * 1000;
@@ -38,11 +40,23 @@ async function onShowbox(title: string, type: string, year: string): Promise<boo
 	return false;
 }
 
-async function onOtherSource(title: string, type: string, year: string): Promise<boolean> {
+async function onAniwave(title: string, type: string, year: string): Promise<boolean> {
 	if (type === 'movie') return Boolean(await aniwaveFilm(title, year));
 	const show = await tmdbShow(title.replace(/\s+(season|s)\s*\d+\s*$/i, '').trim(), '');
 	if (!show?.anime) return false;
 	return (await aniwaveFiles(show, title)).size > 0;
+}
+
+/** 7Movies goes by TMDB's id: a film's, or a show's first episode. */
+async function on7Movies(title: string, type: string, year: string): Promise<boolean> {
+	if (type === 'movie') {
+		type Found = { results: { id: number; title?: string }[] };
+		const found = await tmdbGet<Found>('/search/movie', { query: title, ...(year ? { year } : {}) });
+		const film = found?.results.find((r) => r.title?.toLowerCase() === title.toLowerCase()) ?? found?.results[0];
+		return film ? onVidrift({ type: 'movie', id: film.id }) : false;
+	}
+	const show = await tmdbShow(title.replace(/\s+(season|s)\s*\d+\s*$/i, '').trim(), '');
+	return show ? onVidrift({ type: 'tv', id: show.id, season: 1, episode: 1 }) : false;
 }
 
 /** True as soon as one says yes; false once all have said no. */
@@ -67,7 +81,7 @@ export function isAvailable(title: string, type: string, year: string): Promise<
 
 	const running = underWay.get(key);
 	if (running) return running;
-	const check = firstYes([onShowbox(title, type, year), onOtherSource(title, type, year)]).then((yes) => {
+	const check = firstYes([onShowbox(title, type, year), onAniwave(title, type, year), on7Movies(title, type, year)]).then((yes) => {
 		saveOrderCache(key, yes, Date.now());
 		underWay.delete(key);
 		return yes;

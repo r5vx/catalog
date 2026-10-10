@@ -27,7 +27,7 @@
 	} = $props();
 </script>
 
-<a {href} class="tv-card" data-tv-item data-tv-autofocus={autofocus || undefined} {onfocus}>
+<a {href} class="tv-card" class:with-title={showTitle} data-tv-item data-tv-autofocus={autofocus || undefined} {onfocus}>
 	<span class="poster">
 		{#if poster}
 			<img src={poster} alt="" loading="lazy" />
@@ -90,6 +90,17 @@
 		box-shadow:
 			0 0 0 0.3vw var(--ink),
 			0 1vw 2.5vw rgb(0 0 0 / 60%);
+	}
+
+	/* With its name underneath, it grows upwards instead, so it never covers the name. */
+	.tv-card.with-title .poster {
+		transform-origin: center bottom;
+	}
+
+	.tv-card:focus,
+	.tv-card:global(.tv-focused) {
+		position: relative;
+		z-index: 1;
 	}
 
 	.note {

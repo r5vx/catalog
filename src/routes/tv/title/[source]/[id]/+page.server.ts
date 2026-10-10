@@ -4,6 +4,7 @@ import { anilistResting } from '$lib/server/metadata/anilistNodes';
 import { entryIdForSource, entryIdForShow, entryIdByTitle, getEntry, continueWatchingList, profileTitleFor } from '$lib/server/db/queries';
 import { currentProfile, MAIN_PROFILE } from '$lib/server/profile';
 import { showRoots } from '$lib/server/metadata/franchise';
+import { showSeasons } from '$lib/server/tvEpisodes';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -40,10 +41,20 @@ export const load: PageServerLoad = async ({ params }) => {
 	const names = [details.title, entry?.title, details.altTitle].filter(Boolean).map((n) => n!.toLowerCase());
 	const continuing = continueWatchingList().find((item) => item.type === type && names.includes(item.title.toLowerCase())) ?? null;
 
+	// A show's seasons, for picking an episode before playing. Opens on the season being
+	// watched; an anime season's own entry on the season that came out that year.
+	const show = type === 'tv' ? await showSeasons(source, id, entry?.title ?? details.title).catch(() => null) : null;
+	let season = continuing?.season ?? 0;
+	if (show && !show.seasons.some((s) => s.number === season)) {
+		const sameYear = source === 'anilist' ? show.seasons.find((s) => s.year === details.year)?.number : 0;
+		season = sameYear || show.seasons[0]?.number || 0;
+	}
+
 	return {
 		source,
 		id,
 		type,
+		show: show && show.seasons.length ? { ...show, season } : null,
 		details: {
 			title: details.title,
 			year: details.year,
@@ -68,3 +79,4 @@ export const load: PageServerLoad = async ({ params }) => {
 			: null
 	};
 };
+
