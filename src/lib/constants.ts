@@ -148,3 +148,6 @@ export const WATCH_REGIONS = [
 	'IL', 'IN', 'IT', 'JP', 'KR', 'MX', 'MY', 'NL', 'NO', 'NZ', 'PH', 'PL',
 	'PT', 'RO', 'RU', 'SA', 'SE', 'SG', 'TH', 'TR', 'TW', 'US', 'VN', 'ZA'
 ] as const;
+
+/** The colours a TV profile can have; a new one is given the next in turn. */
+export const PROFILE_COLORS = ['#e994c2', '#5b8def', '#f2a541', '#4fbf8a', '#a77bea', '#ef6a5b', '#3fb8c4'];

@@ -361,6 +361,85 @@ try { db.exec("ALTER TABLE watch_progress ADD COLUMN poster_url TEXT NOT NULL DE
 try { db.exec("ALTER TABLE watch_progress ADD COLUMN share_key TEXT NOT NULL DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE watch_progress ADD COLUMN fid INTEGER NOT NULL DEFAULT 0"); } catch {}
 
+// Who's watching, on the TV (src/lib/server/profile.ts). Profile 0 is the library's owner and
+// has no row until it's given a name; everyone else's list of titles is in profile_titles.
+// A deleted profile's number is never given out again, so a TV still set to it can't land in
+// someone new's profile.
+db.exec(`
+	CREATE TABLE IF NOT EXISTS profiles (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		color TEXT NOT NULL,
+		created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)
+`);
+db.exec(`
+	CREATE TABLE IF NOT EXISTS profile_titles (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		profile INTEGER NOT NULL,
+		source TEXT NOT NULL,
+		source_id TEXT NOT NULL,
+		title TEXT NOT NULL,
+		year INTEGER,
+		category TEXT NOT NULL,
+		poster_url TEXT,
+		overview TEXT,
+		status TEXT NOT NULL,
+		last_season INTEGER,
+		last_episode INTEGER,
+		updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+		UNIQUE (profile, source, source_id)
+	)
+`);
+
+// Watch progress and Continue Watching belong to a profile. The key changes, which SQLite can
+// only do by copying into a new table; everything there so far is the owner's (profile 0).
+once('progress-per-profile', () => {
+	const PROGRESS_COLUMNS = ['title', 'type', 'season', 'episode', '"current_time"', 'duration', 'updated_at', 'sub_url', 'sub_delay', 'sub_file_name', 'poster_url', 'share_key', 'fid'].join(', ');
+	db.exec('BEGIN');
+	try {
+		db.exec(`
+			CREATE TABLE watch_progress_new (
+				profile INTEGER NOT NULL DEFAULT 0,
+				title TEXT NOT NULL,
+				type TEXT NOT NULL DEFAULT 'movie',
+				season INTEGER NOT NULL DEFAULT 0,
+				episode INTEGER NOT NULL DEFAULT 0,
+				"current_time" REAL NOT NULL DEFAULT 0,
+				duration REAL NOT NULL DEFAULT 0,
+				updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+				sub_url TEXT NOT NULL DEFAULT '',
+				sub_delay REAL NOT NULL DEFAULT 0,
+				sub_file_name TEXT NOT NULL DEFAULT '',
+				poster_url TEXT NOT NULL DEFAULT '',
+				share_key TEXT NOT NULL DEFAULT '',
+				fid INTEGER NOT NULL DEFAULT 0,
+				PRIMARY KEY (profile, title, type, season, episode)
+			)
+		`);
+		db.exec(`INSERT INTO watch_progress_new (${PROGRESS_COLUMNS}) SELECT ${PROGRESS_COLUMNS} FROM watch_progress`);
+		db.exec('DROP TABLE watch_progress');
+		db.exec('ALTER TABLE watch_progress_new RENAME TO watch_progress');
+
+		db.exec(`
+			CREATE TABLE continue_hidden_new (
+				profile INTEGER NOT NULL DEFAULT 0,
+				title TEXT NOT NULL,
+				type TEXT NOT NULL,
+				hidden_at TEXT NOT NULL DEFAULT (datetime('now')),
+				PRIMARY KEY (profile, title, type)
+			)
+		`);
+		db.exec('INSERT INTO continue_hidden_new (title, type, hidden_at) SELECT title, type, hidden_at FROM continue_hidden');
+		db.exec('DROP TABLE continue_hidden');
+		db.exec('ALTER TABLE continue_hidden_new RENAME TO continue_hidden');
+		db.exec('COMMIT');
+	} catch (error) {
+		db.exec('ROLLBACK');
+		throw error;
+	}
+});
+
 /**
  * node:sqlite hands back null-prototype objects. SvelteKit needs plain ones to
  * send them to the browser, so every query result goes through here.

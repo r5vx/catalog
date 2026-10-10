@@ -195,6 +195,29 @@
 		} catch {} finally { loadingFriend = false; }
 	}
 
+	/** Renaming a friend: the box beside their chip, open while this is their id. */
+	let renaming = $state<number | null>(null);
+	let newName = $state('');
+
+	function startRename(id: number) {
+		renaming = id;
+		newName = friends.find((f) => f.id === id)?.name ?? '';
+		tick().then(() => document.querySelector<HTMLInputElement>('.rename-input')?.select());
+	}
+
+	async function saveRename() {
+		const id = renaming;
+		const name = newName.trim();
+		renaming = null;
+		if (!id || !name) return;
+		const resp = await fetch('/api/shared', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ id, name })
+		});
+		if (resp.ok) friends = friends.map((f) => (f.id === id ? { ...f, name } : f));
+	}
+
 	async function removeFriend(id: number) {
 		await fetch(`/api/shared?id=${id}`, { method: 'DELETE' });
 		friends = friends.filter((f) => f.id !== id);
@@ -221,6 +244,8 @@
 				await loadFriends();
 				loadFriend(added.id);
 				invalidateAll();
+				// Their file says what they call themselves; offer to call them something else.
+				startRename(added.id);
 			}
 		} catch { problem = 'That file is not readable JSON.'; }
 	}
@@ -296,7 +321,18 @@
 		</div>
 
 		{#if activeFriend}
-			<button type="button" class="btn btn-danger tiny" onclick={() => removeFriend(activeFriend!)}>Remove {activeName}</button>
+			<span class="friend-actions">
+				{#if renaming === activeFriend}
+					<form class="rename" onsubmit={(e) => { e.preventDefault(); saveRename(); }}>
+						<input class="rename-input" bind:value={newName} maxlength="60" aria-label="Their name" />
+						<button type="submit" class="btn tiny">Save</button>
+						<button type="button" class="btn tiny" onclick={() => (renaming = null)}>Cancel</button>
+					</form>
+				{:else}
+					<button type="button" class="btn tiny" onclick={() => startRename(activeFriend!)}>Rename</button>
+					<button type="button" class="btn btn-danger tiny" onclick={() => removeFriend(activeFriend!)}>Remove {activeName}</button>
+				{/if}
+			</span>
 		{/if}
 	</div>
 
@@ -449,6 +485,9 @@
 	.drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 
 	.drop-label { font-weight: 600; color: var(--accent); }
+	.friend-actions { display: flex; gap: 6px; align-items: center; }
+	.rename { display: flex; gap: 6px; align-items: center; }
+	.rename-input { width: 160px; padding: 4px 8px; font-size: 0.85rem; }
 
 	.friends-header {
 		display: flex;

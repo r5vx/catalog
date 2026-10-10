@@ -431,6 +431,9 @@ function extractVideoUrl(html: string): string | null {
 	if (allM3u8.length > 1) {
 		const master = allM3u8.find((u) => !/\/(360|480|720|1080|2160)p?\//i.test(u));
 		if (master) return master;
+		// Only one playlist per quality: the best, never just the first listed (often 360p).
+		const quality = (u: string) => Number(u.match(/\/(360|480|720|1080|2160)p?\//i)?.[1] ?? 0);
+		return [...allM3u8].sort((a, b) => quality(b) - quality(a))[0];
 	}
 	if (allM3u8.length > 0) return allM3u8[0];
 
@@ -855,7 +858,10 @@ export function bestMatch(
 	if (exactNoYear && !wantYear) return exactNoYear;
 	if (exactNoYear && wantYear) {
 		const ey = extractYear(exactNoYear.info);
-		if (!ey && Number(wantYear) >= 2000) return exactNoYear;
+		// Showbox gives series no year ("SS 24 EPS 9"). The exact name of a series is trusted from
+		// any year (Law & Order: Special Victims Unit is 1999); a film's only from 2000 on, since
+		// old and new films share names ("Face to Face", 1946 and 2019).
+		if (!ey && (exactNoYear.type === 'tv' || Number(wantYear) >= 2000)) return exactNoYear;
 		if (ey && Math.abs(Number(ey) - Number(wantYear)) <= 5) return exactNoYear;
 	}
 
@@ -893,7 +899,7 @@ export function bestMatch(
 					continue;
 				}
 			} else if (!resultYear) {
-				if (t === want && Number(wantYear) >= 2000) {
+				if (t === want && (r.type === 'tv' || Number(wantYear) >= 2000)) {
 					// no year info + exact title + modern request = trust it
 				} else {
 					score -= 0.4;

@@ -119,8 +119,17 @@ const DIRECTIONS: Record<string, Direction> = {
 };
 
 function onKey(event: KeyboardEvent) {
+	// The remote's OK is Enter, which doesn't tick a checkbox the way it presses a button.
+	const focused = document.activeElement;
+	if (event.key === 'Enter' && focused instanceof HTMLInputElement && (focused.type === 'checkbox' || focused.type === 'radio')) {
+		event.preventDefault();
+		focused.click();
+		return;
+	}
 	const direction = DIRECTIONS[event.key];
 	if (!direction || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+	// The TV screens (src/routes/tv) move the highlight their own way (src/lib/tvNav.ts).
+	if (document.querySelector('[data-tv-app]')) return;
 
 	const current = document.activeElement as HTMLElement | null;
 	const nothingFocused = !current || current === document.body || current.tagName === 'VIDEO';

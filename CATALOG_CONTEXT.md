@@ -676,6 +676,27 @@ mum: her laptop runs Catalog, her Fire TV shows it). Pieces:
   `window.__catalogTv` takes play/pause and seek from the remote. The player keeps the arrows
   while a video is showing and nothing in its controls is focused (`data-tv-player`).
 - The signing key `android/catalog-tv.keystore` must be kept, and `versionCode` bumped, for updates.
+- **TV layout** (`src/routes/tv/`, 2026-10-10): the home page redirects the TV app (user agent
+  `CatalogTV/`) to `/tv` unless `settings.tvLayout === 'full'` (Settings → Watch on TV). Netflix-
+  style: menu down the left, a banner about the highlighted title over rows of posters, an
+  on-screen keyboard (`TvKeyboard`; the TV's own keyboard doesn't pop up in the WebView, and no APK
+  change is needed), title screens with Resume / From the start / My List. The remote is handled by
+  `src/lib/tvNav.ts` (rows `[data-tv-row]`, grids `[data-tv-grid]`, items `[data-tv-item]`,
+  `[data-tv-track]` slides rows under the banner; `tv.ts` stands aside while `[data-tv-app]` is on
+  screen). The highlight is also drawn from a `.tv-focused` class because `:focus` doesn't paint in a
+  background window. Everything is sized in vw (the Fire TV WebView is 960×540 CSS px). It's all
+  web code, so it reaches the TV with an ordinary Catalog update on the laptop.
+- **Profiles** (2026-10-10, "Who's watching?", `src/routes/tv/profiles/`): each request runs as one
+  profile via AsyncLocalStorage (`src/lib/server/profile.ts`, set in `hooks.server.ts` from the TV's
+  `catalog_profile` cookie), so queries call `currentProfile()` instead of every caller passing it.
+  Only TV requests count: the `CatalogTV/` user agent, or the TV layout previewed on a computer
+  (`catalog_tv_preview` cookie, dropped on any other page), and never with `tvLayout === 'full'`.
+  Profile 0 is the library's owner (no `profiles` row until renamed; shown as "Me"); their list *is*
+  the library. Anyone else's list is `profile_titles`, and `/api/add`, `/api/watch/add-to-library`,
+  `/api/entries` PATCH and `finish-film` write there instead; the rest of `/api/entries` refuses.
+  `watch_progress` and `continue_hidden` were rebuilt with `profile` in the key (one-time fix
+  `progress-per-profile`). Profile ids are AUTOINCREMENT so a deleted one's number isn't reused. The
+  TV app opens at `/`, which goes to `/tv/profiles` when there's more than one profile.
 
 ### Other sources: Aniwave video, anime.nexus subtitles
 `src/lib/server/sources/`. Only for anime (TMDB: Japanese + Animation). The owner says both

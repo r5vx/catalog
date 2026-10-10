@@ -1,6 +1,8 @@
 import { db, plain, plainAll, toInt } from './index';
 import type { Category, Entry, EntryCard } from './types';
 import { titleKey } from '../../titleKey';
+import { currentProfile, MAIN_PROFILE } from '../profile';
+import { PROFILE_COLORS } from '../../constants';
 
 /**
  * Every database query in the app lives here, as plain SQL. If you want to
@@ -767,10 +769,18 @@ export function entryIdForSource(source: string, sourceId: string): number | nul
 	return row?.id ?? null;
 }
 
+/** The library entry by that name; for someone else's profile, the title on their own list. */
 export function findEntryByTitle(title: string): { id: number; status: string; posterUrl: string; lastSeason: number; lastEpisode: number } | null {
-	const row = db
-		.prepare('SELECT id, status, poster_url AS posterUrl, last_season AS lastSeason, last_episode AS lastEpisode FROM entries WHERE title = ? COLLATE NOCASE LIMIT 1')
-		.get(title) as { id: number; status: string; posterUrl: string; lastSeason: number; lastEpisode: number } | undefined;
+	const profile = currentProfile();
+	const row = (
+		profile === MAIN_PROFILE
+			? db
+					.prepare('SELECT id, status, poster_url AS posterUrl, last_season AS lastSeason, last_episode AS lastEpisode FROM entries WHERE title = ? COLLATE NOCASE LIMIT 1')
+					.get(title)
+			: db
+					.prepare('SELECT id, status, poster_url AS posterUrl, last_season AS lastSeason, last_episode AS lastEpisode FROM profile_titles WHERE profile = ? AND title = ? COLLATE NOCASE LIMIT 1')
+					.get(profile, title)
+	) as { id: number; status: string; posterUrl: string; lastSeason: number; lastEpisode: number } | undefined;
 	return row ? { ...row } : null;
 }
 
@@ -803,9 +813,9 @@ export function saveWatchProgress(
 	// No length yet (duration 0) is "started this episode": it moves to the front of Continue
 	// Watching, but a place already saved in it is kept.
 	db.prepare(`
-		INSERT INTO watch_progress (title, type, season, episode, current_time, duration, sub_url, sub_delay, sub_file_name, poster_url, share_key, fid, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-		ON CONFLICT (title, type, season, episode)
+		INSERT INTO watch_progress (profile, title, type, season, episode, current_time, duration, sub_url, sub_delay, sub_file_name, poster_url, share_key, fid, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		ON CONFLICT (profile, title, type, season, episode)
 		DO UPDATE SET
 			current_time = CASE WHEN excluded.duration > 0 THEN excluded.current_time ELSE watch_progress.current_time END,
 			duration = CASE WHEN excluded.duration > 0 THEN excluded.duration ELSE watch_progress.duration END,
@@ -816,7 +826,7 @@ export function saveWatchProgress(
 			share_key = CASE WHEN excluded.share_key != '' THEN excluded.share_key ELSE watch_progress.share_key END,
 			fid = CASE WHEN excluded.fid != 0 THEN excluded.fid ELSE watch_progress.fid END,
 			updated_at = excluded.updated_at
-	`).run(title, type, season, episode, currentTime, duration, subUrl ?? '', subDelay ?? 0, subFileName ?? '', posterUrl ?? '', shareKey ?? '', fid ?? 0);
+	`).run(currentProfile(), title, type, season, episode, currentTime, duration, subUrl ?? '', subDelay ?? 0, subFileName ?? '', posterUrl ?? '', shareKey ?? '', fid ?? 0);
 }
 
 export function getWatchProgress(
@@ -826,8 +836,8 @@ export function getWatchProgress(
 	episode: number
 ): WatchProgress | null {
 	const row = db
-		.prepare('SELECT title, type, season, episode, "current_time" AS currentTime, duration, sub_url AS subUrl, sub_delay AS subDelay, sub_file_name AS subFileName FROM watch_progress WHERE title = ? AND type = ? AND season = ? AND episode = ?')
-		.get(title, type, season, episode) as WatchProgress | undefined;
+		.prepare('SELECT title, type, season, episode, "current_time" AS currentTime, duration, sub_url AS subUrl, sub_delay AS subDelay, sub_file_name AS subFileName FROM watch_progress WHERE profile = ? AND title = ? AND type = ? AND season = ? AND episode = ?')
+		.get(currentProfile(), title, type, season, episode) as WatchProgress | undefined;
 	return row ? { ...row } : null;
 }
 
@@ -877,21 +887,24 @@ export function getCachedStreamInfo(title: string, type: string): { shareKey: st
 
 export function listAllWatchProgress(): (WatchProgress & { updatedAt: string })[] {
 	return db
-		.prepare('SELECT title, type, season, episode, "current_time" AS currentTime, duration, updated_at AS updatedAt FROM watch_progress ORDER BY updated_at DESC LIMIT 50')
-		.all() as unknown as (WatchProgress & { updatedAt: string })[];
+		.prepare('SELECT title, type, season, episode, "current_time" AS currentTime, duration, updated_at AS updatedAt FROM watch_progress WHERE profile = ? ORDER BY updated_at DESC LIMIT 50')
+		.all(currentProfile()) as unknown as (WatchProgress & { updatedAt: string })[];
 }
 
 export function clearAllWatchProgress(): void {
-	db.prepare('DELETE FROM watch_progress').run();
+	db.prepare('DELETE FROM watch_progress WHERE profile = ?').run(currentProfile());
 }
 
 export function deleteWatchProgress(title: string, type: string, season: number, episode: number): void {
-	db.prepare('DELETE FROM watch_progress WHERE title = ? AND type = ? AND season = ? AND episode = ?')
-		.run(title, type, season, episode);
+	db.prepare('DELETE FROM watch_progress WHERE profile = ? AND title = ? AND type = ? AND season = ? AND episode = ?')
+		.run(currentProfile(), title, type, season, episode);
 }
 
 export function continueWatchingList(): (WatchProgress & { updatedAt: string; posterUrl: string | null; entryId: number | null; entryStatus: string | null })[] {
 	cleanupCompletedProgress();
+	// The owner's list is the library; anyone else's is their own titles.
+	const profile = currentProfile();
+	const list = profile === MAIN_PROFILE ? 'entries' : `(SELECT * FROM profile_titles WHERE profile = ${Number(profile)})`;
 	try {
 		return db
 			.prepare(`
@@ -905,17 +918,17 @@ export function continueWatchingList(): (WatchProgress & { updatedAt: string; po
 							NULLIF(w.poster_url, '')
 						) AS posterUrl,
 						COALESCE(
-							(SELECT e.id FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1),
-							(SELECT e.id FROM entries e WHERE w.type = 'tv' AND (instr(lower(e.title), lower(w.title)) = 1 OR instr(lower(w.title), lower(e.title)) = 1) LIMIT 1)
+							(SELECT e.id FROM ${list} e WHERE lower(e.title) = lower(w.title) LIMIT 1),
+							(SELECT e.id FROM ${list} e WHERE w.type = 'tv' AND (instr(lower(e.title), lower(w.title)) = 1 OR instr(lower(w.title), lower(e.title)) = 1) LIMIT 1)
 						) AS entryId,
 						COALESCE(
-							(SELECT e.status FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1),
-							(SELECT e.status FROM entries e WHERE w.type = 'tv' AND (instr(lower(e.title), lower(w.title)) = 1 OR instr(lower(w.title), lower(e.title)) = 1) LIMIT 1)
+							(SELECT e.status FROM ${list} e WHERE lower(e.title) = lower(w.title) LIMIT 1),
+							(SELECT e.status FROM ${list} e WHERE w.type = 'tv' AND (instr(lower(e.title), lower(w.title)) = 1 OR instr(lower(w.title), lower(e.title)) = 1) LIMIT 1)
 						) AS entryStatus
 				FROM watch_progress w
-				WHERE w.rowid = (
+				WHERE w.profile = :profile AND w.rowid = (
 					SELECT w2.rowid FROM watch_progress w2
-					WHERE w2.title = w.title AND w2.type = w.type
+					WHERE w2.profile = w.profile AND w2.title = w.title AND w2.type = w.type
 					ORDER BY w2.updated_at DESC, w2.season DESC, w2.episode DESC
 					LIMIT 1
 				)
@@ -926,12 +939,20 @@ export function continueWatchingList(): (WatchProgress & { updatedAt: string; po
 				-- Hidden until it's watched again after being removed.
 				AND NOT EXISTS (
 					SELECT 1 FROM continue_hidden h
-					WHERE h.title = w.title AND h.type = w.type AND h.hidden_at >= w.updated_at
+					WHERE h.profile = w.profile AND h.title = w.title AND h.type = w.type AND h.hidden_at >= w.updated_at
 				)
+				-- A show marked completed (by hand, or by Autosync after its last episode) is done:
+				-- it only comes back when an episode is started again after that (a rewatch, a new season).
+				AND NOT (w.type = 'tv' AND EXISTS (
+					SELECT 1 FROM ${list} e
+					WHERE lower(e.title) = lower(w.title) AND e.status = 'completed'
+						AND (w.duration = 0 OR CAST(w."current_time" AS REAL) / w.duration >= 0.9
+							OR datetime(w.updated_at) <= datetime(e.updated_at))
+				))
 				ORDER BY w.updated_at DESC
 				LIMIT 20
 			`)
-			.all() as unknown as (WatchProgress & { updatedAt: string; posterUrl: string | null; entryId: number | null; entryStatus: string | null })[];
+			.all({ profile }) as unknown as (WatchProgress & { updatedAt: string; posterUrl: string | null; entryId: number | null; entryStatus: string | null })[];
 	} catch (e) {
 		console.error('[continueWatchingList]', e);
 		return [];
@@ -940,13 +961,13 @@ export function continueWatchingList(): (WatchProgress & { updatedAt: string; po
 
 export function hideFromContinueWatching(title: string, type: string): void {
 	db.prepare(`
-		INSERT INTO continue_hidden (title, type, hidden_at) VALUES (?, ?, datetime('now'))
-		ON CONFLICT (title, type) DO UPDATE SET hidden_at = excluded.hidden_at
-	`).run(title, type);
+		INSERT INTO continue_hidden (profile, title, type, hidden_at) VALUES (?, ?, ?, datetime('now'))
+		ON CONFLICT (profile, title, type) DO UPDATE SET hidden_at = excluded.hidden_at
+	`).run(currentProfile(), title, type);
 }
 
 export function deleteTitleProgress(title: string, type: string): void {
-	db.prepare('DELETE FROM watch_progress WHERE title = ? AND type = ?').run(title, type);
+	db.prepare('DELETE FROM watch_progress WHERE profile = ? AND title = ? AND type = ?').run(currentProfile(), title, type);
 }
 
 /**
@@ -956,17 +977,18 @@ export function deleteTitleProgress(title: string, type: string): void {
  */
 export function markEpisodes(title: string, episodes: { season: number; episode: number }[], watched: boolean): void {
 	const upsert = db.prepare(`
-		INSERT INTO watch_progress (title, type, season, episode, current_time, duration, sub_url, sub_delay, sub_file_name, poster_url, share_key, fid, updated_at)
-		VALUES (?, 'tv', ?, ?, ?, 1, '', 0, '', '', '', 0, datetime('now'))
-		ON CONFLICT (title, type, season, episode)
+		INSERT INTO watch_progress (profile, title, type, season, episode, current_time, duration, sub_url, sub_delay, sub_file_name, poster_url, share_key, fid, updated_at)
+		VALUES (?, ?, 'tv', ?, ?, ?, 1, '', 0, '', '', '', 0, datetime('now'))
+		ON CONFLICT (profile, title, type, season, episode)
 		DO UPDATE SET current_time = CASE WHEN ? THEN MAX(watch_progress.duration, 1) ELSE 0 END,
 			duration = MAX(watch_progress.duration, 1),
 			updated_at = CASE WHEN ? THEN datetime('now') ELSE watch_progress.updated_at END
 	`);
+	const profile = currentProfile();
 	db.exec('BEGIN');
 	try {
 		for (const { season, episode } of episodes) {
-			upsert.run(title, season, episode, watched ? 1 : 0, watched ? 1 : 0, watched ? 1 : 0);
+			upsert.run(profile, title, season, episode, watched ? 1 : 0, watched ? 1 : 0, watched ? 1 : 0);
 		}
 		db.exec('COMMIT');
 	} catch (error) {
@@ -978,8 +1000,8 @@ export function markEpisodes(title: string, episodes: { season: number; episode:
 export function watchedEpisodesForTitle(title: string): { season: number; episode: number; pct: number }[] {
 	return db
 		.prepare(`SELECT season, episode, CAST("current_time" AS REAL) / duration AS pct
-			FROM watch_progress WHERE title = ? AND type = 'tv' AND duration > 0`)
-		.all(title) as { season: number; episode: number; pct: number }[];
+			FROM watch_progress WHERE profile = ? AND title = ? AND type = 'tv' AND duration > 0`)
+		.all(currentProfile(), title) as { season: number; episode: number; pct: number }[];
 }
 
 export function updateSeasonEpisodeReached(id: number, season: number, episode: number): void {
@@ -994,6 +1016,162 @@ function cleanupCompletedProgress(): void {
 export function listAllWatchProgressFull(): (WatchProgress & { updatedAt: string })[] {
 	cleanupCompletedProgress();
 	return db
-		.prepare('SELECT title, type, season, episode, "current_time" AS currentTime, duration, sub_url AS subUrl, sub_delay AS subDelay, sub_file_name AS subFileName, updated_at AS updatedAt FROM watch_progress ORDER BY updated_at DESC')
-		.all() as unknown as (WatchProgress & { updatedAt: string })[];
+		.prepare('SELECT title, type, season, episode, "current_time" AS currentTime, duration, sub_url AS subUrl, sub_delay AS subDelay, sub_file_name AS subFileName, updated_at AS updatedAt FROM watch_progress WHERE profile = ? ORDER BY updated_at DESC')
+		.all(currentProfile()) as unknown as (WatchProgress & { updatedAt: string })[];
+}
+
+/* ------------------------------------------------------------------ the TV screens */
+
+/** A library title as the TV screens show it: a poster card, and the banner above the rows. */
+export type TvItem = {
+	id: number;
+	title: string;
+	year: number | null;
+	status: string;
+	posterUrl: string | null;
+	overview: string | null;
+	source: string;
+	sourceId: string | null;
+	category: string;
+	categoryName: string;
+	lastSeason: number | null;
+	lastEpisode: number | null;
+};
+
+/** The whole library, most recently touched first; for someone else's profile, their own list. */
+export function tvLibrary(): TvItem[] {
+	const profile = currentProfile();
+	if (profile !== MAIN_PROFILE) {
+		return db
+			.prepare(`
+				SELECT p.id, p.title, p.year, p.status, p.poster_url AS posterUrl, p.overview, p.source,
+					p.source_id AS sourceId, p.category, COALESCE(c.name, p.category) AS categoryName,
+					p.last_season AS lastSeason, p.last_episode AS lastEpisode
+				FROM profile_titles p
+				LEFT JOIN categories c ON c.slug = p.category
+				WHERE p.profile = ?
+				ORDER BY p.updated_at DESC
+			`)
+			.all(profile)
+			.map((row) => ({ ...(row as TvItem) }));
+	}
+	return db
+		.prepare(`
+			SELECT e.id, e.title, e.year, e.status, e.poster_url AS posterUrl, e.overview, e.source,
+				e.source_id AS sourceId, c.slug AS category, c.name AS categoryName,
+				e.last_season AS lastSeason, e.last_episode AS lastEpisode
+			FROM entries e
+			JOIN categories c ON c.id = e.category_id
+			ORDER BY e.updated_at DESC
+		`)
+		.all()
+		.map((row) => ({ ...(row as TvItem) }));
+}
+
+/** A friend's shared catalog, under the name you'd rather call them by. */
+export function renameSharedCatalog(id: number, name: string): void {
+	db.prepare('UPDATE shared_catalogs SET name = ? WHERE id = ?').run(name, id);
+}
+
+/* ------------------------------------------------------------------ who's watching (TV profiles) */
+
+export type Profile = { id: number; name: string; color: string };
+
+
+/**
+ * Everyone who watches on the TVs, the library's owner first. The owner (profile 0) is there
+ * from the start, called "Me" until it's given a name.
+ */
+export function listProfiles(): Profile[] {
+	const rows = db.prepare('SELECT id, name, color FROM profiles ORDER BY id').all().map((row) => plain<Profile>(row));
+	if (!rows.some((row) => row.id === MAIN_PROFILE)) rows.unshift({ id: MAIN_PROFILE, name: 'Me', color: PROFILE_COLORS[0] });
+	return rows;
+}
+
+export function profileExists(id: number): boolean {
+	return id === MAIN_PROFILE || Boolean(db.prepare('SELECT 1 FROM profiles WHERE id = ?').get(id));
+}
+
+export function addProfile(name: string): number {
+	const used = listProfiles().length;
+	const added = db.prepare('INSERT INTO profiles (name, color) VALUES (?, ?)').run(name, PROFILE_COLORS[used % PROFILE_COLORS.length]);
+	return Number(added.lastInsertRowid);
+}
+
+export function updateProfile(id: number, name: string, color: string): void {
+	db.prepare(`
+		INSERT INTO profiles (id, name, color) VALUES (?, ?, ?)
+		ON CONFLICT (id) DO UPDATE SET name = excluded.name, color = excluded.color
+	`).run(id, name, color);
+}
+
+/** Someone's profile goes, with what they'd watched and their list. Never the owner's. */
+export function deleteProfile(id: number): void {
+	if (id === MAIN_PROFILE) return;
+	db.exec('BEGIN');
+	try {
+		db.prepare('DELETE FROM watch_progress WHERE profile = ?').run(id);
+		db.prepare('DELETE FROM continue_hidden WHERE profile = ?').run(id);
+		db.prepare('DELETE FROM profile_titles WHERE profile = ?').run(id);
+		db.prepare('DELETE FROM profiles WHERE id = ?').run(id);
+		db.exec('COMMIT');
+	} catch (error) {
+		db.exec('ROLLBACK');
+		throw error;
+	}
+}
+
+export type ProfileTitleInput = {
+	source: string;
+	sourceId: string;
+	title: string;
+	year: number | null;
+	category: string;
+	posterUrl: string | null;
+	overview: string | null;
+	status: string;
+	lastSeason?: number | null;
+	lastEpisode?: number | null;
+};
+
+/** Puts a title on the current profile's own list (or updates it there). Returns its id. */
+export function saveProfileTitle(input: ProfileTitleInput): number {
+	const profile = currentProfile();
+	db.prepare(`
+		INSERT INTO profile_titles (profile, source, source_id, title, year, category, poster_url, overview, status, last_season, last_episode, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		ON CONFLICT (profile, source, source_id) DO UPDATE SET
+			status = excluded.status,
+			last_season = COALESCE(excluded.last_season, profile_titles.last_season),
+			last_episode = COALESCE(excluded.last_episode, profile_titles.last_episode),
+			updated_at = excluded.updated_at
+	`).run(profile, input.source, input.sourceId, input.title, input.year, input.category, input.posterUrl, input.overview, input.status, input.lastSeason ?? null, input.lastEpisode ?? null);
+	return (db.prepare('SELECT id FROM profile_titles WHERE profile = ? AND source = ? AND source_id = ?').get(profile, input.source, input.sourceId) as { id: number }).id;
+}
+
+/** A title on the current profile's own list, by where it's from or by name and year. */
+export function profileTitleFor(source: string, sourceId: string, title?: string | null, year?: number | null): { id: number; title: string; status: string } | null {
+	const profile = currentProfile();
+	const row =
+		db.prepare('SELECT id, title, status FROM profile_titles WHERE profile = ? AND source = ? AND source_id = ?').get(profile, source, sourceId) ??
+		(title
+			? db
+					.prepare('SELECT id, title, status FROM profile_titles WHERE profile = ? AND lower(title) = lower(?) AND (? IS NULL OR year IS NULL OR year = ?) LIMIT 1')
+					.get(profile, title, year ?? null, year ?? null)
+			: undefined);
+	return row ? plain<{ id: number; title: string; status: string }>(row) : null;
+}
+
+export function completeProfileTitle(id: number): void {
+	db.prepare("UPDATE profile_titles SET status = 'completed', updated_at = datetime('now') WHERE id = ? AND profile = ?").run(id, currentProfile());
+}
+
+/** The episode reached; something on their list they've now started is Watching. */
+export function profileTitleReached(id: number, season: number, episode: number): void {
+	db.prepare(`
+		UPDATE profile_titles
+		SET last_season = ?, last_episode = ?, status = CASE WHEN status = 'planned' THEN 'watching' ELSE status END, updated_at = datetime('now')
+		WHERE id = ? AND profile = ?
+	`)
+		.run(season, episode, id, currentProfile());
 }

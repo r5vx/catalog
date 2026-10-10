@@ -1,7 +1,20 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+	import { isTv } from '$lib/tv';
 	import type { ActionData } from './$types';
 
 	let { form }: { form: ActionData } = $props();
+
+	/* On the TV there's no keyboard to type with: number keys to press with the remote instead. */
+	let tv = $state(false);
+	let pin = $state('');
+	let padStart: HTMLButtonElement | undefined = $state();
+	onMount(() => {
+		tv = isTv();
+	});
+	$effect(() => {
+		if (tv && padStart) padStart.focus();
+	});
 </script>
 
 <svelte:head><title>Catalog</title></svelte:head>
@@ -22,10 +35,28 @@
 			name="pin"
 			placeholder="PIN"
 			autocomplete="current-password"
-			autofocus
+			autofocus={!tv}
+			readonly={tv}
+			tabindex={tv ? -1 : undefined}
 			aria-label="PIN"
+			bind:value={pin}
 		/>
-		<button type="submit" class="btn btn-primary">Open</button>
+		{#if tv}
+			<div class="pad">
+				{#each ['1', '2', '3', '4', '5', '6', '7', '8', '9'] as digit, i (digit)}
+					{#if i === 0}
+						<button type="button" class="btn" bind:this={padStart} onclick={() => (pin += digit)}>{digit}</button>
+					{:else}
+						<button type="button" class="btn" onclick={() => (pin += digit)}>{digit}</button>
+					{/if}
+				{/each}
+				<button type="button" class="btn" onclick={() => (pin = pin.slice(0, -1))} aria-label="Delete">⌫</button>
+				<button type="button" class="btn" onclick={() => (pin += '0')}>0</button>
+				<button type="submit" class="btn btn-primary">Open</button>
+			</div>
+		{:else}
+			<button type="submit" class="btn btn-primary">Open</button>
+		{/if}
 	</form>
 </div>
 
@@ -58,6 +89,18 @@
 		gap: 10px;
 		width: 100%;
 		margin-top: 6px;
+	}
+
+	/* The TV's number keys, three across. */
+	.pad {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 8px;
+	}
+
+	.pad .btn {
+		font-size: 1.3rem;
+		padding: 12px 0;
 	}
 
 	.error {
