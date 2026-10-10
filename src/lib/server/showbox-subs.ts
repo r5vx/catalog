@@ -1,6 +1,7 @@
 import { fetchImdbId, fetchEnglishTitle } from './metadata/tmdb';
 import { readSettings } from './settings';
 import { gunzipSync, inflateRawSync } from 'node:zlib';
+import xz from 'xz-decompress';
 
 const OS_REST = 'https://rest.opensubtitles.org/search';
 const SUBDL_API = 'https://api.subdl.com/api/v1/subtitles';
@@ -197,101 +198,139 @@ async function queryGestdown(
 	}
 }
 
+/** OpenSubtitles, by IMDb id, or by name when that finds nothing. */
+async function fromOpenSubtitles(
+	title: string,
+	type: 'movie' | 'tv',
+	imdbId: string | null,
+	season?: number,
+	episode?: number
+): Promise<SubtitleOption[]> {
+	const seen = new Set<string>();
+	const subs: SubtitleOption[] = [];
+
+	const matchesEpisode = (s: OSResult) =>
+		type !== 'tv' || !season || !episode ||
+		(String(s.SeriesSeason) === String(season) && String(s.SeriesEpisode) === String(episode));
+
+	const addSub = (s: OSResult) => {
+		if (!s.SubDownloadLink || !s.SubLanguageID) return;
+		const key = s.IDSubtitleFile ?? s.SubDownloadLink;
+		if (seen.has(key)) return;
+		seen.add(key);
+		subs.push({
+			id: s.IDSubtitleFile ?? String(subs.length),
+			url: s.SubDownloadLink,
+			lang: s.SubLanguageID,
+			language: langName(s.SubLanguageID),
+			fileName: s.SubFileName ?? '',
+			source: 'OpenSubtitles'
+		});
+	};
+
+	const collectResults = (results: OSResult[]) => {
+		const matched = results.filter(matchesEpisode);
+		if (matched.length > 0) return matched;
+		return (type === 'tv' && season && episode) ? [] : results;
+	};
+
+	if (imdbId) {
+		const numericId = imdbId.replace(/^tt/, '');
+		const [engResults, allResults] = await Promise.all([
+			queryOS(`imdbid-${numericId}/sublanguageid-eng`),
+			queryOS(`imdbid-${numericId}`)
+		]);
+		for (const s of collectResults(engResults)) addSub(s);
+		for (const s of collectResults(allResults)) addSub(s);
+	}
+
+	if (subs.length === 0) {
+		const titlesToTry = [title];
+		const engTitle = await fetchEnglishTitle(title, type);
+		if (engTitle) titlesToTry.push(engTitle);
+
+		for (const t of titlesToTry) {
+			const spaced = t.toLowerCase().replace(/[-_]/g, ' ').replace(/[^a-z0-9 ]/g, '').trim().replace(/\s+/g, '+');
+			const spaceless = t.toLowerCase().replace(/[^a-z0-9]/g, '');
+			const variants: string[] = [];
+			if (spaced) variants.push(spaced);
+			if (spaceless && spaced.includes('+')) variants.push(spaceless);
+
+			for (const terms of variants) {
+				const [engText, allText] = await Promise.all([
+					queryOS(`query-${terms}/sublanguageid-eng`),
+					queryOS(`query-${terms}`)
+				]);
+				for (const s of collectResults(engText)) addSub(s);
+				for (const s of collectResults(allText)) addSub(s);
+			}
+			if (subs.length > 0) break;
+		}
+	}
+	return subs;
+}
+
+/** OpenSubtitles first, then SubDL and Addic7ed; no repeats, and only so many per language. */
+function mergeSubtitles(lists: SubtitleOption[][]): SubtitleOption[] {
+	const seen = new Set<string>();
+	const subs: SubtitleOption[] = [];
+	for (const s of lists.flat()) {
+		const name = s.fileName.toLowerCase();
+		if (seen.has(s.url) || (s.source !== 'OpenSubtitles' && name && seen.has(name))) continue;
+		seen.add(s.url);
+		if (name) seen.add(name);
+		subs.push(s);
+	}
+	const langCount = new Map<string, number>();
+	return subs.filter((s) => {
+		const count = (langCount.get(s.lang) ?? 0) + 1;
+		langCount.set(s.lang, count);
+		return s.lang === 'eng' ? count <= 25 : count <= 5;
+	});
+}
+
+/** Complete answers, kept for an hour, so a site that was slow the first time is there next time. */
+const complete = new Map<string, { list: SubtitleOption[]; at: number }>();
+
+/**
+ * Subtitles from OpenSubtitles, SubDL and Addic7ed, all asked at once. The list goes back with
+ * whatever has answered — 2.5 seconds after OpenSubtitles, six at most; one slow site used to
+ * hold it up for half a minute — and the rest is kept for the next time it's asked for.
+ */
 export async function fetchSubtitlesForTitle(
 	title: string,
 	type: 'movie' | 'tv',
 	season?: number,
 	episode?: number
 ): Promise<SubtitleOption[]> {
+	const key = `${title.toLowerCase()}|${type}|${season ?? 0}|${episode ?? 0}`;
+	const known = complete.get(key);
+	if (known && Date.now() - known.at < 60 * 60 * 1000) return known.list;
+
 	try {
 		let imdbId = await fetchImdbId(title, type);
-		if (!imdbId) {
-			const alt = type === 'tv' ? 'movie' : 'tv';
-			imdbId = await fetchImdbId(title, alt);
-		}
+		if (!imdbId) imdbId = await fetchImdbId(title, type === 'tv' ? 'movie' : 'tv');
 
-		const seen = new Set<string>();
-		const subs: SubtitleOption[] = [];
-
-		const matchesEpisode = (s: OSResult) =>
-			type !== 'tv' || !season || !episode ||
-			(String(s.SeriesSeason) === String(season) && String(s.SeriesEpisode) === String(episode));
-
-		const addSub = (s: OSResult) => {
-			if (!s.SubDownloadLink || !s.SubLanguageID) return;
-			const key = s.IDSubtitleFile ?? s.SubDownloadLink;
-			if (seen.has(key)) return;
-			seen.add(key);
-
-			subs.push({
-				id: s.IDSubtitleFile ?? String(subs.length),
-				url: s.SubDownloadLink,
-				lang: s.SubLanguageID,
-				language: langName(s.SubLanguageID),
-				fileName: s.SubFileName ?? '',
-				source: 'OpenSubtitles'
-			});
-		};
-
-		const collectResults = (results: OSResult[]) => {
-			const matched = results.filter(matchesEpisode);
-			if (matched.length > 0) return matched;
-			return (type === 'tv' && season && episode) ? [] : results;
-		};
-
-		if (imdbId) {
-			const numericId = imdbId.replace(/^tt/, '');
-			const [engResults, allResults] = await Promise.all([
-				queryOS(`imdbid-${numericId}/sublanguageid-eng`),
-				queryOS(`imdbid-${numericId}`)
-			]);
-			for (const s of collectResults(engResults)) addSub(s);
-			for (const s of collectResults(allResults)) addSub(s);
-		}
-
-		if (subs.length === 0) {
-			const titlesToTry = [title];
-			const engTitle = await fetchEnglishTitle(title, type);
-			if (engTitle) titlesToTry.push(engTitle);
-
-			for (const t of titlesToTry) {
-				const spaced = t.toLowerCase().replace(/[-_]/g, ' ').replace(/[^a-z0-9 ]/g, '').trim().replace(/\s+/g, '+');
-				const spaceless = t.toLowerCase().replace(/[^a-z0-9]/g, '');
-				const variants: string[] = [];
-				if (spaced) variants.push(spaced);
-				if (spaceless && spaced.includes('+')) variants.push(spaceless);
-
-				for (const terms of variants) {
-					const [engText, allText] = await Promise.all([
-						queryOS(`query-${terms}/sublanguageid-eng`),
-						queryOS(`query-${terms}`)
-					]);
-					for (const s of collectResults(engText)) addSub(s);
-					for (const s of collectResults(allText)) addSub(s);
-				}
-				if (subs.length > 0) break;
-			}
-		}
-
-		const [subdlSubs, gestdownSubs] = await Promise.all([
+		const answered: (SubtitleOption[] | null)[] = [null, null, null];
+		const asking = [
+			fromOpenSubtitles(title, type, imdbId, season, episode),
 			querySubDL(imdbId, title, type, season, episode),
 			queryGestdown(title, type, season, episode)
-		]);
-		for (const s of [...subdlSubs, ...gestdownSubs]) {
-			const key = s.fileName.toLowerCase();
-			if (!seen.has(key) && !seen.has(s.url)) {
-				seen.add(key);
-				seen.add(s.url);
-				subs.push(s);
-			}
-		}
+		].map((p, i) => p.catch(() => []).then((list) => (answered[i] = list)));
 
-		const langCount = new Map<string, number>();
-		return subs.filter((s) => {
-			const count = (langCount.get(s.lang) ?? 0) + 1;
-			langCount.set(s.lang, count);
-			return s.lang === 'eng' ? count <= 25 : count <= 5;
+		const all = Promise.all(asking).then((lists) => {
+			const list = mergeSubtitles(lists);
+			complete.set(key, { list, at: Date.now() });
+			return list;
 		});
+		// OpenSubtitles has the most; once it has answered, the others get 2.5 seconds more.
+		const afterOpenSubtitles = asking[0].then(() => new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)));
+		const inTime = await Promise.race([
+			all,
+			afterOpenSubtitles,
+			new Promise<null>((resolve) => setTimeout(() => resolve(null), 6000))
+		]);
+		return inTime ?? mergeSubtitles(answered.map((list) => list ?? []));
 	} catch {
 		return [];
 	}
@@ -343,11 +382,15 @@ function extractFromZip(buf: Buffer, season?: number, episode?: number): string 
 	}
 	if (files.length === 0) return '';
 
+	// Text formats first: a ".sub" is often a Blu-ray/DVD picture subtitle, with no text to show.
+	const format = (name: string) => SUB_EXTS.findIndex((ext) => name.toLowerCase().endsWith(ext));
 	const pick = files
 		.map((f, i) => ({ f, score: episodeScore(f.name, season, episode), i }))
-		.sort((a, b) => b.score - a.score || a.i - b.i)[0].f;
+		.sort((a, b) => b.score - a.score || format(a.f.name) - format(b.f.name) || a.i - b.i)[0].f;
 	const dataStart = pick.at + 30 + buf.readUInt16LE(pick.at + 26) + buf.readUInt16LE(pick.at + 28);
-	return inflate(buf.subarray(dataStart, dataStart + pick.size), pick.method);
+	const text = inflate(buf.subarray(dataStart, dataStart + pick.size), pick.method);
+	// Pictures, not text (binary): nothing that can be shown.
+	return text.includes('\0') ? '' : text;
 }
 
 function extractFromZipScan(buf: Buffer): string {
@@ -385,6 +428,11 @@ export async function downloadSubtitle(url: string, season?: number, episode?: n
 		if (buf[0] === 0x50 && buf[1] === 0x4b) return extractFromZip(buf, season, episode);
 		if (buf[0] === 0x1f && buf[1] === 0x8b) {
 			return gunzipSync(buf).toString('utf-8');
+		}
+		// xz (AnimeTosho's subtitle downloads): FD 37 7A 58 5A 00.
+		if (buf[0] === 0xfd && buf[1] === 0x37 && buf[2] === 0x7a && buf[3] === 0x58) {
+			const stream = new Blob([buf]).stream();
+			return await new Response(new xz.XzReadableStream(stream)).text();
 		}
 		return buf.toString('utf-8');
 	} catch {

@@ -1,5 +1,6 @@
 import { db, plain, plainAll, toInt } from './index';
 import type { Category, Entry, EntryCard } from './types';
+import { titleKey } from '../../titleKey';
 
 /**
  * Every database query in the app lives here, as plain SQL. If you want to
@@ -306,7 +307,26 @@ export function existingSourceKeysWithIds(): Record<string, number> {
 		`)
 		.all() as { id: number; root: number }[];
 	for (const row of roots) map[`anilist:${row.root}`] ??= row.id;
+
+	// The same title and year from the other site (an AniList result for a TMDB entry).
+	const titled = db.prepare('SELECT id, title, year FROM entries WHERE year IS NOT NULL').all() as { id: number; title: string; year: number }[];
+	for (const row of titled) map[titleKey(row.title, row.year)] ??= row.id;
 	return map;
+}
+
+/** Each library entry's poster, by its id: what a search result shows when it's in the library. */
+export function libraryPosters(): Record<number, string> {
+	const rows = db.prepare("SELECT id, poster_url AS poster FROM entries WHERE poster_url IS NOT NULL AND poster_url != ''").all() as {
+		id: number;
+		poster: string;
+	}[];
+	return Object.fromEntries(rows.map((r) => [r.id, r.poster]));
+}
+
+/** A library entry with exactly this title and year, from either site. */
+export function entryIdByTitle(title: string, year: number | string | null | undefined): number | null {
+	if (!title || !year) return null;
+	return existingSourceKeysWithIds()[titleKey(title, year)] ?? null;
 }
 
 /** Owned entry for any season of the same show, if there is one. */
@@ -346,6 +366,47 @@ export function saveOrderCache(key: string, value: unknown, at: number): void {
 	db.prepare(
 		'INSERT INTO watch_order_cache (key, value, saved_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, saved_at = excluded.saved_at'
 	).run(key, JSON.stringify(value), at);
+}
+
+/* ---------------------------------------------------------------- saved subtitles */
+
+export function savedSubtitle(url: string): string | undefined {
+	const row = db.prepare('SELECT content FROM saved_subtitles WHERE url = ?').get(url) as { content: string } | undefined;
+	return row?.content;
+}
+
+export function saveSubtitle(url: string, show: string, content: string): void {
+	db.prepare(
+		'INSERT INTO saved_subtitles (url, show, content) VALUES (?, ?, ?) ON CONFLICT(url) DO UPDATE SET show = excluded.show, content = excluded.content'
+	).run(url, show, content);
+}
+
+/**
+ * Lets go of the subtitles kept for shows that are done with: marked completed in the library,
+ * not watched for 7 days, or taken off Continue Watching. Watching it again fetches them anew.
+ */
+export function forgetFinishedSubtitles(): void {
+	try {
+		db.exec(`
+			DELETE FROM saved_subtitles WHERE show IN (
+				SELECT s.show FROM (SELECT DISTINCT show FROM saved_subtitles) s
+				WHERE EXISTS (
+						SELECT 1 FROM entries e WHERE lower(e.title) = lower(s.show) AND e.status = 'completed'
+					)
+					OR COALESCE(
+						(SELECT max(w.updated_at) FROM watch_progress w WHERE lower(w.title) = lower(s.show)),
+						(SELECT min(x.saved_at) FROM saved_subtitles x WHERE x.show = s.show)
+					) < datetime('now', '-7 days')
+					OR EXISTS (
+						SELECT 1 FROM continue_hidden h
+						WHERE lower(h.title) = lower(s.show)
+							AND h.hidden_at >= COALESCE((SELECT max(w.updated_at) FROM watch_progress w WHERE lower(w.title) = lower(s.show)), '')
+					)
+			)
+		`);
+	} catch (e) {
+		console.error('[forgetFinishedSubtitles]', e);
+	}
 }
 
 export function skippedTitles(): Set<string> {
@@ -739,12 +800,18 @@ export function saveWatchProgress(
 	shareKey?: string,
 	fid?: number
 ): void {
+	// No length yet (duration 0) is "started this episode": it moves to the front of Continue
+	// Watching, but a place already saved in it is kept.
 	db.prepare(`
 		INSERT INTO watch_progress (title, type, season, episode, current_time, duration, sub_url, sub_delay, sub_file_name, poster_url, share_key, fid, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 		ON CONFLICT (title, type, season, episode)
-		DO UPDATE SET current_time = excluded.current_time, duration = excluded.duration,
-			sub_url = excluded.sub_url, sub_delay = excluded.sub_delay, sub_file_name = excluded.sub_file_name,
+		DO UPDATE SET
+			current_time = CASE WHEN excluded.duration > 0 THEN excluded.current_time ELSE watch_progress.current_time END,
+			duration = CASE WHEN excluded.duration > 0 THEN excluded.duration ELSE watch_progress.duration END,
+			sub_url = CASE WHEN excluded.duration > 0 THEN excluded.sub_url ELSE watch_progress.sub_url END,
+			sub_delay = CASE WHEN excluded.duration > 0 THEN excluded.sub_delay ELSE watch_progress.sub_delay END,
+			sub_file_name = CASE WHEN excluded.duration > 0 THEN excluded.sub_file_name ELSE watch_progress.sub_file_name END,
 			poster_url = CASE WHEN excluded.poster_url != '' THEN excluded.poster_url ELSE watch_progress.poster_url END,
 			share_key = CASE WHEN excluded.share_key != '' THEN excluded.share_key ELSE watch_progress.share_key END,
 			fid = CASE WHEN excluded.fid != 0 THEN excluded.fid ELSE watch_progress.fid END,
@@ -829,22 +896,22 @@ export function continueWatchingList(): (WatchProgress & { updatedAt: string; po
 		return db
 			.prepare(`
 				SELECT w.title, w.type, w.season, w.episode, w."current_time" AS currentTime, w.duration, w.updated_at AS updatedAt,
-					COALESCE(
-						(SELECT e.poster_url FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1),
-						(SELECT e.poster_url FROM entries e WHERE instr(lower(e.title), lower(w.title)) > 0 LIMIT 1),
-						(SELECT e.poster_url FROM entries e WHERE instr(lower(w.title), lower(e.title)) > 0 LIMIT 1),
-						NULLIF(w.poster_url, '')
-					) AS posterUrl,
-					COALESCE(
-						(SELECT e.id FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1),
-						(SELECT e.id FROM entries e WHERE instr(lower(e.title), lower(w.title)) > 0 LIMIT 1),
-						(SELECT e.id FROM entries e WHERE instr(lower(w.title), lower(e.title)) > 0 LIMIT 1)
-					) AS entryId,
-					COALESCE(
-						(SELECT e.status FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1),
-						(SELECT e.status FROM entries e WHERE instr(lower(e.title), lower(w.title)) > 0 LIMIT 1),
-						(SELECT e.status FROM entries e WHERE instr(lower(w.title), lower(e.title)) > 0 LIMIT 1)
-					) AS entryStatus
+						-- The library entry with the same name; for a show, one whose name starts the other's
+						-- ("Kaiju No. 8" for "Kaiju No. 8 Season 2"). Never a name found somewhere inside
+						-- another: "Re:ZERO … The Frozen Bond" took Disney's Frozen's poster that way.
+						COALESCE(
+							(SELECT e.poster_url FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1),
+							(SELECT e.poster_url FROM entries e WHERE w.type = 'tv' AND (instr(lower(e.title), lower(w.title)) = 1 OR instr(lower(w.title), lower(e.title)) = 1) LIMIT 1),
+							NULLIF(w.poster_url, '')
+						) AS posterUrl,
+						COALESCE(
+							(SELECT e.id FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1),
+							(SELECT e.id FROM entries e WHERE w.type = 'tv' AND (instr(lower(e.title), lower(w.title)) = 1 OR instr(lower(w.title), lower(e.title)) = 1) LIMIT 1)
+						) AS entryId,
+						COALESCE(
+							(SELECT e.status FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1),
+							(SELECT e.status FROM entries e WHERE w.type = 'tv' AND (instr(lower(e.title), lower(w.title)) = 1 OR instr(lower(w.title), lower(e.title)) = 1) LIMIT 1)
+						) AS entryStatus
 				FROM watch_progress w
 				WHERE w.rowid = (
 					SELECT w2.rowid FROM watch_progress w2

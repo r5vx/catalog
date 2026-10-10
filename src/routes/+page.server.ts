@@ -1,4 +1,4 @@
-import { listCategories, listEntries, countsByCategory, completedCount, completedByCategory, continueWatchingList, sharedCatalogCount, existingSourceKeys, existingSourceKeysWithIds } from '$lib/server/db/queries';
+import { listCategories, listEntries, countsByCategory, completedCount, completedByCategory, continueWatchingList, sharedCatalogCount, existingSourceKeys, existingSourceKeysWithIds, forgetFinishedSubtitles } from '$lib/server/db/queries';
 import { countNotes } from '$lib/server/db/notes';
 import { listTags } from '$lib/server/db/tags';
 import { SORTS, KEPT_FILTERS } from '$lib/constants';
@@ -12,6 +12,8 @@ import type { PageServerLoad } from './$types';
  * the first time; it never holds the page up more than a second and a half.
  */
 async function continueWatchingWithPosters() {
+	// Anything just finished or taken off Continue Watching lets go of its kept subtitles.
+	forgetFinishedSubtitles();
 	const list = continueWatchingList();
 	const missing = list.filter((item) => !item.posterUrl && item.type === 'tv');
 	if (!missing.length) return list;

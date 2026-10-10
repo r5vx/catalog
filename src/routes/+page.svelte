@@ -4,7 +4,12 @@
 	import { warmUpTitle } from '$lib/watch';
 	import { STATUSES, statusLabel, sortBadge, KEPT_FILTERS } from '$lib/constants';
 	import SortPicker from '$lib/SortPicker.svelte';
-	import { episodesBehind } from '$lib/progress';
+
+	/** "S2E6": how far a show's been watched, for its card. */
+	const reachedOf = (entry: { lastSeason: number | null; lastEpisode: number | null }) =>
+		entry.lastSeason === null && entry.lastEpisode === null
+			? ''
+			: `${entry.lastSeason !== null ? `S${entry.lastSeason}` : ''}${entry.lastEpisode !== null ? `E${entry.lastEpisode}` : ''}`;
 	import { page } from '$app/state';
 	import { rememberLibrary } from '$lib/nav';
 	import CategoryTabs from '$lib/CategoryTabs.svelte';
@@ -366,40 +371,18 @@
 						</div>
 
 						<div class="meta">
-							<h3 class="card-title">{entry.title}</h3>
+							<h3 class="card-title" title={entry.title}>{entry.title}</h3>
+							<!-- Kept to the minimum: year, kind and how far you've got; then what it's sorted
+							     by and its status. Everything else is on its page. -->
 							<p class="sub faint tabular">
-								{entry.year ?? '—'} · {entry.categoryName}
+								{[entry.year ?? '—', entry.categoryName, reachedOf(entry)].filter(Boolean).join(' · ')}
 							</p>
+							<!-- What it's sorted by, then its status: both tags on one row. -->
 							<div class="badges">
 								{#if sortBadge(entry, data.filters.sort)}
 									<span class="sorted tabular">{sortBadge(entry, data.filters.sort)}</span>
 								{/if}
 								<span class="pill {entry.status}">{pm ? p(statusLabel(entry.status)) : statusLabel(entry.status)}</span>
-								{#if entry.rating !== null}
-									<span class="rating mine tabular" title="Your rating">{entry.rating.toFixed(1)}</span>
-								{:else if entry.externalRating !== null}
-									<span class="rating tabular" title="Public rating"
-										>{entry.externalRating.toFixed(1)}</span
-									>
-								{/if}
-								{#if episodesBehind(entry)}
-									<span class="waiting tabular" title="Episodes you have not seen">
-										+{episodesBehind(entry)}
-									</span>
-								{/if}
-								{#if entry.lastSeason !== null || entry.lastEpisode !== null}
-									<span class="rating tabular" title="Where you left off">
-										{entry.lastSeason !== null ? `S${entry.lastSeason}` : ''}{entry.lastEpisode !==
-										null
-											? `E${entry.lastEpisode}`
-											: ''}
-									</span>
-								{/if}
-								{#if entry.rewatches > 0}
-									<span class="rewatch tabular" title="Times rewatched">
-										×{entry.rewatches + 1}
-									</span>
-								{/if}
 							</div>
 						</div>
 					</a>
@@ -594,27 +577,39 @@
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
+		/* The tags below size their text to the card's width (cqi). */
+		container-type: inline-size;
 	}
 
+	/* At most two lines; a longer title ends in "…". */
 	.card-title {
 		font-family: var(--body);
 		font-size: 0.92rem;
 		font-weight: 600;
 		line-height: 1.3;
 		overflow-wrap: anywhere;
+		display: -webkit-box;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		overflow: hidden;
 	}
 
 	.sub {
 		font-size: 0.78rem;
 		margin: 0;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 
 	.badges {
 		display: flex;
-		flex-wrap: wrap;
 		align-items: center;
-		gap: 5px;
+		flex-wrap: nowrap;
+		gap: 4px;
 		margin-top: 2px;
+		min-width: 0;
 	}
 
 	.waiting {
@@ -645,11 +640,27 @@
 		border: 1px solid var(--rule);
 	}
 
+	/* Both tags always share one row: their text shrinks with a narrower card (never bigger
+	   than usual), so the longest pair, "Sep 28, 2026" and "Want to watch", always fits. */
+	.badges .pill {
+		flex: none;
+		font-size: min(0.62rem, calc(6.2cqi - 1.9px));
+		letter-spacing: 0.02em;
+		padding: 2px 6px;
+	}
+
 	/* The value you sorted on leads, so the column reads down the page. */
 	.sorted {
 		background: var(--accent-bg);
 		color: var(--accent);
 		border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+		flex: none;
+		font-size: min(0.66rem, calc(6.6cqi - 2px));
+		padding: 1px 4px;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		min-width: 0;
 	}
 
 	.empty {

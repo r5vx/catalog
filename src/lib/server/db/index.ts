@@ -297,6 +297,19 @@ db.exec(`
 	)
 `);
 
+// Subtitle files kept on this PC for a show you're watching, so they load instantly and don't
+// depend on the site staying up. Cleared once the show is finished, unwatched for a week, or
+// taken off Continue Watching (forgetFinishedSubtitles). A few dozen KB each.
+db.exec(`
+	CREATE TABLE IF NOT EXISTS saved_subtitles (
+		url TEXT PRIMARY KEY,
+		show TEXT NOT NULL,
+		content TEXT NOT NULL,
+		saved_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)
+`);
+db.exec('CREATE INDEX IF NOT EXISTS saved_subtitles_show ON saved_subtitles (show)');
+
 // Watch-list titles you've chosen to skip: no longer "up next", and not counted. Keyed like
 // the list items, "movie:1726:1" (type, TMDB id, season).
 db.exec(`

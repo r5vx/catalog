@@ -2,11 +2,12 @@
  * Aniwave (aniwaves.ru): a second place to watch anime, for episodes Showbox doesn't have.
  *
  * Its lookups answer plain requests: search, a show's episode list, an episode's servers, then
- * a server's player, which hands over the video playlist. Only two versions are used, both
+ * a server's player, which hands over the video playlist. Two versions are used first, both
  * without subtitles burned into the picture:
  *   - "S-Sub" (ssub): Japanese audio, up to 1080p; Catalog shows its own subtitles over it.
  *   - "Dub": English audio.
- * Its plain "Sub" has the subtitles burned in, so it's never used.
+ * Its plain "Sub" has the subtitles burned in: only used for a series with no S-Sub (Black
+ * Clover), so Japanese audio is still there.
  *
  * The video's servers only answer their own player (Referer https://play.echovideo.ru/) and
  * won't let another page read the video, so Catalog's server fetches it for the player and
@@ -19,7 +20,9 @@ const PLAYER = 'https://play.echovideo.ru/';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
 const HOUR = 60 * 60 * 1000;
 
-export type AniwaveKind = 'ssub' | 'dub';
+/** S-Sub (Japanese, clean picture), Dub, or Sub (Japanese with subtitles burned in: only offered
+ * for a series that has no S-Sub). */
+export type AniwaveKind = 'ssub' | 'dub' | 'sub';
 
 export interface AniwaveEntry {
 	id: number;
@@ -36,6 +39,8 @@ export interface AniwaveEpisode {
 	number: number;
 	sub: boolean;
 	dub: boolean;
+	/** Its title, when Aniwave gives one. */
+	title: string;
 }
 
 /** Video servers Aniwave has sent us to: the only ones the relay will fetch from. */
@@ -115,24 +120,45 @@ export async function searchAniwave(query: string): Promise<AniwaveEntry[]> {
 /* ------------------------------------------------ episodes */
 
 export async function aniwaveEpisodes(id: number): Promise<AniwaveEpisode[]> {
-	const key = `aniwave-episodes|${id}`;
+	const key = `aniwave-episodes2|${id}`;
 	const known = saved<AniwaveEpisode[]>(key, 3 * HOUR);
 	if (known) return known;
 
 	const data = await ask<{ result?: string }>(`/ajax/episode/list/${id}?vrf=`, `${BASE}/watch/${id}`);
 	if (!data?.result) return [];
 	const episodes: AniwaveEpisode[] = [];
-	for (const m of data.result.matchAll(/<a [^>]*data-num="(\d+)"[^>]*>/g)) {
+	// <a … data-num="1" … data-sub="1" data-dub="1"><b>1</b> <span class="d-title" …>Its title</span>
+	for (const m of data.result.matchAll(/<a [^>]*data-num="(\d+)"[^>]*>([\s\S]*?)<\/a>/g)) {
 		const tag = m[0];
 		if (/enabled="0"/.test(tag)) continue;
 		episodes.push({
 			number: Number(m[1]),
 			sub: /data-sub="1"/.test(tag),
-			dub: /data-dub="1"/.test(tag)
+			dub: /data-dub="1"/.test(tag),
+			title: unescape(m[2].match(/class="d-title"[^>]*>([^<]*)</)?.[1]?.trim() ?? '')
 		});
 	}
 	saveOrderCache(key, episodes, Date.now());
 	return episodes;
+}
+
+/**
+ * Whether a series has its Japanese-audio copy without subtitles in the picture (S-Sub). Some
+ * only have the burned-in one and the dub (Black Clover), so there's no Japanese copy to offer.
+ * Told by its first episode's servers; kept for a week.
+ */
+export async function aniwaveHasSoftSub(id: number): Promise<boolean> {
+	const key = `aniwave-ssub|${id}`;
+	const known = saved<boolean>(key, 7 * 24 * HOUR);
+	if (known !== undefined) return known;
+	const first = (await aniwaveEpisodes(id))[0];
+	if (!first) return false;
+	const list = await ask<{ result?: string }>(`/ajax/server/list?servers=${id}&eps=${first.number}`, `${BASE}/watch/${id}/ep-${first.number}`);
+	// No answer: offered for now, asked again next time.
+	if (!list?.result) return true;
+	const has = /data-type="ssub"[\s\S]*?data-link-id=/.test(list.result.split('</ul>').find((b) => b.includes('data-type="ssub"')) ?? '');
+	saveOrderCache(key, has, Date.now());
+	return has;
 }
 
 /* ------------------------------------------------ the video */
@@ -179,12 +205,23 @@ export async function aniwaveStream(id: number, episode: number, kind: AniwaveKi
 	return null;
 }
 
+/**
+ * Fetches an episode's link ahead of time (the next episode, while this one plays), so it starts
+ * at once. One fetched in the last four minutes is left alone; an older one is fetched again so
+ * it's still good when it's wanted.
+ */
+export function warmAniwaveStream(id: number, episode: number, kind: AniwaveKind): void {
+	const hit = streams.get(`${id}:${episode}:${kind}`);
+	const old = !hit || Date.now() - hit.at > 4 * 60 * 1000;
+	if (old) aniwaveStream(id, episode, kind, true).catch(() => {});
+}
+
 /** `aniwave:<id>:<episode>:<kind>` — what an Aniwave file plays from. */
 export function aniwaveShareKey(id: number, episode: number, kind: AniwaveKind): string {
 	return `aniwave:${id}:${episode}:${kind}`;
 }
 
 export function parseAniwaveShareKey(shareKey: string): { id: number; episode: number; kind: AniwaveKind } | null {
-	const m = shareKey.match(/^aniwave:(\d+):(\d+):(ssub|dub)$/);
+	const m = shareKey.match(/^aniwave:(\d+):(\d+):(ssub|dub|sub)$/);
 	return m ? { id: Number(m[1]), episode: Number(m[2]), kind: m[3] as AniwaveKind } : null;
 }

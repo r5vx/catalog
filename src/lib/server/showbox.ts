@@ -1,3 +1,4 @@
+import { noteRefusal } from './slowRequests';
 import { electronFetch, electronGetVideoUrl, electronGetSubtitles } from './electron-fetch';
 import { withoutQualifier } from './metadata/types';
 
@@ -264,18 +265,33 @@ export async function listFebboxFiles(
 	const key = extractShareKey(shareUrl);
 	if (!key) return [];
 
-	const data = await getJson(
-		`https://www.febbox.com/file/file_share_list?share_key=${key}&pwd=&parent_id=${parentId}`,
-		{
-			headers: {
-				'User-Agent':
-					'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-				Referer: 'https://www.febbox.com/'
+	// A folder comes 50 files at a time (Black Clover's season 1 has 170): every page, in turn.
+	const list: Record<string, unknown>[] = [];
+	for (let page = 1; page <= 20; page++) {
+		const data = await getJson(
+			`https://www.febbox.com/file/file_share_list?share_key=${key}&pwd=&parent_id=${parentId}&page=${page}`,
+			{
+				headers: {
+					'User-Agent':
+						'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+					Referer: 'https://www.febbox.com/'
+				}
 			}
+		);
+		const files = data?.data?.file_list;
+		if (!Array.isArray(files)) {
+			// A reply without a file list is the host saying no (busy, too many requests…): noted on
+			// /api/diagnostics, since to the player it looks just like an empty folder.
+			if (data) noteRefusal('www.febbox.com', '/file/file_share_list', `answered: ${data.msg ?? data.code ?? 'no file list'}`);
+			// A later page refused: what came before still counts.
+			if (page === 1) return [];
+			break;
 		}
-	);
-	const list = data?.data?.file_list;
-	if (!Array.isArray(list)) return [];
+		const seen = new Set(list.map((f) => f.fid));
+		const fresh = files.filter((f: Record<string, unknown>) => !seen.has(f.fid));
+		list.push(...fresh);
+		if (files.length < 50 || !fresh.length) break;
+	}
 
 	return list.map((f: Record<string, unknown>) => ({
 		fid: Number(f.fid),
@@ -297,6 +313,8 @@ export interface FileOption {
 	shareKey?: string;
 	/** "Japanese" or "English", when the source says. */
 	audio?: string;
+	/** English subtitles are part of the picture: Catalog's own aren't switched on over them. */
+	burnedIn?: boolean;
 }
 
 export interface EpisodeInfo {
@@ -306,6 +324,8 @@ export interface EpisodeInfo {
 }
 
 const EP_PATTERN = /[Ss](\d{1,2})[Ee](\d{1,3})/;
+/** An episode number without a season, for files in a season folder. */
+const EP_ONLY = /(?:\s-\s|\b(?:E|EP|Episode)\s?)(\d{1,3})(?:v\d)?(?=[\s._\-\[(]|$)/i;
 const QUALITY_PATTERN = /(\d{3,4}p)/i;
 const VIDEO_EXTS = /\.(mp4|mkv|avi|m4v|webm)$/i;
 
@@ -354,10 +374,10 @@ export async function listEpisodes(
 
 		for (const file of files) {
 			if (file.isDir || !VIDEO_EXTS.test(file.name)) continue;
-			const epMatch = file.name.match(EP_PATTERN);
-			if (!epMatch) continue;
+			// "S01E05", or in a season folder just the episode: "… - 05 …", "E05", "Episode 5".
+			const ep = Number(file.name.match(EP_PATTERN)?.[2] ?? file.name.match(EP_ONLY)?.[1]);
+			if (!ep) continue;
 
-			const ep = Number(epMatch[2]);
 			const quality = file.name.match(QUALITY_PATTERN)?.[1] ?? '';
 			if (quality) allQualities.add(quality);
 			const key = `${seasonNum}-${ep}`;

@@ -1,5 +1,5 @@
 import { searchAll, browseShelves, hasTmdbKey, trendingPeopleTmdb, type BrowseMode, type BrowseFilters } from '$lib/server/metadata';
-import { existingSourceKeysWithIds } from '$lib/server/db/queries';
+import { existingSourceKeysWithIds, libraryPosters } from '$lib/server/db/queries';
 import { searchPeople } from '$lib/server/db/people';
 import { parseTitle } from '$lib/parseTitle';
 import { watchRegion } from '$lib/server/metadata/providers';
@@ -41,6 +41,7 @@ export const load: PageServerLoad = async ({ url }) => {
 			results: [],
 			shelves: [],
 			owned: existingSourceKeysWithIds(),
+			posters: libraryPosters(),
 			tmdbEnabled: hasTmdbKey(),
 			people,
 			trending
@@ -66,6 +67,7 @@ export const load: PageServerLoad = async ({ url }) => {
 		results,
 		shelves,
 		owned: existingSourceKeysWithIds(),
+		posters: libraryPosters(),
 		tmdbEnabled: hasTmdbKey(),
 		people: [],
 		trending: []

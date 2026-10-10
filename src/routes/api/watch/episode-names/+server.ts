@@ -1,6 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import { fetchEpisodeNames } from '$lib/server/metadata/tmdb';
 import { tmdbShow } from '$lib/server/combinedEpisodes';
+import { episodesBefore } from '$lib/server/sources';
 import type { RequestHandler } from './$types';
 
 /**
@@ -16,11 +17,14 @@ export const GET: RequestHandler = async ({ url }) => {
 
 	if (!title || !season) return error(400, 'Missing title or season');
 
-	const names = await fetchEpisodeNames(title, season);
-	if (Object.keys(names).length || !before || !count) return json(names);
+	if (!before || !count) return json(await fetchEpisodeNames(title, season));
 
+	// TMDB's season of the same number is only this one when it starts at the same episode:
+	// Black Clover's Showbox season 2 is episodes 52–102, TMDB's season 2 is the 2026 one.
 	const show = await tmdbShow(title, '');
-	if (!show) return json(names);
+	const same = !show || (show.seasons.some((s) => s.number === season) && episodesBefore(show, season) === before);
+	const names: Record<number, string> = same ? await fetchEpisodeNames(title, season) : {};
+	if (!show || Object.keys(names).length) return json(names);
 	// Walk TMDB's seasons, counting episodes from the first, and take this season's stretch.
 	let passed = 0;
 	for (const s of show.seasons.filter((s) => s.number > 0).sort((a, b) => a.number - b.number)) {
