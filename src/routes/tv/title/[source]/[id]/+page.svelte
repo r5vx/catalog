@@ -59,6 +59,8 @@
 		runtime: number | null;
 		overview: string | null;
 		progress: number;
+		/** In the player's list but no source has it (yet). */
+		missing?: boolean;
 	};
 	let season = $state(0);
 	let seasonEps = $state<SeasonEpisode[]>([]);
@@ -67,11 +69,87 @@
 	$effect(() => {
 		season = data.show?.season ?? 0;
 	});
+
+	/*
+	 * When the player numbers the show its own way (Showbox's seasons: Bleach is 2 seasons on TMDB,
+	 * 18 in the player), the seasons and episodes here become the player's, so picking one opens
+	 * exactly that one. Asked a second after the page opens, so flicking through titles doesn't
+	 * ask Showbox about each one.
+	 */
+	type PlayerList = {
+		title: string;
+		seasons: { number: number; count: number }[];
+		episodes: { season: number; episode: number; available: boolean; airDate: string | null }[];
+	};
+	let playerList = $state<PlayerList | null>(null);
+	$effect(() => {
+		const show = data.show;
+		if (!show || data.type !== 'tv') return;
+		const params = new URLSearchParams({ title: playTitle, year: data.continuing ? '' : String(d.year ?? '') });
+		playerList = null;
+		const timer = setTimeout(async () => {
+			const list: PlayerList | null = await fetch(`/api/tv/player-episodes?${params}`)
+				.then((r) => (r.ok ? r.json() : null))
+				.catch(() => null);
+			if (!list?.seasons?.length) return;
+			const same =
+				list.seasons.length === show.seasons.length &&
+				list.seasons.every((s, i) => s.number === show.seasons[i].number && Math.abs(s.count - show.seasons[i].count) <= 2);
+			if (same) return;
+			playerList = list;
+			const resumeSeason = data.continuing?.season ?? 0;
+			if (!list.seasons.some((s) => s.number === season)) {
+				season = list.seasons.some((s) => s.number === resumeSeason) ? resumeSeason : list.seasons[0].number;
+			}
+		}, 1000);
+		return () => clearTimeout(timer);
+	});
+	const seasonsShown = $derived(playerList?.seasons ?? data.show?.seasons ?? []);
+	const episodeTitle = $derived(playerList?.title ?? playTitle);
+
+	/** A season of the player's own list: its names as the player shows them, and how far through each. */
+	async function playerSeason(list: PlayerList, wanted: number): Promise<SeasonEpisode[]> {
+		const eps = list.episodes.filter((e) => e.season === wanted);
+		let before = 0;
+		for (const s of list.seasons) if (s.number < wanted) before += s.count;
+		const names: Record<number, string> = await fetch(
+			`/api/watch/episode-names?${new URLSearchParams({ title: list.title, season: String(wanted), before: String(before), count: String(eps.length) })}`
+		)
+			.then((r) => (r.ok ? r.json() : {}))
+			.catch(() => ({}));
+		const watched: { season: number; episode: number; pct: number }[] = await fetch(
+			`/api/watch/progress?${new URLSearchParams({ title: list.title, type: 'tv', episodes: '1' })}`
+		)
+			.then((r) => (r.ok ? r.json() : []))
+			.catch(() => []);
+		return eps.map((e) => ({
+			episode: e.episode,
+			name: names[e.episode] ?? `Episode ${e.episode}`,
+			still: null,
+			airDate: e.airDate,
+			runtime: null,
+			overview: null,
+			progress: Math.min(1, watched.find((w) => w.season === wanted && w.episode === e.episode)?.pct ?? 0),
+			missing: !e.available
+		}));
+	}
+
 	$effect(() => {
 		const show = data.show;
 		const wanted = season;
+		const list = playerList;
 		if (!show || !wanted) return;
 		loadingEps = true;
+		if (list) {
+			playerSeason(list, wanted)
+				.then((eps) => {
+					if (season === wanted) seasonEps = eps;
+				})
+				.finally(() => {
+					if (season === wanted) loadingEps = false;
+				});
+			return;
+		}
 		const params = new URLSearchParams({ show: String(show.showId), season: String(wanted), title: playTitle });
 		fetch(`/api/tv/season?${params}`)
 			.then((response) => response.json())
@@ -143,9 +221,9 @@
 
 	{#if data.show && !d.unreleased}
 		<section class="episodes" onfocusin={() => (down = true)}>
-			{#if data.show.seasons.length > 1}
+			{#if seasonsShown.length > 1}
 				<div class="seasons" data-tv-row data-tv-strip>
-					{#each data.show.seasons as one (one.number)}
+					{#each seasonsShown as one (one.number)}
 						<button type="button" class="chip" class:on={season === one.number} data-tv-item onclick={() => (season = one.number)}>
 							Season {one.number}
 						</button>
@@ -157,8 +235,8 @@
 			{#if seasonEps.length}
 				<div class="eps" data-tv-row data-tv-strip>
 					{#each seasonEps as ep (ep.episode)}
-						{#if aired(ep)}
-							<a class="ep" data-tv-item href={playHref(playTitle, 'tv', data.continuing ? null : d.year, season, ep.episode)}>
+						{#if aired(ep) && !ep.missing}
+							<a class="ep" data-tv-item href={playHref(episodeTitle, 'tv', data.continuing ? null : d.year, season, ep.episode)}>
 								<span class="still">
 									{#if ep.still}<img src={ep.still} alt="" loading="lazy" />{/if}
 									{#if ep.progress > 0}
@@ -170,7 +248,7 @@
 							</a>
 						{:else}
 							<span class="ep later">
-								<span class="still"><span class="airs">{airsOn(ep.airDate!)}</span></span>
+								<span class="still"><span class="airs">{ep.airDate && !aired(ep) ? airsOn(ep.airDate) : 'Not available'}</span></span>
 								<span class="ep-name">{ep.episode}. {ep.name}</span>
 							</span>
 						{/if}

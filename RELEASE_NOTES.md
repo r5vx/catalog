@@ -12,6 +12,21 @@ without both.
 
 ## Unreleased
 
+## 3.0.5 — 2026-10-11 — Night updates, family-friendly browsing and Bleach's seasons on the TV
+
+### New
+- **Updates** can install by themselves at night (off unless turned on; 4 AM, or another hour): Settings → Updates, or Updates on the TV
+
+### Improved
+- Catalog looks for updates every four hours while it's open, not only when it starts
+- Browsing anime leaves out ecchi (suggestive) shows; searching still finds them
+- **TV**: subtitle timing (sooner or later, half a second at a time) at the top of the captions menu
+
+### Fixed
+- **TV**
+  - OK sometimes brought up the buttons instead of pausing, and they wouldn't go away
+  - A show the player splits into its own seasons (Bleach: 18) shows those seasons and episodes on its page, not TMDB's two
+
 ## 3.0.4 — 2026-10-11 — Faster resuming, previews and a better TV
 
 ### Improved

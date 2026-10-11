@@ -128,11 +128,13 @@ export function toResult(item: AniListMedia): SearchResult {
 	};
 }
 
+// Browsing leaves out ecchi (suggestive) anime as well as adult ones: "I'm Dating a Dark Summoner"
+// turned up on the owner's mom's TV. Searching still finds them.
 const TRENDING = `
 query ($perPage: Int, $page: Int, $sort: [MediaSort], $yearGreater: FuzzyDateInt, $yearLesser: FuzzyDateInt, $genre: String, $statusNot: MediaStatus) {
   Page(perPage: $perPage, page: $page) {
     pageInfo { hasNextPage }
-    media(type: ANIME, sort: $sort, isAdult: false, startDate_greater: $yearGreater, startDate_lesser: $yearLesser, genre: $genre, status_not: $statusNot) {
+    media(type: ANIME, sort: $sort, isAdult: false, genre_not_in: ["Ecchi", "Hentai"], startDate_greater: $yearGreater, startDate_lesser: $yearLesser, genre: $genre, status_not: $statusNot) {
       id
       title { romaji english }
       startDate { year month day }

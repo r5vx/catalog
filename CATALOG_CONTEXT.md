@@ -262,6 +262,13 @@ version tells the page (`update-failed` → `/api/update` `failed` → the banne
 page); electron-updater's log goes to `%APPDATA%\Catalog\update.log`. Only the version doing the
 updating runs this code, so 3.0.1 itself still needs installing by hand.
 
+**21b. Installing at night** (2026-10-11): `nightUpdate` / `nightUpdateHour` in settings, off by
+default. `updater.ts` looks every 5 minutes: in that hour, Windows release copies only, with an
+update `ready` and nothing played for 15 minutes (`watchedLately`, any profile), it sends
+`install-update` with `auto: true` — once a night (`nightUpdateTried`). main.cjs skips an auto
+install where the app folder needs permission (nobody's there for the prompt) or nothing is
+downloaded. main.cjs also checks for updates every 4 hours, for a Catalog left open for days.
+
 **21. The library got corrupted, and how it was put back.**
 Between two snapshots an hour apart the live `library.db` went from
 `integrity_check: ok` to a damaged B-tree: rowids out of order, a page
@@ -723,6 +730,11 @@ mom: her laptop runs Catalog, her Fire TV shows it). Pieces:
   (`tvBack` in tvNav.ts: on a menu screen opens the menu, then Home, then "exit"; elsewhere
   "default" = history back). Fast-forward/rewind send `scan(±1)` once per press (repeats dropped);
   the player scans at 8/16/32/64× until play/pause or OK. The old app's `seek(±30)` also scans.
+- **Player-numbered shows on the TV title screen**: a second after it opens, the page asks
+  `/api/tv/player-episodes` (the player's own resolve, nostream); if those seasons differ from
+  TMDB's (Bleach: TMDB 2, player 18 from Showbox), the seasons, episodes and names
+  (`/api/watch/episode-names` with before/count) become the player's, so the picked episode is the
+  one that plays. Browse's AniList query has `genre_not_in: ["Ecchi", "Hentai"]` (search doesn't).
 - **Title screen episodes** (`src/lib/server/tvEpisodes.ts`, `/api/tv/season`): TMDB seasons and
   episodes (the player's numbering), no Showbox calls; anime is found with `tmdbShow(name, '')`
   and opens on the season that aired in the entry's year. Picking one opens

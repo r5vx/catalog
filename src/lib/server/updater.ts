@@ -1,5 +1,7 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { readSettings, updateSettings } from './settings';
+import { watchedLately } from './db/queries';
 
 /**
  * Catalog updates itself two different ways, and which one you get depends on
@@ -67,6 +69,40 @@ export function installUpdate(): boolean {
 	process.send({ type: 'install-update' });
 	return true;
 }
+
+/* ---------------------------------------------------------- installing at night */
+
+/** The night install's setting: whether it's on, and the hour (4 AM when unset). */
+export function nightUpdate(): { on: boolean; hour: number } {
+	const settings = readSettings();
+	const hour = Number(settings.nightUpdateHour ?? 4);
+	return { on: settings.nightUpdate === '1', hour: Number.isInteger(hour) && hour >= 0 && hour < 24 ? hour : 4 };
+}
+
+/**
+ * Installing at night (off unless turned on in Settings → Updates): looked at every five
+ * minutes. In the chosen hour, with an update downloaded and nothing played in the last 15
+ * minutes, Catalog restarts to install it — once a night at most, so one that won't install
+ * doesn't restart it over and over. Windows only: the Mac copy installs updates by hand.
+ */
+function nightlyLook() {
+	const { on, hour } = nightUpdate();
+	if (!on || updateMode() !== 'release' || process.platform !== 'win32' || !process.send) return;
+	const now = new Date();
+	if (now.getHours() !== hour) return;
+	const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+	if (readSettings().nightUpdateTried === today) return;
+	if (state.status !== 'ready') {
+		// Nothing downloaded yet: ask once at the start of the hour, and look again in five minutes.
+		if (state.status !== 'checking' && state.status !== 'downloading' && now.getMinutes() < 5) requestUpdateCheck();
+		return;
+	}
+	if (watchedLately(15)) return;
+	updateSettings({ nightUpdateTried: today });
+	process.send({ type: 'install-update', auto: true });
+}
+
+setInterval(nightlyLook, 5 * 60 * 1000).unref?.();
 
 // Registered once, on first import. `hooks.server.ts` imports this file so it
 // happens at boot rather than whenever someone opens Settings — otherwise the
