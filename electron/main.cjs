@@ -263,6 +263,13 @@ function startServer() {
 		}
 
 		if (message?.type === 'install-update') {
+			// At night by itself: only where it can install without anyone there (no Windows
+			// permission prompt to answer), and only with an update actually downloaded.
+			if (message.auto && (!canWriteAppFolder() || !readyVersion)) {
+				updateLog(`night install skipped: ${readyVersion ? 'the app folder needs permission' : 'nothing downloaded'}`);
+				return;
+			}
+			if (message.auto) updateLog(`installing ${readyVersion} at night`);
 			if (window) {
 				window.loadURL(`data:text/html,
 					<html><body style="background:#111;color:#fff;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:12px">
@@ -1275,8 +1282,10 @@ if (!app.requestSingleInstanceLock()) {
 		createWindow();
 
 		// Quietly, in the background — a new version downloads itself and is
-		// installed when the app next closes. Nothing interrupts you.
+		// installed when the app next closes. Nothing interrupts you. Looked for again every four
+		// hours, for a Catalog that stays open for days (a TV's computer).
 		checkForUpdates();
+		setInterval(checkForUpdates, 4 * 60 * 60 * 1000).unref?.();
 
 		app.on('activate', () => {
 			if (BrowserWindow.getAllWindows().length === 0) createWindow();

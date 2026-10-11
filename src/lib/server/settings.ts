@@ -62,6 +62,12 @@ export type Settings = {
 	subdlSeen?: string;
 	/** 'full' when the TV app shows the normal layout instead of the TV one (Settings → Watch on TV). */
 	tvLayout?: string;
+	/** '1' to install a downloaded update by itself at night (Settings → Updates). Off unless turned on. */
+	nightUpdate?: string;
+	/** The hour (0–23) it's installed at; 4 when unset. */
+	nightUpdateHour?: string;
+	/** The day (YYYY-MM-DD) it last tried, so it tries once a night at most. */
+	nightUpdateTried?: string;
 };
 
 export function readSettings(): Settings {

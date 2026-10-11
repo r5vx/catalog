@@ -13,12 +13,14 @@
 	let progress = $state<State>({ status: 'idle' });
 	let ready = $state<string | null>(null);
 	let installing = $state(false);
+	let night = $state({ on: false, hour: 4, available: false });
 
 	async function look() {
 		try {
 			const payload = await (await fetch('/api/update')).json();
 			progress = payload.state ?? progress;
 			ready = payload.state?.status === 'ready' ? (payload.state.version ?? null) : null;
+			if (payload.night) night = payload.night;
 		} catch {}
 	}
 
@@ -32,6 +34,18 @@
 		await fetch('/api/update?action=check', { method: 'POST' });
 		look();
 	}
+
+	/** Installing at night by itself, on or off (the hour is set on the computer; 4 AM to start). */
+	async function toggleNight() {
+		night = { ...night, on: !night.on };
+		await fetch('/api/update?action=night', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ on: night.on, hour: night.hour })
+		});
+	}
+
+	const hourName = (h: number) => `${h % 12 || 12} ${h < 12 ? 'AM' : 'PM'}`;
 
 	async function install() {
 		installing = true;
@@ -72,6 +86,11 @@
 				</button>
 			{:else}
 				<button type="button" class="button" data-tv-item data-tv-autofocus onclick={check}>Check for updates</button>
+			{/if}
+			{#if night.available}
+				<button type="button" class="button" data-tv-item onclick={toggleNight}>
+					Install at night ({hourName(night.hour)}): {night.on ? 'On' : 'Off'}
+				</button>
 			{/if}
 		</div>
 	{/if}

@@ -22,6 +22,19 @@
 
 	let muted = $state(false);
 	let isMac = $state(false);
+	/** Installing by itself at night: off unless turned on, at 4 AM unless changed. */
+	let night = $state({ on: false, hour: 4, available: false });
+
+	async function setNight(on: boolean, hour: number) {
+		night = { ...night, on, hour };
+		await fetch('/api/update?action=night', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ on, hour })
+		});
+	}
+
+	const hourName = (h: number) => `${h % 12 || 12} ${h < 12 ? 'AM' : 'PM'}`;
 	let quarantineStatus = $state<'idle' | 'done' | 'error'>('idle');
 
 	async function setMuted(next: boolean) {
@@ -63,6 +76,7 @@
 			release = payload.state;
 			rebuild = payload.rebuild;
 			muted = payload.muted ?? muted;
+			if (payload.night) night = payload.night;
 			isMac = payload.isMac ?? false;
 		} catch {
 			// The app is closing for the swap. Leave the last state on screen.
@@ -256,6 +270,20 @@
 				/>
 				Tell me when an update is ready
 			</label>
+			{#if night.available}
+				<div class="night">
+					<label class="toggle">
+						<input type="checkbox" checked={night.on} onchange={(e) => setNight(e.currentTarget.checked, night.hour)} />
+						Install updates by itself at
+					</label>
+					<select value={night.hour} disabled={!night.on} onchange={(e) => setNight(night.on, Number(e.currentTarget.value))}>
+						{#each Array.from({ length: 24 }, (_, h) => h) as h (h)}
+							<option value={h}>{hourName(h)}</option>
+						{/each}
+					</select>
+				</div>
+				<p class="faint hint">Catalog restarts to install it then, unless something played in the last 15 minutes.</p>
+			{/if}
 		</section>
 	{/if}
 
@@ -326,6 +354,13 @@
 		flex-direction: column;
 		gap: 12px;
 		align-items: flex-start;
+	}
+
+	.night {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
 	}
 
 	.muted {

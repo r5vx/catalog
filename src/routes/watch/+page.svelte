@@ -1022,7 +1022,16 @@
 	/** On a TV, with nothing in the controls highlighted: OK plays/pauses, up/down bring the controls. */
 	function tvKey(e: KeyboardEvent): boolean {
 		const current = document.activeElement as HTMLElement | null;
-		const onControl = current && current !== document.body && current.tagName !== 'VIDEO';
+		// Only a real button (or link) counts as highlighted. Anything else holding focus — the
+		// invisible layer over the video, the page itself — made OK bring up the controls again
+		// and again instead of pausing, and kept them up.
+		const onControl =
+			current &&
+			current !== document.body &&
+			current.tagName !== 'VIDEO' &&
+			!current.classList.contains('click-layer') &&
+			current.matches('button:not([disabled]), a[href], input, select');
+		if (current && !onControl && current !== document.body) current.blur();
 		if (onControl) {
 			// The highlight moves between the controls (src/lib/tv.ts); keep them up meanwhile.
 			if (e.key.startsWith('Arrow') || e.key === 'Enter') {
@@ -3648,6 +3657,17 @@
 					<!-- captions popup -->
 					{#if showCaptions}
 						<div class="popup popup-captions">
+							<!-- On the TV the timing is here, in the captions menu (its own button is hidden there). -->
+							{#if tvMode && subtitlesOn}
+								<p class="popup-label">Timing</p>
+								<div class="tv-delay">
+									<button class="sub-delay-jump" onclick={() => (subtitleDelay = Math.round((subtitleDelay - 0.5) * 10) / 10)}>Sooner −0.5s</button>
+									<span class="sub-delay-value">{subtitleDelay > 0 ? '+' : ''}{subtitleDelay.toFixed(1)}s</span>
+									<button class="sub-delay-jump" onclick={() => (subtitleDelay = Math.round((subtitleDelay + 0.5) * 10) / 10)}>Later +0.5s</button>
+									{#if subtitleDelay !== 0}<button class="sub-delay-reset" onclick={() => (subtitleDelay = 0)}>Reset</button>{/if}
+								</div>
+								<hr class="popup-divider" />
+							{/if}
 							<p class="popup-label">Subtitles</p>
 							<button
 								class="popup-item"
@@ -3829,9 +3849,18 @@
 	:global(html.tv) .add-btn,
 	:global(html.tv) .vol-group,
 	:global(html.tv) .pip-btn,
-	:global(html.tv) .fs-btn {
+	:global(html.tv) .fs-btn,
+	:global(html.tv) .delay-wrap {
 		display: none;
 	}
+
+	/* The TV's subtitle timing, at the top of the captions menu: big enough to read across the room. */
+	.tv-delay { display: flex; align-items: center; gap: 10px; padding: 6px 14px 10px; white-space: nowrap; }
+	.tv-delay .sub-delay-jump { padding: 8px 14px; font-size: 0.95rem; border-radius: 16px; }
+	.tv-delay .sub-delay-jump:focus { background: #fff; color: #000; outline: none; }
+	.tv-delay .sub-delay-value { font-size: 1.05rem; min-width: 56px; }
+	.tv-delay .sub-delay-reset { padding: 6px 12px; font-size: 0.85rem; }
+	.tv-delay .sub-delay-reset:focus { border-color: #fff; color: #fff; outline: none; }
 
 	/* --------------------------------------------------------- loading / search */
 	.loading-page { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 120px 20px; text-align: center; color: var(--ink-soft); }

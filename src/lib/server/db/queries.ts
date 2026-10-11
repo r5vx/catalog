@@ -1191,6 +1191,11 @@ export function titleSourceByName(title: string): { source: string; sourceId: st
 	return row ? { ...row } : null;
 }
 
+/** Whether anything has played (on any screen, for anyone) in the last few minutes. */
+export function watchedLately(minutes: number): boolean {
+	return Boolean(db.prepare(`SELECT 1 FROM watch_progress WHERE updated_at > datetime('now', ?) LIMIT 1`).get(`-${minutes} minutes`));
+}
+
 /** Takes a title off the current profile's own list. */
 export function deleteProfileTitle(id: number): void {
 	db.prepare('DELETE FROM profile_titles WHERE id = ? AND profile = ?').run(id, currentProfile());
