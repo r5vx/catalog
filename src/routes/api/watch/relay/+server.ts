@@ -36,7 +36,10 @@ export const GET: RequestHandler = async ({ url, request }) => {
 
 	// Aniwave's servers label video pieces as pictures; they're plain video.
 	const type = (upstream.headers.get('content-type') ?? '').replace(/^image\/.*/i, 'video/mp2t');
-	const headers = new Headers({ 'Content-Type': type || 'video/mp2t', 'Cache-Control': 'no-store' });
+	// Video pieces may be kept by the browser for a few hours: the progress-bar pictures ask for
+	// the same pieces the player already has, and get them without a second download. (Playlists
+	// are answered further down, never kept: their links change.)
+	const headers = new Headers({ 'Content-Type': type || 'video/mp2t', 'Cache-Control': 'private, max-age=21600' });
 	for (const name of ['content-length', 'content-range', 'accept-ranges']) {
 		const value = upstream.headers.get(name);
 		if (value) headers.set(name, value);

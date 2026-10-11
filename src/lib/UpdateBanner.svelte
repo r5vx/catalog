@@ -11,6 +11,11 @@
 	type Offer = { kind: 'release' | 'source'; version: string | null };
 
 	let offer = $state<Offer | null>(null);
+	/** A version that was installed but didn't take (Catalog is still the old one). */
+	let failed = $state<string | null>(null);
+
+	// The installer, for putting it on by hand.
+	const RELEASES = 'https://github.com/r5vx/catalog/releases/latest';
 	let dismissed = $state(false);
 	let starting = $state(false);
 	// Plain variables, not state: when the effect below read them, every finished check (no
@@ -58,8 +63,9 @@
 			const payload = await response.json();
 			const state = payload.state;
 			offer = payload.offer ?? null;
+			failed = payload.failed ?? null;
 
-			if (offer) return 'found';
+			if (offer || failed) return 'found';
 			if (state?.status === 'none' || state?.status === 'error') return 'none';
 			if (state?.status === 'downloading' || state?.status === 'checking') return 'wait';
 			return 'none';
@@ -93,13 +99,15 @@
 		if (offer?.kind === 'source') window.location.href = '/settings/updates';
 	}
 
-	const showing = $derived(Boolean(offer) && !dismissed);
+	const showing = $derived((Boolean(offer) || Boolean(failed)) && !dismissed);
 </script>
 
 {#if showing}
 	<div class="banner" role="status">
 		<span class="what">
-			{#if offer?.kind === 'release'}
+			{#if failed}
+				<strong>Catalog {failed} didn't install.</strong> Close Catalog and run the installer from the download page.
+			{:else if offer?.kind === 'release'}
 				<strong>Catalog {offer.version} is ready.</strong> Restart to install it.
 			{:else}
 				<strong>An update is ready.</strong> There are changes that aren't in your app yet.
@@ -107,9 +115,13 @@
 		</span>
 
 		<span class="actions">
-			<button type="button" class="btn btn-primary" disabled={starting} onclick={updateNow}>
-				{starting ? 'Starting…' : 'Update'}
-			</button>
+			{#if failed}
+				<a class="btn btn-primary" href={RELEASES} target="_blank" rel="noopener">Download page</a>
+			{:else}
+				<button type="button" class="btn btn-primary" disabled={starting} onclick={updateNow}>
+					{starting ? 'Starting…' : 'Update'}
+				</button>
+			{/if}
 			<button type="button" class="btn" onclick={notNow}>Not now</button>
 			<button type="button" class="btn quiet" onclick={never}>Don't ask again</button>
 		</span>

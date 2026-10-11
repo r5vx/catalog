@@ -6,7 +6,8 @@ import {
 	requestUpdateCheck,
 	installUpdate,
 	appVersion,
-	sourceIsStale
+	sourceIsStale,
+	failedUpdate
 } from '$lib/server/updater';
 import { startRebuild, rebuildState } from '$lib/server/rebuild';
 import { readSettings, updateSettings } from '$lib/server/settings';
@@ -36,7 +37,7 @@ export const GET: RequestHandler = async () => {
 					? { kind: 'source' as const, version: null }
 					: null;
 
-	return json({ mode, version: appVersion(), state, rebuild, offer, muted, isMac: process.platform === 'darwin' });
+	return json({ mode, version: appVersion(), state, rebuild, offer, muted, failed: failedUpdate(), isMac: process.platform === 'darwin' });
 };
 
 /**

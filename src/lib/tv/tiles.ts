@@ -13,9 +13,28 @@ export type Tile = {
 	/** Small text over the poster: "S2E6". */
 	note?: string | null;
 	progress?: number | null;
+	/** What the remote's menu button offers for it (src/lib/tv/TvMenu.svelte). */
+	menu?: TileMenu;
 };
 
+/** Which kind of poster it is, and what's needed to act on it from its menu. */
+export type TileMenu =
+	| { kind: 'continue'; title: string; type: string; entryId: number | null; link: { source: string; id: string } | null }
+	| { kind: 'library'; id: number; status: string }
+	| { kind: 'result'; source: string; sourceId: string };
+
 export type TileRow = { label: string; tiles: Tile[] };
+
+/**
+ * A poster at a size fit for filling half a TV: the library keeps small ones (TMDB's 342 or 500
+ * pixels wide, AniList's "large", 230 wide), which looked blurry blown up behind the banner.
+ */
+export function bigPicture(url: string | null): string | null {
+	if (!url) return url;
+	return url
+		.replace(/(image\.tmdb\.org\/t\/p\/)w\d+\//, '$1w780/')
+		.replace(/\/cover\/(small|medium|large)\//, '/cover/extraLarge/');
+}
 
 /** A title's own TV page. */
 export const titleHref = (source: string, sourceId: string) => `/tv/title/${source}/${encodeURIComponent(sourceId)}`;
@@ -70,7 +89,8 @@ export function fromLibrary(item: LibraryItem): Tile {
 		poster: item.posterUrl,
 		meta: [item.year, item.categoryName, STATUS_WORDS[item.status], reached].filter(Boolean).join(' · '),
 		overview: item.overview,
-		note: item.status === 'watching' ? reached : null
+		note: item.status === 'watching' ? reached : null,
+		menu: { kind: 'library', id: item.id, status: item.status }
 	};
 }
 
@@ -92,7 +112,8 @@ export function fromResult(result: Result): Tile {
 		title: result.title,
 		poster: result.posterUrl,
 		meta: [result.year, result.kind].filter(Boolean).join(' · '),
-		overview: result.overview
+		overview: result.overview,
+		menu: { kind: 'result', source: result.source, sourceId: result.sourceId }
 	};
 }
 
@@ -104,6 +125,10 @@ type Continuing = {
 	currentTime: number;
 	duration: number;
 	posterUrl: string | null;
+	/** The library entry it belongs to, if any. */
+	entryId?: number | null;
+	/** Its own page, when it's known which title it is. */
+	link?: { source: string; id: string } | null;
 };
 
 export function fromContinue(item: Continuing, overview: string | null = null): Tile {
@@ -111,12 +136,13 @@ export function fromContinue(item: Continuing, overview: string | null = null): 
 	const left = item.duration > 0 ? Math.max(0, Math.round((item.duration - item.currentTime) / 60)) : null;
 	return {
 		key: `cw-${item.type}-${item.title}`,
-		href: playHref(item.title, item.type, null, item.season, item.episode),
+		href: item.link ? titleHref(item.link.source, item.link.id) : playHref(item.title, item.type, null, item.season, item.episode),
 		title: item.title,
 		poster: item.posterUrl,
 		meta: [episode, left !== null && left > 0 ? `${left} min left` : null].filter(Boolean).join(' · ') || 'Continue watching',
 		overview,
 		note: episode,
-		progress: item.duration > 0 ? item.currentTime / item.duration : null
+		progress: item.duration > 0 ? item.currentTime / item.duration : null,
+		menu: { kind: 'continue', title: item.title, type: item.type, entryId: item.entryId ?? null, link: item.link ?? null }
 	};
 }

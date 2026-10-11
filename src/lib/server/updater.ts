@@ -51,6 +51,10 @@ let state: UpdateState = { status: 'idle' };
 
 export const updateState = (): UpdateState => state;
 
+/** A version that was installed last time but didn't take: Catalog is still the old one. */
+let failed: string | null = null;
+export const failedUpdate = () => failed;
+
 export function requestUpdateCheck(): boolean {
 	if (!process.send) return false;
 	state = { status: 'checking' };
@@ -70,6 +74,7 @@ export function installUpdate(): boolean {
 process.on('message', (message: unknown) => {
 	const note = message as { type?: string; state?: UpdateState } | null;
 	if (note?.type === 'update-state' && note.state) state = note.state;
+	if (note?.type === 'update-failed') failed = (note as { version?: string }).version ?? null;
 });
 
 /* --------------------------------------------------- is an update waiting? */

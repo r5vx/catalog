@@ -3,7 +3,7 @@
 	import TvRow from './TvRow.svelte';
 	import TvCard from './TvCard.svelte';
 	import { tvFocus } from '$lib/tvNav';
-	import type { Tile, TileRow } from './tiles';
+	import { bigPicture, type Tile, type TileRow } from './tiles';
 
 	/**
 	 * A browsing screen on the TV, like Netflix's home: a big banner about whatever's highlighted,
@@ -30,7 +30,7 @@
 <div class="screen">
 	<header class="banner">
 		{#if shown?.poster}
-			<img class="art" src={shown.poster} alt="" />
+			<img class="art" src={bigPicture(shown.poster)} alt="" />
 		{/if}
 		<div class="shade"></div>
 		{#if shown}
@@ -53,6 +53,7 @@
 							poster={tile.poster}
 							note={tile.note}
 							progress={tile.progress}
+							menu={tile.menu}
 							autofocus={r === 0 && i === 0}
 							onfocus={() => (picked = tile)}
 						/>
@@ -73,6 +74,7 @@
 									href={tile.href}
 									title={tile.title}
 									poster={tile.poster}
+									menu={tile.menu}
 									onfocus={() => (picked = tile)}
 								/>
 							{/each}

@@ -26,6 +26,10 @@
 <div class="settings">
 	<h1>Settings</h1>
 	<div class="options" data-tv-row data-tv-grid>
+		<a href="/tv/settings/updates" class="option" data-tv-item>
+			<strong>Updates</strong>
+			<span>Which Catalog this is, and what's new.</span>
+		</a>
 		<a href="/tv/profiles" class="option" data-tv-item data-tv-autofocus>
 			<strong>Profiles</strong>
 			<span>Everyone gets their own Continue Watching and My List.</span>

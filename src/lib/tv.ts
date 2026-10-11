@@ -163,6 +163,11 @@ function onKey(event: KeyboardEvent) {
 
 /** The menu button: the "⋯" of the highlighted card or row, or a right-click on it. */
 function openMenu() {
+	// The TV layout has its own (src/lib/tv/TvMenu.svelte).
+	if (document.querySelector('[data-tv-app]')) {
+		window.dispatchEvent(new Event('catalog:tv-menu'));
+		return;
+	}
 	const current = document.activeElement as HTMLElement | null;
 	if (!current || current === document.body) return;
 	const holder = current.closest('.has-more');

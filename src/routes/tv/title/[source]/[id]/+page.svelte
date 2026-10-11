@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { playHref } from '$lib/tv/tiles';
+	import { playHref, bigPicture } from '$lib/tv/tiles';
 	import { tvFocus } from '$lib/tvNav';
 	import type { PageData } from './$types';
 
@@ -101,7 +101,7 @@
 
 <div class="title-screen" class:down>
 	{#if d.backdropUrl || d.posterUrl}
-		<img class="art" class:poster-art={!d.backdropUrl} src={d.backdropUrl ?? d.posterUrl} alt="" />
+		<img class="art" class:poster-art={!d.backdropUrl} src={d.backdropUrl ?? bigPicture(d.posterUrl)} alt="" />
 	{/if}
 	<div class="shade"></div>
 

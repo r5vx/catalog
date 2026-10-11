@@ -64,7 +64,7 @@
 		{:else}
 			<div class="results" data-tv-row data-tv-grid>
 				{#each results as tile (tile.key)}
-					<TvCard href={tile.href} title={tile.title} poster={tile.poster} showTitle />
+					<TvCard href={tile.href} title={tile.title} poster={tile.poster} menu={tile.menu} showTitle />
 				{/each}
 			</div>
 		{/if}

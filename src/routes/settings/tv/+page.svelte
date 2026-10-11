@@ -38,18 +38,18 @@
 <svelte:head><title>Watch on TV · Catalog</title></svelte:head>
 
 <section>
-	<h2>TV layout</h2>
+	<h2>On the Fire TV</h2>
 	<label class="toggle">
 		<input type="checkbox" checked={tvLayout} onchange={(e) => setTvLayout(e.currentTarget.checked)} />
-		Big rows made for the remote, like Netflix
+		Use the TV layout on the TV app
 	</label>
 	<p class="muted">
-		The TV shows a menu down the side, rows of posters and its own on-screen keyboard. Off, it shows the same
-		screens as this computer.
+		Big rows made for the remote, like Netflix. Off, the TV app shows the same screens as this computer. Only the
+		TV app changes: computers and phones always have the normal layout.
 	</p>
 	{#if !onTv}
 		<p class="muted">
-			<a href="/tv">Preview the TV layout here</a> — the arrow keys move, Enter picks, Esc goes back.
+			<a href="/tv">Try the TV layout here</a> — the arrow keys move, Enter picks, Esc goes back.
 		</p>
 	{/if}
 </section>

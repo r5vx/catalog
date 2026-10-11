@@ -1175,3 +1175,23 @@ export function profileTitleReached(id: number, season: number, episode: number)
 	`)
 		.run(season, episode, id, currentProfile());
 }
+
+/** Where a title in the library (or someone's own list) is from, by its name: for linking to its page. */
+export function titleSourceByName(title: string): { source: string; sourceId: string } | null {
+	const profile = currentProfile();
+	const row = (
+		profile === MAIN_PROFILE
+			? db
+					.prepare("SELECT source, source_id AS sourceId FROM entries WHERE title = ? COLLATE NOCASE AND source != 'manual' AND source_id IS NOT NULL LIMIT 1")
+					.get(title)
+			: db
+					.prepare('SELECT source, source_id AS sourceId FROM profile_titles WHERE profile = ? AND title = ? COLLATE NOCASE LIMIT 1')
+					.get(profile, title)
+	) as { source: string; sourceId: string } | undefined;
+	return row ? { ...row } : null;
+}
+
+/** Takes a title off the current profile's own list. */
+export function deleteProfileTitle(id: number): void {
+	db.prepare('DELETE FROM profile_titles WHERE id = ? AND profile = ?').run(id, currentProfile());
+}

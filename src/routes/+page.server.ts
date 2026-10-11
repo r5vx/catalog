@@ -1,4 +1,4 @@
-import { listProfiles, listCategories, listEntries, countsByCategory, completedCount, completedByCategory, sharedCatalogCount, existingSourceKeys, existingSourceKeysWithIds } from '$lib/server/db/queries';
+import { listCategories, listEntries, countsByCategory, completedCount, completedByCategory, sharedCatalogCount, existingSourceKeys, existingSourceKeysWithIds } from '$lib/server/db/queries';
 import { countNotes } from '$lib/server/db/notes';
 import { listTags } from '$lib/server/db/tags';
 import { SORTS, KEPT_FILTERS } from '$lib/constants';
@@ -27,9 +27,9 @@ function keptView(url: URL): URLSearchParams {
 
 export const load: PageServerLoad = async ({ url, request }) => {
 	// The TV app opens the TV layout (big rows for the remote) unless it's been switched off.
-	// With more than one person set up, it starts at "Who's watching?".
+	// It starts at "Who's watching?", every time the TV app opens (like Netflix).
 	if (/CatalogTV\//.test(request.headers.get('user-agent') ?? '') && readSettings().tvLayout !== 'full') {
-		redirect(303, listProfiles().length > 1 ? '/tv/profiles' : '/tv');
+		redirect(303, '/tv/profiles');
 	}
 	const view = keptView(url);
 	const q = (url.searchParams.get('q') ?? '').trim();

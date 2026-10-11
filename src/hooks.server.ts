@@ -10,6 +10,7 @@ import { watchOutsideRequests } from '$lib/server/slowRequests';
 import { forgetFinishedSubtitles, profileExists } from '$lib/server/db/queries';
 import { withProfile, MAIN_PROFILE } from '$lib/server/profile';
 import { keepShowboxSigninFresh } from '$lib/server/showboxSignin';
+import { clearOldStrips } from '$lib/server/previewStrips';
 
 // Before anything asks another site for something: a time limit for every outside request,
 // and a note of the slow ones (on /api/diagnostics).
@@ -19,6 +20,9 @@ watchOutsideRequests();
 // get filled in shortly after the app opens, without anyone asking.
 scheduleBackfill();
 recategorizeAnime();
+
+// Preview pictures not opened for 60 days go.
+clearOldStrips();
 
 // Subtitles kept for shows that are done with go now, and every hour after.
 forgetFinishedSubtitles();

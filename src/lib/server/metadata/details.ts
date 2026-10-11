@@ -1,4 +1,7 @@
 import { anilistSaidWait } from './anilistNodes';
+import { getOrderCache, saveOrderCache } from '../db/queries';
+
+const DAY = 24 * 60 * 60 * 1000;
 import { env } from '$env/dynamic/private';
 import { readSettings } from '../settings';
 import { plainText } from './types';
@@ -78,11 +81,20 @@ const tmdbKey = () => (readSettings().tmdbApiKey || env.TMDB_API_KEY || '').trim
  * work without you tagging 300 films by hand.
  */
 export async function fetchDetails(source: string, sourceId: string): Promise<TitleDetails> {
+	// Each title's answer is kept. AniList's is used for three days without asking again: it
+	// allows only a few requests a minute, and right after Catalog opens its own background work
+	// can use them all up, which made a title's page fail with "AniList is busy". Whenever a
+	// fresh answer can't be had, the last one kept is used, however old.
+	const key = `details|${source}|${sourceId}`;
+	const kept = getOrderCache(key);
+	if (kept && source === 'anilist' && Date.now() - kept.at < 3 * DAY) return kept.value as TitleDetails;
+	let details = EMPTY;
 	try {
-		return source === 'anilist' ? await fromAniList(sourceId) : await fromTmdb(sourceId);
-	} catch {
-		return EMPTY;
-	}
+		details = source === 'anilist' ? await fromAniList(sourceId) : await fromTmdb(sourceId);
+	} catch {}
+	if (details.title) saveOrderCache(key, details, Date.now());
+	else if (kept) return kept.value as TitleDetails;
+	return details;
 }
 
 /**

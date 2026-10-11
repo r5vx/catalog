@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { createFromResult } from '$lib/server/entries';
-import { markEntryCompleted, incrementRewatches, updateSeasonEpisodeReached, deleteEntry, completeProfileTitle, profileTitleReached } from '$lib/server/db/queries';
+import { markEntryCompleted, incrementRewatches, updateSeasonEpisodeReached, deleteEntry, completeProfileTitle, profileTitleReached, deleteProfileTitle } from '$lib/server/db/queries';
 import { currentProfile, MAIN_PROFILE } from '$lib/server/profile';
 import type { SearchResult } from '$lib/server/metadata';
 import type { RequestHandler } from './$types';
@@ -57,7 +57,11 @@ export const PATCH: RequestHandler = async ({ request }) => {
 export const DELETE: RequestHandler = async ({ request }) => {
 	const body = (await request.json()) as { id: number };
 	if (!body.id) return error(400, 'Missing id');
-	if (currentProfile() !== MAIN_PROFILE) return error(403, 'Not on this profile');
+	// Someone else's profile on the TV: off their own list (the library itself isn't theirs).
+	if (currentProfile() !== MAIN_PROFILE) {
+		deleteProfileTitle(body.id);
+		return json({ ok: true });
+	}
 	deleteEntry(body.id);
 	return json({ ok: true });
 };
