@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { afterNavigate } from '$app/navigation';
-	import { startTvNav } from '$lib/tvNav';
-	import type { Snippet } from 'svelte';
+	import { afterNavigate, pushState } from '$app/navigation';
+	import { startTvNav, tvBack, MENU_SCREENS } from '$lib/tvNav';
+	import TvMenu from '$lib/tv/TvMenu.svelte';
+	import { onMount, tick, type Snippet } from 'svelte';
 	import type { LayoutData } from './$types';
 
 	/**
@@ -13,6 +14,8 @@
 	 */
 	let { data, children }: { data: LayoutData; children: Snippet } = $props();
 	let app: HTMLElement | undefined = $state();
+	/** A poster's menu is open: everything else is out of reach until it closes. */
+	let menuOpen = $state(false);
 
 	const MENU = [
 		{ href: '/tv/search', label: 'Search', icon: 'search' },
@@ -30,13 +33,43 @@
 	const here = (href: string) =>
 		href === '/tv' ? page.url.pathname === '/tv' : page.url.pathname.startsWith(href);
 
+	/*
+	 * The TV app before 1.2 handles Back itself: back a page, or out of the app when there's none —
+	 * so Back on Home closed Catalog. A spare step in the history (same page, marked tvGuard) is
+	 * what Back takes off there instead, and Catalog then does what Back should (opens the menu,
+	 * then goes Home) and puts the step back. With that app Back never leaves; the remote's Home
+	 * button does. (TV app 1.2 asks Catalog first, so the spare step is never used there.)
+	 */
+	let guardedPath = '';
+	async function guard() {
+		const path = page.url.pathname;
+		if (!MENU_SCREENS.test(path) || (page.state as { tvGuard?: boolean }).tvGuard) return;
+		await tick();
+		pushState('', { tvGuard: true });
+		guardedPath = path;
+	}
+	onMount(() => {
+		const onPop = () =>
+			setTimeout(() => {
+				// Only the spare step coming off: still the same page, now without the mark.
+				if (location.pathname !== guardedPath || (page.state as { tvGuard?: boolean }).tvGuard) return;
+				tvBack();
+				guard();
+			}, 0);
+		window.addEventListener('popstate', onPop);
+		return () => window.removeEventListener('popstate', onPop);
+	});
+
 	// Each screen starts with something highlighted.
-	afterNavigate(() => startTvNav(app ?? null));
+	afterNavigate(() => {
+		startTvNav(app ?? null);
+		guard();
+	});
 </script>
 
 <div class="tv-app" data-tv-app bind:this={app}>
 	{#if !picking}
-	<nav class="tv-nav" data-tv-nav aria-label="Menu">
+	<nav class="tv-nav" data-tv-nav aria-label="Menu" inert={menuOpen}>
 		<!-- Who's watching: their picture, and OK goes to pick someone else. -->
 		<a href="/tv/profiles" class="tv-nav-item" data-tv-item>
 			<span class="avatar" style:background={data.profile.color}>{data.profile.name.slice(0, 1).toUpperCase()}</span>
@@ -58,7 +91,9 @@
 					{:else if item.icon === 'library'}
 						<path d="M5 4v16M10 4v16M15 4.5l4.5 15" />
 					{:else}
-						<circle cx="12" cy="12" r="3.2" /><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" />
+						<!-- A gear. -->
+						<circle cx="12" cy="12" r="3" />
+						<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
 					{/if}
 				</svg>
 				<span class="label">{item.label}</span>
@@ -68,7 +103,10 @@
 	{/if}
 
 	<main class="tv-main" class:full={picking} data-tv-main>
-		{@render children()}
+		<div class="screen" inert={menuOpen}>
+			{@render children()}
+		</div>
+		<TvMenu bind:showing={menuOpen} />
 	</main>
 </div>
 
@@ -98,14 +136,17 @@
 		flex-direction: column;
 		gap: 0.6vw;
 		background: linear-gradient(90deg, var(--paper) 55%, transparent);
-		transition: width 0.2s ease, background 0.2s ease;
+		/* The rest of the screen, darkened while the menu's open (a shadow spread over all of it). */
+		box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0%);
+		transition: width 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
 	}
 
 	/* Open while it's highlighted: wider, with its names, over a darkened screen. */
 	:global(.tv-app.nav-open) .tv-nav {
 		width: 24vw;
-		background: linear-gradient(90deg, var(--paper) 70%, color-mix(in srgb, var(--paper) 0%, transparent));
-		box-shadow: 30vw 0 0 0 rgb(0 0 0 / 45%);
+		/* Fades into the same darkening as the rest of the screen, so there's no seam. */
+		background: linear-gradient(90deg, var(--paper) 70%, rgb(0 0 0 / 45%));
+		box-shadow: 0 0 0 100vmax rgb(0 0 0 / 45%);
 	}
 
 	.tv-nav-item {
@@ -177,5 +218,10 @@
 
 	.tv-main.full {
 		left: 0;
+	}
+
+	.screen {
+		position: absolute;
+		inset: 0;
 	}
 </style>

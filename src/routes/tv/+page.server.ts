@@ -1,6 +1,7 @@
 import { tvLibrary } from '$lib/server/db/queries';
 import { continueWatchingWithPosters } from '$lib/server/continueWatching';
 import { browseShelves } from '$lib/server/metadata';
+import { tvTitleLink } from '$lib/server/tvLinks';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -9,8 +10,11 @@ import type { PageServerLoad } from './$types';
  */
 export const load: PageServerLoad = async () => {
 	const library = tvLibrary();
+	// Each opens its own page (Resume, and its episodes), not straight into the player.
+	const continuing = await continueWatchingWithPosters();
+	const links = await Promise.all(continuing.map((item) => tvTitleLink(item.title, item.type).catch(() => null)));
 	return {
-		continueWatching: await continueWatchingWithPosters(),
+		continueWatching: continuing.map((item, i) => ({ ...item, link: links[i] })),
 		library,
 		shelves: browseShelves().catch(() => [])
 	};

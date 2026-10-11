@@ -12,6 +12,33 @@ without both.
 
 ## Unreleased
 
+## 3.0.4 — 2026-10-11 — Faster resuming, previews and a better TV
+
+### Improved
+- **Player**
+  - Resuming starts loading right where you left off, in the quality that plays: no waiting for the start to load first
+  - The progress-bar preview works like a streaming app's: pictures across the whole video are gathered while it plays, so moving along the bar shows one at once
+  - Dragging along the progress bar or fast-forwarding marks where you were, with its time
+  - Preview pictures are kept, so a video opened again shows them from the first second; the poster shows until there's one
+  - The computer gets the next episode's pictures ready, and makes them for whatever a TV is playing
+  - On the TV, fast-forward shows the picture of where it's got to
+- Settings → Watch on TV says plainly that the TV layout is only for the TV app
+- **TV**
+  - "Who's watching?" every time the TV app opens, and again after it's been left for half an hour (TV app 1.3)
+  - Watch again on Home, and rows by kind (Comedy, Drama, Romance…) in Movies, TV Shows and Anime
+  - The menu button (☰) on a poster: mark it watched, remove it, take it off Continue Watching, add it to My List
+  - Updates in Settings: which Catalog this is, check for and install updates, what's new
+  - Continue Watching opens the show's page (Resume and its episodes) instead of playing straight away
+  - Back on Home opens the menu even on the old TV app
+  - Sharper big pictures behind the title
+  - With the menu open, the whole screen dims (it was a dark box in the middle)
+  - Settings has a gear
+  - Holding an arrow moves along a row as it goes, not only after letting go
+- A title's page opens even when AniList is busy (right after Catalog starts), from what was saved last time
+- **Updates**
+  - Installed "for all users" (Windows asks permission): the installer shows its window instead of failing unseen, and closing Catalog no longer tries
+  - An update that didn't install says so, with a link to download it
+
 ## 3.0.3 — 2026-10-10 — 7Movies, episodes and the remote on the TV
 
 ### New

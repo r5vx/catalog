@@ -183,6 +183,41 @@ function readPageAnswer(url, answerFrom, visible = false) {
 	return next;
 }
 
+/*
+ * Preview pictures made by the computer itself (/strip-maker), for a TV playing something and for
+ * the next episode: one at a time, in a window nobody sees, closed when it's done or after six
+ * minutes. Muted, and kept running at full speed while hidden.
+ */
+const stripQueue = [];
+let stripBusy = false;
+
+function makeStrip(pagePath) {
+	if (!pagePath.startsWith('/strip-maker?') || stripQueue.includes(pagePath)) return;
+	stripQueue.push(pagePath);
+	nextStrip();
+}
+
+function nextStrip() {
+	if (stripBusy || !stripQueue.length || quitting) return;
+	stripBusy = true;
+	const pagePath = stripQueue.shift();
+	const win = new BrowserWindow({ show: false, width: 640, height: 360, webPreferences: { backgroundThrottling: false } });
+	win.webContents.setAudioMuted(true);
+	win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+	let finished = false;
+	const done = () => {
+		if (finished) return;
+		finished = true;
+		clearTimeout(timer);
+		if (!win.isDestroyed()) win.destroy();
+		stripBusy = false;
+		setTimeout(nextStrip, 2000);
+	};
+	const timer = setTimeout(done, 6 * 60 * 1000);
+	win.on('closed', done);
+	win.loadURL(`${ORIGIN}${pagePath}`).catch(done);
+}
+
 function startServer() {
 	const entry = path.join(__dirname, '..', 'build', 'index.js');
 
@@ -217,6 +252,8 @@ function startServer() {
 
 		if (message?.type === 'print-pdf') makePdf(message.id, message.path);
 
+		if (message?.type === 'make-strip') makeStrip(String(message.path));
+
 		if (message?.type === 'check-for-updates') checkForUpdates();
 
 		if (message?.type === 'page-answer') {
@@ -234,7 +271,13 @@ function startServer() {
 					</body></html>
 				`);
 			}
-			setTimeout(() => autoUpdater().quitAndInstall(true, true), 1500);
+			// Remembered, so the next start can tell whether it took (see reportFailedUpdate). A copy
+			// installed where Windows asks permission to write (Program Files, "for all users") gets
+			// the installer's own window rather than a silent install, which can fail there unseen.
+			const quietly = canWriteAppFolder();
+			rememberUpdateAttempt();
+			updateLog(`installing ${readyVersion ?? '?'} over ${app.getVersion()}${quietly ? '' : ', with the installer window (the app folder needs permission)'}`);
+			setTimeout(() => autoUpdater().quitAndInstall(quietly, true), 1500);
 		}
 
 		if (message?.type === 'get-video-url') {
@@ -743,6 +786,61 @@ async function makePdf(id, path) {
 /* ------------------------------------------------- updating an installed app */
 
 let updater = null;
+/** The version downloaded and waiting to be installed. */
+let readyVersion = null;
+
+/**
+ * What the updater did, kept in %APPDATA%\Catalog\update.log (the last 200 lines), so an update
+ * that won't install on someone's PC can be looked into afterwards.
+ */
+function updateLog(line) {
+	try {
+		const file = path.join(app.getPath('userData'), 'update.log');
+		const old = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).slice(-199) : [];
+		fs.writeFileSync(file, [...old, `${new Date().toISOString()} ${line}`].join('\n') + '\n');
+	} catch {}
+}
+
+/** Whether Catalog can write to its own folder without asking Windows' permission. */
+function canWriteAppFolder() {
+	try {
+		const probe = path.join(path.dirname(process.execPath), `.write-test-${process.pid}`);
+		fs.writeFileSync(probe, '');
+		fs.unlinkSync(probe);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+const attemptFile = () => path.join(app.getPath('userData'), 'update-attempt.json');
+
+function rememberUpdateAttempt() {
+	try {
+		fs.writeFileSync(attemptFile(), JSON.stringify({ from: app.getVersion(), to: readyVersion, at: Date.now() }));
+	} catch {}
+}
+
+/**
+ * At start: did the last install take? If Catalog is still the version it was updating from,
+ * it didn't — the page then says so and offers the installer to download.
+ */
+function reportFailedUpdate() {
+	let attempt = null;
+	try {
+		attempt = JSON.parse(fs.readFileSync(attemptFile(), 'utf8'));
+		fs.unlinkSync(attemptFile());
+	} catch {
+		return;
+	}
+	if (!attempt?.to || attempt.to === app.getVersion()) {
+		updateLog(`now on ${app.getVersion()}: the update worked`);
+		return;
+	}
+	if (attempt.from !== app.getVersion() || Date.now() - attempt.at > 24 * 60 * 60 * 1000) return;
+	updateLog(`still on ${app.getVersion()}: ${attempt.to} did not install`);
+	server?.send({ type: 'update-failed', version: attempt.to });
+}
 
 /**
  * Loaded only when it's needed. A build made from source has no release feed
@@ -753,8 +851,15 @@ function autoUpdater() {
 
 	updater = require('electron-updater').autoUpdater;
 	updater.autoDownload = true;
-	updater.autoInstallOnAppQuit = true;
-	updater.logger = null;
+	// Installed on closing, quietly — except where the folder needs Windows' permission, where a
+	// quiet install can't work: there it's only the Update button, with the installer showing.
+	updater.autoInstallOnAppQuit = canWriteAppFolder();
+	updater.logger = {
+		info: (m) => updateLog(String(m)),
+		warn: (m) => updateLog(`warn: ${m}`),
+		error: (m) => updateLog(`error: ${m}`),
+		debug: () => {}
+	};
 
 	let downloadVersion = null;
 
@@ -774,7 +879,10 @@ function autoUpdater() {
 	updater.on('download-progress', (progress) =>
 		send({ status: 'downloading', version: downloadVersion, percent: Math.round(progress?.percent ?? 0) })
 	);
-	updater.on('update-downloaded', (info) => send({ status: 'ready', version: info?.version }));
+	updater.on('update-downloaded', (info) => {
+		readyVersion = info?.version ?? null;
+		send({ status: 'ready', version: info?.version });
+	});
 	updater.on('error', (error) =>
 		send({ status: 'error', message: String(error?.message || error) })
 	);
@@ -1161,6 +1269,9 @@ if (!app.requestSingleInstanceLock()) {
 			console.error(error);
 		}
 
+		// Before the window, so its first look at /api/update already knows.
+		if (!SOURCE_MODE && app.isPackaged) reportFailedUpdate();
+
 		createWindow();
 
 		// Quietly, in the background — a new version downloads itself and is
@@ -1395,6 +1506,8 @@ if (!app.requestSingleInstanceLock()) {
 
 	app.on('before-quit', () => {
 		quitting = true;
+		// Closing with an update waiting installs it: remembered, so the next start can check.
+		if (readyVersion && updater?.autoInstallOnAppQuit) rememberUpdateAttempt();
 		tvDiscovery?.close();
 		stopServer();
 	});

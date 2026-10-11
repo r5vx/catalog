@@ -12,7 +12,9 @@
 	const rows = $derived<TileRow[]>([
 		{ label: 'Continue Watching', tiles: data.continueWatching.map((item) => fromContinue(item, overviewOf(item.title))) },
 		{ label: 'Watching', tiles: data.library.filter((item) => item.status === 'watching').map(fromLibrary) },
-		{ label: 'Want to watch', tiles: data.library.filter((item) => item.status === 'planned').map(fromLibrary) }
+		{ label: 'Want to watch', tiles: data.library.filter((item) => item.status === 'planned').map(fromLibrary) },
+		// The 40 watched most lately: all of them (hundreds) would weigh a TV down.
+		{ label: 'Watch again', tiles: data.library.filter((item) => item.status === 'completed').slice(0, 40).map(fromLibrary) }
 	]);
 
 	const later = $derived(

@@ -251,6 +251,17 @@ made easier to test with, check what the removal was load-bearing for.** The
 fix re-runs the check on navigation, skips `/login`, and treats a non-JSON
 reply as "no answer yet" rather than "no update".
 
+**21a. An update that asks Windows' permission can fail where nobody sees it.**
+A friend on 3.0.1 couldn't update to 3.0.3: Update closed Catalog, Windows asked permission, and
+Catalog never came back — still 3.0.1. A Windows permission prompt means the app folder isn't
+writable by the user (installed "for all users" / Program Files), and a *silent* install there
+can fail without a trace (`updater.logger` was null). Since 3.0.4: a copy that can't write its own
+folder (`canWriteAppFolder`) installs with the installer's window showing and doesn't install on
+close; every install is remembered in `update-attempt.json`, and a start that's still on the old
+version tells the page (`update-failed` → `/api/update` `failed` → the banner links the download
+page); electron-updater's log goes to `%APPDATA%\Catalog\update.log`. Only the version doing the
+updating runs this code, so 3.0.1 itself still needs installing by hand.
+
 **21. The library got corrupted, and how it was put back.**
 Between two snapshots an hour apart the live `library.db` went from
 `integrity_check: ok` to a damaged B-tree: rowids out of order, a page
@@ -697,6 +708,17 @@ mom: her laptop runs Catalog, her Fire TV shows it). Pieces:
   `watch_progress` and `continue_hidden` were rebuilt with `profile` in the key (one-time fix
   `progress-per-profile`). Profile ids are AUTOINCREMENT so a deleted one's number isn't reused. The
   TV app opens at `/`, which goes to `/tv/profiles` when there's more than one profile.
+- **Old TV app's Back** (before 1.2 it goes back a page or exits): the TV layout keeps a spare
+  history step (`pushState` with `tvGuard`) on menu screens; Back pops it, `tvBack()` runs and it's
+  put back. So Back never exits there (the Home button does). With 1.2 it's never used.
+- **Poster menu** (☰ / M): `TvMenu.svelte`, posters carry `data-tv-menu` (kind continue / library /
+  result); the rest of the screen is `inert` while open; Back closes it. "Remove from My Library"
+  works on the owner's library too (the owner's mom only uses Catalog on her TV).
+- Continue Watching on the TV opens the title's page (`tvTitleLink`: library entry, else TMDB).
+- **TV app 1.3** (versionCode 4): back after 30+ minutes away reloads the computer's address, so
+  it opens at "Who's watching?" (`/` always redirects the TV app to `/tv/profiles` now, even
+  with one profile). Browse pages add a row per genre (TMDB ids; TV has its own, e.g. 10759, 10765;
+  anime goes through `TMDB_GENRE_TO_ANILIST`, fewer rows for AniList's rate limit).
 - **Back and fast-forward** (TV app 1.2, versionCode 3): Back asks `window.__catalogTv.back()` first
   (`tvBack` in tvNav.ts: on a menu screen opens the menu, then Home, then "exit"; elsewhere
   "default" = history back). Fast-forward/rewind send `scan(±1)` once per press (repeats dropped);
@@ -775,6 +797,35 @@ which records what a site's page loads while the owner browses it.
   one gives no link. The relay's playlists have no ".m3u8" in their address, so the player treats
   anything from `/api/watch/relay` as HLS (`isPlaylist`). No subtitles from 7Movies; Catalog's own
   subtitle sites are used. Found with the probe while the owner played SVU S28E1.
+- **Starting a video** (2026-10-11): hls.js is made with `autoStartLoad: false`; the saved place
+  (`savedPlace()`, asked for the moment the video is chosen, inside `untrack`) and the level
+  (`startLevel`/`loadLevel`, not `currentLevel`, which flushes) are settled first, then
+  `startLoad(place)`. Before, it fetched the start in one quality, again in another, then the
+  place itself: up to three pieces before playing — the "10 seconds to resume". Thor via the
+  relay now plays from its place 1.6 s after the page opens.
+- **Kept strips and the computer's own gatherer** (2026-10-11): the gathering lives in
+  `src/lib/previewStrip.ts` (`PreviewStrip`, two unseen copies). Pictures are kept as base64 JPEGs
+  (192×108, ~5 KB) in `<library folder>/previews/<sha1>.json`, one per film/episode
+  (`stripKey`: title|type|season|episode, whichever copy) — `/api/watch/strip`, cleared after 60
+  days unopened, not in backups. The player loads them at open, gathers the rest (only while ≥10 s
+  is buffered), keeps every 15. TVs never gather (a second video would fight the TV's own): they
+  ask `/api/watch/strip/prepare`, the server sends `make-strip` to electron/main.cjs, which opens
+  `/strip-maker` in a hidden window (one at a time, `backgroundThrottling: false`, muted, 6-min
+  cap) — tested: a whole 24-min strip (140 pictures) in ~50 s. Every player also asks for the next
+  episode's (a minute in; at once on a TV). `?stay=1` keeps /strip-maker open for trying in a
+  browser. On the TV the preview shows while fast-forwarding. Until a picture exists the poster
+  shows. Neither Aniwave nor 7Movies publishes ready-made seek pictures; Showbox's player unknown.
+- **Progress-bar preview** (trick-play, 2026-10-11): a hidden second hls.js copy (`progressive:
+  true`, `autoStartLoad: false`) of the smallest copy (`findThumbSource`: the playlist's lowest
+  level, Showbox's smallest file ≤480p, Orion's 480p for 7Movies' H.264 — whose pieces are ~20 MB —
+  else the video itself). Each picture is the first frame of a piece: `startLoad(t)` + seek to the
+  piece start, `createImageBitmap` on `seeked`, then `stopLoad()`. Gathered in the background
+  (5 s after playing starts, only while the main video has ≥20 s buffered or is paused): one a
+  minute across the whole video first, then every 10 s; the one under the mouse jumps the queue,
+  and the nearest gathered (≤60 s) shows meanwhile. Kaiju Girl: every point on the bar had a
+  picture within 50 ms after 20 s of playing. The relay lets the browser keep video pieces
+  (`private, max-age=21600`) so pictures from the part the player already loaded cost nothing.
+  On a fresh start the piece list needs loading to begin (LEVEL_LOADED), then stops.
 - Aniwave's "sub" flag means Japanese audio, often only with burned-in subtitles. The Japanese
   file plays S-Sub when the series has it (`aniwaveHasSoftSub`, checked on its first episode,
   kept a week), otherwise the burned-in "sub" copy (`burnedIn`, kind `sub`; Catalog's own
@@ -802,6 +853,9 @@ which records what a site's page loads while the owner browses it.
   `source`; `pickFile` takes Showbox's first. Don't hammer these sites while testing either.
 
 ### AniList's rate limit
+`fetchDetails` keeps every title's answer (`details|source|id` in watch_order_cache): AniList's is
+reused for 3 days, and any failed lookup falls back to the last one kept. Right after start the
+background jobs used up AniList's allowance and a title's page said "AniList is busy" (2026-10-11).
 AniList allows few requests a minute (Retry-After often 30–40 s), shared by
 everything on the owner's connection. `anilistResting()` / `anilistSaidWait()`
 in `anilistNodes.ts` are the one switch: on a 429 every AniList caller backs

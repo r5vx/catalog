@@ -117,10 +117,10 @@ function slideTo(el: HTMLElement) {
 	if (strip) {
 		const left = el.offsetLeft - strip.clientWidth * 0.06;
 		const right = el.offsetLeft + el.offsetWidth - strip.clientWidth * 0.86;
-		if (strip.scrollLeft > left) strip.scrollTo({ left: Math.max(0, left), behavior: 'smooth' });
-		else if (strip.scrollLeft < right) strip.scrollTo({ left: right, behavior: 'smooth' });
+		if (strip.scrollLeft > left) strip.scrollTo({ left: Math.max(0, left), behavior: glide() });
+		else if (strip.scrollLeft < right) strip.scrollTo({ left: right, behavior: glide() });
 	} else if (!track) {
-		el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+		el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: glide() });
 	}
 }
 
@@ -212,7 +212,7 @@ function move(app: HTMLElement, direction: Direction): boolean {
 }
 
 /** The screens the menu goes to. Back on them opens the menu rather than leaving. */
-const MENU_SCREENS = /^\/tv(\/(search|library|settings|browse\/[^/]+))?\/?$/;
+export const MENU_SCREENS = /^\/tv(\/(search|library|settings|browse\/[^/]+))?\/?$/;
 
 /**
  * The remote's Back, as on Netflix. On a screen from the menu it opens the menu; with the menu
@@ -220,6 +220,11 @@ const MENU_SCREENS = /^\/tv(\/(search|library|settings|browse\/[^/]+))?\/?$/;
  * the player) it goes back a page as usual ("default").
  */
 export function tvBack(): 'handled' | 'exit' | 'default' {
+	// A poster's menu open: Back closes it.
+	if (document.querySelector('[data-tv-sheet]')) {
+		window.dispatchEvent(new Event('catalog:tv-menu-close'));
+		return 'handled';
+	}
 	const app = document.querySelector<HTMLElement>('[data-tv-app]');
 	if (!app || !MENU_SCREENS.test(location.pathname)) return 'default';
 	if (!app.classList.contains('nav-open')) {
@@ -239,12 +244,26 @@ function firstItem(app: Element): HTMLElement | null {
 	return main.querySelector<HTMLElement>('[data-tv-autofocus]') ?? items(main)[0] ?? null;
 }
 
+/**
+ * An arrow held down repeats many times a second; each smooth scroll would cancel the one before,
+ * so the row stood still until the arrow was let go. While it repeats, rows move straight there.
+ */
+let holding = false;
+const glide = (): ScrollBehavior => (holding ? 'auto' : 'smooth');
+
 function onKey(event: KeyboardEvent) {
+	holding = event.repeat;
 	const app = document.querySelector<HTMLElement>('[data-tv-app]');
 	if (!app || event.altKey || event.ctrlKey || event.metaKey) return;
 	const direction = DIRECTIONS[event.key];
 	if (direction) {
 		if (move(app, direction)) event.preventDefault();
+		return;
+	}
+	// Trying the TV screens on a computer: the context-menu key (or M) is the remote's menu button.
+	if (event.key === 'ContextMenu' || event.key === 'm') {
+		event.preventDefault();
+		window.dispatchEvent(new Event('catalog:tv-menu'));
 		return;
 	}
 	// Trying the TV screens on a computer: Esc (or Backspace) is the remote's Back.

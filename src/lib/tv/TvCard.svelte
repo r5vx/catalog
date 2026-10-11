@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { TileMenu } from './tiles';
 	/**
 	 * A poster on the TV screens. Highlighted, it grows and gets a white ring, so it's obvious
 	 * from across the room which one OK will open.
@@ -11,6 +12,7 @@
 		progress = null,
 		showTitle = false,
 		autofocus = false,
+		menu = undefined,
 		onfocus
 	}: {
 		href: string;
@@ -23,11 +25,13 @@
 		/** The name under the poster (where there's no banner saying it). */
 		showTitle?: boolean;
 		autofocus?: boolean;
+		/** What the remote's menu button offers for it. */
+		menu?: TileMenu;
 		onfocus?: () => void;
 	} = $props();
 </script>
 
-<a {href} class="tv-card" class:with-title={showTitle} data-tv-item data-tv-autofocus={autofocus || undefined} {onfocus}>
+<a {href} class="tv-card" class:with-title={showTitle} data-tv-item data-tv-menu={menu ? JSON.stringify(menu) : undefined} data-tv-title={title} data-tv-autofocus={autofocus || undefined} {onfocus}>
 	<span class="poster">
 		{#if poster}
 			<img src={poster} alt="" loading="lazy" />

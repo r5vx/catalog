@@ -274,6 +274,23 @@ public class MainActivity extends Activity {
 		return super.dispatchKeyEvent(event);
 	}
 
+	/** When the app was last left for the home screen or another app. */
+	private long leftAt = 0;
+
+	@Override
+	protected void onStop() {
+		super.onStop();
+		leftAt = System.currentTimeMillis();
+	}
+
+	@Override
+	protected void onRestart() {
+		super.onRestart();
+		// Back after half an hour or more: it starts again at "Who's watching?", like Netflix.
+		String saved = prefs().getString(KEY_SERVER, null);
+		if (saved != null && leftAt > 0 && System.currentTimeMillis() - leftAt > 30 * 60 * 1000) open(saved);
+	}
+
 	@Override
 	protected void onPause() {
 		super.onPause();

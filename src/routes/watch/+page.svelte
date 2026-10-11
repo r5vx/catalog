@@ -8,6 +8,7 @@
 	import { p, pRandom } from '$lib/poison';
 	import { pickFile, playableHere, PREFERRED_QUALITY } from '$lib/watch';
 	import { isTv, tvPlayer } from '$lib/tv';
+	import { PreviewStrip, keepPictures, keptPictures, askComputerForPictures, type StripVideo } from '$lib/previewStrip';
 
 	const pm = $derived(page.data.poisonMode);
 
@@ -662,79 +663,179 @@
 
 	/* --------------------------------------------------------------- scrubbing preview */
 
-	/**
-	 * A picture of the moment the mouse is over on the progress bar (hovering or dragging): a
-	 * second, unseen copy of the video at its lowest quality jumps there and its frame is drawn
-	 * above the bar. It's only loaded once the bar is used, and only small pieces of it.
+	/*
+	 * Pictures above the progress bar while hovering, dragging or fast-forwarding, the way
+	 * streaming apps do it (src/lib/previewStrip.ts). Pictures kept from before load the moment a
+	 * video opens. The rest are gathered from the start, two at a time for the rough pass, and kept
+	 * for next time. On the TV nothing is gathered (a second video would compete with the TV's
+	 * own): the computer makes the strip instead, out of sight, and the TV picks it up as it comes.
+	 * The computer also gets the next episode's ready. Until there's a picture, the poster shows.
 	 */
 	let hoverPct = $state(-1);
 	let thumbCanvas: HTMLCanvasElement | undefined = $state();
-	let thumbReady = $state(false);
-	let thumbVideo: HTMLVideoElement | null = null;
-	let thumbHls: Hls | null = null;
-	let thumbFor = '';
-	let thumbTimer: ReturnType<typeof setTimeout> | undefined;
+	let strip: PreviewStrip | null = null;
+	/** Which video the strip is for ("title|type|season|episode"). */
+	let stripFor = '';
+	let stripTimer: ReturnType<typeof setInterval> | undefined;
 	const previewPct = $derived(seekPreview >= 0 ? seekPreview : hoverPct);
 
-	function stopThumbs() {
-		clearTimeout(thumbTimer);
-		thumbHls?.destroy();
-		thumbHls = null;
-		if (thumbVideo) {
-			thumbVideo.removeAttribute('src');
-			thumbVideo.load();
+	const stripVideo = (): StripVideo | null =>
+		videoTitle
+			? {
+					title: videoTitle.replace(/ S\d+E\d+$/, ''),
+					type: showType,
+					season: showType === 'tv' ? (activeEpisode?.season ?? 0) : 0,
+					episode: showType === 'tv' ? (activeEpisode?.episode ?? 0) : 0
+				}
+			: null;
+
+	/** The small copy's address to gather from ('' for none). */
+	async function findThumbSource(): Promise<string> {
+		// Several qualities: the lowest of them, from the same playlist.
+		if (hlsLevels.length > 1) return streamUrl;
+		const file = activeFile;
+		if (!file) return streamUrl;
+		const ask = async (copy: FileOption) => {
+			try {
+				const resp = await fetch(`/api/watch/stream?share_key=${shareOf(copy)}&fid=${copy.fid}`);
+				return resp.ok ? ((await resp.json()).url ?? '') : '';
+			} catch {
+				return '';
+			}
+		};
+		if (file.source === '7Movies') {
+			// Its H.264 pieces are ~20 MB each: Orion's 480p instead, where it plays.
+			const orion = currentFiles.find((f) => f.source === '7Movies' && f.hevc);
+			if (file.hevc) return streamUrl;
+			return orion ? ask(orion) : '';
 		}
-		thumbVideo = null;
-		thumbFor = '';
-		thumbReady = false;
-	}
-
-	function startThumbs() {
-		const source = `${streamUrl}#${streamNonce}`;
-		if (!streamUrl || tvMode || thumbFor === source) return;
-		stopThumbs();
-		thumbFor = source;
-		const video = document.createElement('video');
-		video.muted = true;
-		video.preload = 'auto';
-		video.addEventListener('seeked', drawThumb);
-		thumbVideo = video;
-		if (isPlaylist(streamUrl) && Hls.isSupported()) {
-			const hls = new Hls({ maxBufferLength: 2, maxMaxBufferLength: 4, backBufferLength: 0, startLevel: 0, enableWorker: true });
-			hls.on(Hls.Events.MANIFEST_PARSED, () => {
-				// The smallest picture there is: it's only drawn small.
-				hls.currentLevel = 0;
-				hls.autoLevelCapping = 0;
-			});
-			hls.loadSource(streamUrl);
-			hls.attachMedia(video);
-			thumbHls = hls;
-		} else {
-			video.src = streamUrl;
+		if (!file.source) {
+			// Showbox's smallest file, when it's a smaller one (480p or less).
+			const small = currentFiles
+				.filter((f) => !f.source && f.fid !== file.fid && (parseInt(f.quality) || 9999) <= 480)
+				.sort((a, b) => (parseInt(a.quality) || 0) - (parseInt(b.quality) || 0))[0];
+			return small ? (await ask(small)) || streamUrl : streamUrl;
 		}
+		return streamUrl;
 	}
 
-	/** Jumps the unseen copy there, once the mouse settles for a moment. */
-	function requestThumb(pct: number) {
-		if (tvMode || duration <= 0) return;
-		startThumbs();
-		clearTimeout(thumbTimer);
-		thumbTimer = setTimeout(() => {
-			if (thumbVideo && thumbVideo.readyState >= 1) thumbVideo.currentTime = (pct / 100) * duration;
-			else if (thumbVideo) thumbVideo.addEventListener('loadedmetadata', () => requestThumb(pct), { once: true });
-		}, 120);
+	/** Keeps what was gathered here on the computer. */
+	async function keepGathered() {
+		const video = stripVideo();
+		if (!strip || !video) return;
+		keepPictures(video, await strip.takeFresh());
 	}
 
+	function closeStrip() {
+		clearInterval(stripTimer);
+		stripTimer = undefined;
+		if (strip) {
+			const leaving = strip;
+			const video = stripVideo();
+			leaving.takeFresh().then((frames) => video && keepPictures(video, frames)).finally(() => leaving.stop());
+		}
+		strip = null;
+		stripFor = '';
+	}
+
+	/** The strip for the video that just opened: kept pictures at once, then gathering. */
+	async function openStrip() {
+		const video = stripVideo();
+		if (!video) return;
+		const id = `${video.title}|${video.type}|${video.season}|${video.episode}`;
+		if (stripFor === id) return;
+		closeStrip();
+		stripFor = id;
+		const kept = keptPictures(video);
+		const url = tvMode ? '' : await findThumbSource();
+		if (stripFor !== id) return;
+		const s = new PreviewStrip(url, { copies: 2 });
+		// The video itself comes first: only while it has a little loaded ahead (or is paused).
+		s.canGather = () => !videoEl || videoEl.paused || bufferedAhead() >= 10;
+		s.playhead = () => videoEl?.currentTime ?? 0;
+		let sinceKept = 0;
+		s.onFrame = () => {
+			drawThumb();
+			if (++sinceKept >= 15) {
+				sinceKept = 0;
+				keepGathered();
+			}
+		};
+		strip = s;
+		await s.addSaved(await kept);
+		drawThumb();
+		if (url) s.start();
+
+		const year = lastResolveArgs?.year ?? '';
+		if (tvMode) {
+			// The computer makes this one, and the TV picks up its pictures as they're kept.
+			askComputerForPictures({ ...video, year });
+			stripTimer = setInterval(async () => {
+				if (strip !== s || s.frames.size >= 150) return;
+				await s.addSaved(await keptPictures(video));
+				drawThumb();
+			}, 15000);
+		}
+		// The next episode's, ready for when it starts.
+		const next = showType === 'tv' ? nextEpisode() : null;
+		if (next) setTimeout(() => strip === s && askComputerForPictures({ ...video, season: next.season, episode: next.episode, year }), tvMode ? 1000 : 60000);
+	}
+
+	// A video opens (once its qualities are known): its strip.
+	$effect(() => {
+		void videoTitle;
+		void activeEpisode;
+		const levelsKnown = hlsLevels.length > 0 || !isPlaylist(streamUrl);
+		if (!streamUrl || !videoTitle || (!levelsKnown && !tvMode)) return;
+		untrack(() => openStrip());
+	});
+
+	onDestroy(() => closeStrip());
+
+	let posterPicture: HTMLImageElement | null = null;
+	let posterFor = '';
+
+	/** The video's poster, for the preview until there's a picture. */
+	function posterImage(): HTMLImageElement | null {
+		if (!watchPosterUrl) return null;
+		if (posterFor !== watchPosterUrl) {
+			posterFor = watchPosterUrl;
+			const img = new Image();
+			img.onload = () => drawThumb();
+			img.src = watchPosterUrl;
+			posterPicture = img;
+		}
+		return posterPicture?.complete && posterPicture.naturalWidth ? posterPicture : null;
+	}
+
+	/** Shows the picture for where the mouse (or fast-forward) is: its own, the nearest, or the poster. */
 	function drawThumb() {
-		if (!thumbCanvas || !thumbVideo || !thumbVideo.videoWidth) return;
+		if (!thumbCanvas || previewPct < 0 || duration <= 0) return;
 		const ctx = thumbCanvas.getContext('2d');
 		if (!ctx) return;
-		try {
-			ctx.drawImage(thumbVideo, 0, 0, thumbCanvas.width, thumbCanvas.height);
-			thumbReady = true;
-		} catch {
-			thumbReady = false;
+		const { width, height } = thumbCanvas;
+		const frame = strip?.pictureFor((previewPct / 100) * duration, 60) ?? null;
+		if (frame) {
+			ctx.drawImage(frame, 0, 0, width, height);
+			return;
 		}
+		const poster = posterImage();
+		ctx.fillStyle = '#111';
+		ctx.fillRect(0, 0, width, height);
+		if (poster) {
+			// The middle of the poster, filling the box, dimmed.
+			const sh = Math.min(poster.naturalHeight, (poster.naturalWidth * height) / width);
+			ctx.globalAlpha = 0.55;
+			ctx.drawImage(poster, 0, (poster.naturalHeight - sh) / 2.5, poster.naturalWidth, sh, 0, 0, width, height);
+			ctx.globalAlpha = 1;
+		}
+	}
+
+	/** Under the mouse: its picture (or the nearest) shows, and its own is fetched first if missing. */
+	function requestThumb(pct: number) {
+		if (duration <= 0) return;
+		drawThumb();
+		strip?.want((pct / 100) * duration);
 	}
 
 	function onProgressHover(e: MouseEvent) {
@@ -744,18 +845,11 @@
 		requestThumb(hoverPct);
 	}
 
-	// Its box is made afresh each time the mouse comes back: blank until the next picture.
+	// The box is made afresh each time the mouse comes back (and redrawn as fast-forward moves).
 	$effect(() => {
-		if (previewPct < 0) thumbReady = false;
+		void previewPct;
+		if (thumbCanvas) drawThumb();
 	});
-
-	// A new video (another file or episode): the old preview copy goes.
-	$effect(() => {
-		void streamUrl;
-		void streamNonce;
-		return () => stopThumbs();
-	});
-
 	function commitSeek(e: MouseEvent) {
 		if (!progressBarEl || !videoEl) return;
 		const rect = progressBarEl.getBoundingClientRect();
@@ -1303,44 +1397,68 @@
 		if (progressSaveTimer) { clearInterval(progressSaveTimer); progressSaveTimer = null; }
 	}
 
-	async function loadAndResumeProgress() {
-		if (!videoTitle || !videoEl) return;
-		if (skipResume) { skipResume = false; return; }
+	type SavedPlace = { at: number; subUrl?: string; subFileName?: string; subDelay?: number };
+
+	/**
+	 * Where this video was left, in seconds (0: from the start), with the subtitles saved there.
+	 * An episode already finished moves on to the next one instead (null). Asked for as soon as
+	 * the video is chosen, so the video can start loading right there rather than at the start.
+	 */
+	async function savedPlace(): Promise<SavedPlace | null> {
+		if (!videoTitle) return { at: 0 };
+		if (skipResume) { skipResume = false; return { at: 0 }; }
 		const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
 		const s = showType === 'tv' && activeEpisode ? activeEpisode.season : 0;
 		const e = showType === 'tv' && activeEpisode ? activeEpisode.episode : 0;
 		try {
 			const resp = await fetch(`/api/watch/progress?title=${encodeURIComponent(baseTitle)}&type=${showType}&season=${s}&episode=${e}`);
-			if (!resp.ok) return;
+			if (!resp.ok) return { at: 0 };
 			const data = await resp.json();
-			if (data && data.currentTime > 5 && data.duration > 0) {
+			if (!data) return { at: 0 };
+			let at = 0;
+			if (data.currentTime > 5 && data.duration > 0) {
 				const pct = data.currentTime / data.duration;
 				if (pct >= 0.95 && showType === 'tv') {
 					const next = nextEpisode();
-					// Finished already: on to the next one, leaving this one's finished place as it is
-					// (it has only just started playing, a few seconds in).
-					if (next) { playEpisode(next, true); return; }
+					// Finished already: on to the next one, leaving this one's finished place as it is.
+					if (next) { playEpisode(next, true); return null; }
 				}
 				// Finished with nothing after it (the last episode, a film): from the start, not the end.
-				if (pct < 0.95) {
-					const seekTo = data.currentTime;
-					if (videoEl.readyState >= 1) {
-						videoEl.currentTime = seekTo;
-					} else {
-						videoEl.addEventListener('loadeddata', () => {
-							if (videoEl) videoEl.currentTime = seekTo;
-						}, { once: true });
-					}
-				}
+				if (pct < 0.95) at = data.currentTime;
 			}
-			// The subtitles that were on, back on. Not plain subtitles over the English dub: they were
-			// on for Japanese audio (captions, which follow the dub, still come back).
-			const forDub = /\bCC\b|SDH/i.test(data?.subFileName ?? '');
-			if (data && data.subUrl && (!hearingDub() || forDub)) {
-				loadSub({ id: '0', url: data.subUrl, lang: 'eng', language: 'English', fileName: data.subFileName || '' });
-				if (data.subDelay) subtitleDelay = data.subDelay;
+			return { at, subUrl: data.subUrl, subFileName: data.subFileName, subDelay: data.subDelay };
+		} catch {
+			return { at: 0 };
+		}
+	}
+
+	/**
+	 * The subtitles that were on, back on. Not plain subtitles over the English dub: they were on
+	 * for Japanese audio (captions, which follow the dub, still come back).
+	 */
+	function restoreSavedSubs(place: SavedPlace) {
+		const forDub = /\bCC\b|SDH/i.test(place.subFileName ?? '');
+		if (place.subUrl && (!hearingDub() || forDub)) {
+			loadSub({ id: '0', url: place.subUrl, lang: 'eng', language: 'English', fileName: place.subFileName || '' });
+			if (place.subDelay) subtitleDelay = place.subDelay;
+		}
+	}
+
+	/** For a plain video file (not a playlist): jumps to where it was left once it has loaded. */
+	async function loadAndResumeProgress() {
+		const place = await savedPlace();
+		if (!place || !videoEl) return;
+		const seekTo = place.at;
+		if (seekTo > 0) {
+			if (videoEl.readyState >= 1) {
+				videoEl.currentTime = seekTo;
+			} else {
+				videoEl.addEventListener('loadeddata', () => {
+					if (videoEl) videoEl.currentTime = seekTo;
+				}, { once: true });
 			}
-		} catch {}
+		}
+		restoreSavedSubs(place);
 	}
 
 	/** Files that came at low quality and were given a fresh link (once each). */
@@ -2166,7 +2284,16 @@
 		videoEl.load();
 
 		if (isPlaylist(streamUrl) && Hls.isSupported()) {
+			// Where to start: the place a reload or a change of file was at, else where it was left
+			// (asked for now, alongside the playlist). Nothing loads until it's known, so the first
+			// piece fetched is the one at that place, in the quality that will play — before, the
+			// start was fetched, then fetched again in another quality, then the place itself.
+			const reloadAt = seekAfterLoad;
+			seekAfterLoad = 0;
+			// (untrack: what it reads mustn't make this effect run again and reload the video.)
+			const placeSoon: Promise<SavedPlace | null> = reloadAt > 0 ? Promise.resolve({ at: reloadAt }) : untrack(() => savedPlace());
 			const hls = new Hls({
+				autoStartLoad: false,
 				// Catalog draws its own subtitles: none of the browser's, from captions some videos
 				// carry inside them or a subtitle track their playlist lists.
 				enableCEA708Captions: false,
@@ -2207,7 +2334,9 @@
 						const vc = hls.levels[i].codecSet || hls.levels[i].videoCodec || '';
 						if (vc.includes('avc1') || vc.includes('avc3')) { best = i; break; }
 					}
-					hls.currentLevel = best;
+					// Chosen before loading starts: no first piece in another quality to throw away.
+					hls.startLevel = best;
+					hls.loadLevel = best;
 					hlsActiveLevel = best;
 				} else {
 					hlsActiveLevel = 0;
@@ -2223,13 +2352,13 @@
 				hlsActiveAudio = hls.audioTrack;
 				applyPreferredAudio();
 				recheckSubsForAudio();
-				if (seekAfterLoad > 0) {
-					const t = seekAfterLoad;
-					seekAfterLoad = 0;
-					if (videoEl) videoEl.currentTime = t;
-				} else {
-					loadAndResumeProgress();
-				}
+				placeSoon.then((place) => {
+					if (hlsInstance !== hls) return; // another video took its place meanwhile
+					const at = place?.at ?? 0;
+					hls.startLoad(at > 0 ? at : -1);
+					if (at > 0 && videoEl) videoEl.currentTime = at;
+					if (place) restoreSavedSubs(place);
+				});
 			});
 			hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => {
 				hlsAudioTracks = hls.audioTracks.map((t, i) => ({
@@ -3278,9 +3407,9 @@
 						<!-- progress bar -->
 						<!-- svelte-ignore a11y_no_static_element_interactions -->
 						<div class="progress-wrap" onmousedown={onProgressDown} onmousemove={onProgressHover} onmouseleave={() => (hoverPct = -1)}>
-							{#if previewPct >= 0 && duration > 0 && !tvMode}
+							{#if previewPct >= 0 && duration > 0}
 								<div class="scrub-preview" style:left="clamp(84px, {previewPct}%, calc(100% - 84px))">
-									<canvas bind:this={thumbCanvas} width="192" height="108" class:ready={thumbReady}></canvas>
+									<canvas bind:this={thumbCanvas} width="192" height="108"></canvas>
 									<span class="scrub-time">{fmt((previewPct / 100) * duration)}</span>
 								</div>
 							{/if}
@@ -3298,6 +3427,12 @@
 								{/if}
 								<div class="prog-played" style:width="{displayPct}%"></div>
 								<div class="prog-handle" style:left="{displayPct}%" class:dragging={seeking}></div>
+								<!-- Dragging or fast-forwarding: where you were, so it's easy to find again. -->
+								{#if seekPreview >= 0 && duration > 0}
+									<div class="prog-was" style:left="{progressPct}%">
+										<span class="prog-was-time">{fmt(currentTime)}</span>
+									</div>
+								{/if}
 							</div>
 						</div>
 
@@ -3859,10 +3994,11 @@
 
 	/* --------------------------------------------------------- progress bar */
 	.progress-wrap { position: relative; padding: 8px 0; cursor: pointer; }
+	.prog-was { position: absolute; top: -6px; bottom: -6px; width: 3px; margin-left: -1.5px; border-radius: 2px; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55); pointer-events: none; z-index: 2; }
+	.prog-was-time { position: absolute; top: calc(100% + 4px); left: 50%; transform: translateX(-50%); padding: 1px 6px; border-radius: 4px; background: rgba(0, 0, 0, 0.8); color: #fff; font-size: 0.7rem; font-weight: 600; white-space: nowrap; }
 	/* The picture of where the mouse is on the bar, with its time. */
 	.scrub-preview { position: absolute; bottom: calc(100% + 6px); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: none; z-index: 3; }
-	.scrub-preview canvas { width: 168px; height: 94.5px; border-radius: 4px; border: 2px solid rgba(255, 255, 255, 0.85); background: #000; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6); opacity: 0; transition: opacity 0.12s; }
-	.scrub-preview canvas.ready { opacity: 1; }
+	.scrub-preview canvas { width: 168px; height: 94.5px; border-radius: 4px; border: 2px solid rgba(255, 255, 255, 0.85); background: #111; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6); }
 	.scrub-time { padding: 2px 7px; border-radius: 4px; background: rgba(0, 0, 0, 0.8); color: #fff; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
 	.progress-bar { position: relative; height: 3px; background: rgba(255, 255, 255, 0.2); border-radius: 2px; transition: height 0.1s; }
 	.progress-wrap:hover .progress-bar { height: 5px; }

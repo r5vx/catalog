@@ -38,7 +38,7 @@
 	{#if tiles.length}
 		<div class="grid" data-tv-row data-tv-grid>
 			{#each tiles as tile (tile.key)}
-				<TvCard href={tile.href} title={tile.title} poster={tile.poster} note={tile.note} showTitle />
+				<TvCard href={tile.href} title={tile.title} poster={tile.poster} note={tile.note} menu={tile.menu} showTitle />
 			{/each}
 		</div>
 	{:else}
