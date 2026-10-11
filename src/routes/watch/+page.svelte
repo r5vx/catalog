@@ -198,6 +198,30 @@
 	let preferredAudioName = $state('');
 	/* Fill (the picture fills the screen) unless you picked Fit; your pick sticks for everything. */
 	const VIDEO_FIT = 'catalog:videoFit';
+
+	/**
+	 * How subtitles look, picked in the captions menu and kept on this device: the dark box behind
+	 * them or plain white text with an outline, and their size.
+	 */
+	const SUB_LOOK = 'catalog:subLook';
+	const SUB_SIZES = [
+		{ key: 'small', label: 'S', rem: 1.15 },
+		{ key: 'normal', label: 'M', rem: 1.4 },
+		{ key: 'large', label: 'L', rem: 1.8 },
+		{ key: 'huge', label: 'XL', rem: 2.3 }
+	] as const;
+	let subLook = $state<{ box: boolean; size: string }>({ box: true, size: 'normal' });
+	try {
+		const kept = JSON.parse(localStorage.getItem(SUB_LOOK) ?? 'null');
+		if (kept && typeof kept.box === 'boolean' && SUB_SIZES.some((s) => s.key === kept.size)) subLook = kept;
+	} catch {}
+	function setSubLook(change: Partial<{ box: boolean; size: string }>) {
+		subLook = { ...subLook, ...change };
+		try {
+			localStorage.setItem(SUB_LOOK, JSON.stringify(subLook));
+		} catch {}
+	}
+	const subFontSize = $derived(`${SUB_SIZES.find((s) => s.key === subLook.size)?.rem ?? 1.4}rem`);
 	let videoFit = $state<'contain' | 'cover'>('cover');
 
 	function chooseFit(fit: 'contain' | 'cover') {
@@ -3378,10 +3402,10 @@
 					{#if !inPiP}
 						<!-- cue text is escaped by safeSubHtml(), so only i/b/u tags can reach the page -->
 						{#if activeSubs.top}
-							<div class="subtitle-display top">{@html activeSubs.top.replace(/\n/g, '<br>')}</div>
+							<div class="subtitle-display top" class:plain={!subLook.box} style:font-size={subFontSize}>{@html activeSubs.top.replace(/\n/g, '<br>')}</div>
 						{/if}
 						{#if activeSubs.bottom}
-							<div class="subtitle-display">{@html activeSubs.bottom.replace(/\n/g, '<br>')}</div>
+							<div class="subtitle-display" class:plain={!subLook.box} style:font-size={subFontSize}>{@html activeSubs.bottom.replace(/\n/g, '<br>')}</div>
 						{/if}
 					{/if}
 
@@ -3727,10 +3751,23 @@
 								{/if}
 							{/if}
 							<hr class="popup-divider" />
-							<button class="popup-item" onclick={uploadSubtitle}>
-								<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16" style="flex:none;opacity:0.6"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zM6 20V4h7v5h5v11H6z"/></svg>
-								Upload subtitle file
-							</button>
+							<p class="popup-label">Look</p>
+							<div class="sub-look">
+								<button class="sub-delay-jump" class:on={subLook.box} onclick={() => setSubLook({ box: !subLook.box })}>
+									{subLook.box ? 'Dark box: On' : 'Dark box: Off'}
+								</button>
+								{#each SUB_SIZES as size (size.key)}
+									<button class="sub-delay-jump" class:on={subLook.size === size.key} onclick={() => setSubLook({ size: size.key })}>{size.label}</button>
+								{/each}
+							</div>
+							<!-- Not on the TV: there's no picking a file there. -->
+							{#if !tvMode}
+								<hr class="popup-divider" />
+								<button class="popup-item" onclick={uploadSubtitle}>
+									<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16" style="flex:none;opacity:0.6"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zM6 20V4h7v5h5v11H6z"/></svg>
+									Upload subtitle file
+								</button>
+							{/if}
 						</div>
 					{/if}
 				{/if}
@@ -4013,6 +4050,12 @@
 	/* --------------------------------------------------------- subtitle overlay */
 	.subtitle-display { position: absolute; bottom: 80px; left: 10%; right: 10%; text-align: center; color: #fff; font-size: 1.4rem; line-height: 1.5; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 0, 0, 0.7); pointer-events: none; z-index: 5; background: rgba(0, 0, 0, 0.5); padding: 6px 16px; border-radius: 4px; width: fit-content; margin: 0 auto; }
 	.subtitle-display.top { top: 60px; bottom: auto; }
+	/* No box: white text with a dark outline all round, so it reads on any picture. */
+	.subtitle-display.plain { background: none; padding: 0 16px; text-shadow: 0 0 3px #000, 0 0 3px #000, 1px 1px 2px #000, -1px -1px 2px #000, 0 2px 8px rgba(0, 0, 0, 0.8); }
+	.sub-look { display: flex; align-items: center; gap: 6px; padding: 4px 14px 8px; flex-wrap: wrap; }
+	.sub-look .sub-delay-jump.on { background: rgba(255, 255, 255, 0.3); }
+	.sub-look .sub-delay-jump:focus { background: #fff; color: #000; outline: none; }
+	:global(html.tv) .sub-look .sub-delay-jump { padding: 8px 14px; font-size: 0.95rem; border-radius: 16px; }
 
 	/* --------------------------------------------------------- PiP placeholder */
 	.pip-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--ink-faint); font-size: 1.1rem; pointer-events: none; z-index: 2; background: #000; }
