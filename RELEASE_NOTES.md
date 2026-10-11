@@ -12,6 +12,14 @@ without both.
 
 ## Unreleased
 
+## 3.0.6 — 2026-10-11 — Subtitles your way
+
+### New
+- **Subtitles**: choose how they look in the captions menu — with or without the dark box, and four sizes
+
+### Improved
+- **TV**: no "Upload subtitle file", since there's no file to pick on a TV
+
 ## 3.0.5 — 2026-10-11 — Night updates, family-friendly browsing and Bleach's seasons on the TV
 
 ### New
