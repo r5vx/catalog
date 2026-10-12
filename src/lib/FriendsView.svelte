@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { watchTypeOf } from '$lib/watchType';
 	import MoreButton from '$lib/MoreButton.svelte';
 	import { goto, invalidateAll, beforeNavigate } from '$app/navigation';
 	import { statusLabel, sortBadge } from '$lib/constants';
@@ -440,7 +441,7 @@
 		{#if link(ctxMenu.row)}
 			<button type="button" onclick={() => {
 				const r = ctxMenu!.row;
-				const t = r.category === 'Movies' ? 'movie' : 'tv';
+				const t = watchTypeOf({ categoryName: r.category, sourceId: r.sourceId });
 				goto(`/watch?title=${encodeURIComponent(r.title)}&type=${t}${r.year ? `&year=${r.year}` : ''}&auto=1`);
 				closeCtx();
 			}}>▶ Watch</button>

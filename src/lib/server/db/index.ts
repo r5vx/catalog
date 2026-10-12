@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { slimSubtitle } from '../subtitleFonts';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -339,6 +340,18 @@ function once(name: string, fix: () => void): void {
 // Shows are now also grouped the way TMDB groups them (JoJo's parts are one show), so the
 // saved groupings from before need working out again.
 once('anime-roots-tmdb-seasons', () => db.exec('DELETE FROM anime_roots'));
+
+// Subtitles kept with fonts and drawings inside (32 MB a file for Re:Zero's): those go, then the
+// space they took, and any other empty space, is given back (the library was 190 MB, 120 MB of
+// it nothing). From then on the file gives space back as things are deleted.
+once('subtitles-slimmed', () => {
+	const big = db.prepare('SELECT url, content FROM saved_subtitles WHERE length(content) > 500000').all() as { url: string; content: string }[];
+	const update = db.prepare('UPDATE saved_subtitles SET content = ? WHERE url = ?');
+	for (const row of big) update.run(slimSubtitle(row.content), row.url);
+	db.exec('PRAGMA auto_vacuum = INCREMENTAL');
+	db.exec('VACUUM');
+	db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+});
 
 // Which Showbox entry a title opened as, so the slow search is skipped after a restart.
 db.exec(`

@@ -28,6 +28,8 @@ export type SearchResult = {
 	 * anime scores low even when it's the most popular thing in its own results.
 	 */
 	popularity: number;
+	/** Not out yet (VisionQuest, a week before it starts): no Watch for it. */
+	unreleased?: boolean;
 };
 
 /**

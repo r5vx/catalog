@@ -1,7 +1,7 @@
 {
 	"name": "catalog",
 	"private": true,
-	"version": "3.0.6",
+	"version": "3.0.7",
 	"type": "module",
 	"description": "Your personal library of everything you've watched.",
 	"main": "electron/main.cjs",
@@ -28,6 +28,7 @@
 	"dependencies": {
 		"electron-updater": "^6.8.9",
 		"hls.js": "^1.7.3",
+		"onnxruntime-web": "1.29",
 		"xz-decompress": "^0.2.2"
 	},
 	"devDependencies": {

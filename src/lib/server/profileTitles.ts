@@ -21,7 +21,8 @@ export async function addProfileTitleFromSource(
 		category: details.categorySlug,
 		posterUrl: details.posterUrl,
 		overview: details.overview,
-		status,
+		// Not out yet can only be wanted (as in the library: createFromResult).
+		status: details.unreleased ? 'planned' : status,
 		lastSeason: reached.season ?? null,
 		lastEpisode: reached.episode ?? null
 	});

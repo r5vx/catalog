@@ -63,7 +63,25 @@ export const GET: RequestHandler = async ({ url }) => {
 	const playerTracksSoon = share?.kind === 'ssub'
 		? aniwaveStream(share.id, share.episode, 'ssub').then((s) => s?.tracks ?? [])
 		: Promise.resolve([]);
-	const othersSoon = extra?.film ? fetchSubtitlesForTitle(extra.name, 'movie') : fetchSubtitlesForTitle(title, type, season, episode);
+	// Subtitle sites mostly number episodes the TMDB way (Bleach S6E13 is episode 122 there), so a
+	// show the player numbers its own way is asked for under both.
+	const othersSoon = extra?.film
+		? fetchSubtitlesForTitle(extra.name, 'movie')
+		: Promise.all([
+				fetchSubtitlesForTitle(title, type, season, episode),
+				tmdb && (tmdb.season !== season || tmdb.episode !== episode)
+					? fetchSubtitlesForTitle(title, type, tmdb.season, tmdb.episode).catch(() => [])
+					: Promise.resolve([]),
+				// Not a series anywhere (One Piece Heroines: a one-episode special to AniList, a film
+				// to everyone else): asked for as the film too.
+				type === 'tv' && !show && (episode ?? 1) === 1
+					? fetchSubtitlesForTitle(title, 'movie').catch(() => [])
+					: Promise.resolve([])
+			]).then(([ours, theirs, asFilm]) => {
+				const all = [...ours];
+				for (const s of [...theirs, ...asFilm]) if (!all.some((o) => o.url === s.url)) all.push(s);
+				return all;
+			});
 
 	// The official English subtitles: AnimeTosho first — it never asks for a check, so they're
 	// there every time — and anime.nexus only for an episode AnimeTosho has none for. Each gets

@@ -3,7 +3,8 @@
 	import UpdateBanner from '$lib/UpdateBanner.svelte';
 	import SigninBanner from '$lib/SigninBanner.svelte';
 	import ConfirmDialog from '$lib/ConfirmDialog.svelte';
-	import { navigating } from '$app/state';
+	import SideNav from '$lib/SideNav.svelte';
+	import { navigating, page } from '$app/state';
 	import { beforeNavigate } from '$app/navigation';
 	import { rememberBeforeSettings } from '$lib/nav';
 	import { onMount } from 'svelte';
@@ -15,6 +16,12 @@
 	let { children, data }: { children: Snippet; data: LayoutData } = $props();
 
 	const accent = $derived(data?.accent ?? DEFAULT_ACCENT);
+
+	// The sidebar, when turned on: not over the player, the TV's own layout, or the pages before
+	// signing in.
+	const sideNav = $derived(
+		Boolean(data?.sideNav) && !/^\/(watch|tv|strip-maker|login|welcome)(\/|$)/.test(page.url.pathname)
+	);
 
 	// On a TV (the Fire TV app), the remote's arrows move around the page.
 	onMount(startTv);
@@ -57,7 +64,8 @@
 	<meta name="theme-color" content={accent} />
 </svelte:head>
 
-<div class="app" class:wide={data?.wideLayout} style={accentCss}>
+{#if sideNav}<div style={accentCss}><SideNav /></div>{/if}
+<div class="app" class:wide={data?.wideLayout} class:beside-nav={sideNav} style={accentCss}>
 	<!-- Shows a click was heard while the next page loads; hidden for quick ones. -->
 	{#if navigating.to}
 		<div class="nav-progress" aria-hidden="true"></div>
@@ -79,6 +87,22 @@
 	.app.wide {
 		max-width: none;
 		padding-inline: 40px;
+	}
+
+	/* Room for the sidebar, and the page centred in what's left. */
+	@media (min-width: 901px) {
+		.app.beside-nav {
+			margin-left: max(256px, calc((100vw - 1180px + 236px) / 2));
+			margin-right: auto;
+		}
+
+		.app.beside-nav.wide {
+			margin-left: 236px;
+		}
+
+		:global(html.tv) .app.beside-nav {
+			margin-left: auto;
+		}
 	}
 
 	.nav-progress {

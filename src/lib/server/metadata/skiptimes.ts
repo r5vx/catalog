@@ -2,48 +2,37 @@
  * Intro, recap and credits timestamps for anime episodes, from AniSkip — a free,
  * crowd-sourced database keyed by MyAnimeList id and episode number.
  *
- * Showbox numbers seasons the way TMDB does, which often isn't how AniList splits
- * a show (one TMDB season can be two AniList entries). So the episode is counted
- * from the very start of the series and walked along AniList's chain of sequels.
+ * Showbox numbers seasons the way TMDB does, which often isn't how MyAnimeList splits
+ * a show (one TMDB season can be two MyAnimeList entries). So the episode is counted
+ * from the very start of the series and walked along the chain of sequels.
+ *
+ * The MyAnimeList ids and the chain come from Kitsu (free, no sign-up, answers in a fraction of
+ * a second and doesn't ration questions the way AniList, which this used before, does).
  */
 
 export type SkipSegment = { type: 'intro' | 'recap' | 'credits'; start: number; end: number };
 
-type Edge = { relationType: string; node: { id: number; format: string | null } };
-type Media = {
-	id: number;
-	idMal: number | null;
-	episodes: number | null;
-	format: string | null;
-	relations?: { edges: Edge[] } | null;
+type KitsuAnime = {
+	id: string;
+	attributes: {
+		canonicalTitle: string | null;
+		titles: Record<string, string | null> | null;
+		abbreviatedTitles: string[] | null;
+		subtype: string | null;
+		episodeCount: number | null;
+	};
+	relationships?: { mappings?: { data?: { id: string }[] } };
 };
-type SearchMedia = Media & {
-	title: { english: string | null; romaji: string | null };
-	synonyms: string[] | null;
-};
+type KitsuMapping = { id: string; attributes: { externalSite: string; externalId: string } };
 
 type Part = { malId: number | null; episodes: number | null };
-type Chain = { parts: Part[]; nextId: number | null; visited: Set<number>; checkedAt: number };
+type Chain = { parts: Part[]; nextId: string | null; visited: Set<string>; checkedAt: number };
 
-const ANILIST = 'https://graphql.anilist.co';
+const KITSU = 'https://kitsu.io/api/edge';
 const DAY = 24 * 60 * 60 * 1000;
 
-/** Formats that count as a season. Films and OVAs in the chain are stepped over. */
-const SEASON_FORMATS = new Set(['TV', 'TV_SHORT', 'ONA']);
-
-const MEDIA_FIELDS = 'id idMal episodes format relations { edges { relationType node { id format } } }';
-
-const SEARCH = `query ($search: String) {
-  Page(perPage: 8) {
-    media(search: $search, type: ANIME, sort: SEARCH_MATCH, format_in: [TV, TV_SHORT, ONA]) {
-      title { english romaji }
-      synonyms
-      ${MEDIA_FIELDS}
-    }
-  }
-}`;
-
-const BY_ID = `query ($id: Int) { Media(id: $id, type: ANIME) { ${MEDIA_FIELDS} } }`;
+/** Kinds that count as a season. Films and OVAs in the chain are stepped over. */
+const SEASON_KINDS = new Set(['TV', 'ONA']);
 
 const chains = new Map<string, Chain>();
 const segmentsCache = new Map<string, { segments: SkipSegment[]; checkedAt: number }>();
@@ -51,59 +40,67 @@ const segmentsCache = new Map<string, { segments: SkipSegment[]; checkedAt: numb
 const normalize = (text: string) =>
 	text.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]/g, '');
 
-async function anilist<T>(query: string, variables: Record<string, unknown>): Promise<T | null> {
-	const init = {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-		body: JSON.stringify({ query, variables })
-	};
+async function kitsu<T>(path: string): Promise<T | null> {
 	try {
-		let response = await fetch(ANILIST, { ...init, signal: AbortSignal.timeout(8000) });
-		if (response.status === 429) {
-			const wait = Number(response.headers.get('Retry-After') ?? '2');
-			await new Promise((resolve) => setTimeout(resolve, Math.min(wait, 10) * 1000));
-			response = await fetch(ANILIST, { ...init, signal: AbortSignal.timeout(8000) });
-		}
-		if (!response.ok) return null;
-		return ((await response.json()) as { data?: T }).data ?? null;
+		const response = await fetch(`${KITSU}${path}`, {
+			headers: { Accept: 'application/vnd.api+json' },
+			signal: AbortSignal.timeout(8000)
+		});
+		return response.ok ? ((await response.json()) as T) : null;
 	} catch {
 		return null;
 	}
 }
 
-function absorb(chain: Chain, media: Media) {
-	chain.visited.add(media.id);
-	if (SEASON_FORMATS.has(media.format ?? '')) {
-		chain.parts.push({ malId: media.idMal, episodes: media.episodes });
-	}
-	const sequels = (media.relations?.edges ?? []).filter((edge) => edge.relationType === 'SEQUEL');
-	const next = sequels.find((edge) => SEASON_FORMATS.has(edge.node.format ?? '')) ?? sequels[0];
-	chain.nextId = next && !chain.visited.has(next.node.id) ? next.node.id : null;
+/** One entry's MyAnimeList id, from the mappings that came with it (or asked for). */
+async function malIdOf(anime: KitsuAnime, included?: KitsuMapping[]): Promise<number | null> {
+	let mappings = included?.filter((m) => anime.relationships?.mappings?.data?.some((d) => d.id === m.id));
+	if (!mappings?.length) mappings = (await kitsu<{ data: KitsuMapping[] }>(`/anime/${anime.id}/mappings`))?.data ?? [];
+	const mal = mappings.find((m) => m.attributes.externalSite === 'myanimelist/anime');
+	return mal ? Number(mal.attributes.externalId) || null : null;
 }
 
-/** Null when AniList couldn't be asked; an empty chain when it isn't an anime it knows. */
+async function absorb(chain: Chain, anime: KitsuAnime, included?: KitsuMapping[]) {
+	chain.visited.add(anime.id);
+	if (SEASON_KINDS.has(anime.attributes.subtype ?? '')) {
+		chain.parts.push({ malId: await malIdOf(anime, included), episodes: anime.attributes.episodeCount });
+	}
+	const sequels = await kitsu<{ data: { relationships: { destination: { data: { id: string } } } }[]; included?: KitsuAnime[] }>(
+		`/anime/${anime.id}/media-relationships?filter[role]=sequel&include=destination`
+	);
+	const next =
+		sequels?.included?.find((one) => SEASON_KINDS.has(one.attributes.subtype ?? '') && !chain.visited.has(one.id)) ??
+		sequels?.included?.find((one) => !chain.visited.has(one.id));
+	chain.nextId = next?.id ?? null;
+}
+
+/** Null when Kitsu couldn't be asked; an empty chain when it isn't an anime it knows. */
 async function chainFor(title: string): Promise<Chain | null> {
 	const key = normalize(title);
 	const cached = chains.get(key);
 	if (cached && Date.now() - cached.checkedAt < DAY) return cached;
 
-	const data = await anilist<{ Page: { media: SearchMedia[] } }>(SEARCH, { search: title });
-	if (!data) return null;
+	const found = await kitsu<{ data: KitsuAnime[]; included?: KitsuMapping[] }>(
+		`/anime?filter[text]=${encodeURIComponent(title)}&include=mappings&page[limit]=8`
+	);
+	if (!found) return null;
 
 	// Exact names only — a near miss would put another show's intro on this one.
-	const match = data.Page.media.find((media) =>
-		[media.title.english, media.title.romaji, ...(media.synonyms ?? [])].some(
-			(name) => name && normalize(name) === key
-		)
+	const match = found.data.find(
+		(anime) =>
+			SEASON_KINDS.has(anime.attributes.subtype ?? '') &&
+			[anime.attributes.canonicalTitle, ...Object.values(anime.attributes.titles ?? {}), ...(anime.attributes.abbreviatedTitles ?? [])].some(
+				(name) => name && normalize(name) === key
+			)
 	);
 
 	const chain: Chain = { parts: [], nextId: null, visited: new Set(), checkedAt: Date.now() };
-	if (match) absorb(chain, match);
+	if (match) await absorb(chain, match, found.included);
 	chains.set(key, chain);
 	return chain;
 }
 
-/** Which AniList entry, and which episode of it, the nth episode of the series is. */
+/** Which MyAnimeList entry, and which episode of it, the nth episode of the series is. */
 async function locate(title: string, overallEpisode: number) {
 	const chain = await chainFor(title);
 	if (!chain) return null;
@@ -120,9 +117,9 @@ async function locate(title: string, overallEpisode: number) {
 			remaining -= part.episodes;
 		}
 		if (!chain.nextId) return null;
-		const data = await anilist<{ Media: Media }>(BY_ID, { id: chain.nextId });
-		if (!data?.Media) return null;
-		absorb(chain, data.Media);
+		const next = await kitsu<{ data: KitsuAnime }>(`/anime/${chain.nextId}`);
+		if (!next?.data) return null;
+		await absorb(chain, next.data);
 	}
 	return null;
 }

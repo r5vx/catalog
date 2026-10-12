@@ -11,6 +11,8 @@ import { forgetFinishedSubtitles, profileExists } from '$lib/server/db/queries';
 import { withProfile, MAIN_PROFILE } from '$lib/server/profile';
 import { keepShowboxSigninFresh } from '$lib/server/showboxSignin';
 import { clearOldStrips } from '$lib/server/previewStrips';
+import { keepWithinLimit, tellAppItsShare } from '$lib/server/storage';
+import { moveOffAniList } from '$lib/server/offAniList';
 
 // Before anything asks another site for something: a time limit for every outside request,
 // and a note of the slow ones (on /api/diagnostics).
@@ -23,6 +25,18 @@ recategorizeAnime();
 
 // Preview pictures not opened for 60 days go.
 clearOldStrips();
+
+// Anime added from AniList moves to TMDB's copy, a minute in (src/lib/server/offAniList.ts).
+setTimeout(() => {
+	moveOffAniList()
+		.then((report) => report.moved.length && console.log(`[off-anilist] moved ${report.moved.length}, left ${report.left.length}`))
+		.catch((error) => console.error('[off-anilist]', error));
+}, 60_000).unref?.();
+
+// What's kept to load faster stays within the limit in Settings → Storage: now, and every hour.
+tellAppItsShare();
+keepWithinLimit();
+setInterval(keepWithinLimit, 60 * 60 * 1000).unref?.();
 
 // Subtitles kept for shows that are done with go now, and every hour after.
 forgetFinishedSubtitles();

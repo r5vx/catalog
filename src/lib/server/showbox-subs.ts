@@ -1,4 +1,5 @@
 import { fetchImdbId, fetchEnglishTitle } from './metadata/tmdb';
+import { slimSubtitle } from './subtitleFonts';
 import { readSettings } from './settings';
 import { gunzipSync, inflateRawSync } from 'node:zlib';
 import xz from 'xz-decompress';
@@ -234,11 +235,19 @@ async function fromOpenSubtitles(
 		return (type === 'tv' && season && episode) ? [] : results;
 	};
 
+	// Asked for the one episode: asked for the whole show, OpenSubtitles gives the first hundred
+	// it has, and for a long show (Bleach, 366 episodes) the one playing is hardly ever among
+	// them. The parts of the address go in alphabetical order (episode, imdbid or query, season,
+	// sublanguageid); any other order is sent off to a bad address.
+	const one = type === 'tv' && season && episode;
+	const ep = one ? `episode-${episode}/` : '';
+	const se = one ? `/season-${season}` : '';
+
 	if (imdbId) {
 		const numericId = imdbId.replace(/^tt/, '');
 		const [engResults, allResults] = await Promise.all([
-			queryOS(`imdbid-${numericId}/sublanguageid-eng`),
-			queryOS(`imdbid-${numericId}`)
+			queryOS(`${ep}imdbid-${numericId}${se}/sublanguageid-eng`),
+			queryOS(`${ep}imdbid-${numericId}${se}`)
 		]);
 		for (const s of collectResults(engResults)) addSub(s);
 		for (const s of collectResults(allResults)) addSub(s);
@@ -258,8 +267,8 @@ async function fromOpenSubtitles(
 
 			for (const terms of variants) {
 				const [engText, allText] = await Promise.all([
-					queryOS(`query-${terms}/sublanguageid-eng`),
-					queryOS(`query-${terms}`)
+					queryOS(`${ep}query-${terms}${se}/sublanguageid-eng`),
+					queryOS(`${ep}query-${terms}${se}`)
 				]);
 				for (const s of collectResults(engText)) addSub(s);
 				for (const s of collectResults(allText)) addSub(s);
@@ -417,6 +426,10 @@ function extractFromZipScan(buf: Buffer): string {
 }
 
 export async function downloadSubtitle(url: string, season?: number, episode?: number): Promise<string> {
+	return slimSubtitle(await downloadSubtitleText(url, season, episode));
+}
+
+async function downloadSubtitleText(url: string, season?: number, episode?: number): Promise<string> {
 	try {
 		const resp = await fetch(url, {
 			headers: { 'User-Agent': UA },

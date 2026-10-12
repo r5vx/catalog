@@ -156,39 +156,55 @@ export async function fetchKnownFor(sourceId: string) {
 				}));
 		}
 
+		// Kept for a week: AniList allows Catalog only thirty questions a minute, for everything.
+		const keyed = `knownfor|anilist:${id}`;
+		const kept = getOrderCache(keyed);
+		if (kept && Date.now() - kept.at < 7 * DAY) return kept.value as unknown[];
+
+		// Each show they voiced someone in, most popular first (`characters` used to be asked for
+		// here, and AniList stopped answering that way: every voice actor had nothing else).
 		const response = await fetch('https://graphql.anilist.co', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				query: `query($id:Int){Staff(id:$id){characters(sort:FAVOURITES_DESC,perPage:50){edges{
-					node{ name{ full } }
-					media{ nodes{ id title{ english romaji } startDate{ year } coverImage{ medium } averageScore popularity } }
+				query: `query($id:Int){Staff(id:$id){characterMedia(sort:POPULARITY_DESC,perPage:50){edges{
+					characters{ name{ full } }
+					node{ id type title{ english romaji } startDate{ year } coverImage{ medium } averageScore popularity }
 				}}}}`,
 				variables: { id: Number(id) }
 			})
 		});
-		if (!response.ok) return [];
+		if (response.status === 429) anilistSaidWait(response);
+		if (!response.ok) return kept ? (kept.value as unknown[]) : [];
 
-		const edges = (await response.json())?.data?.Staff?.characters?.edges ?? [];
-		return edges
-			.map((edge: Record<string, any>) => {
-				const media = edge.media?.nodes?.[0];
-				if (!media) return null;
-				return {
-					title: media.title?.english || media.title?.romaji || '',
-					year: media.startDate?.year ? String(media.startDate.year) : '',
-					character: edge.node?.name?.full ?? null,
-					poster: media.coverImage?.medium ?? null,
-					source: 'anilist',
-					sourceId: String(media.id ?? ''),
-					kind: 'Anime',
-					categorySlug: 'anime',
-					rating: media.averageScore ? media.averageScore / 10 : null,
-					votes: media.popularity ?? null
-				};
-			})
-			.filter(Boolean)
-			.slice(0, KNOWN_FOR_DEPTH);
+		const edges = (await response.json())?.data?.Staff?.characterMedia?.edges ?? [];
+		// Two characters in one show come as two answers: one card, both names.
+		const byShow = new Map<number, Record<string, any>>();
+		for (const edge of edges as Record<string, any>[]) {
+			const media = edge.node;
+			if (!media?.id || media.type !== 'ANIME') continue;
+			const names = (edge.characters ?? []).map((c: Record<string, any>) => c?.name?.full).filter(Boolean);
+			const known = byShow.get(media.id);
+			if (known) {
+				known.character = [known.character, ...names].filter(Boolean).join(', ');
+				continue;
+			}
+			byShow.set(media.id, {
+				title: media.title?.english || media.title?.romaji || '',
+				year: media.startDate?.year ? String(media.startDate.year) : '',
+				character: names.join(', ') || null,
+				poster: media.coverImage?.medium ?? null,
+				source: 'anilist',
+				sourceId: String(media.id),
+				kind: 'Anime',
+				categorySlug: 'anime',
+				rating: media.averageScore ? media.averageScore / 10 : null,
+				votes: media.popularity ?? null
+			});
+		}
+		const list = [...byShow.values()].slice(0, KNOWN_FOR_DEPTH);
+		saveOrderCache(keyed, list, Date.now());
+		return list;
 	} catch {
 		return [];
 	}
@@ -448,6 +464,11 @@ export async function fetchPerson(
 			};
 		}
 
+		// Kept for a month, so opening them again doesn't ask AniList.
+		const keyed = `person|anilist:${id}`;
+		const kept = getOrderCache(keyed);
+		if (kept && Date.now() - kept.at < 30 * DAY) return kept.value as { name: string; photo: string | null };
+
 		const response = await fetch('https://graphql.anilist.co', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -456,12 +477,15 @@ export async function fetchPerson(
 				variables: { id: Number(id) }
 			})
 		});
-		if (!response.ok) return null;
+		if (response.status === 429) anilistSaidWait(response);
+		if (!response.ok) return (kept?.value as { name: string; photo: string | null } | undefined) ?? null;
 
 		const staff = (await response.json())?.data?.Staff;
 		if (!staff?.name?.full) return null;
 
-		return { name: staff.name.full, photo: staff.image?.medium ?? null };
+		const person = { name: staff.name.full, photo: staff.image?.medium ?? null };
+		saveOrderCache(keyed, person, Date.now());
+		return person;
 	} catch {
 		return null;
 	}

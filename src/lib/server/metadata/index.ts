@@ -1,9 +1,7 @@
-import { searchAniList, trendingAniList } from './anilist';
-import { searchTmdb, trendingTmdb, trendingPeopleTmdb, hasTmdbKey, type BrowseFilters } from './tmdb';
+import { searchTmdb, trendingTmdb, trendingAnimeTmdb, trendingPeopleTmdb, hasTmdbKey, type BrowseFilters } from './tmdb';
 export { trendingPeopleTmdb };
 import { normalizeTitle, withoutQualifier, type SearchResult } from './types';
 import { watchRegion as getWatchRegion } from './providers';
-import { groupByShow } from './franchise';
 
 export { hasTmdbKey };
 export type { SearchResult, BrowseFilters };
@@ -163,15 +161,7 @@ function dedupe(scored: Scored[]): Scored[] {
 
 type SearchOptions = { year?: number | null; limit?: number; fuzzy?: boolean };
 
-/** Search both providers at once and return one merged, ranked list. */
-/**
- * `work`'s answer if it comes within `ms`, otherwise `fallback`. The work carries on either way,
- * so what it learns (AniList's answers are kept) is there the next time.
- */
-function within<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
-	return Promise.race([work, new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))]);
-}
-
+/** Search and return one ranked list. */
 export async function searchAll(
 	query: string,
 	{ year = null, limit = 12, fuzzy = false }: SearchOptions = {}
@@ -179,11 +169,12 @@ export async function searchAll(
 	const trimmed = query.trim();
 	if (trimmed.length < 2) return [];
 
-	// AniList can take several seconds to answer; TMDB has the anime too, so search doesn't
-	// wait more than three for it.
-	const [anime, other] = await Promise.all([within(searchAniList(trimmed), 3000, []), searchTmdb(trimmed, fuzzy)]);
+	// TMDB only: it has the anime too, one card per show with its seasons inside, and answers
+	// at once. AniList, asked as well, made searches wait up to six seconds (and used up the
+	// thirty questions a minute it allows, which opening a title needed).
+	const found = await searchTmdb(trimmed, fuzzy);
 
-	const scored = [...anime, ...other].map((result) => ({
+	const scored = found.map((result) => ({
 		result,
 		score: scoreOf(result, trimmed, year, fuzzy)
 	}));
@@ -193,9 +184,7 @@ export async function searchAll(
 		.map((item) => item.result)
 		.slice(0, limit * 3);
 
-	// Folding seasons into one card asks AniList about each; three seconds at most, then the
-	// cards as they are (the answers it gets are kept, so next time they're folded).
-	return sameShowOnce(await within(groupByShow(ranked), 3000, ranked)).slice(0, limit);
+	return sameShowOnce(ranked).slice(0, limit);
 }
 
 /** After seasons fold into a first-season card, TMDB's copy of that same show can be left over. */
@@ -257,8 +246,7 @@ export async function browsePage(
 	const key = `${category}:${mode}:${page}:${region ?? ''}:${filterKey}`;
 	const cached = browseCache.get(key);
 	if (cached && Date.now() - cached.time < BROWSE_TTL) return cached.data;
-	// Older than that: shown straight away, and fetched fresh behind it for next time — the
-	// anime row needs AniList, which can take seconds.
+	// Older than that: shown straight away, and fetched fresh behind it for next time.
 	if (cached) {
 		if (!refreshing.has(key)) {
 			refreshing.add(key);
@@ -287,10 +275,7 @@ async function fetchBrowsePage(
 	filters?: BrowseFilters
 ): Promise<SearchResult[]> {
 	let data: SearchResult[];
-	if (category === 'anime') {
-		const dateSorted = filters?.sort === 'release_date_desc' || filters?.sort === 'release_date_asc';
-		data = await groupByShow(await trendingAniList(50, page, mode, filters), dateSorted);
-	}
+	if (category === 'anime') data = await trendingAnimeTmdb(page, mode, filters);
 	else if (category === 'movies') data = await trendingTmdb('movie', page, mode, region, filters);
 	else if (category === 'tv') data = await trendingTmdb('tv', page, mode, region, filters);
 	else data = [];
@@ -307,6 +292,7 @@ async function fetchBrowsePage(
  */
 export function warmBrowseCache(): void {
 	browseShelves(undefined, 'trending', getWatchRegion()).catch(() => {});
+	trendingPeopleTmdb().catch(() => {});
 }
 
 const INITIAL_PAGES = 3;

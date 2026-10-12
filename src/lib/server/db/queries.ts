@@ -207,6 +207,7 @@ export function listEntries(options: ListOptions = {}): EntryCard[] {
 			e.created_at  AS createdAt,
 			e.updated_at  AS updatedAt,
 			e.finished_on AS finishedOn,
+			e.source_id   AS sourceId,
 			e.category_id AS categoryId,
 			c.name  AS categoryName,
 			c.emoji AS categoryEmoji

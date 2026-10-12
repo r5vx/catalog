@@ -90,7 +90,7 @@ export type EntryCard = Pick<
 	| 'externalRating' | 'externalVotes' | 'lastSeason' | 'lastEpisode'
 	| 'episodesTotal' | 'showStatus' | 'seasonCounts' | 'nextAirDate'
 	| 'runtimeMinutes' | 'boxOffice' | 'imdbRating' | 'rtScore' | 'metascore'
-	| 'createdAt' | 'updatedAt' | 'finishedOn'
+	| 'createdAt' | 'updatedAt' | 'finishedOn' | 'sourceId'
 > & {
 	categoryId: number;
 	categoryName: string;

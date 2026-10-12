@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { watchTypeOf } from '$lib/watchType';
 	import MoreButton from '$lib/MoreButton.svelte';
 	import { goto } from '$app/navigation';
 	import BackBar from '$lib/BackBar.svelte';
@@ -8,7 +9,9 @@
 
 	/** Our own id where this person is in the library, the provider's if not. */
 	const personKey = $derived(data.person.id || data.person.sourceId);
-	const here = $derived(`/person/${personKey}`);
+	// With its own way back, so going back through a title you opened from here, and back
+	// again, ends where you started (Browse's Actors, say).
+	const here = $derived(data.back ? `/person/${personKey}?back=${encodeURIComponent(data.back)}` : `/person/${personKey}`);
 
 	/** Titles added from here, so the button can show it worked. */
 	let justAdded = $state<Record<string, number>>({});
@@ -76,7 +79,7 @@
 
 	function watch(credit: Credit) {
 		menu = null;
-		const params = new URLSearchParams({ title: credit.title, type: credit.categorySlug === 'movies' ? 'movie' : 'tv', auto: '1' });
+		const params = new URLSearchParams({ title: credit.title, type: watchTypeOf(credit), auto: '1' });
 		if (credit.year) params.set('year', credit.year);
 		goto(`/watch?${params}`);
 	}
@@ -92,7 +95,7 @@
 
 	function watchOwned(item: Owned) {
 		ownedMenu = null;
-		const params = new URLSearchParams({ title: item.title, type: item.categorySlug === 'movies' ? 'movie' : 'tv', auto: '1' });
+		const params = new URLSearchParams({ title: item.title, type: watchTypeOf(item), auto: '1' });
 		if (item.year) params.set('year', String(item.year));
 		goto(`/watch?${params}`);
 	}
