@@ -16,7 +16,8 @@ export const load: PageServerLoad = async () => {
 		})(),
 		hiddenSorts: (settings.hiddenSorts ?? '').split(',').filter(Boolean),
 		theme: settings.theme ?? '',
-		wideLayout: settings.wideLayout === '1',
+		wideLayout: settings.wideLayout !== '0',
+		sideNav: settings.sideNav !== '0',
 		poisonMode: settings.poisonMode === '1'
 	};
 };
@@ -56,8 +57,13 @@ export const actions: Actions = {
 	saveLayout: async ({ request }) => {
 		const form = await request.formData();
 		const wide = form.get('wideLayout') === '1';
-		updateSettings({ wideLayout: wide ? '1' : undefined });
+		updateSettings({ wideLayout: wide ? '1' : '0' });
 		return { layoutOk: wide ? 'Wide layout enabled.' : 'Centered layout restored.' };
+	},
+
+	saveSideNav: async ({ request }) => {
+		const on = (await request.formData()).get('sideNav') === '1';
+		updateSettings({ sideNav: on ? '1' : '0' });
 	},
 
 	savePoison: async ({ request }) => {

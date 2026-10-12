@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import { invalidateAll } from '$app/navigation';
 	import { ACCENT_PRESETS } from '$lib/accent';
 	import { SORTS, SORT_GROUPS } from '$lib/constants';
 	import type { PageData, ActionData } from './$types';
@@ -13,6 +14,15 @@
 
 	let theme = $state(untrack(() => data.theme));
 	let wideLayout = $state(untrack(() => data.wideLayout));
+	let sideNav = $state(untrack(() => data.sideNav));
+
+	async function chooseSideNav(on: boolean) {
+		sideNav = on;
+		const body = new FormData();
+		body.set('sideNav', on ? '1' : '0');
+		await fetch('?/saveSideNav', { method: 'POST', body });
+		await invalidateAll();
+	}
 	let poisonMode = $state(untrack(() => (data as any).poisonMode as boolean));
 
 	const THEMES = [
@@ -107,6 +117,33 @@
 			</span>
 			<span class="layout-label">Wide</span>
 			<span class="layout-desc faint">Uses the full window width</span>
+		</button>
+	</div>
+
+	<p class="muted side-intro">A sidebar with every part of the library, Browse and Settings, on every page.</p>
+	<div class="layout-options">
+		<button type="button" class="layout-card" class:picked={!sideNav} onclick={() => chooseSideNav(false)}>
+			<span class="layout-preview centered-preview">
+				<span class="layout-bar"></span>
+				<span class="layout-grid">
+					<span></span><span></span><span></span>
+				</span>
+			</span>
+			<span class="layout-label">No sidebar</span>
+			<span class="layout-desc faint">Tabs at the top of the library</span>
+		</button>
+		<button type="button" class="layout-card" class:picked={sideNav} onclick={() => chooseSideNav(true)}>
+			<span class="layout-preview side-preview">
+				<span class="side-strip"></span>
+				<span class="side-page">
+					<span class="layout-bar"></span>
+					<span class="layout-grid">
+						<span></span><span></span><span></span>
+					</span>
+				</span>
+			</span>
+			<span class="layout-label">Sidebar</span>
+			<span class="layout-desc faint">Always one click from the library</span>
 		</button>
 	</div>
 </section>
@@ -472,6 +509,32 @@
 
 	.wide-preview {
 		align-items: stretch;
+	}
+
+	.side-intro {
+		margin-top: 18px;
+	}
+
+	.side-preview {
+		flex-direction: row;
+	}
+
+	.side-strip {
+		width: 18px;
+		border-radius: 2px;
+		background: var(--accent);
+		opacity: 0.5;
+	}
+
+	.side-page {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.side-page .layout-bar {
+		width: 50%;
 	}
 
 	.layout-bar {

@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
 import { readSettings } from '../settings';
+import { getOrderCache, saveOrderCache } from '../db/queries';
 import { plainText, fameScore, normalizeTitle, type SearchResult } from './types';
 
 const BASE = 'https://api.themoviedb.org/3';
@@ -304,7 +305,8 @@ function toResult(item: TmdbItem): SearchResult {
 		runtimeMinutes: null,
 		externalRating: item.vote_average ? item.vote_average : null,
 		externalVotes: item.vote_count ?? null,
-		popularity: scaleFame(item.vote_count ?? 0, item.popularity ?? 0)
+		popularity: scaleFame(item.vote_count ?? 0, item.popularity ?? 0),
+		unreleased: (item.release_date ?? item.first_air_date ?? '') > new Date().toISOString().slice(0, 10)
 	};
 }
 
@@ -417,6 +419,99 @@ export async function trendingTmdb(
 	}
 }
 
+/**
+ * Anime for Browse, from TMDB rather than AniList: TMDB has it all (a Japanese, animated title
+ * is anime — categorize() above), answers in a tenth of a second and doesn't turn Catalog away
+ * after thirty questions a minute, which AniList did, and held up whatever was clicked next.
+ *
+ * What people are watching is what's airing (an episode in the last two months) and most
+ * popular, with films from the last year among them; all time is the most voted. Children's
+ * series (Doraemon, decades of it) are left out, and so is anything TMDB marks ecchi, hentai or
+ * softcore: "I'm Dating a Dark Summoner" turned up on the TV at home. Searching still finds them.
+ */
+const NOT_FOR_BROWSING = [195669, 285672, 198385, 384581, 155477, 256466, 378816].join('|');
+const KIDS_SERIES = '10762';
+
+/** A film genre as TMDB numbers it for series (they differ), or a keyword where series have none. */
+const SERIES_GENRE: Record<number, { genre?: string; keyword?: string }> = {
+	28: { genre: '10759' }, 12: { genre: '10759' }, 878: { genre: '10765' }, 14: { genre: '10765' },
+	35: { genre: '35' }, 18: { genre: '18' }, 9648: { genre: '9648' }, 80: { genre: '80' },
+	10751: { genre: '10751' }, 99: { genre: '99' }, 37: { genre: '37' }, 10752: { genre: '10768' },
+	10749: { keyword: '9840' }, 27: { keyword: '315058' }
+};
+
+export async function trendingAnimeTmdb(page = 1, mode: BrowseMode = 'trending', filters?: BrowseFilters): Promise<SearchResult[]> {
+	if (!tmdbKey()) return [];
+	const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+	const today = daysAgo(0);
+	const sortBy = (kind: 'movie' | 'tv') => {
+		const date = kind === 'movie' ? 'primary_release_date' : 'first_air_date';
+		switch (filters?.sort) {
+			case 'vote_average': return 'vote_average.desc';
+			case 'popularity': return 'popularity.desc';
+			case 'release_date_desc': return `${date}.desc`;
+			case 'release_date_asc': return `${date}.asc`;
+			case 'vote_count': return 'vote_count.desc';
+			default: return mode === 'popular' ? 'vote_count.desc' : 'popularity.desc';
+		}
+	};
+	const common = (kind: 'movie' | 'tv'): Record<string, string> => {
+		const date = kind === 'movie' ? 'primary_release_date' : 'first_air_date';
+		const params: Record<string, string> = {
+			page: String(page),
+			with_original_language: 'ja',
+			include_adult: 'false',
+			without_keywords: NOT_FOR_BROWSING,
+			sort_by: sortBy(kind),
+			'vote_count.gte': filters?.sort === 'vote_average' ? '200' : filters?.sort?.startsWith('release') ? '5' : '20'
+		};
+		if (filters?.yearFrom) params[`${date}.gte`] = `${filters.yearFrom}-01-01`;
+		params[`${date}.lte`] = filters?.yearTo ? `${filters.yearTo}-12-31` : today;
+		return params;
+	};
+
+	const series = common('tv');
+	series.with_genres = '16';
+	series.without_genres = KIDS_SERIES;
+	const films = common('movie');
+	films.with_genres = '16';
+	if (filters?.genre) {
+		films.with_genres = `16,${filters.genre}`;
+		const asSeries = SERIES_GENRE[filters.genre];
+		if (asSeries?.genre) series.with_genres = `16,${asSeries.genre}`;
+		else if (asSeries?.keyword) series.with_keywords = asSeries.keyword;
+	}
+	const browsingNow = mode === 'trending' && !filters?.sort && !filters?.yearFrom && !filters?.yearTo;
+	if (browsingNow) {
+		series['air_date.gte'] = daysAgo(60);
+		// Known well enough to be what people are watching (Chibi Maruko-chan airs every week too).
+		series['vote_count.gte'] = '100';
+		films['primary_release_date.gte'] = daysAgo(365);
+	}
+	// A genre series can't be asked for by (thriller, say): films only.
+	const askSeries = !filters?.genre || Boolean(SERIES_GENRE[filters.genre]);
+
+	const [shows, movies] = await Promise.all([
+		askSeries ? tmdbGet<{ results?: TmdbItem[] }>('/discover/tv', series) : Promise.resolve(null),
+		tmdbGet<{ results?: TmdbItem[] }>('/discover/movie', films)
+	]);
+	const asResults = (items: TmdbItem[] | undefined, kind: 'movie' | 'tv') =>
+		(items ?? [])
+			.map((item) => ({ ...item, media_type: kind }))
+			.filter((item) => !isPlaceholder(item))
+			.map(toResult)
+			.map((r) => ({ ...r, categorySlug: 'anime' as const, kind: kind === 'movie' ? 'Movie' : 'Anime', confident: true }));
+	// Three series to a film, as there are about that many more of them.
+	const a = asResults(shows?.results, 'tv');
+	const b = asResults(movies?.results, 'movie');
+	const out: SearchResult[] = [];
+	while (a.length || b.length) {
+		out.push(...a.splice(0, 3));
+		if (b.length) out.push(b.shift()!);
+	}
+	return out;
+}
+
 export interface TrendingPerson {
 	id: number;
 	name: string;
@@ -424,47 +519,81 @@ export interface TrendingPerson {
 	knownFor: string;
 }
 
+/**
+ * Who's actually trending: the leads of this week's most-watched films and series, each counted
+ * by how high their titles are and how high they're billed. TMDB's own "popular people" list is
+ * easily pushed about (actors from two 1998 films at the top), and its "trending people" is
+ * mostly adult performers. Worked out twice a day; the last answer shows meanwhile.
+ */
+let trendingPeople: { list: TrendingPerson[]; at: number } | null = null;
+let workingOutPeople: Promise<TrendingPerson[]> | null = null;
+
 export async function trendingPeopleTmdb(): Promise<TrendingPerson[]> {
-	const key = tmdbKey();
-	if (!key) return [];
-
-	type RawPerson = {
-		id: number;
-		name: string;
-		popularity?: number;
-		profile_path?: string | null;
-		known_for?: { title?: string; name?: string; media_type?: string }[];
-	};
-
-	try {
-		const all: RawPerson[] = [];
-		for (let page = 1; page <= 3; page++) {
-			const url = new URL(`${BASE}/person/popular`);
-			url.searchParams.set('page', String(page));
-			const response = await fetch(url, authorize(url, key));
-			if (!response.ok) break;
-			const payload = (await response.json()) as { results?: RawPerson[] };
-			all.push(...(payload.results ?? []));
-		}
-
-		const seen = new Set<number>();
-		return all
-			.filter((p) => p.profile_path)
-			.filter((p) => (p.known_for?.length ?? 0) >= 2)
-			.filter((p) => { if (seen.has(p.id)) return false; seen.add(p.id); return true; })
-			.map((p) => ({
-				id: p.id,
-				name: p.name,
-				photo: `${IMAGE}${p.profile_path}`,
-				knownFor: (p.known_for ?? [])
-					.map((k) => k.title ?? k.name)
-					.filter(Boolean)
-					.slice(0, 2)
-					.join(', ')
-			}));
-	} catch {
-		return [];
+	if (!tmdbKey()) return [];
+	if (!trendingPeople) {
+		const kept = getOrderCache('trending-people');
+		if (kept) trendingPeople = { list: kept.value as TrendingPerson[], at: kept.at };
 	}
+	const fresh = trendingPeople && Date.now() - trendingPeople.at < 12 * 60 * 60 * 1000;
+	if (!fresh) {
+		workingOutPeople ??= workOutTrendingPeople()
+			.then((list) => {
+				if (list.length) {
+					trendingPeople = { list, at: Date.now() };
+					saveOrderCache('trending-people', list, Date.now());
+				}
+				return list;
+			})
+			.finally(() => (workingOutPeople = null));
+	}
+	if (trendingPeople?.list.length) return trendingPeople.list;
+	return workingOutPeople ?? [];
+}
+
+async function workOutTrendingPeople(): Promise<TrendingPerson[]> {
+	type Credit = { id: number; name: string; profile_path?: string | null; order?: number; known_for_department?: string };
+	type Title = { id: number; title?: string; name?: string; vote_count?: number; adult?: boolean };
+
+	const [films, series] = await Promise.all([
+		tmdbGet<{ results?: Title[] }>('/trending/movie/week'),
+		tmdbGet<{ results?: Title[] }>('/trending/tv/week')
+	]);
+	// Real releases only (a vote count), the top twenty of each, in order.
+	const titles = [
+		...(films?.results ?? []).map((t, rank) => ({ ...t, kind: 'movie', rank })),
+		...(series?.results ?? []).map((t, rank) => ({ ...t, kind: 'tv', rank }))
+	].filter((t) => !t.adult && (t.vote_count ?? 0) >= 50);
+
+	const people = new Map<number, { person: TrendingPerson; score: number; titles: string[] }>();
+	const casts = await Promise.all(
+		titles.map((t) =>
+			tmdbGet<{ cast?: Credit[] }>(t.kind === 'movie' ? `/movie/${t.id}/credits` : `/tv/${t.id}/aggregate_credits`).then(
+				(credits) => ({ t, cast: (credits?.cast ?? []).slice(0, 6) })
+			)
+		)
+	);
+	for (const { t, cast } of casts) {
+		cast.forEach((c, billed) => {
+			if (!c.profile_path || (c.known_for_department && c.known_for_department !== 'Acting')) return;
+			const score = (25 - t.rank) * (6 - billed);
+			const known = people.get(c.id);
+			const name = t.title ?? t.name ?? '';
+			if (known) {
+				known.score += score;
+				if (name && !known.titles.includes(name)) known.titles.push(name);
+			} else {
+				people.set(c.id, {
+					person: { id: c.id, name: c.name, photo: `${IMAGE}${c.profile_path}`, knownFor: '' },
+					score,
+					titles: name ? [name] : []
+				});
+			}
+		});
+	}
+	return [...people.values()]
+		.sort((a, b) => b.score - a.score)
+		.slice(0, 40)
+		.map(({ person, titles }) => ({ ...person, knownFor: titles.slice(0, 2).join(', ') }));
 }
 
 export async function fetchImdbId(

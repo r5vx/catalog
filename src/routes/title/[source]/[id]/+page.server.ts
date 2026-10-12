@@ -1,12 +1,13 @@
 import { fetchDetails } from '$lib/server/metadata/details';
 import { anilistResting } from '$lib/server/metadata/anilistNodes';
 import { isAvailable } from '$lib/server/availability';
-import { fetchScores, omdbConfigured } from '$lib/server/metadata/omdb';
+import { quickScores, omdbConfigured } from '$lib/server/metadata/omdb';
 import { entryIdForSource, entryIdForShow, entryIdByTitle } from '$lib/server/db/queries';
 import { showRoots } from '$lib/server/metadata/franchise';
 import { knownPeople } from '$lib/server/db/people';
 import { addFromSource } from '$lib/server/entries';
 import { safeBack } from '$lib/back';
+import { playsAsFilm } from '$lib/watchType';
 import { error, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 
@@ -40,11 +41,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
 
 	// A film plays as a film, wherever it's listed: an anime film is under Anime (Re:Zero's
 	// Memory Snow), and played as a series it opened the show instead.
-	const film =
-		details.categorySlug === 'movies' ||
-		(source === 'tmdb' && id.startsWith('movie:')) ||
-		details.kind === 'Movie' ||
-		(details.kind === 'OVA' && details.episodesTotal === 1);
+	const film = playsAsFilm({ categorySlug: details.categorySlug, sourceId: source === 'tmdb' ? id : null, kind: details.kind, episodesTotal: details.episodesTotal });
 	const watchType = film ? 'movie' : 'tv';
 
 	// Started now, so the Watch button's own check (sent once the page shows) finds it under way.
@@ -60,7 +57,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
 	}));
 
 	const scores = omdbConfigured()
-		? ((await fetchScores({
+		? ((await quickScores({
 				imdbId: details.imdbId,
 				title: details.title,
 				year: details.year,

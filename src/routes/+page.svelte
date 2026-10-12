@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { posterSrcset, POSTER_SIZES } from '$lib/poster';
+	import { watchTypeOf } from '$lib/watchType';
 	import MoreButton from '$lib/MoreButton.svelte';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { warmUpTitle } from '$lib/watch';
@@ -236,7 +238,7 @@
 					>
 						<div class="poster">
 							{#if item.posterUrl}
-								<img src={item.posterUrl} alt="" loading="lazy" />
+								<img src={item.posterUrl} srcset={posterSrcset(item.posterUrl)} sizes={POSTER_SIZES} alt="" loading="lazy" />
 							{:else}
 								<span class="poster-fallback" aria-hidden="true">▶</span>
 							{/if}
@@ -359,7 +361,7 @@
 					<a href="/entry/{entry.id}" class="card">
 						<div class="poster">
 							{#if entry.posterUrl}
-								<img src={entry.posterUrl} alt="" loading="lazy" />
+								<img src={entry.posterUrl} srcset={posterSrcset(entry.posterUrl)} sizes={POSTER_SIZES} alt="" loading="lazy" />
 							{:else}
 								<span class="poster-fallback" aria-hidden="true">{entry.categoryEmoji}</span>
 							{/if}
@@ -396,7 +398,7 @@
 {#if ctxMenu}
 	<div class="ctx-backdrop" onclick={closeCtx} oncontextmenu={(e) => { e.preventDefault(); closeCtx(); }}></div>
 	<div class="ctx-menu" style="left: {ctxMenu.x}px; top: {ctxMenu.y}px;">
-		<button type="button" onclick={() => { const e = ctxMenu!.entry; const t = e.categoryName === 'Movies' ? 'movie' : 'tv'; goto(`/watch?title=${encodeURIComponent(e.title)}&type=${t}${e.year ? `&year=${e.year}` : ''}&auto=1`); closeCtx(); }}>
+		<button type="button" onclick={() => { const e = ctxMenu!.entry; const t = watchTypeOf(e); goto(`/watch?title=${encodeURIComponent(e.title)}&type=${t}${e.year ? `&year=${e.year}` : ''}&auto=1`); closeCtx(); }}>
 			{pm ? p('▶ Watch') : '▶ Watch'}
 		</button>
 		<button type="button" onclick={() => { goto(`/entry/${ctxMenu!.entry.id}?edit=1`); closeCtx(); }}>

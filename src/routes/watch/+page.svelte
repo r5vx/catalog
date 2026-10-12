@@ -9,6 +9,7 @@
 	import { pickFile, playableHere, PREFERRED_QUALITY } from '$lib/watch';
 	import { isTv, tvPlayer } from '$lib/tv';
 	import { PreviewStrip, keepPictures, keptPictures, askComputerForPictures, type StripVideo } from '$lib/previewStrip';
+	import { SubtitleSync } from '$lib/subtitleSync';
 
 	const pm = $derived(page.data.poisonMode);
 
@@ -222,6 +223,23 @@
 		} catch {}
 	}
 	const subFontSize = $derived(`${SUB_SIZES.find((s) => s.key === subLook.size)?.rem ?? 1.4}rem`);
+
+	/**
+	 * Automatic subtitle timing (src/lib/subtitleSync.ts): off unless turned on in the captions
+	 * menu, kept on this device. It listens to the video and moves the delay to where the
+	 * subtitles match the talking, again and again as it plays — only when it's sure.
+	 */
+	const SUB_AUTOSYNC = 'catalog:subAutoSync';
+	let subAutoSync = $state(false);
+	try {
+		subAutoSync = localStorage.getItem(SUB_AUTOSYNC) === '1';
+	} catch {}
+	function toggleAutoSync() {
+		subAutoSync = !subAutoSync;
+		try {
+			localStorage.setItem(SUB_AUTOSYNC, subAutoSync ? '1' : '0');
+		} catch {}
+	}
 	let videoFit = $state<'contain' | 'cover'>('cover');
 
 	function chooseFit(fit: 'contain' | 'cover') {
@@ -291,6 +309,7 @@
 	let bufferedEnd = $state(0);
 	let gainNode: GainNode | undefined = $state();
 	let audioCtx: AudioContext | undefined;
+	let audioSource: MediaElementAudioSourceNode | undefined;
 	let playbackRate = $state(1);
 	let isFullscreen = $state(false);
 
@@ -493,12 +512,69 @@
 		videoEl.muted = !videoEl.muted;
 	}
 
+	let subSync: SubtitleSync | null = null;
+	let syncedOnce = false;
+	/** A click or key press has happened (the page's audio may only start after one). */
+	let pageActivated = $state(false);
+	onMount(() => {
+		const activated = () => (pageActivated = true);
+		window.addEventListener('pointerdown', activated, { once: true, capture: true });
+		window.addEventListener('keydown', activated, { once: true, capture: true });
+		return () => {
+			window.removeEventListener('pointerdown', activated, { capture: true });
+			window.removeEventListener('keydown', activated, { capture: true });
+		};
+	});
+
+	// Listening for the timing only while subtitles show, the video plays and it's turned on.
+	// (The sound then goes through the page's audio, as for turning the volume past 100%; that's
+	// only started after a click or a key press, or the browser would keep it silent.)
+	$effect(() => {
+		const wanted = subtitlesOn && subAutoSync && playing && subtitleCues.length > 0;
+		void pageActivated;
+		untrack(() => {
+			if (!wanted) {
+				subSync?.stop();
+				return;
+			}
+			if (!subSync) {
+				const activated =
+					pageActivated ||
+					((navigator as Navigator & { userActivation?: { hasBeenActive: boolean } }).userActivation?.hasBeenActive ?? true);
+				if (!activated || !videoEl) return;
+				ensureGain();
+				if (!audioCtx || !audioSource) return;
+				if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+				// Heard before the volume boost, so turning it past 100% changes nothing.
+				subSync = new SubtitleSync(audioCtx, audioSource, videoEl, () => subtitleCues, () => subtitleDelay);
+				subSync.onDelay = (delay) => {
+					subtitleDelay = delay;
+					if (!syncedOnce) showQualityToast('Subtitles re-timed to match');
+					syncedOnce = true;
+				};
+			}
+			subSync.start();
+		});
+	});
+
+	// Another episode or other subtitles: listen afresh.
+	$effect(() => {
+		void activeSubUrl;
+		void activeEpisode;
+		untrack(() => {
+			subSync?.reset();
+			syncedOnce = false;
+		});
+	});
+
+	onDestroy(() => subSync?.stop());
+
 	function ensureGain() {
 		if (gainNode || !videoEl) return;
 		audioCtx = new AudioContext();
-		const source = audioCtx.createMediaElementSource(videoEl);
+		audioSource = audioCtx.createMediaElementSource(videoEl);
 		gainNode = audioCtx.createGain();
-		source.connect(gainNode);
+		audioSource.connect(gainNode);
 		gainNode.connect(audioCtx.destination);
 	}
 
@@ -2076,13 +2152,33 @@
 				(tvMode ? (english.find((s) => /\bCC\b|SDH/i.test(s.fileName)) ?? english[0]) : undefined);
 			if (pick) {
 				const tries = [pick, ...febboxSubs.filter((s) => s !== pick && !s.check && s.language === 'English')].slice(0, 4);
+				// Subtitles that run on well past the end of the video were timed for a longer copy
+				// of it (Bleach's DVD ones on the TV version): they fall further behind as it plays,
+				// so the next is tried, and the first one comes back if none fits.
+				const fitsVideo = () => {
+					const length = videoEl?.duration ?? NaN;
+					const last = subtitleCues.reduce((most, cue) => Math.max(most, cue.end), 0);
+					return !Number.isFinite(length) || last <= length + 8;
+				};
+				const video = videoEl;
+				if (video && !Number.isFinite(video.duration)) {
+					await new Promise<void>((resolve) => {
+						video.addEventListener('durationchange', () => resolve(), { once: true });
+						setTimeout(resolve, 8000);
+					});
+				}
+				let tooLong: SubOption | null = null;
 				for (const sub of tries) {
-					if (key !== subsKey || subtitlesOn) break;
-					if (await loadSub(sub)) {
-						subsAuto = true;
+					if (key !== subsKey || (subtitlesOn && !tooLong)) break;
+					if (!(await loadSub(sub))) continue;
+					subsAuto = true;
+					if (fitsVideo()) {
+						tooLong = null;
 						break;
 					}
+					tooLong ??= sub;
 				}
+				if (tooLong && key === subsKey && subsAuto && activeSubUrl !== tooLong.url && (await loadSub(tooLong))) subsAuto = true;
 			}
 		}
 	}
@@ -3752,6 +3848,11 @@
 							{/if}
 							<hr class="popup-divider" />
 							<p class="popup-label">Look</p>
+							<div class="sub-look">
+								<button class="sub-delay-jump" class:on={subAutoSync} onclick={toggleAutoSync}>
+									{subAutoSync ? 'Auto-timing: On' : 'Auto-timing: Off'}
+								</button>
+							</div>
 							<div class="sub-look">
 								<button class="sub-delay-jump" class:on={subLook.box} onclick={() => setSubLook({ box: !subLook.box })}>
 									{subLook.box ? 'Dark box: On' : 'Dark box: Off'}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { watchTypeOf } from '$lib/watchType';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import BackBar from '$lib/BackBar.svelte';
@@ -9,7 +10,6 @@
 	import TagChips from '$lib/TagChips.svelte';
 	import CastRow from '$lib/CastRow.svelte';
 	import WhereToWatch from '$lib/WhereToWatch.svelte';
-	import { showbox } from '$lib/showboxHealth.svelte';
 	import { progressSummary } from '$lib/progress';
 	import { statusLabel } from '$lib/constants';
 	import { money } from '$lib/format';
@@ -28,7 +28,6 @@
 	let showWatchElsewhere = $state(false);
 
 	onMount(() => {
-		showbox.check();
 		if (page.url.searchParams.get('edit') === '1') {
 			const el = document.querySelector<HTMLDetailsElement>('.editor');
 			if (el) {
@@ -46,6 +45,26 @@
 
 	const isAnime = $derived(category?.slug === 'anime' || entry.source === 'anilist');
 	const isMovie = $derived(category?.slug === 'movies');
+
+	const watchType = $derived(watchTypeOf({ categorySlug: category?.slug, sourceId: entry.sourceId, episodesTotal: entry.episodesTotal }));
+	const watchHref = $derived(
+		`/watch?title=${encodeURIComponent(entry.title)}&type=${watchType}${entry.year ? `&year=${entry.year}` : ''}&auto=1`
+	);
+
+	// Asked once the page shows, as on a title's page from Browse, so Watch only shows when
+	// there's something to play.
+	let watchAvailable = $state<boolean | null>(null);
+	$effect(() => {
+		const params = new URLSearchParams({ title: entry.title, type: watchType });
+		if (entry.year) params.set('year', String(entry.year));
+		watchAvailable = null;
+		let stop = false;
+		fetch(`/api/watch/available?${params}`)
+			.then((r) => r.json())
+			.then((d) => { if (!stop) watchAvailable = d.available; })
+			.catch(() => {});
+		return () => { stop = true; };
+	});
 
 	const added = $derived(
 		new Date(entry.createdAt).toLocaleDateString(undefined, {
@@ -196,14 +215,35 @@
 			<div class="pills">
 				<span class="pill {entry.status}">{pm ? p(statusLabel(entry.status)) : statusLabel(entry.status)}</span>
 				{#if entry.favorite}<span class="pill fav">{pm ? '★ Finch approved' : '★ Favourite'}</span>{/if}
-				<a
-					href="/watch?title={encodeURIComponent(entry.title)}&type={category?.slug === 'movies' || entry.sourceId?.startsWith('movie:') ? 'movie' : 'tv'}{entry.year ? `&year=${entry.year}` : ''}&auto=1"
-					class="pill watch"
-					class:disabled={!showbox.up}
-					title={showbox.up ? 'Watch now' : 'showbox.media is down'}
-				>{pm ? p('▶ Watch') : '▶ Watch'}</a>
+			</div>
+
+			<h1>{entry.title}</h1>
+			<p class="facts faint tabular">{facts.join(' · ')}</p>
+
+			<ScoreStrip
+				mine={entry.rating}
+				site={entry.externalRating}
+				siteName={entry.source === 'anilist' ? 'AniList' : 'TMDB'}
+				{...entry.source === 'anilist' ? {} : { siteVotes: entry.externalVotes }}
+				imdb={scores?.imdbRating ?? null}
+				imdbVotes={scores?.imdbVotes ?? null}
+				rt={scores?.rtScore ?? null}
+				metascore={scores?.metascore ?? null}
+				contentRating={scores?.contentRating ?? null}
+				loading={looking}
+			/>
+
+			<!-- Where a title's page from Browse has them, so they're in the same place everywhere. -->
+			<div class="title-actions">
+				{#if watchAvailable === true}
+					<a href={watchHref} class="btn btn-watch">{pm ? p('▶ Watch') : '▶ Watch'}</a>
+				{:else if watchAvailable === false}
+					<span class="btn btn-watch unavailable">Not available</span>
+				{:else}
+					<span class="btn btn-watch checking">Checking availability…</span>
+				{/if}
 				<span class="watch-elsewhere-wrap">
-					<button class="pill watch-elsewhere" onclick={() => showWatchElsewhere = !showWatchElsewhere}>
+					<button class="btn watch-elsewhere" onclick={() => showWatchElsewhere = !showWatchElsewhere}>
 						Watch elsewhere ▾
 					</button>
 					{#if showWatchElsewhere}
@@ -235,22 +275,6 @@
 				</span>
 			</div>
 
-			<h1>{entry.title}</h1>
-			<p class="facts faint tabular">{facts.join(' · ')}</p>
-
-			<ScoreStrip
-				mine={entry.rating}
-				site={entry.externalRating}
-				siteName={entry.source === 'anilist' ? 'AniList' : 'TMDB'}
-				{...entry.source === 'anilist' ? {} : { siteVotes: entry.externalVotes }}
-				imdb={scores?.imdbRating ?? null}
-				imdbVotes={scores?.imdbVotes ?? null}
-				rt={scores?.rtScore ?? null}
-				metascore={scores?.metascore ?? null}
-				contentRating={scores?.contentRating ?? null}
-				loading={looking}
-			/>
-
 			{#if progressSummary(entry)}
 				<p class="airing muted">{progressSummary(entry)}</p>
 			{/if}
@@ -264,7 +288,7 @@
 	<Synopsis text={overview} pending={looking} />
 
 	{#if entry.sourceId}
-		<WhereToWatch entryId={entry.id} />
+		<WhereToWatch entryId={entry.id} title={entry.title} />
 	{/if}
 
 	{#if scores?.awards}
@@ -276,7 +300,7 @@
 
 	<TagChips {tags} />
 
-	<CastRow {cast} back="/entry/{entry.id}" />
+	<CastRow {cast} back={page.url.pathname + page.url.search} />
 
 	<!-- Closed by default: opening a film should show you the film, not a
 	     wall of empty text boxes. -->
@@ -422,39 +446,59 @@
 		border-color: color-mix(in srgb, var(--accent) 35%, transparent);
 	}
 
-	.pill.watch {
-		background: var(--good);
-		color: var(--paper);
-		border-color: var(--good);
-		cursor: pointer;
-		text-decoration: none;
+	.title-actions {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		margin-top: 4px;
+		max-width: 360px;
 	}
 
-	.pill.watch:hover {
+	.btn-watch {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		padding: 8px 20px;
+		background: var(--good);
+		color: var(--paper);
+		border: none;
+		border-radius: var(--radius);
+		font-size: 0.9rem;
+		font-weight: 600;
+		text-decoration: none;
+		cursor: pointer;
+	}
+
+	.btn-watch:hover {
 		filter: brightness(1.12);
 	}
 
-	.pill.watch.disabled {
-		opacity: 0.35;
-		pointer-events: none;
+	.btn-watch.unavailable {
+		background: var(--danger, #c33);
+		cursor: default;
+		opacity: 0.85;
+	}
+
+	.btn-watch.checking {
+		background: var(--ink-faint);
+		cursor: default;
+		opacity: 0.6;
+	}
+
+	.btn-watch.unavailable:hover,
+	.btn-watch.checking:hover {
+		filter: none;
 	}
 
 	.watch-elsewhere-wrap {
 		position: relative;
-		display: inline-block;
+		display: flex;
+		flex-direction: column;
 	}
 
-	.pill.watch-elsewhere {
-		background: var(--sunk);
-		color: var(--ink-soft);
-		border: 1px solid var(--rule);
-		cursor: pointer;
-		font: inherit;
-		font-size: inherit;
-	}
-
-	.pill.watch-elsewhere:hover {
-		background: var(--hover);
+	.btn.watch-elsewhere {
+		width: 100%;
 	}
 
 	.watch-elsewhere-menu {

@@ -12,6 +12,39 @@ without both.
 
 ## Unreleased
 
+## 3.0.7 — 2026-10-12 — Browse without AniList, a sidebar, auto-timing for subtitles, and a much smaller library file
+
+### New
+- **Sidebar**: every part of the library, Browse and Settings in a sidebar on every page, with the layout wide; it's the new look, and Settings → Personalization → Layout turns either back (the library's tabs show again without the sidebar)
+- **Storage**: Settings → Storage shows what Catalog keeps to load faster, lets you choose how much (100 MB to 2 GB, each kind with its own share so none crowds out the rest), and clears it
+- **Subtitles**: "Auto-timing" in the captions menu (off to start) listens to the episode and moves subtitles that are early or late to match the talking, and keeps following them if they jump
+- **Where to watch**: each service shows its name and opens it, searching for the title
+
+### Improved
+- **Library**: a title's page has the big Watch button under the scores, the same as from Browse
+- **Library**: the tabs have their own icons instead of emoji
+- **Library**: the sidebar's sections are the library's tabs, with their counts: drag to move them, right-click to hide one, "…" to bring hidden ones back
+- **Library**: Friends, Watch list and Notes no longer show the "Watched … of …" boxes
+- **Posters**: sharper on high-resolution and scaled screens (a bigger copy is used where the screen needs it)
+- **Anime**: titles added from AniList move to TMDB's copy by themselves (your ratings, notes and progress stay), so Skip Intro, cast and voice actors no longer need AniList either; Skip Intro's lookups come from Kitsu
+- **Library file**: subtitle files kept with fonts and animated song lyrics inside are slimmed (one was 32 MB, now 235 KB), and the space is given back: the library went from 190 MB to under 10 MB
+- **Subtitles**
+  - Every episode of a long show finds its subtitles: only the first hundred of the show's were looked through before (Bleach went from 2 English to 4, and other languages)
+  - Long anime numbered differently by the player (Bleach S6E13 is episode 122) are searched under both numbers
+  - Subtitles that run on well past the end of the video (made for a different copy, so they drift) are passed over for one that fits
+- **Browse**
+  - Titles open and go back in a couple of seconds at most; the IMDb and Rotten Tomatoes scores held them up for as long as fifteen
+  - "Show more" asks for its pages together, and says so if they don't come, instead of spinning or saying that's everything
+  - Trending actors are the stars of what's trending this week, not TMDB's list (which had people from two 1998 films at the top)
+  - Anime comes from TMDB, like films and TV, so Browse and search no longer wait on AniList (which turns Catalog away after thirty questions a minute); ecchi is still left out
+
+### Fixed
+- **Subtitles**: one-episode specials like One Piece Heroines play as films and find their subtitles (they had none), wherever they're played from: the library, Browse, people's pages, a friend's list, the TV
+- **Browse**: no Watch for something that isn't out yet (VisionQuest), and adding something whose release date is still to come always makes it "Want to watch", however it's added
+- **People**: anime voice actors show the other anime they're in again (AniList changed how it answers, and every one had nothing)
+- **People**: an actor's page no longer says 404 while AniList is busy; their other roles are kept for a week
+- **People**: back from an actor opened in Browse's Actors goes back there, not to the library, however many titles and actors you went through
+
 ## 3.0.6 — 2026-10-11 — Subtitles your way
 
 ### New

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import MoreButton from '$lib/MoreButton.svelte';
+	import TabIcon from '$lib/TabIcon.svelte';
 	import { page } from '$app/state';
 	import { invalidateAll } from '$app/navigation';
 	import { p } from '$lib/poison';
@@ -14,9 +15,11 @@
 		friendCount?: number;
 		active: string;
 		poisonMode?: boolean;
+		/** Stacked, in the sidebar (src/lib/SideNav.svelte). */
+		vertical?: boolean;
 	};
 
-	let { categories, countByCategory, total, noteCount, watchingCount = 0, friendCount = 0, active, poisonMode = false }: Props = $props();
+	let { categories, countByCategory, total, noteCount, watchingCount = 0, friendCount = 0, active, poisonMode = false, vertical = false }: Props = $props();
 	const pm = $derived(poisonMode);
 
 	/**
@@ -24,7 +27,8 @@
 	 * settings, not something you should have to reapply per tab.
 	 */
 	function link(slug: string) {
-		const params = new URLSearchParams(page.url.search);
+		// From another page (the sidebar's on every page), nothing of that page's comes along.
+		const params = new URLSearchParams(page.url.pathname === '/' ? page.url.search : '');
 		params.delete('cat');
 		if (slug) params.set('cat', slug);
 
@@ -77,9 +81,10 @@
 	function onDragOver(e: DragEvent, key: string) {
 		if (!dragging) return;
 		e.preventDefault();
-		// Over the right half of a tab means "after it", i.e. in front of the next one.
+		// Over the right half of a tab (the bottom half, stacked) means "after it", i.e. in front
+		// of the next one.
 		const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
-		const after = e.clientX > box.left + box.width / 2;
+		const after = vertical ? e.clientY > box.top + box.height / 2 : e.clientX > box.left + box.width / 2;
 		const i = tabs.findIndex((t) => t.key === key);
 		dropBefore = after ? (tabs[i + 1]?.key ?? '') : key;
 	}
@@ -167,7 +172,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<nav class="tabs has-more" aria-label="Categories" oncontextmenu={(e) => openMenu(e, null)}>
+<nav class="tabs has-more" class:vertical aria-label="Categories" oncontextmenu={(e) => openMenu(e, null)}>
 	{#each tabs as tab (tab.key)}
 		<a
 			href={tab.href}
@@ -182,7 +187,7 @@
 			ondragend={onDragEnd}
 			oncontextmenu={tab.key === 'all' ? undefined : (e) => openMenu(e, tab.key)}
 		>
-			{#if tab.emoji}<span aria-hidden="true">{tab.emoji}</span>{/if}
+			{#if tab.key !== 'all' || vertical}<TabIcon name={tab.key} />{/if}
 			{tab.label}
 			{#if tab.count !== null}<span class="n tabular">{tab.count}</span>{/if}
 		</a>
@@ -237,6 +242,38 @@
 		margin-bottom: 14px;
 	}
 
+	/* The sidebar has these (src/lib/SideNav.svelte), where there's room for it. */
+	@media (min-width: 901px) {
+		:global(.app.beside-nav) .tabs:not(.vertical) {
+			display: none;
+		}
+	}
+
+	/* Stacked in the sidebar: one per line, the whole width. */
+	.tabs.vertical {
+		flex-direction: column;
+		flex-wrap: nowrap;
+		gap: 2px;
+		border-bottom: none;
+		padding-bottom: 0;
+		margin-bottom: 0;
+	}
+
+	.tabs.vertical .tab {
+		display: flex;
+		gap: 10px;
+		padding: 8px 10px;
+		border-radius: var(--radius-sm);
+		white-space: nowrap;
+		font-size: 0.86rem;
+	}
+
+	/* The count kept clear of the name, at the far end. */
+	.tabs.vertical .tab .n {
+		padding-left: 10px;
+		margin-left: auto;
+	}
+
 	.tab {
 		display: inline-flex;
 		align-items: center;
@@ -275,6 +312,14 @@
 	/* Where the dragged tab will land: a bar just in front of this one. */
 	.drop-before {
 		box-shadow: -4px 0 0 -1px var(--accent);
+	}
+
+	.tabs.vertical .drop-before {
+		box-shadow: 0 -3px 0 -1px var(--accent);
+	}
+
+	.tabs.vertical .end-drop {
+		min-height: 24px;
 	}
 
 	.end-drop {

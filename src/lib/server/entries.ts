@@ -24,6 +24,10 @@ type Overrides = {
  */
 export function createFromResult(result: SearchResult, overrides: Overrides = {}): number {
 	const categoryId = overrides.categoryId ?? categoryIdForSlug(result.categorySlug);
+	// Not out yet (its release date is still to come: VisionQuest, the week before it started)
+	// can't have been watched, however it was added: it goes on the list as wanted.
+	const notOut = Boolean(result.unreleased);
+	const status = notOut ? 'planned' : (overrides.status ?? 'completed');
 
 	const id = insertEntry({
 		categoryId,
@@ -42,8 +46,8 @@ export function createFromResult(result: SearchResult, overrides: Overrides = {}
 		// Always Completed. A season/episode marker often just records where a
 		// finished show ended, not that you're partway through — so it's yours
 		// to change, not ours to guess.
-		status: overrides.status ?? 'completed',
-		finishedOn: overrides.markWatchedToday ? today() : null
+		status,
+		finishedOn: overrides.markWatchedToday && !notOut ? today() : null
 	});
 
 	// Tags and cast, fetched in the background so adding stays instant.
@@ -115,7 +119,8 @@ export async function addFromSource(
 			runtimeMinutes: details.runtimeMinutes,
 			externalRating: details.externalRating,
 			externalVotes: details.externalVotes,
-			popularity: 0
+			popularity: 0,
+			unreleased: details.unreleased
 		},
 		{
 			categoryId: categoryIdForSlug(details.categorySlug),

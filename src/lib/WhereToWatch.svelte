@@ -32,6 +32,27 @@
 		year?: number | null;
 	} = $props();
 
+	/**
+	 * Each service's own search, with the title filled in, so a logo takes you to it there.
+	 * A service not listed here (or whose search can't be linked to) goes to the full listings
+	 * instead, which link to every one.
+	 */
+	const SEARCHES: [RegExp, (q: string) => string][] = [
+		[/netflix/i, (q) => `https://www.netflix.com/search?q=${q}`],
+		[/amazon|prime video/i, (q) => `https://www.amazon.com/s?k=${q}&i=instant-video`],
+		[/hulu/i, (q) => `https://www.hulu.com/search?q=${q}`],
+		[/apple tv/i, (q) => `https://tv.apple.com/search?term=${q}`],
+		[/google play/i, (q) => `https://play.google.com/store/search?q=${q}&c=movies`],
+		[/youtube/i, (q) => `https://www.youtube.com/results?search_query=${q}`],
+		[/crunchyroll/i, (q) => `https://www.crunchyroll.com/search?q=${q}`],
+		[/tubi/i, (q) => `https://tubitv.com/search/${q}`],
+	];
+
+	function linkFor(offer: Offer): string | null {
+		const search = SEARCHES.find(([name]) => name.test(offer.name))?.[1];
+		return search && title ? search(encodeURIComponent(title)) : (where?.link ?? null);
+	}
+
 	let where = $state<Where | null>(null);
 	let looking = $state(false);
 	let asked = $state(false);
@@ -108,14 +129,16 @@
 				<span class="kind faint">{row.label}</span>
 				<ul>
 					{#each row.offers as offer (offer.name)}
-						<li title={offer.name}>
-							{#if offer.logo}
-								<!-- Not lazy: they're 92px icons, a handful at a time, and
-								     they arrive after the rest of the page anyway. -->
-								<img src={offer.logo} alt={offer.name} />
-							{:else}
-								<span class="named">{offer.name}</span>
-							{/if}
+						{@const href = linkFor(offer)}
+						<li>
+							<svelte:element this={href ? 'a' : 'span'} class="offer" {href} target={href ? '_blank' : undefined} rel={href ? 'noreferrer' : undefined}>
+								{#if offer.logo}
+									<!-- Not lazy: they're 92px icons, a handful at a time, and
+									     they arrive after the rest of the page anyway. -->
+									<img src={offer.logo} alt="" />
+								{/if}
+								<span>{offer.name}</span>
+							</svelte:element>
 						</li>
 					{/each}
 				</ul>
@@ -176,22 +199,33 @@
 		padding: 0;
 	}
 
-	li img {
-		width: 34px;
-		height: 34px;
-		border-radius: 8px;
-		display: block;
+	/* The service's logo and its name, together a link to it. */
+	.offer {
+		display: inline-flex;
+		align-items: center;
+		gap: 7px;
+		font-size: 0.78rem;
+		padding: 3px 10px 3px 3px;
 		border: 1px solid var(--rule);
+		border-radius: 9px;
+		background: var(--surface);
+		color: var(--ink);
+	}
+
+	a.offer:hover {
+		border-color: var(--accent);
+	}
+
+	.offer img {
+		width: 28px;
+		height: 28px;
+		border-radius: 6px;
+		display: block;
 		background: var(--surface-2);
 	}
 
-	.named {
-		display: inline-block;
-		font-size: 0.78rem;
-		padding: 5px 9px;
-		border: 1px solid var(--rule);
-		border-radius: 8px;
-		background: var(--surface);
+	.offer:not(:has(img)) {
+		padding-left: 10px;
 	}
 
 	.small {

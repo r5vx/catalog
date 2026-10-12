@@ -1,3 +1,4 @@
+import { watchTypeOf } from '$lib/watchType';
 /**
  * Everything a TV screen shows as a poster, in one shape: where OK goes, and what the banner
  * above the rows says about it while it's highlighted.
@@ -50,8 +51,6 @@ export function playHref(title: string, type: string, year?: number | string | n
 	return `/watch?${params}`;
 }
 
-const CATEGORY_TYPE: Record<string, string> = { movies: 'movie' };
-
 type LibraryItem = {
 	id: number;
 	title: string;
@@ -77,14 +76,14 @@ const STATUS_WORDS: Record<string, string> = {
 
 export function fromLibrary(item: LibraryItem): Tile {
 	const reached = item.lastSeason && item.lastEpisode ? `S${item.lastSeason}E${item.lastEpisode}` : null;
-	const filmFromTmdb = item.sourceId?.startsWith('movie:');
+
 	return {
 		key: `lib-${item.id}`,
 		// Its own page when Catalog knows where it's from; otherwise straight to playing it.
 		href:
 			item.source !== 'manual' && item.sourceId
 				? titleHref(item.source, item.sourceId)
-				: playHref(item.title, CATEGORY_TYPE[item.category] ?? (filmFromTmdb ? 'movie' : 'tv'), item.year),
+				: playHref(item.title, watchTypeOf({ categorySlug: item.category, sourceId: item.sourceId }), item.year),
 		title: item.title,
 		poster: item.posterUrl,
 		meta: [item.year, item.categoryName, STATUS_WORDS[item.status], reached].filter(Boolean).join(' · '),

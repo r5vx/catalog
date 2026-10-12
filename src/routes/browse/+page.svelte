@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { posterSrcset, POSTER_SIZES } from '$lib/poster';
+	import { watchTypeOf } from '$lib/watchType';
 	import MoreButton from '$lib/MoreButton.svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
@@ -188,6 +190,8 @@
 	let at = $state<Record<string, number>>({});
 	let loading = $state<string | null>(null);
 	let ended = $state<Record<string, boolean>>({});
+	/** A shelf whose last "Show more" didn't come back: its button says so, and can be pressed again. */
+	let failed = $state<Record<string, boolean>>({});
 
 	// A change of category or trending/all-time replaces the shelves entirely,
 	// so anything loaded on top of the old ones has to go with them.
@@ -201,6 +205,7 @@
 		extra = {};
 		at = {};
 		ended = {};
+		failed = {};
 	});
 
 	const shelfResults = (shelf: { key: string; results: SearchResult[] }) => [
@@ -208,66 +213,55 @@
 		...(extra[shelf.key] ?? [])
 	];
 
+	/**
+	 * Three pages at a time, asked for together (one after another, a slow site made each click
+	 * wait for all three in turn). Twenty seconds at most: what doesn't come back by then leaves
+	 * the button to try again, rather than saying that's everything.
+	 */
 	async function more(shelf: { key: string; results: SearchResult[]; page: number }) {
 		loading = shelf.key;
+		failed = { ...failed, [shelf.key]: false };
 		const PAGES_PER_CLICK = 3;
-		const MAX_EMPTY = shelf.key === 'anime' ? 3 : 1;
+
+		const pageOf = async (n: number, mode: string): Promise<SearchResult[]> => {
+			let moreUrl = `/api/browse?cat=${shelf.key}&mode=${mode}&page=${n}`;
+			if (data.sort) moreUrl += `&sort=${data.sort}`;
+			if (data.yearFrom) moreUrl += `&from=${data.yearFrom}`;
+			if (data.yearTo) moreUrl += `&to=${data.yearTo}`;
+			if (data.genre) moreUrl += `&genre=${data.genre}`;
+			const response = await fetch(moreUrl, { signal: AbortSignal.timeout(20_000) });
+			if (!response.ok) throw new Error(String(response.status));
+			return (await response.json()).results ?? [];
+		};
 
 		try {
-			let currentPage = at[shelf.key] ?? shelf.page;
-			let allFresh: SearchResult[] = [];
 			const already = new Set(shelfResults(shelf).map((one) => one.key));
-			let emptyRun = 0;
+			let currentPage = at[shelf.key] ?? shelf.page;
 			let mode = data.mode;
+			let fresh: SearchResult[] = [];
 
-			for (let i = 0; i < PAGES_PER_CLICK + MAX_EMPTY; i++) {
-				const next = currentPage + 1;
-				let moreUrl = `/api/browse?cat=${shelf.key}&mode=${mode}&page=${next}`;
-					if (data.sort) moreUrl += `&sort=${data.sort}`;
-					if (data.yearFrom) moreUrl += `&from=${data.yearFrom}`;
-					if (data.yearTo) moreUrl += `&to=${data.yearTo}`;
-					if (data.genre) moreUrl += `&genre=${data.genre}`;
-					const response = await fetch(moreUrl);
-
-				if (!response.ok) break;
-
-				const payload = await response.json();
-				const results: SearchResult[] = payload.results ?? [];
-				const fresh = results.filter((one) => {
+			// Anime runs out of what's trending quickly; then it carries on with the all-time list.
+			for (let round = 0; round < 2 && fresh.length === 0; round++) {
+				const numbers = Array.from({ length: PAGES_PER_CLICK }, (_, i) => currentPage + 1 + i);
+				const pages = await Promise.all(numbers.map((n) => pageOf(n, mode)));
+				currentPage = numbers.at(-1)!;
+				fresh = pages.flat().filter((one) => {
 					if (already.has(one.key)) return false;
 					already.add(one.key);
 					return true;
 				});
-
-				if (fresh.length === 0) {
-					emptyRun++;
-					if (emptyRun >= MAX_EMPTY) {
-						if (shelf.key === 'anime' && mode === 'trending' && !data.sort) {
-							mode = 'popular';
-							emptyRun = 0;
-							continue;
-						}
-						ended = { ...ended, [shelf.key]: true };
-						break;
-					}
-					currentPage = next;
-					continue;
-				}
-
-				emptyRun = 0;
-				allFresh = [...allFresh, ...fresh];
-				currentPage = next;
-				if (allFresh.length >= PAGES_PER_CLICK * 50) break;
+				if (fresh.length === 0 && shelf.key === 'anime' && mode === 'trending' && !data.sort) mode = 'popular';
+				else break;
 			}
 
-			if (allFresh.length > 0) {
-				extra = { ...extra, [shelf.key]: [...(extra[shelf.key] ?? []), ...allFresh] };
+			if (fresh.length > 0) {
+				extra = { ...extra, [shelf.key]: [...(extra[shelf.key] ?? []), ...fresh] };
 				at = { ...at, [shelf.key]: currentPage };
-			} else if (!ended[shelf.key]) {
+			} else {
 				ended = { ...ended, [shelf.key]: true };
 			}
 		} catch {
-			ended = { ...ended, [shelf.key]: true };
+			failed = { ...failed, [shelf.key]: true };
 		} finally {
 			loading = null;
 		}
@@ -443,7 +437,7 @@
 	<ul class="actor-list">
 		{#each data.people as person (person.id)}
 			<li>
-				<a href="/person/{person.id}">
+				<a href="/person/{person.id}?back={encodeURIComponent(here)}">
 					{#if person.photo}
 						<img src={person.photo} alt="" loading="lazy" />
 					{:else}
@@ -467,7 +461,7 @@
 			<ul class="trend-grid">
 				{#each data.trending as person (person.id)}
 					<li>
-						<a href="/person/tmdb:{person.id}">
+						<a href="/person/tmdb:{person.id}?back={encodeURIComponent(here)}">
 							<div class="trend-photo">
 								<img src={person.photo} alt="" loading="lazy" />
 							</div>
@@ -488,7 +482,7 @@
 		<a href={link(result)} class="card-link" aria-label={result.title} onclick={saveScroll}></a>
 		<div class="poster">
 			{#if posterOf(result)}
-				<img src={posterOf(result)} alt="" loading="lazy" />
+				<img src={posterOf(result)} srcset={posterSrcset(posterOf(result))} sizes={POSTER_SIZES} alt="" loading="lazy" />
 			{:else}
 				<span class="fallback" aria-hidden="true">?</span>
 			{/if}
@@ -548,7 +542,7 @@
 				</ul>
 
 				{#if ended[shelf.key]}
-					<p class="faint end">That's everything {shelf.key === 'anime' ? 'AniList' : 'TMDB'} has here.</p>
+					<p class="faint end">That's everything TMDB has here.</p>
 				{:else}
 					<button
 						type="button"
@@ -556,7 +550,7 @@
 						disabled={loading === shelf.key}
 						onclick={() => more(shelf)}
 					>
-						{loading === shelf.key ? (pm ? pRandom() : 'Finding more…') : (pm ? 'gimme more giblets' : 'Show more')}
+						{loading === shelf.key ? (pm ? pRandom() : 'Finding more…') : failed[shelf.key] ? "Couldn't load more. Try again" : (pm ? 'gimme more giblets' : 'Show more')}
 					</button>
 				{/if}
 			</section>
@@ -572,14 +566,16 @@
 {#if ctxMenu}
 	<div class="ctx-backdrop" onclick={closeCtx} oncontextmenu={(e) => { e.preventDefault(); closeCtx(); }}></div>
 	<div class="ctx-menu" style="left: {ctxMenu.x}px; top: {ctxMenu.y}px;">
+		{#if !ctxMenu.result.unreleased}
 		<button type="button" onclick={() => {
 			const r = ctxMenu!.result;
-			const t = r.kind === 'Movie' || r.sourceId.startsWith('movie:') ? 'movie' : 'tv';
+			const t = watchTypeOf(r);
 			goto(`/watch?title=${encodeURIComponent(r.title)}&type=${t}${r.year ? `&year=${r.year}` : ''}&auto=1`);
 			closeCtx();
 		}}>
 			{pm ? p('▶ Watch') : '▶ Watch'}
 		</button>
+		{/if}
 		<button type="button" onclick={() => { goto(link(ctxMenu!.result)); closeCtx(); }}>
 			{pm ? p('View details') : 'View details'}
 		</button>

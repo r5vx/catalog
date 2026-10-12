@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
 import { readSettings } from '../settings';
+import { getOrderCache, saveOrderCache } from '../db/queries';
 import { parseOmdb, real, EMPTY_SCORES, type Scores } from './omdbParse';
 
 /**
@@ -84,7 +85,7 @@ export async function fetchScores(lookup: {
 	}
 
 	try {
-		const response = await fetch(url);
+		const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
 
 		// 401 is a bad key or the daily limit; both mean "ask again later".
 		if (!response.ok) return null;
@@ -93,4 +94,24 @@ export async function fetchScores(lookup: {
 	} catch {
 		return null;
 	}
+}
+
+const WEEK = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Scores for a page that's waiting on them: the kept answer when there is one (a week old at
+ * most), otherwise OMDb's, but never more than two seconds' wait. OMDb can take fifteen, and
+ * that held the whole title page up (Bleach, from Browse). A late answer is kept for next time.
+ */
+export async function quickScores(lookup: Parameters<typeof fetchScores>[0]): Promise<Scores | null> {
+	const key = `scores|${lookup.imdbId ?? `${lookup.title}|${lookup.year ?? ''}|${lookup.isSeries ? 'series' : ''}`}`;
+	const kept = getOrderCache(key);
+	if (kept && Date.now() - kept.at < WEEK) return kept.value as Scores;
+
+	const fresh = fetchScores(lookup).then((scores) => {
+		if (scores) saveOrderCache(key, scores, Date.now());
+		return scores;
+	});
+	const late = new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000));
+	return (await Promise.race([fresh, late])) ?? ((kept?.value as Scores | undefined) ?? null);
 }

@@ -20,6 +20,7 @@
 	const SECTIONS: Section[] = [
 		{ href: '/settings/personalization', label: 'Personalization', hint: 'Colour and sorting' },
 		{ href: '/settings/library', label: 'Library', hint: 'Export, where your files live' },
+		{ href: '/settings/storage', label: 'Storage', hint: 'Space kept to load faster' },
 		{
 			href: '/settings/services',
 			label: 'Services',

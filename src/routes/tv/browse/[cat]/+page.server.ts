@@ -7,8 +7,8 @@ const NAMES: Record<string, string> = { movies: 'Movies', tv: 'TV Shows', anime:
 
 /**
  * A row for each kind, under trending and the all-time biggest: TMDB's genres for films and TV
- * (TV has its own numbers for some), AniList's for anime (fewer rows: AniList allows only a few
- * requests a minute). Each row is its most popular.
+ * (TV has its own numbers for some; anime asks by the film numbers, src/lib/server/metadata/tmdb.ts
+ * turns them into the series ones). Each row is its most popular.
  */
 const GENRES: Record<string, [number, string][]> = {
 	movies: [

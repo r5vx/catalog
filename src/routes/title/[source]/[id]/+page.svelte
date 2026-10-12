@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import ScoreStrip from '$lib/ScoreStrip.svelte';
 	import Synopsis from '$lib/Synopsis.svelte';
 	import TagChips from '$lib/TagChips.svelte';
@@ -7,6 +8,7 @@
 	import { STATUSES } from '$lib/constants';
 	import BackBar from '$lib/BackBar.svelte';
 	import { money } from '$lib/format';
+	import { untrack } from 'svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -36,7 +38,8 @@
 		}
 	}
 
-	let selectedStatus = $state('completed');
+	// Something not out yet can only be wanted.
+	let selectedStatus = $state(untrack(() => (data.details.unreleased ? 'planned' : 'completed')));
 
 	let watchAvailable = $state<boolean | null>(null);
 	let checkingWatch = $state(false);
@@ -128,7 +131,7 @@
 					<div class="add">
 						<select bind:value={selectedStatus} aria-label="Add it as">
 							{#each STATUSES as option (option.value)}
-								<option value={option.value} selected={option.value === 'completed'}>
+								<option value={option.value}>
 									{option.label}
 								</option>
 							{/each}
@@ -167,7 +170,7 @@
 	<!-- Everyone is clickable: ours by id, the rest by the provider's. -->
 	<CastRow
 		cast={data.cast.map((person) => ({ ...person, id: person.entryPersonId }))}
-		back="/title/{data.source}/{data.sourceId}"
+		back={page.url.pathname + page.url.search}
 	/>
 
 	{#if details.homepage}

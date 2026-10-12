@@ -23,6 +23,11 @@
 
 	// A category whose tab is hidden loses its tile too.
 	const hiddenTabs = $derived<string[]>(page.data.hiddenTabs ?? []);
+
+	// How much you've watched is about the library: not shown over Friends, the Watch list or Notes.
+	const showStats = $derived(
+		!/^\/(notes|orders)(\/|$)/.test(page.url.pathname) && page.url.searchParams.get('cat') !== 'friends'
+	);
 </script>
 
 <BackToTop />
@@ -36,6 +41,7 @@
 			<a href="/entry/new" class="btn btn-primary">{pm ? '+ Claim giblet' : '+ Add'}</a>
 		</div>
 	</div>
+	{#if showStats}
 	<div class="stat-tiles">
 		<div class="tile">
 			<span class="tile-label">{pm ? 'Consumed' : 'Watched'}</span>
@@ -48,6 +54,7 @@
 			</div>
 		{/each}
 	</div>
+	{/if}
 </header>
 
 <style>

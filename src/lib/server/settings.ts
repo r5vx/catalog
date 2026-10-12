@@ -52,8 +52,12 @@ export type Settings = {
 	theme?: string;
 	/** Serialised febbox cookies — stored after login, or pasted by a friend. */
 	febboxToken?: string;
-	/** When '1', the layout stretches edge-to-edge instead of centering. */
+	/** '0' centres the layout; otherwise (the default) it stretches edge-to-edge. */
 	wideLayout?: string;
+	/** '0' turns off the sidebar with the library's sections, Browse and Settings (on by default). */
+	sideNav?: string;
+	/** Settings → Storage: how many MB Catalog may keep to load things faster (src/lib/server/storage.ts). */
+	storageLimitMb?: string;
 	/** When '1', UI text gets replaced with Poison's vocabulary. */
 	poisonMode?: string;
 	/** Free key from subdl.com. Optional — adds more subtitle results. */

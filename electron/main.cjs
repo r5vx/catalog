@@ -15,6 +15,14 @@ const os = require('node:os');
 
 app.commandLine.appendSwitch('enable-features', 'PlatformHEVCDecoderSupport,PlatformHEVCEncoderSupport');
 
+// The app's own cache of pictures and video pieces, kept to its share of the limit in Settings →
+// Storage (written by the server, src/lib/server/storage.ts; read here, as it has to be set
+// before the app starts).
+try {
+	const share = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'storage.json'), 'utf8'));
+	if (share?.appCacheBytes > 0) app.commandLine.appendSwitch('disk-cache-size', String(Math.round(share.appCacheBytes)));
+} catch {}
+
 const PORT = Number(process.env.CATALOG_PORT || 4173);
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 
@@ -253,6 +261,8 @@ function startServer() {
 		if (message?.type === 'print-pdf') makePdf(message.id, message.path);
 
 		if (message?.type === 'make-strip') makeStrip(String(message.path));
+
+		if (message?.type === 'clear-app-cache') session.defaultSession.clearCache().catch(() => {});
 
 		if (message?.type === 'check-for-updates') checkForUpdates();
 

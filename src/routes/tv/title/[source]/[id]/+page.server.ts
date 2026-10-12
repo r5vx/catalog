@@ -1,3 +1,4 @@
+import { playsAsFilm } from '$lib/watchType';
 import { error } from '@sveltejs/kit';
 import { fetchDetails } from '$lib/server/metadata/details';
 import { anilistResting } from '$lib/server/metadata/anilistNodes';
@@ -30,11 +31,7 @@ export const load: PageServerLoad = async ({ params }) => {
 	const entry = mine ? (ownedId ? getEntry(ownedId) : null) : profileTitleFor(source, id, details.title, details.year);
 
 	// A film plays as a film wherever it's listed (anime films are under Anime).
-	const film =
-		details.categorySlug === 'movies' ||
-		id.startsWith('movie:') ||
-		details.kind === 'Movie' ||
-		(details.kind === 'OVA' && details.episodesTotal === 1);
+	const film = playsAsFilm({ categorySlug: details.categorySlug, sourceId: id, kind: details.kind, episodesTotal: details.episodesTotal });
 	const type = film ? 'movie' : 'tv';
 
 	// Where it was left: Continue Watching, under its name here or its name in the library.

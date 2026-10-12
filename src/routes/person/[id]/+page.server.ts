@@ -5,6 +5,7 @@ import {
 	allTitleKeys
 } from '$lib/server/db/people';
 import { fetchKnownFor, fetchPerson } from '$lib/server/metadata/details';
+import { anilistResting } from '$lib/server/metadata/anilistNodes';
 import { safeBack } from '$lib/back';
 import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
@@ -22,13 +23,19 @@ export const load: PageServerLoad = async ({ params, url }) => {
 
 	const person = numeric ? getPerson(Number(params.id)) : getPersonBySourceId(params.id);
 
-	// Someone we've never stored: ask the provider who they are.
+	// Someone we've never stored: ask the provider who they are, or go by the name and photo the
+	// link brought (a cast list's) when it won't say.
+	const given = {
+		name: url.searchParams.get('name')?.trim() ?? '',
+		photo: /^https:\/\/(image\.tmdb\.org|s4\.anilist\.co)\//.test(url.searchParams.get('photo') ?? '') ? url.searchParams.get('photo') : null
+	};
 	const resolved = person ?? {
 		id: 0,
 		sourceId: params.id,
-		...((await fetchPerson(params.id)) ?? { name: '', photo: null })
+		...((await fetchPerson(params.id)) ?? given)
 	};
 
+	if (!resolved.name && params.id.startsWith('anilist:') && anilistResting()) error(503, 'AniList is busy. Try again in a few seconds.');
 	if (!resolved.name) error(404, 'No one by that name here.');
 
 	const yours = resolved.id ? entriesWithPerson(resolved.id) : [];

@@ -26,10 +26,20 @@
 		note?: string | null;
 	} = $props();
 
-	/** Our own id where we have one; the provider's where we don't. */
-	const href = (person: { id?: number | null; sourceId?: string | null }) => {
-		const who = person.id || person.sourceId;
-		return back ? `/person/${who}?back=${encodeURIComponent(back)}` : `/person/${who}`;
+	/**
+	 * Our own id where we have one; the provider's where we don't, with their name and photo, so
+	 * their page opens even while AniList won't answer (it allows only so many questions a
+	 * minute, and that used to be "404").
+	 */
+	const href = (person: { id?: number | null; sourceId?: string | null; name: string; photo: string | null }) => {
+		const params = new URLSearchParams();
+		if (!person.id) {
+			params.set('name', person.name);
+			if (person.photo) params.set('photo', person.photo);
+		}
+		if (back) params.set('back', back);
+		const query = params.toString();
+		return `/person/${person.id || person.sourceId}${query ? `?${query}` : ''}`;
 	};
 </script>
 
