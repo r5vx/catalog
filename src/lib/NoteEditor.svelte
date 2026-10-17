@@ -191,6 +191,93 @@
 		}
 	}
 
+	/* --------------------------------------------------------------- lists, as you type */
+
+	/** The line the caret is on: its block, and its text before and after the caret. */
+	function caretLine() {
+		const selection = getSelection();
+		if (!editor || !selection?.rangeCount || !selection.isCollapsed) return null;
+		const range = selection.getRangeAt(0);
+		if (!editor.contains(range.startContainer)) return null;
+		let block: Element | null =
+			range.startContainer.nodeType === Node.TEXT_NODE ? range.startContainer.parentElement : (range.startContainer as Element);
+		while (block && block !== editor && !/^(DIV|P|LI|H[1-6]|BLOCKQUOTE)$/.test(block.tagName)) block = block.parentElement;
+		if (!block) return null;
+		const before = document.createRange();
+		before.selectNodeContents(block);
+		before.setEnd(range.startContainer, range.startOffset);
+		const after = document.createRange();
+		after.selectNodeContents(block);
+		after.setStart(range.startContainer, range.startOffset);
+		const at = range.startContainer.nodeType === Node.TEXT_NODE ? range.startContainer.parentElement : (range.startContainer as Element);
+		return { block, before, after, inList: Boolean(at?.closest('li')) };
+	}
+
+	const BULLET = /^(\s*)([-*•])$/;
+	const NUMBER = /^(\s*)(\d+)([.)])$/;
+	const TYPED_BULLET = /^(\s*)([-*•])\s+(.*)$/s;
+	const TYPED_NUMBER = /^(\s*)(\d+)([.)])\s+(.*)$/s;
+
+	/**
+	 * Lists the way Google Docs and Notes do them: "- " or "* " at the start of a line makes a
+	 * bulleted list and "1. " a numbered one; Enter carries on to the next bullet or number
+	 * (the browser does that within a list) and Enter on an empty one ends it; Tab and
+	 * Shift+Tab move an item in and out. Lists typed out by hand before this (a line starting
+	 * "3. ") carry on numbering too.
+	 */
+	function onEditorKey(event: KeyboardEvent) {
+		if (event.ctrlKey || event.metaKey || event.altKey) return;
+		const line = caretLine();
+		if (!line) return;
+
+		if (event.key === 'Tab' && line.inList) {
+			event.preventDefault();
+			run(event.shiftKey ? 'outdent' : 'indent');
+			return;
+		}
+
+		if (event.key === ' ' && !line.inList) {
+			const typed = line.before.toString();
+			const bullet = typed.match(BULLET);
+			const number = typed.match(NUMBER);
+			if (!bullet && !number) return;
+			event.preventDefault();
+			pushUndoState();
+			// The marker goes; the line becomes a list item.
+			getSelection()?.removeAllRanges();
+			getSelection()?.addRange(line.before);
+			document.execCommand('delete');
+			document.execCommand(number ? 'insertOrderedList' : 'insertUnorderedList');
+			const start = number ? Number(number[2]) : 1;
+			if (start > 1) getSelection()?.anchorNode?.parentElement?.closest('ol')?.setAttribute('start', String(start));
+			queueSave();
+			return;
+		}
+
+		if (event.key === 'Enter' && !event.shiftKey && !line.inList) {
+			const typed = line.before.toString();
+			const bullet = typed.match(TYPED_BULLET);
+			const number = typed.match(TYPED_NUMBER);
+			if (!bullet && !number) return;
+			event.preventDefault();
+			pushUndoState();
+			const rest = (bullet ? bullet[3] : number![4]).trim();
+			if (!rest && !line.after.toString().trim()) {
+				// Only the marker on the line: the list ends there, as in a document.
+				const all = document.createRange();
+				all.selectNodeContents(line.block);
+				getSelection()?.removeAllRanges();
+				getSelection()?.addRange(all);
+				document.execCommand('delete');
+			} else {
+				document.execCommand('insertParagraph');
+				const next = bullet ? `${bullet[1]}${bullet[2]} ` : `${number![1]}${Number(number![2]) + 1}${number![3]} `;
+				document.execCommand('insertText', false, next);
+			}
+			queueSave();
+		}
+	}
+
 	function onEditorClick(event: MouseEvent) {
 		if (isResizing) return;
 		const target = event.target as HTMLElement;
@@ -301,6 +388,7 @@
 			oninput={() => { queueSave(); scheduleUndoSnapshot(); }}
 			onblur={save}
 			onpaste={onPaste}
+			onkeydown={onEditorKey}
 			ondrop={onDrop}
 			ondragover={(e) => e.preventDefault()}
 			onclick={onEditorClick}

@@ -82,6 +82,27 @@ function startTvDiscovery() {
 	}
 }
 
+/*
+ * Febbox folder listings (src/lib/server/febboxList.ts asks for them here): sent as this
+ * browser, with its cookies and the same identity as the player's link lookups, rather than from
+ * Catalog's server. Febbox sits behind Cloudflare, which answers too many listings from one
+ * connection with its "Just a moment…" check (429, cf-mitigated: challenge) for a while; that
+ * check loops even in a normal browser while it lasts, so nothing tries to get past it — the
+ * server asks less, keeps what it listed, and waits it out (febboxList.ts).
+ */
+const FEBBOX_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+/** One page of a Febbox folder listing, asked as this browser. */
+async function febboxList(url) {
+	const { net } = require('electron');
+	const resp = await net.fetch(url, {
+		headers: { 'User-Agent': FEBBOX_UA, Referer: 'https://www.febbox.com/', 'X-Requested-With': 'XMLHttpRequest' },
+		credentials: 'include',
+		signal: AbortSignal.timeout(10000)
+	});
+	return { status: resp.status, body: await resp.text(), challenged: Boolean(resp.headers.get('cf-mitigated')) };
+}
+
 /**
  * Another site's pages (anime.nexus) open out of sight in their own session, the one the source
  * probe uses too, with a plain Chrome identity.
@@ -200,7 +221,8 @@ const stripQueue = [];
 let stripBusy = false;
 
 function makeStrip(pagePath) {
-	if (!pagePath.startsWith('/strip-maker?') || stripQueue.includes(pagePath)) return;
+	// (/skip-maker and /speech-maker do other work for a TV the same way.)
+	if (!/^\/(strip|skip|speech)-maker\?/.test(pagePath) || stripQueue.includes(pagePath)) return;
 	stripQueue.push(pagePath);
 	nextStrip();
 }
@@ -308,7 +330,7 @@ function startServer() {
 
 			try {
 				const { net } = require('electron');
-				const chromeUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+				const chromeUA = FEBBOX_UA;
 
 				// Log session cookies for debugging (names show in stream info too)
 				let cookieNames = '';
@@ -705,6 +727,13 @@ function startServer() {
 			}
 		}
 
+		if (message?.type === 'febbox-list') {
+			const answer = await febboxList(String(message.url)).catch((e) => ({ status: 0, body: '', error: e?.message || String(e) }));
+			try {
+				server.send({ type: 'febbox-list-result', id: message.id, ...answer });
+			} catch {}
+		}
+
 		if (message?.type === 'fetch-febbox') {
 			try {
 				const { net } = require('electron');
@@ -936,6 +965,34 @@ function waitForServer(timeoutMs = 20000) {
 	});
 }
 
+/**
+ * The usual right-click menu for typing: the desktop app has none of its own, so a text box
+ * couldn't be pasted into with the mouse (a key pasted from elsewhere had to be typed by hand
+ * if Ctrl+V didn't work). Also Copy on selected text anywhere. Places that have their own
+ * right-click menu (posters, tabs) keep theirs: they stop this one from opening.
+ */
+function addTextMenu(contents) {
+	contents.on('context-menu', (_event, params) => {
+		const items = [];
+		if (params.isEditable) {
+			const can = params.editFlags;
+			items.push(
+				{ role: 'undo', enabled: can.canUndo },
+				{ role: 'redo', enabled: can.canRedo },
+				{ type: 'separator' },
+				{ role: 'cut', enabled: can.canCut },
+				{ role: 'copy', enabled: can.canCopy },
+				{ role: 'paste', enabled: can.canPaste },
+				{ type: 'separator' },
+				{ role: 'selectAll', enabled: can.canSelectAll }
+			);
+		} else if (params.selectionText.trim()) {
+			items.push({ role: 'copy' });
+		}
+		if (items.length) Menu.buildFromTemplate(items).popup({ window: BrowserWindow.fromWebContents(contents) ?? undefined });
+	});
+}
+
 function createWindow() {
 	window = new BrowserWindow({
 		width: 1180,
@@ -957,6 +1014,7 @@ function createWindow() {
 	});
 
 	window.once('ready-to-show', () => window.show());
+	addTextMenu(window.webContents);
 	window.loadURL(ORIGIN);
 
 	// "ready-to-show" never comes if the first load fails (the server not quite up yet,
@@ -995,6 +1053,7 @@ function createWindow() {
 	});
 
 	window.webContents.on('did-create-window', async (childWindow) => {
+		addTextMenu(childWindow.webContents);
 		// Use a regular Chrome User-Agent — Electron's default UA contains
 		// "Electron/38" which some sites (including Google OAuth) reject.
 		const chromeUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36';
@@ -1060,33 +1119,10 @@ function createWindow() {
 			}
 		}
 
-		// Show diagnostic overlay in the login window if session check fails
-		async function showDiagnostics() {
-			try {
-				const allCookies = await session.defaultSession.cookies.get({});
-				const febCookies = allCookies
-					.filter((c) => c.domain && c.domain.includes('febbox'))
-					.map((c) => ({ name: c.name, domain: c.domain, path: c.path, secure: c.secure, httpOnly: c.httpOnly, sameSite: c.sameSite }));
-
-				const diag = {
-					navigations: navLog,
-					cookieChanges,
-					currentCookies: febCookies,
-					userAgent: chromeUA
-				};
-				await childWindow.webContents.executeJavaScript(`
-					(function() {
-						var d = document.createElement('div');
-						d.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.9);color:#0f0;font:12px monospace;padding:20px;z-index:99999;overflow:auto;white-space:pre-wrap';
-						d.textContent = 'LOGIN DIAGNOSTICS\\n' + '='.repeat(50) + '\\n' + ${JSON.stringify(JSON.stringify(diag, null, 2))};
-						document.body.appendChild(d);
-					})()
-				`);
-			} catch {}
-		}
-
-		// Poll for valid session — auto-close on success, show diagnostics
-		// after several failures so we can see what went wrong.
+		// Poll for a signed-in session and close the window as soon as there is one. It used to
+		// cover the window with a "LOGIN DIAGNOSTICS" screen after ten seconds on any Febbox page
+		// that wasn't /login — which is where the email code is typed with 2-step verification,
+		// so signing in that way took several tries. The log still goes to the console.
 		let captured = false;
 		let pollCount = 0;
 		const loginPoll = setInterval(async () => {
@@ -1115,15 +1151,13 @@ function createWindow() {
 					console.log('[login] session confirmed — capturing cookies');
 					await captureCookies();
 					childWindow.close();
-				} else if (pollCount >= 5 && !url.includes('/login') && !url.includes('accounts.google')) {
-					clearInterval(loginPoll);
-					console.log('[login] session NOT valid after OAuth — showing diagnostics');
-					await showDiagnostics();
+				} else if (pollCount === 30) {
+					console.log('[login] still not signed in after a minute', JSON.stringify({ navigations: navLog.slice(-8), cookieChanges: cookieChanges.slice(-8) }));
 				}
 			} catch {
 				// Window navigating or destroyed
 			}
-		}, 2000);
+		}, 1000);
 
 		setTimeout(() => {
 			clearInterval(loginPoll);

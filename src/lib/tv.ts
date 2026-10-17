@@ -68,9 +68,13 @@ function nearest(from: HTMLElement, direction: Direction): HTMLElement | null {
 	const ay = a.top + a.height / 2;
 	let best: HTMLElement | null = null;
 	let bestScore = Infinity;
+	// A row can say where up goes from it (`data-tv-up="<selector>"`): the player's buttons go
+	// straight to its top bar, past the Skip Intro button sitting on the progress bar.
+	const upTo = direction === 'up' ? from.closest<HTMLElement>('[data-tv-up]')?.dataset.tvUp : undefined;
 
 	for (const el of candidates()) {
 		if (el === from || el.contains(from) || from.contains(el)) continue;
+		if (upTo && !el.matches(upTo)) continue;
 		const b = el.getBoundingClientRect();
 		const bx = b.left + b.width / 2;
 		const by = b.top + b.height / 2;

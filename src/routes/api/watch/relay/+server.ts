@@ -1,6 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { isAniwaveVideo, VIDEO_HEADERS } from '$lib/server/sources/aniwave';
 import { isVidriftVideo, playsDirect, VIDRIFT_HEADERS } from '$lib/server/sources/vidrift';
+import { trustVideoHost, trustedVideoHost } from '$lib/server/relayHosts';
 import type { RequestHandler } from './$types';
 
 /** The relay address for a file on another source's video server. */
@@ -10,7 +11,7 @@ const relayed = (url: string) => `/api/watch/relay?u=${encodeURIComponent(url)}`
  * Passes another source's video (Aniwave, 7Movies) on to the player. Its servers only answer their own
  * player and won't let another page read the video, so Catalog's server asks for it and hands
  * it over: playlists with every address inside pointed back here, video pieces as they come.
- * Only the servers Aniwave sent us to are fetched from.
+ * Only servers a source sent us to are fetched from (and the ones its playlists name).
  */
 export const GET: RequestHandler = async ({ url, request }) => {
 	let target: URL;
@@ -19,8 +20,9 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	} catch {
 		return error(400, 'Bad address');
 	}
-	const vidrift = isVidriftVideo(target);
-	if (!vidrift && !isAniwaveVideo(target)) return error(403, 'Not a video server Catalog was sent to');
+	const kind = isVidriftVideo(target) ? 'vidrift' : isAniwaveVideo(target) ? 'aniwave' : trustedVideoHost(target);
+	if (!kind) return error(403, 'Not a video server Catalog was sent to');
+	const vidrift = kind === 'vidrift';
 
 	const range = request.headers.get('range');
 	let upstream: Response;
@@ -78,7 +80,10 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	const text = Buffer.concat(parts).toString('utf8');
 	const point = (address: string) => {
 		const full = new URL(address, target);
-		return playsDirect(full) ? full.href : relayed(full.href);
+		if (playsDirect(full)) return full.href;
+		// A server this playlist names is one the source sent us to as well.
+		trustVideoHost(full, kind);
+		return relayed(full.href);
 	};
 	const pointed = text
 		.split('\n')

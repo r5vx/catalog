@@ -22,22 +22,23 @@ async function onShowbox(title: string, type: string, year: string): Promise<boo
 	const results = await searchShowbox(title);
 	if (results.length && bestMatch(results, title, type, year)) return true;
 
-	const altTitles: string[] = [];
+	// Its other names, all searched at once (one after another took most of a slow check).
 	const tmdbType = type === 'movie' ? ('movie' as const) : ('tv' as const);
-	altTitles.push(...(await fetchAlternativeTitles(title, tmdbType)));
-	if (type === 'tv' || !type) {
-		const romaji = await fetchRomajiTitle(title);
-		if (romaji && !altTitles.includes(romaji)) altTitles.push(romaji);
-	}
+	const [alternatives, romaji] = await Promise.all([
+		fetchAlternativeTitles(title, tmdbType),
+		type === 'tv' || !type ? fetchRomajiTitle(title) : Promise.resolve(null)
+	]);
+	const altTitles = [...new Set([...alternatives, ...(romaji ? [romaji] : [])])];
 	const wordsOf = (t: string) => t.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter((w) => w.length > 1);
 	const origWords = new Set(wordsOf(title));
-	for (const alt of altTitles) {
-		const candidate = await searchShowbox(alt);
-		const best = candidate.length > 0 ? bestMatch(candidate, alt, type, year) : null;
-		if (!best) continue;
-		if (wordsOf(best.title).some((w) => origWords.has(w)) || wordsOf(alt).some((w) => origWords.has(w))) return true;
-	}
-	return false;
+	return firstYes(
+		altTitles.map(async (alt) => {
+			const candidate = await searchShowbox(alt);
+			const best = candidate.length > 0 ? bestMatch(candidate, alt, type, year) : null;
+			if (!best) return false;
+			return wordsOf(best.title).some((w) => origWords.has(w)) || wordsOf(alt).some((w) => origWords.has(w));
+		})
+	);
 }
 
 async function onAniwave(title: string, type: string, year: string): Promise<boolean> {
@@ -61,6 +62,7 @@ async function on7Movies(title: string, type: string, year: string): Promise<boo
 
 /** True as soon as one says yes; false once all have said no. */
 function firstYes(checks: Promise<boolean>[]): Promise<boolean> {
+	if (!checks.length) return Promise.resolve(false);
 	return new Promise((resolve) => {
 		let left = checks.length;
 		for (const check of checks) {
@@ -74,18 +76,29 @@ function firstYes(checks: Promise<boolean>[]): Promise<boolean> {
 	});
 }
 
-export function isAvailable(title: string, type: string, year: string): Promise<boolean> {
+/** How long the Watch button's check waits before saying "not available" for now. */
+const LIMIT = 12_000;
+
+/**
+ * Whether it can be watched; `unsure` when no source had said yes within 12 seconds. The check
+ * carries on then and keeps its real answer, so asking again a little later gets it — a slow
+ * 7Movies lookup kept "Checking availability…" up for 20 seconds or more (She-Beast).
+ */
+export async function isAvailable(title: string, type: string, year: string): Promise<{ available: boolean; unsure?: boolean }> {
 	const key = `available|${title.toLowerCase()}|${type}|${year}`;
 	const known = getOrderCache(key);
-	if (known && Date.now() - known.at < (known.value ? 24 * HOUR : HOUR)) return Promise.resolve(Boolean(known.value));
+	if (known && Date.now() - known.at < (known.value ? 24 * HOUR : HOUR)) return { available: Boolean(known.value) };
 
-	const running = underWay.get(key);
-	if (running) return running;
-	const check = firstYes([onShowbox(title, type, year), onAniwave(title, type, year), on7Movies(title, type, year)]).then((yes) => {
-		saveOrderCache(key, yes, Date.now());
-		underWay.delete(key);
-		return yes;
-	});
-	underWay.set(key, check);
-	return check;
+	let check = underWay.get(key);
+	if (!check) {
+		check = firstYes([onShowbox(title, type, year), onAniwave(title, type, year), on7Movies(title, type, year)]).then((yes) => {
+			saveOrderCache(key, yes, Date.now());
+			underWay.delete(key);
+			return yes;
+		});
+		underWay.set(key, check);
+	}
+	const late = Symbol('late');
+	const answer = await Promise.race([check, new Promise<typeof late>((r) => setTimeout(() => r(late), LIMIT))]);
+	return answer === late ? { available: false, unsure: true } : { available: answer };
 }

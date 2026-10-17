@@ -381,6 +381,11 @@ repeated `?tag=` params.
 search and filters are app-wide settings rather than something you reapply per
 tab.
 
+**Other names** (`entries.other_titles`, `src/lib/server/otherNames.ts`): TMDB's original name
+plus alternative titles from JP/US/GB/CA/AU, one per line, searched alongside the title, so
+"dungeon meshi" finds Delicious in Dungeon. NULL = not asked; filled 30 s after start-up and on
+every add.
+
 **Name matching is word-by-word, not phrase-based.** "samuel jackson" has to
 find "Samuel L. Jackson"; a LIKE on the whole phrase never will. Both
 `/people` and the library search split the query and require every word.
@@ -739,6 +744,17 @@ mom: her laptop runs Catalog, her Fire TV shows it). Pieces:
   episodes (the player's numbering), no Showbox calls; anime is found with `tmdbShow(name, '')`
   and opens on the season that aired in the entry's year. Picking one opens
   `/watch?...&resume_s=&resume_e=`.
+- **Player on the TV, 2026-10-16:** Up from the controls row highlights the progress bar
+  (`.progress-wrap` gets tabindex on a TV; `data-tv-up` on an element restricts where tv.ts sends
+  Up), where left/right skip 10 s and Up goes on to the top bar — before, Up from the right-hand
+  buttons landed on Skip Intro / Next Episode sitting on the bar and the bar itself could never be
+  reached, which is what the owner's brother meant. Skip Intro takes focus
+  when it appears unless a button is in use. Auto-skip has its own TV key (`catalog-tv-autoskip`,
+  on when unset). TVs never fingerprint: they POST `/api/watch/skip-found/prepare`, the computer
+  opens `/skip-maker` hidden (same queue as `/strip-maker`), and the TV re-reads at 30 s / 75 s.
+  The picked source is kept per show (`catalog:source:<title>`, via `pickFor`), captions turned
+  off are kept per show (`catalog:captionsOff:<title>`), and captions never auto-start or restore
+  over a `burnedIn` file.
 - In the player on the TV: captions go on by themselves (English CC first), Autosync is always on,
   Autoplay has its own setting (`catalog-tv-autoplay`), the Next Episode button counts down its last
   30 s and takes focus, and known closing credits move on 10 s in. A stall in the last 3 s counts as
@@ -863,6 +879,110 @@ which records what a site's page loads while the owner browses it.
   and ones over 2 s are listed in /api/diagnostics `slowRequests` (`src/lib/server/slowRequests.ts`).
 - An Aniwave file carries its own `shareKey` (`aniwave:<id>:<episode>:<ssub|dub>`) and
   `source`; `pickFile` takes Showbox's first. Don't hammer these sites while testing either.
+
+### Hearing the sound track: subtitle auto-timing and Skip Intro (2026-10-16)
+Showbox's HLS playlists carry the sound as separate tracks (`EXT-X-MEDIA TYPE=AUDIO`, fMP4: an
+init piece + ~6 s `.m4s` pieces, ~22 MB an episode, readable from any page). `src/lib/soundTrack.ts`
+reads one and has the browser decode it (`OfflineAudioContext(1, rate, rate).decodeAudioData` on
+init + pieces gives mono-able audio at that rate, durations exact). Two things use it:
+- **Auto-timing v2** (`subtitleSync.ts`, `subtitleTiming.worker.ts`, `subtitleAlign.fitDelays`).
+  The first version listened as it played and needed ~2 minutes of talking per answer: on Bleach
+  S1E1 its first move came at minute 10, so the owner saw "it does nothing". Now the whole track is
+  fetched (two minutes at a time, from where you are, only while ≥30 s is buffered), Silero runs in
+  a worker (~10 s an episode), and `fitDelays` gives a delay per part of the video: best overall
+  delay within ±150 s (top 3 tried), then 3-minute stretches every 30 s within ±20 s of it, outliers
+  dropped, changes ≥1 s placed in the longest quiet spell. Most releases step by a few seconds at
+  the break (HorribleSubs −0.1 → −6 s at 8:20), so one delay was never enough. Whole episode timed
+  in ~17–22 s, the part you're at in ~4 s; switching subtitles re-times in ~1.3 s (the talking is
+  kept). Fewer than 20% clear stretches over 12+ stretches = "These subtitles don't match this
+  video" (wrong episode, wrong show). Videos without a separate track still listen as they play.
+  It found Delicious in Dungeon's Netflix CC at −11 s — the delay the owner had set by hand.
+- **Skip Intro by comparison** (`skipFinder.ts`, `introFinder.ts`, `/api/watch/skip-found`): the
+  first 6 and last 5 minutes of this episode and a neighbour (next, else previous; a copy that is a
+  playlist, not an MP4) are fingerprinted (32 band-difference bits per 0.128 s) and the longest
+  shared run (≥20 s) is the intro / credits. Kept per Showbox fid for both episodes. Wins over
+  AniSkip where both answer: AniSkip's Dungeon Meshi E3/E5 intros end ~10 s late (the "Skip Intro
+  button stays up" report), and it has nothing for E1/E4 and no credits at all. Not run on TVs.
+- **Kept speech** (`src/lib/server/heardSpeech.ts`, `/api/watch/speech`): what auto-timing heard,
+  one byte per 32 ms, kept per Showbox fid + language in `previews/`. Every screen tries it first
+  (a second watch is timed in ~2 s with nothing fetched); a TV never hears audio itself, it asks
+  the computer (`/api/watch/speech/prepare` → hidden `/speech-maker`, ~20 s) and polls. Uploading
+  raw bytes needs `Content-Type: application/octet-stream` — without it the body arrived empty.
+  Auto-timing is on by default; Reset goes back to its delay (`backToTiming`).
+- **Gotchas:** the browser can't decode Dolby (E-AC-3) tracks, and some playlists list them
+  beside AAC (Dungeon Meshi's `audio_ec3` group) — `soundTrackIn` skips groups whose video
+  variants say `ec-3`/`ac-3`. Fetching ~50 pieces at once gave `ERR_NO_BUFFER_SPACE`: six at a time.
+- Bench: `scratchpad/sync` (`whole.mjs`, `plan.mjs` replay `fitDelays` from `.vad` files) and
+  `scratchpad/intro/pair.mjs` (8 kHz `.pcm8` from ffmpeg). AnimeTosho releases must now name the
+  show (`isThisShow`): "Bleach 01" used to pick Thousand-Year Blood War's subtitles.
+
+### Fixes of 2026-10-16 (round 4)
+- **Anime audio:** `/api/watch/is-anime` (TMDB: original language ja + genre 16, kept a month);
+  the player only defaults to the Japanese track when that says yes. A film with a Japanese dub
+  (Avatar) keeps its own default.
+- **Febbox sign-in:** the login window used to draw a full-screen "LOGIN DIAGNOSTICS" overlay
+  after ~10 s on any febbox page that wasn't `/login` — the email 2-step code page is such a page,
+  so the owner's mom and brother needed several tries. Overlay removed; success is polled every
+  second; diagnostics go to the console after a minute.
+- **Subtitle adverts:** `isAdvert()` in the player drops lines with a web address or advert /
+  credit wording, line by line (other cues keep their times). Checked on 155,813 lines from 20
+  titles: every match was an advert, no dialogue.
+- **Mac menus vanishing:** no `backdrop-filter` anywhere in the player (Chromium on macOS stops
+  repainting blurred panels over a video while subtitles change underneath); `.popup` gets its
+  own layer (`translateZ(0)`).
+- **Availability:** 7Movies' token comes back for every id, even made-up ones, so it proves
+  nothing; an Orion playlist in the boot answer does (instant). Otherwise the H.264 lookup (6–15 s)
+  decides. The whole check answers within 12 s (`unsure: true` past that, not kept); the pages ask
+  once more 6 s later. Showbox's fallback searches and alternative-title searches run in parallel.
+
+### Fixes of 2026-10-16 (round 5)
+- **Showbox files that only come in 360p.** Madagascar's and Witch Hat Atelier's "1080p" files
+  came as one 640×360 level with no choices, in Catalog and on Showbox's own site, while other
+  titles played in full: Febbox decides per file. (I first blamed a daily data limit — wrong: that
+  notice in Febbox's player page is a template only shown to VIP accounts, and the owner's mom
+  and brother use their own accounts. Also: a plain server-side fetch of /file/player gets 360p
+  for every file; only the hidden player window in Electron gets the real HD link, so the test
+  server can't tell which files are really 360p-only.) The player notices (a 720p+ Showbox file
+  whose playlist tops out at ≤480p, `showboxHeldBack`), plays another source's copy (7Movies
+  H.264 is 1080p) and remembers that file for a day (`catalog:lowOnly:<fid>`).
+- **7Movies H.264 moved to edge.reelvault.click**, which the relay refused ("Not a video server
+  Catalog was sent to") — SVU S28E2 and Madagascar's HD "could not be played".
+  `src/lib/server/relayHosts.ts`: any server a source hands out is trusted, and so is every
+  server named inside a playlist from a trusted one.
+- **Auto-timing from the player's own downloads** (`hearAppended`): hls.js's BUFFER_APPENDING
+  gives each audio piece (or audio+video piece) as fMP4; init + pieces decode with
+  `decodeAudioData`. Used whenever there's no separate sound track (Showbox while limited,
+  Aniwave, 7Movies H.264), from the moment the video starts (no extra data). Before, those fell
+  back to listening through the speakers, which needed minutes and was ~1 s out — Witch Hat
+  Atelier "didn't put any delay". `soundTrack.ts` also resolves the relay's relative addresses
+  now (Orion's separate audio track failed on `new URL(relative, relative)`).
+- **Other speeds:** subtitles made for 25 fps DVDs run 4% fast against a 23.976 film; `fitDelays`
+  tries 25/23.976, 25/24, 24/23.976 and their inverses when the normal speed doesn't fit (or
+  nothing fits after 4 minutes heard). The plan carries `rate`; the player shows subtitle time
+  `(t − delay) / rate`. Madagascar's aXXo file: rate 1.0427, −0.4 s on Orion; the 7Movies H.264
+  copy starts 26.1 s later than Orion, so +25.7 s there (both right).
+- **Speed:** stretches and the overall search run every 0.128 s first, then 32 ms around the best
+  (`quickShift`) — same answers on all test episodes, ~12× faster (a film ~0.5 s). The worker
+  skips fits that a newer one has superseded.
+
+### Febbox folder listings: the gatekeeper (2026-10-17)
+Spider-Man: Brand New Day showed no Showbox files: share_link found, then `file_share_list`
+answered **429 with `cf-mitigated: challenge`** ("Just a moment…", Cloudflare), which
+`listFebboxFiles` returned as `[]`, the film path took as "no files", and the answer was cached.
+The log showed 13 more such refusals that day. Cloudflare challenges too many listings from one
+connection for a while, and the check loops even in a normal browser while it lasts — so nothing
+tries to get past it. Instead (`src/lib/server/febboxList.ts`):
+- every listing goes through one gate: two at a time, 250 ms apart (a show's season folders used
+  to be asked all at once — 16+ for Bleach); same folder at once → one request; fresh for 20 min;
+- a refusal rests the gate (30 s doubling to 5 min) and falls back to the listing kept in
+  `watch_order_cache` (`febbox-list|share|parent`, a week); with none it throws `FebboxRefused`;
+- resolve treats `FebboxRefused` as busy: match kept (never `forgetShowboxMatch`), nothing cached,
+  other sources play, `showboxBusy` seconds returned; the player re-asks then and adds Showbox's
+  files without touching what's playing (or, with no other source, waits and retries);
+- in the desktop app listings go out through Electron's `net.fetch` with the session cookies and
+  the same Chrome identity as the player's link lookups (`febbox-list` IPC); `npm run dev` fetches
+  directly (so the dev server sees refusals the app may not).
+Test: `scratchpad/gate.test.mjs` (fake Febbox: sharing, spacing, rests, kept fallback).
 
 ### AniList's rate limit
 `fetchDetails` keeps every title's answer (`details|source|id` in watch_order_cache): AniList's is

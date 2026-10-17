@@ -10,6 +10,7 @@
 	import { isTv, tvPlayer } from '$lib/tv';
 	import { PreviewStrip, keepPictures, keptPictures, askComputerForPictures, type StripVideo } from '$lib/previewStrip';
 	import { SubtitleSync } from '$lib/subtitleSync';
+	import { findAndKeepSkips } from '$lib/skipFinder';
 
 	const pm = $derived(page.data.poisonMode);
 
@@ -19,6 +20,8 @@
 		title: string;
 		posterUrl: string;
 		info: string;
+		/** Results found only on Showbox's search page have no id yet (it's looked up on picking). */
+		slug?: string;
 	}
 
 	interface FileOption {
@@ -66,8 +69,86 @@
 		return f.size ? `${f.quality} · ${f.size}` : f.quality;
 	}
 
-	/** Showbox's best file; another source's only when Showbox has none for this episode. */
-	const pickFor = (files: FileOption[]) => pickFile(files, preferredQuality, animeAudio());
+	/*
+	 * Some Showbox files only come in 360p (Madagascar's and Witch Hat Atelier's "1080p" files
+	 * came as one 640×360 level, on Showbox's own site too) while others play in full — Febbox
+	 * decides per file. Such a file is remembered for a day, so it isn't picked first again
+	 * where another source has a better copy (7Movies' H.264 is 1080p).
+	 */
+	const LOW_ONLY = 'catalog:lowOnly:';
+	function lowOnly(fid: number): boolean {
+		try {
+			return Date.now() - Number(localStorage.getItem(LOW_ONLY + fid) || 0) < 24 * 60 * 60 * 1000;
+		} catch {
+			return false;
+		}
+	}
+
+	/** The best copy from another source, for a Showbox file that only comes in low quality. */
+	function betterThanShowbox(files: FileOption[]): FileOption | null {
+		const others = files.filter((f) => f.source && playableHere(f));
+		return (
+			others.find((f) => f.source === '7Movies' && !f.hevc) ??
+			others.find((f) => f.source === 'Aniwave' && !f.burnedIn && (f.audio ?? '') === animeAudio()) ??
+			others.find((f) => f.source === '7Movies') ??
+			null
+		);
+	}
+
+	/**
+	 * A Showbox file of 720p or more whose playlist has nothing above 480p. Switches to another
+	 * source's copy if there is one (true then: the rest of the start-up is skipped).
+	 */
+	function showboxHeldBack(heights: number[]): boolean {
+		const best = Math.max(0, ...heights);
+		if (!activeFile || activeFile.source || (parseInt(activeFile.quality) || 0) < 720 || !best || best > 480) return false;
+		try { localStorage.setItem(LOW_ONLY + activeFile.fid, String(Date.now())); } catch {}
+		const better = betterThanShowbox(currentFiles);
+		if (!better) {
+			showQualityToast(`Showbox only has ${best}p of this one`);
+			return false;
+		}
+		showQualityToast(`Showbox only has ${best}p of this one: playing ${better.source} in HD instead`);
+		setTimeout(() => changeToFile(better, true), 0);
+		return true;
+	}
+
+	/**
+	 * Showbox's best file; another source's only when Showbox has none for this episode — or
+	 * when that source is the one picked for this show last time (Aniwave with subtitles in the
+	 * picture, say), which then stays picked episode after episode.
+	 */
+	const pickFor = (files: FileOption[]) => {
+		const kept = keptSource();
+		const same = kept && files.find((f) => f.source === kept.source && (f.audio ?? '') === kept.audio && !!f.burnedIn === kept.burnedIn && playableHere(f));
+		if (same) return same;
+		const showboxPick = pickFile(files, preferredQuality, animeAudio());
+		// A Showbox file known to come only in 360p: another source's copy instead, if there is one.
+		if (showboxPick && !showboxPick.source && lowOnly(showboxPick.fid)) return betterThanShowbox(files) ?? showboxPick;
+		return showboxPick;
+	};
+
+	/* The source picked for a show, kept on this device (Showbox needs nothing kept: it's the default). */
+	type KeptSource = { source: string; audio: string; burnedIn: boolean };
+	const keptSourceKey = () => `catalog:source:${(lastResolveArgs?.title ?? '').toLowerCase()}`;
+
+	function keptSource(): KeptSource | null {
+		try {
+			return JSON.parse(localStorage.getItem(keptSourceKey()) ?? 'null');
+		} catch {
+			return null;
+		}
+	}
+
+	function keepSource(file: FileOption) {
+		try {
+			if (file.source) {
+				localStorage.setItem(keptSourceKey(), JSON.stringify({ source: file.source, audio: file.audio ?? '', burnedIn: !!file.burnedIn }));
+			} else {
+				localStorage.removeItem(keptSourceKey());
+			}
+		} catch {}
+	}
 
 	/**
 	 * A link for this copy, or — when its source has nothing right now — for the next copy from
@@ -211,12 +292,13 @@
 		{ key: 'large', label: 'L', rem: 1.8 },
 		{ key: 'huge', label: 'XL', rem: 2.3 }
 	] as const;
-	let subLook = $state<{ box: boolean; size: string }>({ box: true, size: 'normal' });
+	type SubLook = { box: boolean; size: string; bold: boolean };
+	let subLook = $state<SubLook>({ box: true, size: 'normal', bold: false });
 	try {
 		const kept = JSON.parse(localStorage.getItem(SUB_LOOK) ?? 'null');
-		if (kept && typeof kept.box === 'boolean' && SUB_SIZES.some((s) => s.key === kept.size)) subLook = kept;
+		if (kept && typeof kept.box === 'boolean' && SUB_SIZES.some((s) => s.key === kept.size)) subLook = { ...subLook, ...kept };
 	} catch {}
-	function setSubLook(change: Partial<{ box: boolean; size: string }>) {
+	function setSubLook(change: Partial<SubLook>) {
 		subLook = { ...subLook, ...change };
 		try {
 			localStorage.setItem(SUB_LOOK, JSON.stringify(subLook));
@@ -225,15 +307,20 @@
 	const subFontSize = $derived(`${SUB_SIZES.find((s) => s.key === subLook.size)?.rem ?? 1.4}rem`);
 
 	/**
-	 * Automatic subtitle timing (src/lib/subtitleSync.ts): off unless turned on in the captions
-	 * menu, kept on this device. It listens to the video and moves the delay to where the
-	 * subtitles match the talking, again and again as it plays — only when it's sure.
+	 * Automatic subtitle timing (src/lib/subtitleSync.ts): on unless turned off in the captions
+	 * menu, kept on this device. It hears the video and moves the delay to where the subtitles
+	 * match the talking, part by part — only when it's sure.
 	 */
 	const SUB_AUTOSYNC = 'catalog:subAutoSync';
-	let subAutoSync = $state(false);
+	let subAutoSync = $state(true);
 	try {
-		subAutoSync = localStorage.getItem(SUB_AUTOSYNC) === '1';
+		subAutoSync = localStorage.getItem(SUB_AUTOSYNC) !== '0';
 	} catch {}
+
+	/** Reset: back to auto-timing's delay when it has one, else no delay. */
+	function resetSubtitleDelay() {
+		if (!(subAutoSync && subSync?.backToTiming())) subtitleDelay = 0;
+	}
 	function toggleAutoSync() {
 		subAutoSync = !subAutoSync;
 		try {
@@ -340,11 +427,22 @@
 	let subtitlesOn = $state(false);
 	let subtitleDelay = $state(0);
 
-	let hlsAudioTracks = $state<{ id: number; name: string }[]>([]);
+	let hlsAudioTracks = $state<{ id: number; name: string; url: string }[]>([]);
 	let hlsActiveAudio = $state(-1);
 	let hlsLevels = $state<{ index: number; height: number; bitrate: number }[]>([]);
 	let hlsActiveLevel = $state(-1);
 	let videoResolution = $state('');
+
+	// Stopping to load again and again (three times in two minutes, not counting jumps): it asks
+	// rather than deciding — a fresh link (a link can land on a slow server), a lower quality, or
+	// keep going. Never changes the quality by itself.
+	/** Levels that can play here (H.264), lowest first. */
+	let playableLevels: number[] = [];
+	let slowStops: number[] = [];
+	/** What the "keeps stopping" box offers: a lower level (−1 when there's none). */
+	let slowOffer = $state<{ lower: number; height: number; freshLink: boolean } | null>(null);
+	/** "Keep loading" was picked for this video: not asked again. */
+	let slowOfferDeclined = false;
 
 	const SPEEDS = [
 		{ value: 0.25, label: '0.25x' },
@@ -368,7 +466,14 @@
 			: progressPct
 	);
 	const bufferedPct = $derived(duration > 0 ? (bufferedEnd / duration) * 100 : 0);
-	const activeSubs = $derived(subtitlesOn ? subsAt(currentTime - subtitleDelay) : { top: '', bottom: '' });
+	/**
+	 * How much slower the subtitles run than they were written (auto-timing found them made for
+	 * another speed: DVD subtitles at 25 frames a second against a 23.976 film). 1 almost always.
+	 */
+	let subtitleRate = $state(1);
+	/** Subtitle time showing at video time `t`. */
+	const subTimeAt = (t: number) => (t - subtitleDelay) / (subAutoSync ? subtitleRate : 1);
+	const activeSubs = $derived(subtitlesOn ? subsAt(subTimeAt(currentTime)) : { top: '', bottom: '' });
 
 	const inEndCredits = $derived(
 		skipSegments.some((s) => s.type === 'credits' && s.end >= duration - 20 && currentTime >= s.start)
@@ -396,7 +501,8 @@
 		credits: 'Skip Credits'
 	};
 	const activeSkip = $derived.by(() => {
-		const seg = skipSegments.find((s) => currentTime >= s.start && currentTime < s.end - 1);
+		// Gone just before the part ends: skipping the last second or two isn't worth a button.
+		const seg = skipSegments.find((s) => currentTime >= s.start && currentTime < s.end - 2);
 		if (!seg) return null;
 		// Credits that run to the end are what "Next Episode" is for.
 		if (seg.type === 'credits' && nextEp && seg.end >= duration - 20) return null;
@@ -526,48 +632,158 @@
 		};
 	});
 
-	// Listening for the timing only while subtitles show, the video plays and it's turned on.
-	// (The sound then goes through the page's audio, as for turning the volume past 100%; that's
-	// only started after a click or a key press, or the browser would keep it silent.)
+	/** The sound track whose fetching failed: listened to as it plays instead. */
+	let soundTrackFailed = $state('');
+
+	// Auto-timing, while subtitles show and it's turned on. A video with its own sound track
+	// (Showbox's, 7Movies' Orion) has the whole of it heard at once, even before playing; other
+	// playlists are heard from the audio the player downloads anyway; a plain video file is
+	// listened to as it plays.
 	$effect(() => {
-		const wanted = subtitlesOn && subAutoSync && playing && subtitleCues.length > 0;
-		void pageActivated;
+		const showing = subtitlesOn && subtitleCues.length > 0;
+		const track = hlsAudioTracks.find((t) => t.id === hlsActiveAudio)?.url ?? '';
+		const playlist = Boolean(streamUrl && isPlaylist(streamUrl));
+		const failed = soundTrackFailed;
+		// Heard from the player's own downloads (no separate sound track): from the start, even
+		// before subtitles go on — it costs nothing, and the timing is ready when they do.
+		const fromDownloads = playlist && (!track || track === failed);
+		const wanted = subAutoSync && (showing || fromDownloads);
 		untrack(() => {
-			if (!wanted) {
-				subSync?.stop();
-				return;
-			}
+			if (!wanted || !videoEl) return;
 			if (!subSync) {
-				const activated =
-					pageActivated ||
-					((navigator as Navigator & { userActivation?: { hasBeenActive: boolean } }).userActivation?.hasBeenActive ?? true);
-				if (!activated || !videoEl) return;
-				ensureGain();
-				if (!audioCtx || !audioSource) return;
-				if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
-				// Heard before the volume boost, so turning it past 100% changes nothing.
-				subSync = new SubtitleSync(audioCtx, audioSource, videoEl, () => subtitleCues, () => subtitleDelay);
+				subSync = new SubtitleSync(videoEl, () => subtitleCues, () => subtitleDelay, () => {
+					// Fetched only while the video has plenty to play, so it never causes a stop.
+					return !videoEl || videoEl.paused || bufferedAhead() > 30;
+				});
+				subSync.onRate = (rate) => (subtitleRate = rate);
 				subSync.onDelay = (delay) => {
 					subtitleDelay = delay;
 					if (!syncedOnce) showQualityToast('Subtitles re-timed to match');
 					syncedOnce = true;
 				};
+				subSync.onMismatch = () => switchToFittingSubs();
+				// For trying it out in a browser: what it found, and why.
+				if (import.meta.env.DEV) (window as unknown as { subSync: SubtitleSync }).subSync = subSync;
 			}
-			subSync.start();
+			if (fromDownloads) {
+				subSync.useAppended();
+				// What the player had already downloaded before this started.
+				for (const piece of appendedSound) subSync.hearAppended(piece.data, piece.at, piece.length, piece.isInit);
+			} else if (showing) timeSoundTrack(track);
 		});
 	});
 
-	// Another episode or other subtitles: listen afresh.
+	/*
+	 * Copies of the audio pieces the player hands the browser (hls.js's BUFFER_APPENDING), for
+	 * auto-timing without a separate sound track (subtitleSync.ts, `hearAppended`). Kept here
+	 * until subtitles go on (separate audio pieces only, the last 150 — about 15 minutes).
+	 */
+	type AppendedSound = { data: Uint8Array; at: number; length: number; isInit: boolean };
+	let appendedSound: AppendedSound[] = [];
+
+	function noteAppendedSound(type: string, data: Uint8Array, frag: { start: number; duration: number } | null) {
+		if ((type !== 'audio' && type !== 'audiovideo') || !frag || !data || data.length < 8) return;
+		const box = String.fromCharCode(data[4], data[5], data[6], data[7]);
+		const piece = { data, at: frag.start, length: frag.duration, isInit: box === 'ftyp' || box === 'moov' };
+		if (subSync) subSync.hearAppended(piece.data, piece.at, piece.length, piece.isInit);
+		// The format piece always (it's small); pieces of sound and picture together are too big to keep.
+		if (piece.isInit) appendedSound = appendedSound.filter((p) => !p.isInit);
+		else if (type !== 'audio') return;
+		appendedSound.push({ ...piece, data: data.slice() });
+		const pieces = appendedSound.filter((p) => !p.isInit);
+		if (pieces.length > 150) appendedSound.splice(appendedSound.indexOf(pieces[0]), 1);
+	}
+
+	/** `track`: the sound track playing (its address), there when the video has a separate one. */
+	async function timeSoundTrack(track: string) {
+		const sync = subSync;
+		if (!sync || !track || track === soundTrackFailed) return;
+		// The same language's track is read, but never a Dolby one (the browser can't decode those).
+		const language = hlsInstance?.audioTracks[hlsActiveAudio]?.lang ?? '';
+		const fid = activeFile && !activeFile.source ? activeFile.fid : 0;
+		// Heard before (by this or another screen, or by the computer for a TV): nothing to fetch.
+		if (fid && (await sync.useKept(fid, language))) return;
+		if (isTv()) {
+			// A TV leaves the hearing to the computer, then picks up what it heard.
+			if (fid) askComputerToHear(fid, language, track);
+			return;
+		}
+		sync.analyseTrack(streamUrl, language, fid).then((ok) => {
+			if (!ok) soundTrackFailed = track;
+		});
+	}
+
+	function askComputerToHear(fid: number, language: string, track: string) {
+		const ep = showType === 'tv' ? activeEpisode : null;
+		fetch('/api/watch/speech/prepare', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				title: videoTitle.replace(/ S\d+E\d+$/, ''),
+				type: showType,
+				year: lastResolveArgs?.year ?? '',
+				season: ep?.season ?? 0,
+				episode: ep?.episode ?? 0,
+				fid,
+				lang: language
+			})
+		}).catch(() => {});
+		// It takes the computer about half a minute; looked for every 15 seconds for 3 minutes.
+		let tries = 0;
+		const look = setInterval(async () => {
+			const current = hlsAudioTracks.find((t) => t.id === hlsActiveAudio)?.url ?? '';
+			if (++tries > 12 || !subSync || current !== track || (await subSync.useKept(fid, language))) clearInterval(look);
+		}, 15_000);
+	}
+
+	// Moving the subtitles while it plays; listening as it plays when there's no sound track.
+	// (That sound goes through the page's audio, as for turning the volume past 100%, which is
+	// only started after a click or a key press, or the browser would keep it silent.)
 	$effect(() => {
-		void activeSubUrl;
-		void activeEpisode;
+		const wanted = subtitlesOn && subAutoSync && playing && subtitleCues.length > 0;
+		// Only a plain video file (not a playlist) is listened to as it plays.
+		const listening = !(streamUrl && isPlaylist(streamUrl));
+		void pageActivated;
 		untrack(() => {
-			subSync?.reset();
+			if (!wanted || !subSync) {
+				subSync?.stop();
+				return;
+			}
+			subSync.start();
+			if (!listening) return;
+			const activated =
+				pageActivated ||
+				((navigator as Navigator & { userActivation?: { hasBeenActive: boolean } }).userActivation?.hasBeenActive ?? true);
+			if (!activated) return;
+			ensureGain();
+			if (!audioCtx || !audioSource) return;
+			if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+			// Heard before the volume boost, so turning it past 100% changes nothing.
+			subSync.listen(audioCtx, audioSource);
+		});
+	});
+
+	// Other subtitles: timed again from what's already been heard.
+	$effect(() => {
+		void subtitleCues;
+		untrack(() => {
+			subSync?.newCues();
 			syncedOnce = false;
 		});
 	});
 
-	onDestroy(() => subSync?.stop());
+	// Another episode: everything heard is for the last one. (Its sound track, if already
+	// known, is started on again; otherwise that happens when its playlist arrives.)
+	$effect(() => {
+		void activeEpisode;
+		untrack(() => {
+			subSync?.reset();
+			syncedOnce = false;
+			if (subtitlesOn && subAutoSync) timeSoundTrack(hlsAudioTracks.find((t) => t.id === hlsActiveAudio)?.url ?? '');
+		});
+	});
+
+	onDestroy(() => subSync?.destroy());
 
 	function ensureGain() {
 		if (gainNode || !videoEl) return;
@@ -610,6 +826,11 @@
 			hlsActiveAudio = id;
 			const track = hlsInstance.audioTracks[id];
 			if (track) preferredAudioName = track.name || track.lang || '';
+			// Japanese or the dub, picked on an anime: the next one starts the same way.
+			if (track && isAnime && hlsInstance.audioTracks.some(isJapaneseTrack)) {
+				const audio = isJapaneseTrack(track) ? 'Japanese' : isEnglishTrack(track) ? 'English' : '';
+				if (audio) try { localStorage.setItem(ANIME_AUDIO, audio); } catch {}
+			}
 			recheckSubsForAudio();
 		}
 	}
@@ -619,6 +840,41 @@
 		hlsInstance.currentLevel = index;
 		hlsActiveLevel = index;
 	}
+
+	/** The next playable quality below `level`, or −1. */
+	function levelBelow(level: number): number {
+		const lower = playableLevels.filter((i) => i < level);
+		return lower.length ? lower[lower.length - 1] : -1;
+	}
+
+	/** A stop to load that wasn't caused by a jump: the third in two minutes brings up the choice. */
+	function noteSlowStop() {
+		if (!videoEl || isVideoSeeking || videoEl.currentTime < 5 || slowOffer || slowOfferDeclined) return;
+		const now = performance.now();
+		slowStops = slowStops.filter((t) => now - t < 120_000);
+		slowStops.push(now);
+		if (slowStops.length < 3) return;
+		slowStops = [];
+		const lower = hlsInstance ? levelBelow(hlsInstance.loadLevel) : -1;
+		const freshLink = Boolean(activeFile?.fid && shareOf(activeFile));
+		if (lower < 0 && !freshLink) return;
+		slowOffer = { lower, height: lower >= 0 ? (hlsInstance?.levels[lower]?.height ?? 0) : 0, freshLink };
+	}
+
+	function slowChoice(choice: 'fresh' | 'lower' | 'keep') {
+		const offer = slowOffer;
+		slowOffer = null;
+		if (!offer) return;
+		if (choice === 'fresh') refreshStream();
+		else if (choice === 'lower' && offer.lower >= 0) setHlsLevel(offer.lower);
+		else slowOfferDeclined = true;
+	}
+
+	// On a TV, the choice takes the highlight so the remote can answer it.
+	let slowOfferEl: HTMLDivElement | undefined = $state();
+	$effect(() => {
+		if (tvMode && slowOfferEl) slowOfferEl.querySelector('button')?.focus({ preventScroll: true });
+	});
 
 	function toggleFS() {
 		if (!playerPageEl) return;
@@ -648,7 +904,7 @@
 		pipCtx.drawImage(videoEl, 0, 0, vw, vh);
 
 		if (subtitlesOn) {
-			const subs = subsAt((videoEl.currentTime || 0) - subtitleDelay);
+			const subs = subsAt(subTimeAt(videoEl.currentTime || 0));
 			const text = plainSubText(subs.bottom || subs.top);
 			if (text) {
 				const lines = text.split('\n');
@@ -1007,6 +1263,7 @@
 
 	const tvMode = isTv();
 	const AUTOPLAY_KEY = tvMode ? 'catalog-tv-autoplay' : 'catalog-autoplay';
+	const AUTOSKIP_KEY = tvMode ? 'catalog-tv-autoskip' : 'catalog-autoskip';
 	let tvFullscreenTried = false;
 
 	/** The controls' first button, for when the remote's up or down brings them up. */
@@ -1047,6 +1304,17 @@
 	let nextEpButton: HTMLButtonElement | undefined = $state();
 	$effect(() => {
 		if (tvMode && nextEpButton) nextEpButton.focus({ preventScroll: true });
+	});
+
+	// On a TV, Skip Intro (or Recap, or Credits) takes the highlight when it appears, so OK
+	// skips, as on Netflix — unless something in the controls is being used.
+	let skipButton: HTMLButtonElement | undefined = $state();
+	$effect(() => {
+		if (!tvMode || !skipButton) return;
+		const current = untrack(() => document.activeElement as HTMLElement | null);
+		const using = current && current !== document.body && current.matches('button, a[href], input, select');
+		if (using && current !== skipButton) return;
+		skipButton.focus({ preventScroll: true });
 	});
 
 	/*
@@ -1122,6 +1390,22 @@
 	/** On a TV, with nothing in the controls highlighted: OK plays/pauses, up/down bring the controls. */
 	function tvKey(e: KeyboardEvent): boolean {
 		const current = document.activeElement as HTMLElement | null;
+		// The progress bar highlighted: left and right skip 10 seconds, OK plays or pauses, and up
+		// and down move on (src/lib/tv.ts has already moved the highlight for those).
+		if (current?.classList.contains('progress-wrap')) {
+			showControlsBriefly();
+			if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+				e.preventDefault();
+				skip(e.key === 'ArrowLeft' ? -10 : 10);
+				return true;
+			}
+			if (e.key === 'Enter') {
+				e.preventDefault();
+				if (!stopScan()) togglePlay();
+				return true;
+			}
+			return e.key.startsWith('Arrow');
+		}
 		// Only a real button (or link) counts as highlighted. Anything else holding focus — the
 		// invisible layer over the video, the page itself — made OK bring up the controls again
 		// and again instead of pausing, and kept them up.
@@ -1252,9 +1536,26 @@
 			.replace(/\\h/g, ' ')
 			.split('\n')
 			.map((line) => line.trim())
-			.filter((line) => line.replace(/<[^>]*>/g, '').trim())
+			.filter((line) => line.replace(/<[^>]*>/g, '').trim() && !isAdvert(line.replace(/<[^>]*>/g, '')))
 			.join('\n');
 		return text ? { text: safeSubHtml(text), top } : null;
+	}
+
+	/**
+	 * A line the subtitle sites slip in, not anything said: a web address ("Watch Online Movies
+	 * and Series for FREE www.osdb.link/lm", "Downloaded From www.AllSubs.org") or their wording
+	 * ("Do you want subtitles for any video?", "Support us and become VIP member", "Subtitles by
+	 * …"). Only that line goes: a subtitle with nothing else in it is dropped, and every other
+	 * one keeps its own times, so the timing isn't touched. Found by going through the English
+	 * subtitles of 20 films and shows; ordinary lines like "...to the real world" don't match.
+	 */
+	function isAdvert(line: string): boolean {
+		return (
+			/(https?:\/\/|www\.)\S+/i.test(line) ||
+			/\b[a-z0-9-]{2,}\.(com|org|net|link|io|me|to|tv|cc|ws|info|xyz|site|club|mx|ag|ru|pt|ro)(\/\S*)?(?![a-z])/i.test(line) ||
+			/subtitles for any video|advertise your product|support us and become|become (a )?vip|downloaded from|proudly presents/i.test(line) ||
+			/^[-–=[\s]*(subtitles?|subs|captions?|synch?(ed|roni[sz]ed)?|resynch?(ed)?|corrected|ripped|translated|transcribed|subtitled|timing|encoded)( (and|&) \w+)? by\b/i.test(line)
+		);
 	}
 
 	function parseSrt(text: string): Cue[] {
@@ -1547,6 +1848,8 @@
 	 */
 	function restoreSavedSubs(place: SavedPlace) {
 		const forDub = /\bCC\b|SDH/i.test(place.subFileName ?? '');
+		// Not over subtitles in the picture, nor for a show they were turned off for.
+		if (activeFile?.burnedIn || captionsOffForShow()) return;
 		if (place.subUrl && (!hearingDub() || forDub)) {
 			loadSub({ id: '0', url: place.subUrl, lang: 'eng', language: 'English', fileName: place.subFileName || '' });
 			if (place.subDelay) subtitleDelay = place.subDelay;
@@ -1582,7 +1885,11 @@
 		const height = videoEl?.videoHeight ?? 0;
 		const fileQuality = parseInt(activeFile?.quality ?? '') || 0;
 		if (!activeFile || activeFile.source || fileQuality < 720 || !height || height > 480) return;
-		if (lowQualityRetried.has(activeFile.fid)) return;
+		// Held back a second time (or Febbox's limit already seen): another source, if there is one.
+		if (lowQualityRetried.has(activeFile.fid) || lowOnly(activeFile.fid)) {
+			showboxHeldBack([height]);
+			return;
+		}
 		lowQualityRetried.add(activeFile.fid);
 		debugInfo = (debugInfo ? debugInfo + ' | ' : '') + `low quality (${height}p): fresh link`;
 		refreshStream();
@@ -1766,10 +2073,29 @@
 		}).catch(() => {});
 	}
 
+	/**
+	 * How much of what's on has actually played (jumping ahead doesn't count), so a film is only
+	 * marked watched when it really was.
+	 */
+	let playedSeconds = 0;
+	let playedFrom = -1;
+	function countPlayed() {
+		if (!videoEl || !playing || seeking || isVideoSeeking || switchingEpisode) {
+			playedFrom = -1;
+			return;
+		}
+		const t = videoEl.currentTime;
+		const step = t - playedFrom;
+		if (playedFrom >= 0 && step > 0 && step < 3) playedSeconds += step;
+		playedFrom = t;
+	}
+
 	function onTimeUpdate() {
+		countPlayed();
 		if (videoEl && !seeking && !isVideoSeeking && !switchingEpisode) currentTime = videoEl.currentTime;
 		if (currentTime >= 60) autosyncEpisode();
 		if (duration > 0 && currentTime >= duration - Math.min(120, duration * 0.1)) autosyncFinished();
+		if (duration > 0 && (currentTime >= duration * 0.95 || (creditsStart !== null && currentTime >= creditsStart))) filmFinished();
 		flushQualityPrefetch();
 		prefetchNextEpisode();
 		autoSkipCheck();
@@ -1784,23 +2110,87 @@
 		return n;
 	}
 
+	let skipFindStop: AbortController | null = null;
+
+	/**
+	 * Intro, recap and credits: AniSkip's (crowd-sourced, anime only), and what Catalog found
+	 * itself by comparing this episode's sound with a neighbour's (src/lib/skipFinder.ts) — that's
+	 * timed on this very file, so it wins where both have an answer.
+	 */
 	async function loadSkipTimes(ep: Episode, length: number) {
 		const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
 		const key = `${baseTitle}:${ep.season}:${ep.episode}`;
 		if (key === skipLookupKey) return;
 		skipLookupKey = key;
 		skipSegments = [];
-		try {
-			const params = new URLSearchParams({
-				title: baseTitle,
-				episode: String(overallEpisodeNumber(ep)),
-				duration: String(Math.round(length))
-			});
-			const resp = await fetch(`/api/watch/skip-times?${params}`);
-			if (!resp.ok) return;
-			const segments = await resp.json() as SkipSegment[];
-			if (key === skipLookupKey) skipSegments = segments;
-		} catch {}
+		skipFindStop?.abort();
+		const file = activeFile && !activeFile.source ? activeFile : null;
+		const params = new URLSearchParams({
+			title: baseTitle,
+			episode: String(overallEpisodeNumber(ep)),
+			duration: String(Math.round(length))
+		});
+		const [fromAniSkip, found] = await Promise.all([
+			fetch(`/api/watch/skip-times?${params}`)
+				.then((r) => (r.ok ? (r.json() as Promise<SkipSegment[]>) : []))
+				.catch(() => [] as SkipSegment[]),
+			file
+				? fetch(`/api/watch/skip-found?fid=${file.fid}`)
+						.then((r) => (r.ok ? r.json() : { segments: null }))
+						.then((r) => r.segments as SkipSegment[] | null)
+						.catch(() => null)
+				: Promise.resolve(null)
+		]);
+		if (key !== skipLookupKey) return;
+		skipSegments = withFound(fromAniSkip, found ?? []);
+		// Not looked for yet: compared with a neighbouring episode once this one is playing well.
+		// A TV asks the computer instead: it would compete with the TV's own video.
+		if (found === null && file) {
+			if (isTv()) askComputerForSkips(ep, file, key, fromAniSkip);
+			else findSkipsFor(ep, file, key, fromAniSkip);
+		}
+	}
+
+	function withFound(fromAniSkip: SkipSegment[], found: SkipSegment[]): SkipSegment[] {
+		return [...found, ...fromAniSkip.filter((s) => !found.some((f) => f.type === s.type))].sort((a, b) => a.start - b.start);
+	}
+
+	async function findSkipsFor(ep: Episode, file: FileOption, key: string, fromAniSkip: SkipSegment[]) {
+		const stop = new AbortController();
+		skipFindStop = stop;
+		const found = await findAndKeepSkips({
+			episodes,
+			season: ep.season,
+			episode: ep.episode,
+			fid: file.fid,
+			quality: file.quality,
+			master: streamUrl,
+			mainShareKey,
+			language: hlsInstance?.audioTracks[hlsInstance.audioTrack]?.lang ?? '',
+			canFetch: () => !videoEl || bufferedAhead() > 30,
+			signal: stop.signal
+		}).catch(() => null);
+		if (found && key === skipLookupKey) skipSegments = withFound(fromAniSkip, found);
+	}
+
+	/** A TV asks the computer to find them (/skip-maker), then looks again in a while. */
+	function askComputerForSkips(ep: Episode, file: FileOption, key: string, fromAniSkip: SkipSegment[]) {
+		const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
+		fetch('/api/watch/skip-found/prepare', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: baseTitle, year: lastResolveArgs?.year ?? '', season: ep.season, episode: ep.episode, fid: file.fid })
+		}).catch(() => {});
+		for (const wait of [30_000, 75_000]) {
+			setTimeout(async () => {
+				if (key !== skipLookupKey) return;
+				const found = await fetch(`/api/watch/skip-found?fid=${file.fid}`)
+					.then((r) => (r.ok ? r.json() : { segments: null }))
+					.then((r) => r.segments as SkipSegment[] | null)
+					.catch(() => null);
+				if (found?.length && key === skipLookupKey) skipSegments = withFound(fromAniSkip, found);
+			}, wait);
+		}
 	}
 
 	function handleBeforeUnload() {
@@ -1937,7 +2327,7 @@
 
 	function toggleAutoSkip() {
 		autoSkip = !autoSkip;
-		try { localStorage.setItem('catalog-autoskip', autoSkip ? '1' : '0'); } catch {}
+		try { localStorage.setItem(AUTOSKIP_KEY, autoSkip ? '1' : '0'); } catch {}
 	}
 
 	function autoSkipCheck() {
@@ -2041,6 +2431,40 @@
 		await markEntryWatched();
 	}
 
+	/**
+	 * A film watched to the end (the last twentieth, or into the credits) is marked completed,
+	 * as a show is when its last episode ends: in the library, or added to it as completed if it
+	 * isn't there yet (someone else's profile on the TV: their own list). Only with Autosync on,
+	 * and only when most of it (70%) has actually played, so skipping to the end doesn't count.
+	 */
+	let filmMarked = '';
+	async function filmFinished() {
+		if (!autosync || showType !== 'movie' || duration < 600 || filmMarked === videoTitle) return;
+		if (playedSeconds < duration * 0.7) return;
+		filmMarked = videoTitle;
+		if (libraryEntryStatus === 'completed') return;
+		if (!libraryEntryId) {
+			try {
+				const resp = await fetch('/api/watch/add-to-library', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ title: videoTitle, type: 'movie' })
+				});
+				const data = await resp.json();
+				if (!data.id) return;
+				libraryEntryId = data.id;
+				// Added just now as completed; already there, it's marked so below.
+				if (!data.already) {
+					libraryEntryStatus = 'completed';
+					return;
+				}
+			} catch {
+				return;
+			}
+		}
+		await markEntryWatched();
+	}
+
 	async function syncProgressToEntry() {
 		if (!libraryEntryId || !activeEpisode) return;
 		try {
@@ -2065,6 +2489,27 @@
 	let subsForDub = false;
 	/** The subtitles showing went on by themselves (not picked), so a change to the dub can take them off. */
 	let subsAuto = false;
+	/** Every subtitle file listed, not just the first five of each language. */
+	let allSubsShown = $state(false);
+
+	/*
+	 * Captions turned off for a show stay off for it on this device: they don't come back on
+	 * by themselves for the next episode (anime on the TV turns them on otherwise).
+	 */
+	const captionsOffKey = () => `catalog:captionsOff:${(lastResolveArgs?.title ?? '').toLowerCase()}`;
+	function captionsOffForShow(): boolean {
+		try {
+			return localStorage.getItem(captionsOffKey()) === '1';
+		} catch {
+			return false;
+		}
+	}
+	function keepCaptionsOff(off: boolean) {
+		try {
+			if (off) localStorage.setItem(captionsOffKey(), '1');
+			else localStorage.removeItem(captionsOffKey());
+		} catch {}
+	}
 
 	/**
 	 * A Showbox file's English audio track is only known once the video has loaded, after the
@@ -2141,9 +2586,10 @@
 				await loadSub(match);
 				subtitleDelay = autoMatch.delay;
 			}
-		} else if (!autoMatch && !subtitlesOn) {
+		} else if (!autoMatch && !subtitlesOn && !activeFile?.burnedIn && !captionsOffForShow()) {
 			// Anime in Japanese starts with subtitles on: the chosen one, or the next English
-			// ones if it won't download.
+			// ones if it won't download. Not over subtitles already in the picture, nor for a
+			// show they were turned off for.
 			// On the TV, everything starts with captions on: English CC where there are some
 			// (they cover sounds too), else English.
 			const english = febboxSubs.filter((s) => !s.check && s.language === 'English');
@@ -2220,10 +2666,63 @@
 		}
 	}
 
-	/** Downloads and shows a subtitle. False if it couldn't be had. */
+	/**
+	 * Auto-timing heard that the subtitles that went on by themselves don't fit this video
+	 * (another episode's, another cut's): the other English ones are tried against the talking
+	 * it has already heard, and the one that fits best goes on instead. Ones picked by hand stay.
+	 */
+	async function switchToFittingSubs() {
+		const sync = subSync;
+		const key = subsKey;
+		if (!sync || !subsAuto) {
+			showQualityToast("These subtitles don't match this video");
+			return;
+		}
+		if (fitTriedFor !== key) {
+			fitTried = new Set();
+			fitTriedFor = key;
+		}
+		fitTried.add(activeSubUrl);
+		const others = febboxSubs.filter((s) => !s.check && s.language === 'English' && !fitTried.has(s.url)).slice(0, 8);
+		for (const sub of others) fitTried.add(sub.url);
+		const downloaded = await Promise.all(others.map(async (sub) => ({ sub, cues: await downloadSub(sub) })));
+		const usable = downloaded.filter((d): d is { sub: SubOption; cues: Cue[] } => Boolean(d.cues?.length));
+		const index = usable.length ? await sync.bestOf(usable.map((d) => d.cues)) : -1;
+		// Meanwhile another episode came on, or subtitles were picked by hand.
+		if (key !== subsKey || !subsAuto || sync !== subSync) return;
+		if (index < 0) {
+			showQualityToast("These subtitles don't match this video");
+			return;
+		}
+		sync.useChoice(index);
+		showSub(usable[index].sub, usable[index].cues);
+		subsAuto = true;
+		showQualityToast('Switched to subtitles that match this video');
+	}
+	/** The subtitles already tried by `switchToFittingSubs` (their addresses), for `fitTriedFor`. */
+	let fitTried = new Set<string>();
+	let fitTriedFor = '';
+
+	/** Downloads and shows a subtitle. False if it couldn't be had (the ones showing stay). */
 	async function loadSub(sub: SubOption): Promise<boolean> {
 		showCaptions = false;
+		const cues = await downloadSub(sub);
+		if (!cues) return false;
 		subsAuto = false;
+		showSub(sub, cues);
+		return true;
+	}
+
+	function showSub(sub: SubOption, cues: Cue[]) {
+		subtitleCues = cues;
+		subtitlesOn = true;
+		activeSubFid = sub.id;
+		activeSubUrl = sub.url;
+		activeSubFileName = sub.fileName || sub.language;
+	}
+
+	/** A subtitle's lines, or null if it couldn't be had. */
+	async function downloadSub(sub: SubOption): Promise<Cue[] | null> {
 		try {
 			// The show's name lets the file be kept on this PC while you're watching it.
 			const params = new URLSearchParams({ url: sub.url, show: videoTitle.replace(/ S\d+E\d+$/, '') });
@@ -2233,18 +2732,11 @@
 				params.set('episode', String(activeEpisode.episode));
 			}
 			const resp = await fetch(`/api/watch/subtitle-content?${params}`);
-			if (!resp.ok) return false;
+			if (!resp.ok) return null;
 			const data = await resp.json();
-			if (data.content) {
-				subtitleCues = parseSrt(data.content);
-				subtitlesOn = true;
-				activeSubFid = sub.id;
-				activeSubUrl = sub.url;
-				activeSubFileName = sub.fileName || sub.language;
-				return true;
-			}
+			if (data.content) return parseSrt(data.content);
 		} catch {}
-		return false;
+		return null;
 	}
 
 	/* --------------------------------------------------------------- episode names */
@@ -2279,11 +2771,23 @@
 		if (key === lastCastKey) loadingCast = false;
 	}
 
+	/** Japanese original and animated (TMDB, via /api/watch/is-anime): starts in Japanese. */
+	let isAnime = false;
+	const isJapaneseTrack = (t: { lang?: string; name?: string }) => /^ja/i.test(t.lang ?? '') || /\b(jpn|japanese)\b/i.test(t.name ?? '');
+	const isEnglishTrack = (t: { lang?: string; name?: string }) => /^en/i.test(t.lang ?? '') || /\b(eng|english)\b/i.test(t.name ?? '');
+
 	function applyPreferredAudio() {
-		if (!hlsInstance || !preferredAudioName || hlsInstance.audioTracks.length < 2) return;
-		const match = hlsInstance.audioTracks.findIndex(
-			(t) => (t.name || t.lang || '').toLowerCase() === preferredAudioName.toLowerCase()
-		);
+		if (!hlsInstance || hlsInstance.audioTracks.length < 2) return;
+		const tracks = hlsInstance.audioTracks;
+		let match = preferredAudioName
+			? tracks.findIndex((t) => (t.name || t.lang || '').toLowerCase() === preferredAudioName.toLowerCase())
+			: -1;
+		// Nothing picked yet, on an anime (Japanese original, not a film with a Japanese dub): the
+		// audio last picked for anime, which is Japanese unless the dub was — not the file's own
+		// default, which for Bleach's dual-audio copies is the dub.
+		if (match < 0 && isAnime && tracks.some(isJapaneseTrack)) {
+			match = tracks.findIndex(animeAudio() === 'English' ? isEnglishTrack : isJapaneseTrack);
+		}
 		if (match >= 0 && match !== hlsInstance.audioTrack) {
 			hlsInstance.audioTrack = match;
 			hlsActiveAudio = match;
@@ -2446,6 +2950,8 @@
 				}
 			});
 			hls.subtitleDisplay = false;
+			appendedSound = [];
+			hls.on(Hls.Events.BUFFER_APPENDING, (_e, data) => noteAppendedSound(data.type, data.data, data.frag ?? null));
 			hls.loadSource(streamUrl);
 			hls.attachMedia(videoEl);
 			hls.on(Hls.Events.FRAG_LOADED, markBytes);
@@ -2457,26 +2963,31 @@
 					`${l.height}p/${l.codecSet || l.videoCodec || '?'}`
 				).join(', ');
 				debugInfo = (debugInfo ? debugInfo + ' | ' : '') + `hls: ${hls.levels.length} lvl (${lvlInfo}), ${hls.subtitleTracks.length} sub tracks`;
+				slowStops = [];
+				slowOffer = null;
+				slowOfferDeclined = false;
 				if (hls.levels.length > 1) {
-					let best = hls.levels.length - 1;
-					for (let i = hls.levels.length - 1; i >= 0; i--) {
-						const vc = hls.levels[i].codecSet || hls.levels[i].videoCodec || '';
-						if (vc.includes('avc1') || vc.includes('avc3')) { best = i; break; }
-					}
+					const isH264 = (i: number) => /avc[13]/.test(hls.levels[i].codecSet || hls.levels[i].videoCodec || '');
+					playableLevels = hls.levels.map((_, i) => i).filter(isH264);
+					if (!playableLevels.length) playableLevels = hls.levels.map((_, i) => i);
+					const best = playableLevels[playableLevels.length - 1];
 					// Chosen before loading starts: no first piece in another quality to throw away.
 					hls.startLevel = best;
 					hls.loadLevel = best;
 					hlsActiveLevel = best;
 				} else {
+					playableLevels = [];
 					hlsActiveLevel = 0;
 				}
+				if (showboxHeldBack(hls.levels.map((l) => l.height))) return;
 				videoEl?.addEventListener('loadedmetadata', checkLowQuality, { once: true });
 				switchingEpisode = false;
 				autoplayFired = false;
 				if (!stayPaused) videoEl?.play().catch(() => {});
 				hlsAudioTracks = hls.audioTracks.map((t, i) => ({
 					id: i,
-					name: t.name || t.lang || `Track ${i + 1}`
+					name: t.name || t.lang || `Track ${i + 1}`,
+					url: t.url ?? ''
 				}));
 				hlsActiveAudio = hls.audioTrack;
 				applyPreferredAudio();
@@ -2492,7 +3003,8 @@
 			hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => {
 				hlsAudioTracks = hls.audioTracks.map((t, i) => ({
 					id: i,
-					name: t.name || t.lang || `Track ${i + 1}`
+					name: t.name || t.lang || `Track ${i + 1}`,
+					url: t.url ?? ''
 				}));
 				hlsActiveAudio = hls.audioTrack;
 				applyPreferredAudio();
@@ -2596,7 +3108,8 @@
 		const track = videoEl.addTextTrack('subtitles', 'Subtitles', 'en');
 		track.mode = 'showing';
 		for (const c of subtitleCues) {
-			const cue = new VTTCue(c.start + subtitleDelay, c.end + subtitleDelay, plainSubText(c.text));
+			const rate = subAutoSync ? subtitleRate : 1;
+			const cue = new VTTCue(c.start * rate + subtitleDelay, c.end * rate + subtitleDelay, plainSubText(c.text));
 			if (c.top) cue.line = 0;
 			track.addCue(cue);
 		}
@@ -2710,7 +3223,12 @@
 			autoplayNext = saved === null ? tvMode : saved === '1';
 		} catch {}
 		try { autosync = tvMode || localStorage.getItem('catalog-autosync') !== '0'; } catch {}
-		try { autoSkip = localStorage.getItem('catalog-autoskip') === '1'; } catch {}
+		// On a TV it's on until turned off (its own setting, like Autoplay): nobody wants to reach
+		// for the remote every intro.
+		try {
+			const saved = localStorage.getItem(AUTOSKIP_KEY);
+			autoSkip = saved === null ? tvMode : saved === '1';
+		} catch {}
 		try {
 			const kept = JSON.parse(localStorage.getItem(SUB_LANGUAGES) ?? 'null');
 			if (Array.isArray(kept) && kept.length) subLanguages = kept;
@@ -2735,6 +3253,56 @@
 		}
 	});
 
+	/** Times in a row Showbox was busy for this title (asked again, up to six times). */
+	let busyTries = 0;
+
+	/**
+	 * Asks again for a title whose Showbox folder was busy, and adds Showbox's files to the
+	 * lists when they come — without touching what's playing. Up to four tries.
+	 */
+	function fetchShowboxFilesLater(title: string, type: string, year: string, waitSeconds: number, tries = 0) {
+		if (tries >= 4) return;
+		setTimeout(async () => {
+			if (lastResolveArgs?.title !== title) return;
+			const params = new URLSearchParams({ title, nostream: '1' });
+			if (type) params.set('type', type);
+			if (year) params.set('year', year);
+			const data = await fetch(`/api/watch/resolve?${params}`)
+				.then((r) => (r.ok ? r.json() : null))
+				.catch(() => null);
+			if (lastResolveArgs?.title !== title) return;
+			if (!data || data.error || data.showboxBusy) {
+				fetchShowboxFilesLater(title, type, year, data?.showboxBusy || data?.retryIn || 60, tries + 1);
+				return;
+			}
+			if (!shareKey && data.shareKey) shareKey = data.shareKey;
+			if (!mainShareKey && data.shareKey) mainShareKey = data.shareKey;
+			if (data.files) {
+				const showbox = (data.files as FileOption[]).filter((f) => !f.source);
+				if (!showbox.length) return;
+				movieFiles = [...showbox, ...movieFiles.filter((f) => f.source)];
+			} else if (data.episodes) {
+				let added = 0;
+				for (const fresh of data.episodes.episodes as Episode[]) {
+					const showbox = fresh.files.filter((f) => !f.source);
+					const mine = episodes.find((e) => e.season === fresh.season && e.episode === fresh.episode);
+					if (mine) {
+						if (!showbox.length || mine.files.some((f) => !f.source)) continue;
+						mine.files = [...showbox, ...mine.files];
+						if (fresh.shareKey) mine.shareKey = fresh.shareKey;
+						mine.available = true;
+					} else {
+						episodes.push(fresh);
+					}
+					added++;
+				}
+				if (!added) return;
+				seasons = data.episodes.seasons;
+			}
+			showQualityToast("Showbox's files are back in the list");
+		}, waitSeconds * 1000);
+	}
+
 	async function resolve(title: string, type: string, year: string) {
 		loading = true;
 		loadingStatus = pm ? pRandom() : 'Searching for title...';
@@ -2745,6 +3313,16 @@
 		stalledOut = false;
 		streamRefreshes = 0;
 		lastResolveArgs = { title, type, year };
+		// Anime starts in Japanese (asked alongside; the audio is put right when it answers).
+		isAnime = false;
+		fetch(`/api/watch/is-anime?${new URLSearchParams({ title, type: type === 'movie' ? 'movie' : 'tv', year: year ?? '' })}`)
+			.then((r) => (r.ok ? r.json() : { anime: false }))
+			.then((r: { anime?: boolean }) => {
+				if (lastResolveArgs?.title !== title) return;
+				isAnime = r.anime === true;
+				if (isAnime) applyPreferredAudio();
+			})
+			.catch(() => {});
 		// Nothing of the last title's carries over (its subtitles stayed on after "Wrong one?").
 		febboxSubs = [];
 		subsKey = '';
@@ -2765,8 +3343,21 @@
 			if (!resp.ok) throw new Error();
 			const data = await resp.json();
 
+			if (data.error === 'busy' && busyTries < 6) {
+				// Showbox found it, but Febbox won't list its files for a moment (and no other source
+				// has it): asked again when Febbox allows, rather than giving up.
+				busyTries++;
+				loadingStatus = `Showbox is busy: trying again in ${data.retryIn} s…`;
+				setTimeout(() => {
+					if (lastResolveArgs?.title === title && !streamUrl) resolve(title, type, year);
+				}, data.retryIn * 1000);
+				return;
+			}
+			busyTries = 0;
 			if (data.error) {
-				if (data.error === 'not_found') {
+				if (data.error === 'busy') {
+					problem = 'Showbox is busy right now. Try again in a few minutes.';
+				} else if (data.error === 'not_found') {
 					problem = 'This title is unavailable.';
 				} else if (data.error === 'no_link') problem = 'This title is unavailable.';
 				else if (data.error === 'no_file') problem = 'This title has no video file.';
@@ -2777,6 +3368,8 @@
 
 			videoTitle = data.title;
 			showType = data.type;
+			playedSeconds = 0;
+			playedFrom = -1;
 			// On the TV the picture gets the whole screen; the Episodes button opens the list.
 			sidebarOpen = !tvMode && !episodesHiddenFor().has(data.title);
 			shareKey = data.shareKey;
@@ -2789,6 +3382,9 @@
 			loadingStatus = pm ? pRandom() : (data.episodes ? 'Loading episodes...' : 'Getting stream...');
 
 			if (data.files) movieFiles = data.files;
+			// Showbox's folder couldn't be listed just now: another source plays meanwhile, and
+			// Showbox's files join the list when Febbox lets them be asked for again.
+			if (data.showboxBusy) fetchShowboxFilesLater(title, type, year, data.showboxBusy);
 
 			let needsResume = false;
 			if (data.episodes) {
@@ -2940,14 +3536,18 @@
 		qualityToastTimer = setTimeout(() => { qualityToast = ''; qualityToastTimer = null; }, 5000);
 	}
 
-	async function changeToFile(file: FileOption) {
+	/** `byItself`: Catalog switched (Showbox held to low quality), not you: nothing is remembered. */
+	async function changeToFile(file: FileOption, byItself = false) {
 		if (!file || file.fid === activeFileFid) return;
-		preferredQuality = file.quality;
+		if (!byItself) preferredQuality = file.quality;
 		streamRefreshes = 0;
 		if (stalledOut) { stalledOut = false; problem = ''; }
-		if (qualityToast) { qualityToast = ''; if (qualityToastTimer) { clearTimeout(qualityToastTimer); qualityToastTimer = null; } }
+		if (qualityToast && !byItself) { qualityToast = ''; if (qualityToastTimer) { clearTimeout(qualityToastTimer); qualityToastTimer = null; } }
 
-		// Picking another source's copy remembers its audio for the next episodes.
+		// Picking another source's copy remembers it (and its audio) for the next episodes.
+		if (!byItself) keepSource(file);
+		// Subtitles in the picture: Catalog's own would sit on top of them.
+		if (file.burnedIn) subtitlesOn = false;
 		if (file.audio) {
 			try {
 				localStorage.setItem(ANIME_AUDIO, file.audio);
@@ -3443,6 +4043,7 @@
 						}}
 						onwaiting={() => {
 							buffering = true;
+							noteSlowStop();
 							if (!stalledOut) watchForStall();
 						}}
 						oncanplay={() => { buffering = false; }}
@@ -3494,14 +4095,24 @@
 						<div class="quality-toast">Switching quality…</div>
 					{/if}
 
+					<!-- keeps stopping to load: asks what to do -->
+					{#if slowOffer}
+						<div class="slow-offer" bind:this={slowOfferEl}>
+							<span>Keeps stopping to load.</span>
+							{#if slowOffer.freshLink}<button type="button" onclick={() => slowChoice('fresh')}>Try a fresh link</button>{/if}
+							{#if slowOffer.lower >= 0}<button type="button" onclick={() => slowChoice('lower')}>Lower quality ({slowOffer.height}p)</button>{/if}
+							<button type="button" onclick={() => slowChoice('keep')}>Keep loading</button>
+						</div>
+					{/if}
+
 					<!-- subtitle overlay -->
 					{#if !inPiP}
 						<!-- cue text is escaped by safeSubHtml(), so only i/b/u tags can reach the page -->
 						{#if activeSubs.top}
-							<div class="subtitle-display top" class:plain={!subLook.box} style:font-size={subFontSize}>{@html activeSubs.top.replace(/\n/g, '<br>')}</div>
+							<div class="subtitle-display top" class:plain={!subLook.box} class:bold={subLook.bold} style:font-size={subFontSize}>{@html activeSubs.top.replace(/\n/g, '<br>')}</div>
 						{/if}
 						{#if activeSubs.bottom}
-							<div class="subtitle-display" class:plain={!subLook.box} style:font-size={subFontSize}>{@html activeSubs.bottom.replace(/\n/g, '<br>')}</div>
+							<div class="subtitle-display" class:plain={!subLook.box} class:bold={subLook.bold} style:font-size={subFontSize}>{@html activeSubs.bottom.replace(/\n/g, '<br>')}</div>
 						{/if}
 					{/if}
 
@@ -3510,7 +4121,7 @@
 						<div class="next-ep-overlay">
 							{#if activeSkip}
 								{@const seg = activeSkip}
-								<button type="button" class="skip-btn" onclick={() => skipSegment(seg)}>{SKIP_LABELS[seg.type]}</button>
+								<button type="button" class="skip-btn" bind:this={skipButton} onclick={() => skipSegment(seg)}>{SKIP_LABELS[seg.type]}</button>
 							{/if}
 							{#if nextEp}
 								<button type="button" class="next-ep-btn" bind:this={nextEpButton} onclick={() => playEpisode(nextEp)}>
@@ -3533,9 +4144,17 @@
 
 					<!-- custom controls overlay -->
 					<div class="controls" class:visible={showControls}>
-						<!-- progress bar -->
+						<!-- progress bar (on a TV it can be highlighted: left and right skip, up goes on to the top bar) -->
 						<!-- svelte-ignore a11y_no_static_element_interactions -->
-						<div class="progress-wrap" onmousedown={onProgressDown} onmousemove={onProgressHover} onmouseleave={() => (hoverPct = -1)}>
+						<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+						<div
+							class="progress-wrap"
+							tabindex={tvMode ? 0 : undefined}
+							data-tv-up=".player-bar button, .player-bar a"
+							onmousedown={onProgressDown}
+							onmousemove={onProgressHover}
+							onmouseleave={() => (hoverPct = -1)}
+						>
 							{#if previewPct >= 0 && duration > 0}
 								<div class="scrub-preview" style:left="clamp(84px, {previewPct}%, calc(100% - 84px))">
 									<canvas bind:this={thumbCanvas} width="192" height="108"></canvas>
@@ -3565,8 +4184,8 @@
 							</div>
 						</div>
 
-						<!-- button row -->
-						<div class="ctrl-row">
+						<!-- button row (on a TV, up goes from here to the progress bar, past Skip Intro sitting on it) -->
+						<div class="ctrl-row" data-tv-up=".progress-wrap">
 							<button class="ctrl-btn" onclick={togglePlay} title={playing ? 'Pause (k)' : 'Play (k)'}>
 								{#if playing}
 									<svg viewBox="0 0 24 24" fill="currentColor" width="28" height="28"><path d="M6 19h4V5H6zm8-14v14h4V5z"/></svg>
@@ -3639,7 +4258,7 @@
 											<span class="delay-label">After audio</span>
 											<button class="sub-delay-jump" onclick={() => subtitleDelay = Math.round((subtitleDelay + 0.5) * 10) / 10} title="Subs appear after audio — push them earlier">+0.5s</button>
 											<button class="sub-delay-jump" onclick={() => subtitleDelay = Math.round((subtitleDelay + 5) * 10) / 10} title="Push subs 5 seconds earlier">+5s</button>
-											<button class="sub-delay-reset" onclick={() => subtitleDelay = 0}>Reset</button>
+											<button class="sub-delay-reset" onclick={resetSubtitleDelay} title={subAutoSync ? 'Back to the auto-timing delay' : 'No delay'}>Reset</button>
 										</div>
 									{/if}
 								</div>
@@ -3784,7 +4403,7 @@
 									<button class="sub-delay-jump" onclick={() => (subtitleDelay = Math.round((subtitleDelay - 0.5) * 10) / 10)}>Sooner −0.5s</button>
 									<span class="sub-delay-value">{subtitleDelay > 0 ? '+' : ''}{subtitleDelay.toFixed(1)}s</span>
 									<button class="sub-delay-jump" onclick={() => (subtitleDelay = Math.round((subtitleDelay + 0.5) * 10) / 10)}>Later +0.5s</button>
-									{#if subtitleDelay !== 0}<button class="sub-delay-reset" onclick={() => (subtitleDelay = 0)}>Reset</button>{/if}
+									{#if subtitleDelay !== 0}<button class="sub-delay-reset" onclick={resetSubtitleDelay}>Reset</button>{/if}
 								</div>
 								<hr class="popup-divider" />
 							{/if}
@@ -3792,7 +4411,7 @@
 							<button
 								class="popup-item"
 								class:active={!subtitlesOn}
-								onclick={() => { subtitlesOn = false; showCaptions = false; }}
+								onclick={() => { subtitlesOn = false; showCaptions = false; keepCaptionsOff(true); }}
 							>
 								{#if !subtitlesOn}<span class="popup-check">&#10003;</span>{/if}
 								Off
@@ -3801,7 +4420,7 @@
 								<button
 									class="popup-item"
 									class:active={subtitlesOn}
-									onclick={() => { subtitlesOn = true; showCaptions = false; }}
+									onclick={() => { subtitlesOn = true; showCaptions = false; keepCaptionsOff(false); }}
 								>
 									{#if subtitlesOn}<span class="popup-check">&#10003;</span>{/if}
 									{activeSubFileName || 'Loaded subtitle'}
@@ -3814,11 +4433,16 @@
 								{:else}
 									{#each Object.entries(subsByLanguage) as [lang, subs] (lang)}
 										<p class="sub-lang-label">{lang}</p>
-										{#each subs as sub (sub.id)}
+										<!-- Five at first (and the one in use), so Look isn't a long scroll away. -->
+										{#each allSubsShown ? subs : subs.filter((s, i) => i < 5 || s.id === activeSubFid) as sub (sub.id)}
 											<button
 												class="popup-item"
 												class:active={activeSubFid === sub.id && subtitlesOn}
-												onclick={() => (sub.check ? passNexusCheck() : loadSub(sub))}
+												onclick={() => {
+													keepCaptionsOff(false);
+													if (sub.check) passNexusCheck();
+													else loadSub(sub);
+												}}
 												title={sub.fileName || sub.language}
 											>
 												{#if activeSubFid === sub.id && subtitlesOn}<span class="popup-check">&#10003;</span>{/if}
@@ -3829,6 +4453,9 @@
 											</button>
 										{/each}
 									{/each}
+									{#if !allSubsShown && Object.values(subsByLanguage).some((subs) => subs.length > 5)}
+										<button class="popup-item more-languages" onclick={() => (allSubsShown = true)}>Show more</button>
+									{/if}
 								{/if}
 							{/if}
 							{#if !loadingSubs && otherLanguages.length > 0}
@@ -3856,6 +4483,9 @@
 							<div class="sub-look">
 								<button class="sub-delay-jump" class:on={subLook.box} onclick={() => setSubLook({ box: !subLook.box })}>
 									{subLook.box ? 'Dark box: On' : 'Dark box: Off'}
+								</button>
+								<button class="sub-delay-jump" class:on={subLook.bold} onclick={() => setSubLook({ bold: !subLook.bold })}>
+									{subLook.bold ? 'Bold: On' : 'Bold: Off'}
 								</button>
 								{#each SUB_SIZES as size (size.key)}
 									<button class="sub-delay-jump" class:on={subLook.size === size.key} onclick={() => setSubLook({ size: size.key })}>{size.label}</button>
@@ -3949,7 +4579,7 @@
 			<p class="muted searching">{pm ? pRandom() : 'Searching...'}</p>
 		{:else if results.length > 0}
 			<ul class="grid">
-				{#each results as result (result.id + result.type)}
+				{#each results as result (`${result.type}:${result.id || result.slug || result.title}`)}
 					<li>
 						<button type="button" class="card" disabled={resolving} onclick={() => watchResult(result)}>
 							<div class="poster">
@@ -4032,7 +4662,7 @@
 	.player-page { position: fixed; inset: 0; display: flex; flex-direction: column; z-index: 100; background: #000; }
 
 	/* --------------------------------------------------------- top bar */
-	.player-bar { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(8px); border-bottom: 1px solid rgba(255, 255, 255, 0.08); z-index: 20; transition: opacity 0.3s ease, transform 0.3s ease; }
+	.player-bar { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: rgba(0, 0, 0, 0.8); border-bottom: 1px solid rgba(255, 255, 255, 0.08); z-index: 20; transition: opacity 0.3s ease, transform 0.3s ease; }
 	.player-bar.bar-hidden { opacity: 0; pointer-events: none; transform: translateY(-100%); }
 	.bar-btn { flex: none; font-size: 0.82rem; font-weight: 600; padding: 5px 12px; border-radius: var(--radius-sm); border: 1px solid rgba(255, 255, 255, 0.15); background: rgba(255, 255, 255, 0.06); color: #e0e0e0; cursor: pointer; text-decoration: none; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
 	.bar-btn:hover { border-color: rgba(255, 255, 255, 0.3); color: #fff; }
@@ -4094,7 +4724,7 @@
 	.player-body { display: flex; flex: 1; min-height: 0; }
 
 	/* --------------------------------------------------------- sidebar */
-	.sidebar { margin-top: 45px; width: 240px; flex: none; display: flex; flex-direction: column; background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(8px); border-right: 1px solid rgba(255, 255, 255, 0.06); overflow: hidden; }
+	.sidebar { margin-top: 45px; width: 240px; flex: none; display: flex; flex-direction: column; background: rgba(0, 0, 0, 0.75); border-right: 1px solid rgba(255, 255, 255, 0.06); overflow: hidden; }
 	.season-tabs { display: flex; flex-wrap: wrap; gap: 2px; padding: 8px 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
 	.season-tab { padding: 4px 10px; font-size: 0.76rem; font-weight: 600; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.04); color: rgba(255, 255, 255, 0.6); cursor: pointer; }
 	.season-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
@@ -4152,6 +4782,7 @@
 	.subtitle-display { position: absolute; bottom: 80px; left: 10%; right: 10%; text-align: center; color: #fff; font-size: 1.4rem; line-height: 1.5; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 0, 0, 0.7); pointer-events: none; z-index: 5; background: rgba(0, 0, 0, 0.5); padding: 6px 16px; border-radius: 4px; width: fit-content; margin: 0 auto; }
 	.subtitle-display.top { top: 60px; bottom: auto; }
 	/* No box: white text with a dark outline all round, so it reads on any picture. */
+	.subtitle-display.bold { font-weight: 700; }
 	.subtitle-display.plain { background: none; padding: 0 16px; text-shadow: 0 0 3px #000, 0 0 3px #000, 1px 1px 2px #000, -1px -1px 2px #000, 0 2px 8px rgba(0, 0, 0, 0.8); }
 	.sub-look { display: flex; align-items: center; gap: 6px; padding: 4px 14px 8px; flex-wrap: wrap; }
 	.sub-look .sub-delay-jump.on { background: rgba(255, 255, 255, 0.3); }
@@ -4166,7 +4797,10 @@
 	.controls.visible { opacity: 1; pointer-events: auto; }
 
 	/* --------------------------------------------------------- progress bar */
-	.progress-wrap { position: relative; padding: 8px 0; cursor: pointer; }
+	.progress-wrap { position: relative; padding: 8px 0; cursor: pointer; outline: none; }
+	/* Highlighted with the remote: thicker, with its handle showing. */
+	.progress-wrap:focus .progress-bar { height: 8px; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85); }
+	.progress-wrap:focus .prog-handle { opacity: 1; }
 	.prog-was { position: absolute; top: -6px; bottom: -6px; width: 3px; margin-left: -1.5px; border-radius: 2px; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55); pointer-events: none; z-index: 2; }
 	.prog-was-time { position: absolute; top: calc(100% + 4px); left: 50%; transform: translateX(-50%); padding: 1px 6px; border-radius: 4px; background: rgba(0, 0, 0, 0.8); color: #fff; font-size: 0.7rem; font-weight: 600; white-space: nowrap; }
 	/* The picture of where the mouse is on the bar, with its time. */
@@ -4198,7 +4832,9 @@
 	.ctrl-spacer { flex: 1; }
 
 	/* --------------------------------------------------------- popups (settings / captions) */
-	.popup { position: absolute; bottom: 60px; right: 16px; background: rgba(18, 18, 18, 0.96); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; padding: 8px 0; min-width: 190px; max-width: min(420px, 50vw); max-height: 400px; overflow-y: auto; backdrop-filter: blur(12px); z-index: 20; }
+	/* No background blur over the video anywhere here: on a Mac it stopped menus redrawing while
+	   subtitles changed underneath (they vanished until the mouse went over them). Own layer too. */
+	.popup { transform: translateZ(0); position: absolute; bottom: 60px; right: 16px; background: rgba(18, 18, 18, 0.96); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; padding: 8px 0; min-width: 190px; max-width: min(420px, 50vw); max-height: 400px; overflow-y: auto; z-index: 20; }
 	.popup-label { display: flex; align-items: center; font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: rgba(255, 255, 255, 0.4); margin: 0; padding: 8px 16px 4px; }
 	.popup-item { display: flex; align-items: center; gap: 8px; padding: 7px 16px; font-size: 0.84rem; color: rgba(255, 255, 255, 0.8); cursor: pointer; border: none; background: none; width: 100%; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.popup-item:hover { background: rgba(255, 255, 255, 0.08); }
@@ -4238,14 +4874,17 @@
 
 	/* --------------------------------------------------------- buffering spinner */
 	.buffering-overlay { position: absolute; inset: 0; display: grid; place-items: center; z-index: 4; pointer-events: none; }
-	.quality-toast { position: absolute; top: 60px; left: 50%; transform: translateX(-50%); padding: 6px 16px; border-radius: 6px; background: rgba(0, 0, 0, 0.75); color: rgba(255, 255, 255, 0.85); font-size: 0.82rem; z-index: 9; pointer-events: none; backdrop-filter: blur(6px); }
+	.slow-offer { position: absolute; top: 60px; left: 50%; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; padding: 8px 12px; border-radius: 8px; background: rgba(0, 0, 0, 0.85); color: rgba(255, 255, 255, 0.9); font-size: 0.85rem; max-width: calc(100% - 32px); }
+	.slow-offer button { border: 1px solid rgba(255, 255, 255, 0.25); background: rgba(255, 255, 255, 0.1); color: #fff; border-radius: 6px; padding: 5px 10px; font-size: 0.82rem; cursor: pointer; }
+	.slow-offer button:hover, .slow-offer button:focus { background: rgba(255, 255, 255, 0.25); }
+	.quality-toast { position: absolute; top: 60px; left: 50%; transform: translateX(-50%); padding: 6px 16px; border-radius: 6px; background: rgba(0, 0, 0, 0.75); color: rgba(255, 255, 255, 0.85); font-size: 0.82rem; z-index: 9; pointer-events: none; }
 
 	.scan-badge { position: absolute; top: 50%; left: 50%; z-index: 9; transform: translate(-50%, -50%); padding: 14px 26px; border-radius: 10px; background: rgba(0, 0, 0, 0.7); color: #fff; font-size: 2rem; font-weight: 700; pointer-events: none; }
 	:global(html.tv) .next-ep-btn:focus { border-color: #fff; background: #fff; color: #000; outline: none; }
 	.next-ep-overlay { position: absolute; bottom: 100px; right: 24px; z-index: 8; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; animation: fadeSlideIn 0.4s ease; }
-	.skip-btn { padding: 11px 22px; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 6px; background: rgba(0, 0, 0, 0.75); color: #fff; font-size: 0.95rem; font-weight: 600; cursor: pointer; backdrop-filter: blur(8px); transition: background 0.2s, border-color 0.2s; }
+	.skip-btn { padding: 11px 22px; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 6px; background: rgba(0, 0, 0, 0.75); color: #fff; font-size: 0.95rem; font-weight: 600; cursor: pointer; transition: background 0.2s, border-color 0.2s; }
 	.skip-btn:hover { background: rgba(30, 30, 30, 0.95); border-color: var(--accent); }
-	.next-ep-btn { display: flex; flex-direction: column; gap: 4px; padding: 14px 22px; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px; background: rgba(0, 0, 0, 0.75); color: #fff; cursor: pointer; backdrop-filter: blur(8px); transition: background 0.2s, border-color 0.2s; }
+	.next-ep-btn { display: flex; flex-direction: column; gap: 4px; padding: 14px 22px; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px; background: rgba(0, 0, 0, 0.75); color: #fff; cursor: pointer; transition: background 0.2s, border-color 0.2s; }
 	.next-ep-btn:hover { background: rgba(30, 30, 30, 0.95); border-color: var(--accent); }
 	.next-ep-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: rgba(255, 255, 255, 0.6); }
 	.next-ep-title { font-size: 0.95rem; font-weight: 600; }

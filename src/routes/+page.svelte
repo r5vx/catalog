@@ -93,6 +93,8 @@
 		dismissed = new Set([...dismissed, `${title}:${type}`]);
 		// Hide only — deleting here wiped every episode's green tick for the show.
 		await fetch(`/api/watch/progress?title=${encodeURIComponent(title)}&type=${type}&hide=1`, { method: 'DELETE' });
+		// The sidebar's Continue Watching count, too.
+		invalidateAll();
 	}
 
 	async function markCompleted(entryId: number | null, title: string, type: string, posterUrl?: string | null) {

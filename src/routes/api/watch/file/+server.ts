@@ -1,5 +1,5 @@
 import { json, error } from '@sveltejs/kit';
-import { getFebboxLink, listFebboxFiles } from '$lib/server/showbox';
+import { getFebboxLink, listFebboxFiles, FebboxRefused } from '$lib/server/showbox';
 
 export async function GET({ url }) {
 	const id = Number(url.searchParams.get('id'));
@@ -13,6 +13,11 @@ export async function GET({ url }) {
 	const link = await getFebboxLink(id, type);
 	if (!link) return error(502, 'No link available');
 
-	const files = await listFebboxFiles(link, fid || 0);
-	return json({ link, files });
+	try {
+		return json({ link, files: await listFebboxFiles(link, fid || 0) });
+	} catch (e) {
+		// Febbox not listing just now: say so, rather than an empty folder.
+		if (e instanceof FebboxRefused) return json({ busy: true, retryIn: e.retryInSeconds }, { status: 503 });
+		throw e;
+	}
 }

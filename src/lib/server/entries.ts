@@ -3,6 +3,7 @@ import { showRoots } from './metadata/franchise';
 import { setTags } from './db/tags';
 import { setCast } from './db/people';
 import { fetchDetails } from './metadata/details';
+import { fillOtherNames } from './otherNames';
 import type { SearchResult } from './metadata';
 
 export const today = () => new Date().toISOString().slice(0, 10);
@@ -66,6 +67,8 @@ export function createFromResult(result: SearchResult, overrides: Overrides = {}
 				});
 			})
 			.catch(() => {});
+		// Its other names, so searching finds it by either ("Dungeon Meshi").
+		fillOtherNames(id).catch(() => {});
 	}
 
 	return id;
@@ -130,6 +133,5 @@ export async function addFromSource(
 			markWatchedToday: status === 'completed'
 		}
 	);
-
 	return { id, already: false };
 }

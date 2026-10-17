@@ -12,6 +12,50 @@ without both.
 
 ## Unreleased
 
+## 3.1.0 — 2026-10-17 — Whole-episode subtitle timing, Skip Intro for more shows, and right-click to paste
+
+### New
+- **Player**: Skip Intro and Skip Credits for episodes AniSkip doesn't have, found by comparing the episode's sound with the next one's
+- **Library**: search finds anime by either name ("Dungeon Meshi" finds Delicious in Dungeon), and films by their original titles
+- **Subtitles**: Bold in the captions menu's Look
+- **Player**: the copy you pick (Aniwave with subtitles in the picture, say) stays picked for the show's next episodes
+- **Typing**: right-click in any text box for Cut, Copy, Paste, Select All, Undo and Redo, and right-click selected text to copy it (desktop app)
+- **Notes**: lists as in Google Docs: "- " or "1. " at the start of a line starts one, Enter goes on to the next bullet or number, Enter on an empty one ends it, Tab and Shift+Tab move an item in and out; lists typed out by hand carry on numbering too
+
+### Improved
+- **Subtitles**: auto-timing is on to start with, hears the whole episode at once (about 20 seconds) instead of waiting minutes, and times each part on its own, so a break cut differently no longer throws it off
+- **Subtitles**: Reset goes back to auto-timing's delay after moving it by hand
+- **Subtitles**: auto-timing works on every source (Aniwave, 7Movies, Showbox's low-quality copies) from the sound the player downloads anyway, nothing extra
+- **Subtitles**: auto-timing spots subtitles made for another speed (DVD subtitles that drift further off as a film goes on) and stretches them to fit
+- **Subtitles**: an episode heard once is remembered, so watching it again (or on another screen) is timed straight away
+- **Subtitles**: switching subtitles with auto-timing on re-times them straight away
+- **Subtitles**: when the subtitles Catalog picked by itself don't match the video, it switches to ones that do (with auto-timing on)
+- **Player**: when a video keeps stopping to load, asks whether to try a fresh link, drop to a lower quality, or keep loading
+- **Player**: a Showbox file that only comes in 360p plays from another source's HD copy instead, and says so
+- **Player**: anime plays in Japanese to start with (the dub once you've picked it); films with a Japanese dub don't
+- **Watch**: the availability check answers within about 12 seconds, and a slow "no" turns into ▶ Watch if the title shows up a moment later
+- **Player**: Skip Intro goes away as the intro ends, not several seconds after
+- **Subtitles**: the captions menu lists five files to start with, with Show more for the rest
+- **Subtitles**: captions turned off for a show stay off for it, and never come on over subtitles in the picture
+- **TV**: Up from the player's buttons highlights the progress bar, where left and right skip 10 seconds
+- **TV**: auto-timing works on the TV (the computer hears the episode for it)
+- **TV**: Skip Intro takes the highlight when it appears, so OK skips
+- **TV**: Auto-skip is on to start with, and works for shows AniSkip doesn't know (the computer finds the intro)
+- **Notes**: deleting a page that was never written on goes for good, instead of into Recently deleted
+- **Player**: a film watched to the end is marked completed (added to the library if it isn't there), as a show is when its last episode ends; only when most of it actually played, so skipping to the end doesn't count (with Autosync on)
+
+### Fixed
+- **Subtitles**: AnimeTosho no longer offers another show's subtitles (Thousand-Year Blood War's for Bleach)
+- **Subtitles**: subtitle sites' adverts and credits ("Watch Online Movies and Series for FREE www.osdb.link", "Support us and become VIP member") are taken out, without moving the rest
+- **Febbox**: signing in with an email code no longer gets covered by a debug screen halfway through
+- **Player (Mac)**: menus no longer vanish while subtitles are showing
+- **Watch**: no longer freezes on "Searching…" for some titles
+- **Showbox**: files no longer vanish when Febbox is refusing for a moment (Spider-Man: Brand New Day): the last list it gave is used, or another source plays and Showbox's files join when Febbox allows
+- **Showbox**: Catalog asks Febbox far less often (folders two at a time, recent answers reused), so it's refused much less
+- **7Movies**: its HD copies play again (they'd moved to a server Catalog wouldn't fetch from): Law & Order: SVU S28E2, Madagascar
+- **Sidebar**: the Continue Watching count goes down as soon as something is taken off it
+- **Where to watch**: no longer stuck on "Checking…" when a service is listed twice (Astro Boy)
+
 ## 3.0.7 — 2026-10-12 — Browse without AniList, a sidebar, auto-timing for subtitles, and a much smaller library file
 
 ### New

@@ -20,7 +20,7 @@
 	// The sidebar, when turned on: not over the player, the TV's own layout, or the pages before
 	// signing in.
 	const sideNav = $derived(
-		Boolean(data?.sideNav) && !/^\/(watch|tv|strip-maker|login|welcome)(\/|$)/.test(page.url.pathname)
+		Boolean(data?.sideNav) && !/^\/(watch|tv|strip-maker|skip-maker|speech-maker|login|welcome)(\/|$)/.test(page.url.pathname)
 	);
 
 	// On a TV (the Fire TV app), the remote's arrows move around the page.

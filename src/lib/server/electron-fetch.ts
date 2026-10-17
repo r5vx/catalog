@@ -40,6 +40,15 @@ try {
 		process.on('message', (msg: unknown) => {
 			const m = msg as Record<string, unknown>;
 			if (m?.id && typeof m.id === 'string' && pending.has(m.id)) {
+				if (m.type === 'febbox-list-result') {
+					pending.get(m.id)!({
+						status: (m.status as number) ?? 0,
+						body: (m.body as string) ?? '',
+						challenged: Boolean(m.challenged),
+						error: m.error as string | undefined
+					});
+					pending.delete(m.id);
+				}
 				if (m.type === 'fetch-febbox-result') {
 					pending.get(m.id)!({
 						status: (m.status as number) ?? 0,
@@ -108,6 +117,25 @@ export function electronFetch(
 		pending.set(id, resolve as (r: FetchResult | VideoUrlResult) => void);
 		process.send!({ type: 'fetch-febbox', id, url, options });
 
+		setTimeout(() => {
+			if (pending.has(id)) {
+				pending.delete(id);
+				resolve({ status: 0, body: '', error: 'timeout' });
+			}
+		}, 15000);
+	});
+}
+
+/**
+ * One page of a Febbox folder listing, asked by the desktop app as its browser, with its cookies
+ * (electron/main.cjs, `febboxList`). Null outside the app.
+ */
+export function electronFebboxList(url: string): Promise<(FetchResult & { challenged?: boolean }) | null> {
+	if (typeof process.send !== 'function') return Promise.resolve(null);
+	const id = String(++counter);
+	return new Promise((resolve) => {
+		pending.set(id, resolve as (r: FetchResult | VideoUrlResult) => void);
+		process.send!({ type: 'febbox-list', id, url });
 		setTimeout(() => {
 			if (pending.has(id)) {
 				pending.delete(id);

@@ -49,9 +49,13 @@
 		checkingWatch = true;
 		const params = new URLSearchParams({ title: details.title ?? '', type: data.watchType });
 		if (details.year) params.set('year', String(details.year));
-		fetch(`/api/watch/available?${params}`)
-			.then((r) => r.json())
-			.then((d) => { watchAvailable = d.available; })
+		const ask = () => fetch(`/api/watch/available?${params}`).then((r) => r.json());
+		ask()
+			.then((d) => {
+				watchAvailable = d.available;
+				// Not sure after 12 seconds: the check carries on, so it's asked once more a little later.
+				if (d.unsure) setTimeout(() => ask().then((again) => { if (again.available) watchAvailable = true; }).catch(() => {}), 6_000);
+			})
 			.catch(() => { watchAvailable = null; })
 			.finally(() => { checkingWatch = false; });
 	});

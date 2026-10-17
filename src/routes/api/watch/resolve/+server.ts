@@ -6,6 +6,7 @@ import {
 	listEpisodes,
 	listMovieFiles,
 	getStreamUrl,
+	FebboxRefused,
 	bestMatch,
 	resolveSlugId
 } from '$lib/server/showbox';
@@ -26,14 +27,17 @@ import type { FileOption } from '$lib/server/showbox';
 import type { RequestHandler } from './$types';
 
 /**
- * A show's Showbox episodes. Showbox's file host sometimes refuses or doesn't answer for a
- * moment, which reads as an empty folder, so an empty answer is asked again once, shortly after.
+ * A Showbox folder listing, or how long until Febbox will list again. Febbox's host refuses
+ * listings for a while after too many (febboxList.ts); that's "busy", never "no files" — taking it
+ * for "no files" is what made Spider-Man: Brand New Day's Showbox files vanish and stay gone.
  */
-async function listShowboxEpisodes(shareUrl: string) {
-	const listed = await listEpisodes(shareUrl);
-	if (listed.episodes.length) return listed;
-	await new Promise((resolve) => setTimeout(resolve, 1500));
-	return listEpisodes(shareUrl);
+async function listing<T>(work: Promise<T>): Promise<{ value: T } | { busy: number }> {
+	try {
+		return { value: await work };
+	} catch (e) {
+		if (e instanceof FebboxRefused) return { busy: Math.max(5, e.retryInSeconds) };
+		throw e;
+	}
 }
 
 /** TMDB's poster for a film, for one only another source has (no Showbox poster). */
@@ -115,6 +119,8 @@ export const GET: RequestHandler = async ({ url }) => {
 	let episodeData: unknown | undefined;
 	let movieFileList: unknown[] | undefined;
 	let startSeason = 0;
+	/** Seconds until Febbox lists folders again, when it refused Showbox's just now (else 0). */
+	let showboxBusy = 0;
 
 	if (cached && Date.now() - cached.time < RESOLVE_TTL) {
 		matchTitle = cached.match.title;
@@ -134,11 +140,21 @@ export const GET: RequestHandler = async ({ url }) => {
 		if (saved) {
 			const shareUrl = `https://www.febbox.com/share/${saved.shareKey}`;
 			if (saved.type === 'tv') {
-				const listed = await listShowboxEpisodes(shareUrl);
-				if (listed.episodes.length) { episodeData = listed; restored = true; }
+				const listed = await listing(listEpisodes(shareUrl));
+				if ('busy' in listed) showboxBusy = listed.busy;
+				else if (listed.value.episodes.length) { episodeData = listed.value; restored = true; }
 			} else {
-				const [files, sevenMovies] = await Promise.all([listMovieFiles(shareUrl), filmCopies(title, year)]);
-				if (files.length) { movieFileList = [...files, ...sevenMovies]; restored = true; }
+				const [listed, sevenMovies] = await Promise.all([listing(listMovieFiles(shareUrl)), filmCopies(title, year)]);
+				if ('busy' in listed) {
+					// Febbox busy: the match stays; 7Movies plays meanwhile, and Showbox's files join
+					// when the player asks again.
+					showboxBusy = listed.busy;
+					if (!sevenMovies.length) return json({ error: 'busy', retryIn: showboxBusy });
+					matchTitle = saved.title;
+					matchType = 'movie';
+					movieFileList = sevenMovies;
+					otherInstead = true;
+				} else if (listed.value.length) { movieFileList = [...listed.value, ...sevenMovies]; restored = true; }
 			}
 			if (restored) {
 				matchTitle = saved.title;
@@ -148,9 +164,8 @@ export const GET: RequestHandler = async ({ url }) => {
 				shareKey = saved.shareKey;
 				startSeason = saved.startSeason;
 			} else if (saved.type === 'tv') {
-				// An empty folder is almost always Showbox's file host refusing for a while (too many
-				// listings), not the show being gone — so the match is kept, and another source plays
-				// it in the meantime if it has it.
+				// Busy, or an empty folder (which can be the host acting up too): the match is kept,
+				// and another source plays it in the meantime if it has it.
 				const other = await fromOtherSources(saved.title, year);
 				if (other) {
 					matchTitle = other.title;
@@ -158,8 +173,11 @@ export const GET: RequestHandler = async ({ url }) => {
 					episodeData = other.episodes;
 					startSeason = other.startSeason;
 					otherInstead = true;
+				} else if (showboxBusy) {
+					return json({ error: 'busy', retryIn: showboxBusy });
 				}
-			} else {
+			} else if (!otherInstead) {
+				// Listed, and really empty: the film's gone from that folder; looked for afresh.
 				forgetShowboxMatch(cacheKey);
 			}
 		}
@@ -237,12 +255,14 @@ export const GET: RequestHandler = async ({ url }) => {
 				shareKey = sk;
 
 				if (match.type === 'tv') {
-					const listed = await listShowboxEpisodes(link);
+					const answer = await listing(listEpisodes(link));
+					if ('busy' in answer) showboxBusy = answer.busy;
+					const listed = 'busy' in answer ? { seasons: [], episodes: [], qualities: [] } : answer.value;
 					episodeData = listed;
 					if (!listed.episodes.length) {
-						// Same as above: another source plays it while Showbox's folder comes back empty.
+						// Same as above: another source plays it while Showbox's folder is busy or empty.
 						const other = await fromOtherSources(match.title, year);
-						if (!other) return json({ error: 'no_file' });
+						if (!other) return json(showboxBusy ? { error: 'busy', retryIn: showboxBusy } : { error: 'no_file' });
 						matchTitle = other.title;
 						episodeData = other.episodes;
 						startSeason = other.startSeason;
@@ -251,12 +271,18 @@ export const GET: RequestHandler = async ({ url }) => {
 					}
 				} else {
 					// Showbox's files, then 7Movies' (played when Showbox's won't, or picked).
-					const [files, sevenMovies] = await Promise.all([listMovieFiles(link), filmCopies(title, year)]);
-					if (!files.length && !sevenMovies.length) return json({ error: 'no_file' });
+					const [answer, sevenMovies] = await Promise.all([listing(listMovieFiles(link)), filmCopies(title, year)]);
+					if ('busy' in answer) {
+						showboxBusy = answer.busy;
+						otherInstead = true;
+					}
+					const files = 'busy' in answer ? [] : answer.value;
+					if (!files.length && !sevenMovies.length) return json(showboxBusy ? { error: 'busy', retryIn: showboxBusy } : { error: 'no_file' });
 					movieFileList = [...files, ...sevenMovies];
 				}
 
-				if (!otherInstead) saveShowboxMatch(cacheKey, {
+				// (Found on Showbox even when its folder was busy: next time skips the search.)
+				if (!otherInstead || showboxBusy) saveShowboxMatch(cacheKey, {
 					showboxId: matchId,
 					title: matchTitle,
 					type: matchType,
@@ -332,7 +358,9 @@ export const GET: RequestHandler = async ({ url }) => {
 			debug: streamDebug,
 			posterUrl,
 			libraryEntry,
-			startSeason
+			startSeason,
+			// Showbox's folder couldn't be listed just now: the player asks again in this many seconds.
+			showboxBusy
 		});
 	}
 
@@ -369,6 +397,7 @@ export const GET: RequestHandler = async ({ url }) => {
 		files,
 		debug: streamDebug,
 		posterUrl,
-		libraryEntry
+		libraryEntry,
+		showboxBusy
 	});
 };
