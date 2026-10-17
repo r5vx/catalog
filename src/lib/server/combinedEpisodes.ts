@@ -32,6 +32,7 @@ import {
 import { getOrderCache, saveOrderCache } from './db/queries';
 import { aniwaveFiles, aniwaveSeriesStarts, episodesBefore, type AniwaveCopies } from './sources';
 import { vidriftCopies } from './sources/vidrift';
+import { movyCopy } from './sources/movy';
 
 export type ListedEpisode = EpisodeInfo & {
 	/** The share this episode plays from, when it isn't the main entry's. */
@@ -435,8 +436,9 @@ export async function combineEpisodes(
 			}
 		}
 
-		// 7Movies: every episode TMDB says is out, by TMDB's own numbering (the same as its player
-		// uses), alongside the other sources' copies. Only when Showbox numbers seasons the same way.
+		// 7Movies and Movy: every episode TMDB says is out, by TMDB's own numbering (the same as
+		// their players use), alongside the other sources' copies. Only when Showbox numbers
+		// seasons the same way.
 		if (sameNumbering) {
 			const today = new Date().toISOString().slice(0, 10);
 			const out = show.seasons.filter((s) => s.number > 0 && s.count > 0);
@@ -445,7 +447,8 @@ export async function combineEpisodes(
 				for (let episode = 1; episode <= season.count; episode++) {
 					const aired = dates.get(episode);
 					if (!aired || aired > today) continue;
-					const files = vidriftCopies({ type: 'tv', id: show.id, season: season.number, episode });
+					const what = { type: 'tv' as const, id: show.id, season: season.number, episode };
+					const files = [...vidriftCopies(what), movyCopy(what)];
 					const listed = episodes.find((e) => e.season === season.number && e.episode === episode);
 					if (listed) listed.files = [...listed.files, ...files];
 					else episodes.push({ season: season.number, episode, files });

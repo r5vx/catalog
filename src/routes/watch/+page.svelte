@@ -156,15 +156,25 @@
 	 */
 	async function linkFor(files: FileOption[], file: FileOption): Promise<{ file: FileOption; url: string; debug?: string }> {
 		const others = files.filter((f) => f !== file && f.source && playableHere(f));
-		let debug: string | undefined;
-		for (const copy of [file, ...others]) {
+		const ask = async (copy: FileOption): Promise<{ url: string; debug?: string }> => {
 			try {
 				const resp = await fetch(`/api/watch/stream?share_key=${shareOf(copy)}&fid=${copy.fid}`);
-				if (!resp.ok) continue;
-				const data = await resp.json();
-				if (data.url) return { file: copy, url: data.url, debug: data.debug };
-				debug = data.debug ?? debug;
-			} catch {}
+				return resp.ok ? await resp.json() : { url: '' };
+			} catch {
+				return { url: '' };
+			}
+		};
+		// Showbox has nothing here: every other source is asked at once (Movy's lookup takes
+		// 10–30 s), and the first in order that has it plays. With a Showbox file (even when
+		// another source's copy was picked), the others are only asked if the pick fails.
+		const all = [file, ...others];
+		const showboxHasIt = files.some((f) => !f.source && playableHere(f));
+		const asked = showboxHasIt ? [] : all.map(ask);
+		let debug: string | undefined;
+		for (const [i, copy] of all.entries()) {
+			const data = await (asked[i] ?? ask(copy));
+			if (data.url) return { file: copy, url: data.url, debug: data.debug };
+			debug = data.debug ?? debug;
 		}
 		return { file, url: '', debug };
 	}
@@ -349,6 +359,13 @@
 	let refreshingStream = false;
 	/** Bumped to reload the player even when a fresh link comes back identical. */
 	let streamNonce = $state(0);
+	/**
+	 * Long video pieces come in short parts through the relay (relayPieces.ts). If a video in
+	 * parts gets stuck or fails, it's reloaded with its pieces whole — exactly as before parts
+	 * existed — for the rest of this visit, so the change can never leave a video worse off.
+	 */
+	let piecesWhole = false;
+	const withPieces = (url: string) => (piecesWhole && url.startsWith('/api/watch/relay?') ? `${url}&whole=1` : url);
 	let streamRefreshes = 0;
 	let lastRefreshAt = 0;
 	let stalledOut = $state(false);
@@ -1372,11 +1389,12 @@
 		return true;
 	}
 
-	// When the controls fade, let go of the highlighted button so the arrows skip again.
+	// When the controls fade, let go of the highlighted button so the arrows skip again (and
+	// OK can't press a top-bar button nobody can see).
 	$effect(() => {
 		if (!tvMode || showControls) return;
 		const current = document.activeElement as HTMLElement | null;
-		if (current && playerPageEl?.querySelector('.controls')?.contains(current)) current.blur();
+		if (current && current.closest('.controls, .player-bar') && playerPageEl?.contains(current)) current.blur();
 	});
 
 	// Fill the TV once it starts playing. (Needs the press that opened it to still count;
@@ -1912,6 +1930,7 @@
 		}
 		streamRefreshes++;
 		lastRefreshAt = now;
+		if (hlsInstance?.levels.some((l) => l.details?.fragments.some((f) => f.url.includes('&part=')))) piecesWhole = true;
 
 		refreshingStream = true;
 		const savedTime = videoEl.currentTime || seekAfterLoad;
@@ -2952,7 +2971,7 @@
 			hls.subtitleDisplay = false;
 			appendedSound = [];
 			hls.on(Hls.Events.BUFFER_APPENDING, (_e, data) => noteAppendedSound(data.type, data.data, data.frag ?? null));
-			hls.loadSource(streamUrl);
+			hls.loadSource(withPieces(streamUrl));
 			hls.attachMedia(videoEl);
 			hls.on(Hls.Events.FRAG_LOADED, markBytes);
 			hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -3804,7 +3823,7 @@
 	>
 		<div
 			class="player-bar"
-			class:bar-hidden={isFullscreen && !showControls}
+			class:bar-hidden={(isFullscreen || tvMode) && !showControls}
 			onmouseenter={() => { showControls = true; if (controlsTimer) clearTimeout(controlsTimer); }}
 			onmouseleave={scheduleHide}
 		>

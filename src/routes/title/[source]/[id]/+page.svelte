@@ -1,4 +1,6 @@
 <script lang="ts">
+	import SourceChecks from '$lib/SourceChecks.svelte';
+	import { checkWatchable, type SourceCheck } from '$lib/watchCheck';
 	import { page } from '$app/state';
 	import ScoreStrip from '$lib/ScoreStrip.svelte';
 	import Synopsis from '$lib/Synopsis.svelte';
@@ -42,22 +44,19 @@
 	let selectedStatus = $state(untrack(() => (data.details.unreleased ? 'planned' : 'completed')));
 
 	let watchAvailable = $state<boolean | null>(null);
-	let checkingWatch = $state(false);
+	let watchSources = $state<SourceCheck[]>([]);
 
+	// Every source asked at once; each one's progress shows under the button while it waits.
 	$effect(() => {
 		if (details.unreleased) return;
-		checkingWatch = true;
 		const params = new URLSearchParams({ title: details.title ?? '', type: data.watchType });
 		if (details.year) params.set('year', String(details.year));
-		const ask = () => fetch(`/api/watch/available?${params}`).then((r) => r.json());
-		ask()
-			.then((d) => {
-				watchAvailable = d.available;
-				// Not sure after 12 seconds: the check carries on, so it's asked once more a little later.
-				if (d.unsure) setTimeout(() => ask().then((again) => { if (again.available) watchAvailable = true; }).catch(() => {}), 6_000);
-			})
-			.catch(() => { watchAvailable = null; })
-			.finally(() => { checkingWatch = false; });
+		watchAvailable = null;
+		watchSources = [];
+		return checkWatchable(params, (available, sources) => {
+			watchAvailable = available;
+			watchSources = sources;
+		});
 	});
 
 	const facts = $derived(
@@ -150,6 +149,7 @@
 				{/if}
 				{#if addError}<p class="add-error">{addError}</p>{/if}
 			</div>
+			{#if !details.unreleased}<SourceChecks sources={watchSources} />{/if}
 		</div>
 	</header>
 
