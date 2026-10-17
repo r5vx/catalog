@@ -3,6 +3,7 @@ import { getStreamUrl, invalidateStreamCache } from '$lib/server/showbox';
 import { readSettings } from '$lib/server/settings';
 import { aniwaveStream, parseAniwaveShareKey } from '$lib/server/sources/aniwave';
 import { vidriftStream, parseVidriftShareKey } from '$lib/server/sources/vidrift';
+import { movyStream, parseMovyShareKey } from '$lib/server/sources/movy';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ url }) => {
@@ -25,6 +26,13 @@ export const GET: RequestHandler = async ({ url }) => {
 	if (parseVidriftShareKey(shareKey)) {
 		const playlist = await vidriftStream(shareKey, refresh);
 		if (!playlist) return json({ url: '', debug: '7Movies has nothing for this right now' });
+		return json({ url: `/api/watch/relay?u=${encodeURIComponent(playlist)}` });
+	}
+
+	// Movy: found by its own page, out of sight (sources/movy.ts); played through the relay.
+	if (parseMovyShareKey(shareKey)) {
+		const playlist = await movyStream(shareKey, refresh);
+		if (!playlist) return json({ url: '', debug: 'Movy has nothing for this right now' });
 		return json({ url: `/api/watch/relay?u=${encodeURIComponent(playlist)}` });
 	}
 

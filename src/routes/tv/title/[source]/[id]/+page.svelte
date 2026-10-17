@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { playHref, bigPicture } from '$lib/tv/tiles';
 	import { tvFocus } from '$lib/tvNav';
 	import type { PageData } from './$types';
@@ -74,23 +75,19 @@
 	 * When the player numbers the show its own way (Showbox's seasons: Bleach is 2 seasons on TMDB,
 	 * 18 in the player), the seasons and episodes here become the player's, so picking one opens
 	 * exactly that one. Asked a second after the page opens, so flicking through titles doesn't
-	 * ask Showbox about each one.
+	 * ask Showbox about each one — and asked again while the answer says it's incomplete (Febbox
+	 * refusing for a moment: Bleach showed TMDB's 2 seasons until the player was opened).
 	 */
-	type PlayerList = {
-		title: string;
-		seasons: { number: number; count: number }[];
-		episodes: { season: number; episode: number; available: boolean; airDate: string | null }[];
-	};
+	type PlayerList = NonNullable<typeof data.keptList>;
 	let playerList = $state<PlayerList | null>(null);
 	$effect(() => {
 		const show = data.show;
 		if (!show || data.type !== 'tv') return;
 		const params = new URLSearchParams({ title: playTitle, year: data.continuing ? '' : String(d.year ?? '') });
 		playerList = null;
-		const timer = setTimeout(async () => {
-			const list: PlayerList | null = await fetch(`/api/tv/player-episodes?${params}`)
-				.then((r) => (r.ok ? r.json() : null))
-				.catch(() => null);
+		let tries = 0;
+		let timer: ReturnType<typeof setTimeout>;
+		const use = (list: PlayerList | null) => {
 			if (!list?.seasons?.length) return;
 			const same =
 				list.seasons.length === show.seasons.length &&
@@ -101,7 +98,17 @@
 			if (!list.seasons.some((s) => s.number === season)) {
 				season = list.seasons.some((s) => s.number === resumeSeason) ? resumeSeason : list.seasons[0].number;
 			}
-		}, 1000);
+		};
+		const ask = async () => {
+			const list: PlayerList | null = await fetch(`/api/tv/player-episodes?${params}`)
+				.then((r) => (r.ok ? r.json() : null))
+				.catch(() => null);
+			if (list?.retryIn && ++tries <= 4) timer = setTimeout(ask, Math.min(60, Math.max(5, list.retryIn)) * 1000);
+			use(list);
+		};
+		// Last time's list straight away; asked again a second later (new episodes).
+		untrack(() => use(data.keptList));
+		timer = setTimeout(ask, 1000);
 		return () => clearTimeout(timer);
 	});
 	const seasonsShown = $derived(playerList?.seasons ?? data.show?.seasons ?? []);

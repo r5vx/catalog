@@ -116,6 +116,135 @@ function sourcesSession() {
 
 let pageAnswerQueue = Promise.resolve();
 
+/* ------------------------------------------------- movy.sx: its own page finds the video */
+
+/**
+ * movy.sx's lookups only answer its own page (a fresh code each time, scrambled answers), so
+ * Catalog opens that page out of sight and notes the video playlist its player asks for, then
+ * closes it — nothing of movy's is copied or undone. Its own addresses (movy.sx, its lookup
+ * service) load as normal; from anywhere else only plain requests go through (the video's
+ * playlist), never scripts, frames or pictures, which is all its ads are. Pop-ups are refused,
+ * it can't leave its own site, and it asks for no permissions.
+ * Two at once at most (two TVs starting different things); the rest wait their turn.
+ */
+const MOVY_OWN = /(^|\.)(movy\.sx|wecollege\.net)$/;
+const MOVY_AT_ONCE = 2;
+/** Its servers that only have dubbed copies (the last five in its menu). */
+const MOVY_DUBS = new Set(['munich', 'berlin', 'paris', 'delhi', 'cancun']);
+let movySessionReady = false;
+let movyRunning = 0;
+const movyWaiting = [];
+
+function movySession() {
+	const movy = session.fromPartition('persist:movy');
+	if (movySessionReady) return movy;
+	movySessionReady = true;
+	movy.setUserAgent(movy.getUserAgent().replace(/\s*Electron\/\S+/, '').replace(/\s*catalog\/\S+/i, ''));
+	movy.webRequest.onBeforeRequest((details, callback) => {
+		let host = '';
+		try {
+			host = new URL(details.url).hostname;
+		} catch {}
+		const own = MOVY_OWN.test(host) || /^(data|blob):/.test(details.url);
+		callback({ cancel: !own && details.resourceType !== 'xhr' });
+	});
+	movy.setPermissionRequestHandler((_contents, _permission, done) => done(false));
+	return movy;
+}
+
+/**
+ * One lookup: { url } of the video's playlist, or { url: '' } (with why) if none came.
+ * `onStop` is handed a function that ends it early (Catalog no longer needs it).
+ */
+function findOnMovyNow(pageUrl, onStop) {
+	return new Promise((resolve) => {
+		let win = null;
+		let finished = false;
+		const finish = (result) => {
+			if (finished) return;
+			finished = true;
+			clearTimeout(timer);
+			try {
+				if (win && !win.isDestroyed()) win.destroy();
+			} catch {}
+			resolve(result);
+		};
+		// Its servers are tried one after another: an obscure film was found by the 12th, 21 s in,
+		// and getting through all the original-audio ones takes about 30 s.
+		const timer = setTimeout(() => finish({ url: '', error: 'timeout' }), 50000);
+		onStop(() => finish({ url: '', error: 'cancelled' }));
+		try {
+			movySession();
+			win = new BrowserWindow({
+				show: false,
+				webPreferences: { partition: 'persist:movy', contextIsolation: true, nodeIntegration: false, backgroundThrottling: false }
+			});
+			win.webContents.setAudioMuted(true);
+			win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+			win.webContents.on('will-navigate', (event, url) => {
+				try {
+					if (!MOVY_OWN.test(new URL(url).hostname)) event.preventDefault();
+				} catch {
+					event.preventDefault();
+				}
+			});
+			const dbg = win.webContents.debugger;
+			dbg.attach('1.3');
+			dbg.sendCommand('Network.enable').catch(() => {});
+			dbg.on('message', (_event, method, params) => {
+				// Its servers are tried in its menu's order, and the last five only have dubs (Munich
+				// and Berlin German, Paris French, Delhi Hindi, Cancun Spanish): once it asks them,
+				// none of the original-audio ones had it. A "no" in ~28 s rather than waiting out all
+				// 18 (~50 s, the last answering "OK" with nothing in it) — and never a dub.
+				if (method === 'Network.requestWillBeSent') {
+					const server = params.request.url.match(/wecollege\.net\/([a-z]+)\/sources/)?.[1];
+					if (server && MOVY_DUBS.has(server)) finish({ url: '', error: 'none' });
+					return;
+				}
+				if (method !== 'Network.responseReceived') return;
+				const { url, status, mimeType } = params.response;
+				let host = '';
+				try {
+					host = new URL(url).hostname;
+				} catch {}
+				if (status === 200 && /mpegurl/i.test(mimeType) && !MOVY_OWN.test(host)) finish({ url });
+			});
+			win.loadURL(pageUrl).catch(() => {});
+		} catch (e) {
+			finish({ url: '', error: e.message });
+		}
+	});
+}
+
+/** Lookups that can still be called off, by the server's id for them. */
+const movyStops = new Map();
+
+function findOnMovy(pageUrl, id) {
+	return new Promise((resolve) => {
+		let stopped = false;
+		let stopRunning = null;
+		movyStops.set(id, () => {
+			stopped = true;
+			if (stopRunning) return stopRunning();
+			movyStops.delete(id);
+			resolve({ url: '', error: 'cancelled' });
+		});
+		const run = () => {
+			// Called off while waiting: the next one goes instead.
+			if (stopped) return void movyWaiting.shift()?.();
+			movyRunning++;
+			findOnMovyNow(pageUrl, (stop) => (stopRunning = stop)).then((result) => {
+				movyRunning--;
+				movyStops.delete(id);
+				resolve(result);
+				movyWaiting.shift()?.();
+			});
+		};
+		if (movyRunning < MOVY_AT_ONCE) run();
+		else movyWaiting.push(run);
+	});
+}
+
 /**
  * Opens `url` out of sight (muted, no pop-ups), waits for the page's own lookup whose address
  * contains `answerFrom`, and returns what it answered — read from Chromium's network log, the
@@ -288,10 +417,24 @@ function startServer() {
 
 		if (message?.type === 'check-for-updates') checkForUpdates();
 
+		if (message?.type === 'movy-find') {
+			findOnMovy(String(message.url), message.id).then((result) => server?.send({ type: 'movy-find-result', id: message.id, ...result }));
+		}
+
+		if (message?.type === 'movy-stop') movyStops.get(message.id)?.();
+
 		if (message?.type === 'page-answer') {
 			readPageAnswer(String(message.url), String(message.answerFrom), Boolean(message.visible)).then((result) =>
 				server?.send({ type: 'page-answer-result', id: message.id, ...result })
 			);
+		}
+
+		if (message?.type === 'install-update' && macUpdater) {
+			if (message.auto && !macUpdater.isReady()) return;
+			rememberUpdateAttempt();
+			// Swaps itself and starts again; if it can't, the Updates page says why.
+			macUpdater.install();
+			return;
 		}
 
 		if (message?.type === 'install-update') {
@@ -835,6 +978,22 @@ let updater = null;
 /** The version downloaded and waiting to be installed. */
 let readyVersion = null;
 
+/** On a Mac, Catalog's own updater instead (electron/macUpdate.cjs says why). */
+const macUpdater =
+	process.platform === 'darwin'
+		? require('./macUpdate.cjs').createMacUpdater({
+				app,
+				send: (state) => {
+					if (state.status === 'ready') readyVersion = state.version ?? null;
+					try {
+						console.log('[update]', state.status, state.percent ?? '', state.version ?? '');
+						server?.send({ type: 'update-state', state });
+					} catch {}
+				},
+				log: updateLog
+			})
+		: null;
+
 /**
  * What the updater did, kept in %APPDATA%\Catalog\update.log (the last 200 lines), so an update
  * that won't install on someone's PC can be looked into afterwards.
@@ -938,6 +1097,7 @@ function autoUpdater() {
 
 function checkForUpdates() {
 	if (SOURCE_MODE || !app.isPackaged) return;
+	if (macUpdater) return void macUpdater.check();
 
 	autoUpdater()
 		.checkForUpdates()
@@ -1322,6 +1482,7 @@ if (!app.requestSingleInstanceLock()) {
 
 		// Before the window, so its first look at /api/update already knows.
 		if (!SOURCE_MODE && app.isPackaged) reportFailedUpdate();
+		if (!SOURCE_MODE && app.isPackaged) macUpdater?.tidy();
 
 		createWindow();
 
@@ -1561,6 +1722,8 @@ if (!app.requestSingleInstanceLock()) {
 		quitting = true;
 		// Closing with an update waiting installs it: remembered, so the next start can check.
 		if (readyVersion && updater?.autoInstallOnAppQuit) rememberUpdateAttempt();
+		// On a Mac, a downloaded update is swapped in now, for next time (as on Windows).
+		if (macUpdater?.isReady() && macUpdater.install({ restart: false })) rememberUpdateAttempt();
 		tvDiscovery?.close();
 		stopServer();
 	});

@@ -345,7 +345,7 @@ async function upload() {
 
 **Windows** — Download **Catalog-Setup-${next}.exe** below. Copies already installed update themselves.
 
-**Mac** — Download the **.dmg** once it appears (built automatically). After installing, **right-click** Catalog and choose **Open** the first time. If that doesn't work, open Terminal and run:
+**Mac** — Copies from 3.2 on update themselves (Settings → Updates). To install Catalog for the first time, download the **.dmg** once it appears (built automatically), drag Catalog into Applications, then open Terminal and run:
 \`\`\`
 xattr -cr /Applications/Catalog.app
 \`\`\``

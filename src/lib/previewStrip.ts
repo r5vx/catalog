@@ -101,7 +101,9 @@ export class PreviewStrip {
 			}
 			this.pump();
 		});
-		hls.loadSource(this.url);
+		// Long pieces whole, not in parts (relayPieces.ts): only their first picture is wanted,
+		// and a part makes the computer fetch the whole piece.
+		hls.loadSource(this.url.startsWith('/api/watch/relay?') ? `${this.url}&whole=1` : this.url);
 		hls.attachMedia(video);
 		return copy;
 	}

@@ -37,6 +37,14 @@ jobs:
             echo "Signed $APP"
           fi
 
+      # What a Catalog already installed downloads to update itself (electron/macUpdate.cjs):
+      # the signed app, zipped with ditto so nothing a Mac app needs is lost.
+      - name: Zip the app for in-app updates
+        run: |
+          APP=$(find dist-app -name "Catalog.app" -maxdepth 2 | head -1)
+          VERSION=$(node -p "require('./package.json').version")
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "dist-app/Catalog-$VERSION-mac.zip"
+
       - name: Package into DMG
         run: |
           DIR=$(find dist-app -name "Catalog.app" -maxdepth 2 -exec dirname {} \; | head -1)
@@ -49,6 +57,8 @@ jobs:
           TAG="${{ github.event.inputs.tag || github.event.release.tag_name }}"
           DMG=$(ls dist-app/*.dmg | head -1)
           gh release upload "$TAG" "$DMG" --clobber
+          ZIP=$(ls dist-app/*-mac.zip | head -1)
+          gh release upload "$TAG" "$ZIP" --clobber
           if [ -f dist-app/latest-mac.yml ]; then
             gh release upload "$TAG" dist-app/latest-mac.yml --clobber
           fi

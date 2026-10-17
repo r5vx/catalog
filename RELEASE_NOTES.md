@@ -12,6 +12,22 @@ without both.
 
 ## Unreleased
 
+## 3.2.0 — 2026-10-17 — Movy, smoother 7Movies on TVs, and Mac updates without Terminal
+
+### New
+- **Player**: Movy as a fourth source, mostly for older films the other sources don't have, up to 1080p (found by the computer Catalog runs on, so TVs get it too)
+- **Updates**: on a Mac, Catalog downloads and installs its updates itself, with no Terminal step (from this version on)
+
+### Improved
+- **Watch**: while it checks whether something can be watched, each site shows under the button as it's looked through (Showbox, 7Movies, Aniwave, Movy), all at once; Watch appears the moment one has it, and the row stays to show which sites do
+- **Player**: when Showbox doesn't have something, every other source is asked at once instead of one after another
+
+### Fixed
+- **Player**: 7Movies episodes that kept stopping to load on a TV (SVU's newest) play smoothly: their long video pieces come in short parts (and if that ever gets stuck, the video goes back to whole pieces by itself)
+- **Player**: a TV on slow Wi-Fi no longer has video pieces cut off partway and downloaded again
+- **TV**: the top bar in the player hides again while watching
+- **TV**: a show's page opens with all its seasons (all of Bleach's) straight away, kept from last time, instead of only after opening an episode
+
 ## 3.1.0 — 2026-10-17 — Whole-episode subtitle timing, Skip Intro for more shows, and right-click to paste
 
 ### New

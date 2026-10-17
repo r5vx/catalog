@@ -23,6 +23,7 @@ import { combineEpisodes, tmdbShow, type EpisodeList } from '$lib/server/combine
 import { aniwaveFilm } from '$lib/server/sources';
 import { aniwaveStream, parseAniwaveShareKey } from '$lib/server/sources/aniwave';
 import { vidriftCopies } from '$lib/server/sources/vidrift';
+import { movyCopy } from '$lib/server/sources/movy';
 import type { FileOption } from '$lib/server/showbox';
 import type { RequestHandler } from './$types';
 
@@ -61,10 +62,12 @@ async function tmdbFilmId(title: string, year: string): Promise<number | null> {
 	return film?.id ?? null;
 }
 
-/** 7Movies' copies of a film, which play alongside (or instead of) Showbox's. */
+/** 7Movies' and Movy's copies of a film, which play alongside (or instead of) Showbox's. */
 async function filmCopies(title: string, year: string): Promise<FileOption[]> {
 	const id = await tmdbFilmId(title, year).catch(() => null);
-	return id ? vidriftCopies({ type: 'movie', id, season: 0, episode: 0 }) : [];
+	if (!id) return [];
+	const what = { type: 'movie' as const, id, season: 0, episode: 0 };
+	return [...vidriftCopies(what), movyCopy(what)];
 }
 
 async function findOnShowbox(title: string, type: string, year: string) {

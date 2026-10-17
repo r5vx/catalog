@@ -1,4 +1,6 @@
 <script lang="ts">
+	import SourceChecks from '$lib/SourceChecks.svelte';
+	import { checkWatchable, type SourceCheck } from '$lib/watchCheck';
 	import { watchTypeOf } from '$lib/watchType';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
@@ -53,26 +55,18 @@
 
 	// Asked once the page shows, as on a title's page from Browse, so Watch only shows when
 	// there's something to play.
+	// Every source asked at once; each one's progress shows under the button while it waits.
 	let watchAvailable = $state<boolean | null>(null);
+	let watchSources = $state<SourceCheck[]>([]);
 	$effect(() => {
 		const params = new URLSearchParams({ title: entry.title, type: watchType });
 		if (entry.year) params.set('year', String(entry.year));
 		watchAvailable = null;
-		let stop = false;
-		const ask = () => fetch(`/api/watch/available?${params}`).then((r) => r.json());
-		let again: ReturnType<typeof setTimeout> | undefined;
-		ask()
-			.then((d) => {
-				if (stop) return;
-				watchAvailable = d.available;
-				// Not sure after 12 seconds: the check carries on, so it's asked once more a little later.
-				if (d.unsure) again = setTimeout(() => ask().then((later) => { if (!stop && later.available) watchAvailable = true; }).catch(() => {}), 6_000);
-			})
-			.catch(() => {});
-		return () => {
-			stop = true;
-			clearTimeout(again);
-		};
+		watchSources = [];
+		return checkWatchable(params, (available, sources) => {
+			watchAvailable = available;
+			watchSources = sources;
+		});
 	});
 
 	const added = $derived(
@@ -283,6 +277,7 @@
 					{/if}
 				</span>
 			</div>
+			<SourceChecks sources={watchSources} />
 
 			{#if progressSummary(entry)}
 				<p class="airing muted">{progressSummary(entry)}</p>

@@ -81,6 +81,10 @@ try {
 					});
 					pending.delete(m.id);
 				}
+				if (m.type === 'movy-find-result') {
+					pending.get(m.id)!({ url: (m.url as string) ?? '', error: m.error as string | undefined });
+					pending.delete(m.id);
+				}
 				if (m.type === 'page-answer-result') {
 					pending.get(m.id)!({
 						body: (m.body as string) ?? '',
@@ -244,6 +248,31 @@ export function electronGetSubtitles(
  * `status` 403 means the site wants its human check first. With `visible`, its page is shown
  * so the owner can pass it, and this waits (up to three minutes) for the lookup to go through.
  */
+/**
+ * movy.sx's video playlist for a page of its (electron/main.cjs opens it out of sight and notes
+ * what its player asks for). `url` is empty when none came (it hasn't got it, or took too long).
+ */
+export function electronMovyFind(pageUrl: string, signal?: AbortSignal): Promise<{ url: string; error?: string }> {
+	if (typeof process.send !== 'function') {
+		return Promise.resolve({ url: '', error: 'not in Electron' });
+	}
+	if (signal?.aborted) return Promise.resolve({ url: '', error: 'cancelled' });
+	const id = String(++counter);
+	return new Promise((resolve) => {
+		pending.set(id, resolve);
+		process.send!({ type: 'movy-find', id, url: pageUrl });
+		// Called off (no longer needed, or making way): its window closes, its answer is 'cancelled'.
+		signal?.addEventListener('abort', () => process.send!({ type: 'movy-stop', id }), { once: true });
+		// Its own limit is 45 s, after waiting for its turn (two at once).
+		setTimeout(() => {
+			if (pending.has(id)) {
+				pending.delete(id);
+				resolve({ url: '', error: 'timeout' });
+			}
+		}, 150000);
+	});
+}
+
 export function electronPageAnswer(
 	pageUrl: string,
 	answerFrom: string,

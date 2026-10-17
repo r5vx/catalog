@@ -975,7 +975,7 @@ tries to get past it. Instead (`src/lib/server/febboxList.ts`):
 - every listing goes through one gate: two at a time, 250 ms apart (a show's season folders used
   to be asked all at once — 16+ for Bleach); same folder at once → one request; fresh for 20 min;
 - a refusal rests the gate (30 s doubling to 5 min) and falls back to the listing kept in
-  `watch_order_cache` (`febbox-list|share|parent`, a week); with none it throws `FebboxRefused`;
+  `watch_order_cache` (`febbox-list|share|parent`, a month); with none it throws `FebboxRefused`;
 - resolve treats `FebboxRefused` as busy: match kept (never `forgetShowboxMatch`), nothing cached,
   other sources play, `showboxBusy` seconds returned; the player re-asks then and adds Showbox's
   files without touching what's playing (or, with no other source, waits and retries);
@@ -983,6 +983,87 @@ tries to get past it. Instead (`src/lib/server/febboxList.ts`):
   the same Chrome identity as the player's link lookups (`febbox-list` IPC); `npm run dev` fetches
   directly (so the dev server sees refusals the app may not).
 Test: `scratchpad/gate.test.mjs` (fake Febbox: sharing, spacing, rests, kept fallback).
+Refusals do happen in normal use (the owner's own 3.1 logged four in an hour). While Showbox is
+busy, Bleach's list comes from Aniwave/7Movies in TMDB's numbering (2 seasons, not Showbox's 18),
+so `/api/tv/player-episodes` passes on `retryIn` and the TV title page asks again (up to 4 times).
+The last list Showbox answered for is kept (`tv-episodes|title|year`, 60 days, `keptPlayerList` in
+tvEpisodes.ts) and sent with the page itself, then looked up again in the background (10 min+).
+
+### Long video pieces, and TVs (2026-10-17, after 3.1)
+Mom's Fire TV kept stopping to load on SVU's newest episode (7Movies only); Bleach on Aniwave was
+fine. 7Movies' H.264 copies come in **36-second fMP4 pieces of ~28 MB** (Aniwave's are a few
+seconds), and all of it goes TV → laptop's relay → edge.reelvault.click. Three things went wrong:
+- the relay's `AbortSignal.timeout(30000)` covered the **whole** download, so a TV pulling a big
+  piece slowly got it cut off (measured: 19 of 28 MB at 600 KB/s), threw it away and started over.
+  Now `fetchSteadily` (relayPieces.ts): 30 s for the answer to start, then 30 s of silence at most;
+- hls.js only uses a piece once it's all there, and Android WebView's video memory is small
+  (Chromium: 150 MB, but ~30 MB on "low-end" ≤1 GB devices like smaller Fire TV sticks) — one
+  28 MB piece nearly fills it, the next can't be added (`bufferFullError`, piece thrown away);
+- so the relay **splits long pieces** (> 12 s, fMP4 with EXT-X-MAP, not locked or byte-ranged):
+  each is listed as ~6 s parts (`&part=k&of=n&len=&ts=&tk=`). Inside, every piece is several
+  `moof`+`mdat` chunks, each starting on a keyframe with `default-base-is-moof`, so any chunk
+  plays alone. Asking for any part downloads the whole piece once (kept a few minutes, 4 at
+  most) and each part is answered as soon as its chunks have arrived; parts are placed by each
+  chunk's `tfdt` on the video track's clock (from the init piece). Joined back, the parts are
+  byte-identical to the piece. The edge server ignores Range and needs vidrift's Referer, so the
+  TV can't fetch it directly. Progress-bar pictures ask with `&whole=1` (they only want each
+  piece's first frame; a part would make the laptop fetch the whole piece);
+- safety net: if a video in parts gets stuck or fails (any `refreshStream`), the player reloads it
+  with `&whole=1` for the rest of the visit (`piecesWhole`) — exactly the old behavior. (A smaller
+  TV buffer was tried and taken back out: the owner didn't want Aniwave on the brother's TV
+  touched, and with short parts hls.js copes with the WebView's memory by itself);
+- the TV's top bar only hid in full screen, and full screen needs the press that opened the
+  episode to still count (~5 s): a slow start left the bar up for good. On a TV it now hides
+  with the controls either way, and a hidden top-bar button loses the highlight.
+
+### The Watch button's check, as it goes
+`availability.ts` notes each source's progress (`noted`, `progress` map, kept a minute after);
+`/api/watch/available?now=1` answers at once with `{ available | null, sources }`, and the title
+and entry pages poll it every second (`src/lib/watchCheck.ts`) with `SourceChecks.svelte` under
+the button. No 12-second limit or "unsure" there any more (the old blocking call still exists).
+
+### Movy (movy.sx), the fourth source (2026-10-17)
+For old films Showbox and 7Movies lack (The She Beast, Miami Beach). Keyed by TMDB id
+(`/movie/<id>?play=true`, `/tv/<id>/<s>/<e>?play=true`). Its lookup (`api.wecollege.net/<city>/
+sources`) needs a fresh seed and answers scrambled, so nothing of it is copied: the desktop app
+opens movy's page out of sight (`findOnMovy` in electron/main.cjs, session `persist:movy`) and
+notes the playlist its player asks for (any 200 `mpegurl` response not from movy). Only its own
+hosts load scripts/frames/images — every ad network is blocked — pop-ups refused, no leaving the
+site. It tries its 18 servers one after another, in its menu's order (a "favorite" in
+localStorage `app-favorite-provider` goes first, then the list from the top — so splitting the
+list across windows wouldn't help). A hit takes ~5–30 s (Miami Beach: Tampa, the 12th). The last
+five only carry dubs (Munich/Berlin German, Paris French, Delhi Hindi, Cancun Spanish — the
+last answers 200 with nothing): the moment it asks one of them, it's a "no" (kept 6 h), ~30 s,
+and a dub is never played. Before, a "no" waited out a 75 s limit and, queued, took the owner
+3 minutes (The Narrow Trail, 1917); now 34 s. 50 s limit. Two windows at once at most.
+- `sources/movy.ts`: fid -5, share key `movy:<type>:<id>:<s>:<e>`, listed after 7Movies on every
+  film and aired episode. Answers kept (yes 40 min, links are short-lived). Same title asked
+  twice shares one lookup. Its own queue, two at once: something about to play is urgent — it
+  goes first and a running Watch-button check makes way at once (`MADE_WAY`: back in line), via
+  `movy-stop` IPC closing that window. The owner's first try (The Narrow Margin) took 2–3 min
+  queued behind checks of titles looked at on the way, though movy itself found it in 5 s; now
+  6.8 s after flicking through four titles. A Watch check runs while its title is the latest one
+  asked about or its page still polls (`availability.ts` `latest`/`lastAsked`), and isn't started
+  once another source has it unless it's the title being looked at.
+- Video: `sun.paleoak.top`, needs `Referer: https://www.movy.sx/`, H.264 up to 1080p, 5 s TS
+  pieces labelled text/html (relay relabels). ~2 Mbps per download, a 6th at once refused (38 B):
+  `relayReadAhead.ts` fetches the next 3 pieces while one plays — 60 s of 1080p in 20 s, played
+  with no stops, 268 s ahead.
+- Player `linkFor`: with no Showbox file, every other copy is asked at once; first in order wins.
+- Only in the desktop app (`npm run dev` has no Electron: Movy never has anything there). Test
+  with `CATALOG_PORT=5299 CATALOG_DB=<copy> electron . --user-data-dir=<scratch>`.
+- Good Mythical Morning: movy lists it but none of its servers have the episodes tried.
+
+### Mac updates without Terminal
+electron-updater can't install on a Mac without an Apple developer certificate, and every .dmg a
+browser downloads is quarantined (hence `xattr -cr`). `electron/macUpdate.cjs`: Catalog reads the
+newest version from `latest.yml`, downloads `Catalog-<v>-mac.zip` (zipped with `ditto` in
+build-mac.yml from the ad-hoc-signed app) itself — files an app downloads aren't quarantined —
+unpacks it with `ditto`, checks its version (PlistBuddy), and on install renames the running
+Catalog.app aside (`.Catalog-old-*.app`, deleted at next start), renames the new one in, and
+relaunches; or swaps it in on quit, as Windows does. 404 for the zip (Mac build still running)
+just means "next check". Not yet tried on a real Mac: the first install of a version with it
+still needs the .dmg and Terminal once.
 
 ### AniList's rate limit
 `fetchDetails` keeps every title's answer (`details|source|id` in watch_order_cache): AniList's is

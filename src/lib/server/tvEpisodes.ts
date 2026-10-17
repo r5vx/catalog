@@ -79,3 +79,28 @@ export async function seasonEpisodes(showId: number, season: number): Promise<Tv
 	saveOrderCache(key, episodes, Date.now());
 	return episodes;
 }
+
+/* ------------------------------------------------ the player's own list, kept */
+
+/** A show's episode list as the player numbers it, for the TV's title page (/api/tv/player-episodes). */
+export type PlayerList = {
+	title: string;
+	retryIn?: number;
+	seasons: { number: number; count: number }[];
+	episodes: { season: number; episode: number; available: boolean; airDate: string | null }[];
+};
+
+/** A complete list is kept this long (looked up again in the background each visit). */
+const PLAYER_LIST_KEPT = 60 * 24 * 60 * 60 * 1000;
+
+const playerListKey = (title: string, year: string) => `tv-episodes|${title.toLowerCase()}|${year}`;
+
+export function keptPlayerList(title: string, year: string): { list: PlayerList; at: number } | null {
+	const kept = getOrderCache(playerListKey(title, year));
+	return kept && Date.now() - kept.at < PLAYER_LIST_KEPT ? { list: kept.value as PlayerList, at: kept.at } : null;
+}
+
+export function keepPlayerList(title: string, year: string, list: PlayerList): void {
+	saveOrderCache(playerListKey(title, year), list, Date.now());
+}
+

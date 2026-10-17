@@ -5,7 +5,7 @@ import { anilistResting } from '$lib/server/metadata/anilistNodes';
 import { entryIdForSource, entryIdForShow, entryIdByTitle, getEntry, continueWatchingList, profileTitleFor } from '$lib/server/db/queries';
 import { currentProfile, MAIN_PROFILE } from '$lib/server/profile';
 import { showRoots } from '$lib/server/metadata/franchise';
-import { showSeasons } from '$lib/server/tvEpisodes';
+import { keptPlayerList, showSeasons } from '$lib/server/tvEpisodes';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -47,11 +47,16 @@ export const load: PageServerLoad = async ({ params }) => {
 		season = sameYear || show.seasons[0]?.number || 0;
 	}
 
+	// The player's own list from last time (all of Bleach's 18 seasons), so it's there at once.
+	const playTitle = continuing?.title ?? entry?.title ?? details.title;
+	const keptList = show ? (keptPlayerList(playTitle, continuing ? '' : String(details.year ?? ''))?.list ?? null) : null;
+
 	return {
 		source,
 		id,
 		type,
 		show: show && show.seasons.length ? { ...show, season } : null,
+		keptList,
 		details: {
 			title: details.title,
 			year: details.year,

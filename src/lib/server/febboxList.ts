@@ -12,7 +12,7 @@
  *   - after a refusal, no listings at all for a while (30 s, doubling up to 5 minutes);
  *   - a folder listed in the last 20 minutes isn't asked again, and the same folder asked for
  *     twice at once is asked once;
- *   - a refusal falls back to the last listing kept (a week), and only when there is none does
+ *   - a refusal falls back to the last listing kept (a month), and only when there is none does
  *     it say so — as `FebboxRefused`, never as an empty folder.
  */
 import { getOrderCache, saveOrderCache } from './db/queries';
@@ -31,7 +31,7 @@ export class FebboxRefused extends Error {
 }
 
 const FRESH = 20 * 60 * 1000;
-const KEPT = 7 * 24 * 60 * 60 * 1000;
+const KEPT = 30 * 24 * 60 * 60 * 1000;
 const SPACING = 250; // ms after each listing request before its lane takes the next
 const FIRST_REST = 30_000;
 const LONGEST_REST = 5 * 60_000;
