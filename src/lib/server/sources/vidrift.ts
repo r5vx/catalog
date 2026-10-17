@@ -13,6 +13,7 @@
  * server's pieces — come through Catalog's relay (`/api/watch/relay`).
  */
 import type { FileOption } from '../showbox';
+import { trustVideoHost } from '../relayHosts';
 
 const BASE = 'https://embed.vidrift.net';
 const PLAYER = `${BASE}/embed2/play`;
@@ -135,14 +136,25 @@ export async function vidriftStream(shareKey: string, fresh = false): Promise<st
 		const first = answer?.success ? answer.streams?.find((s) => s.proxyUrl || s.url) : undefined;
 		if (first) url = new URL(first.proxyUrl || first.url!, BASE).href;
 	}
-	if (!url || !(await isPlaylist(url))) return null;
+	if (!url) return null;
+	// Its server (edge.reelvault.click for the H.264 copies) may now be fetched through the relay.
+	trustVideoHost(url, 'vidrift');
+	if (!(await isPlaylist(url))) return null;
 	streams.set(shareKey, { at: Date.now(), url });
 	return url;
 }
 
-/** Whether 7Movies has a film or episode at all (for the Watch button's check). */
+/**
+ * Whether 7Movies has a film or episode at all (for the Watch button's check). Its opening
+ * answer listing an Orion playlist is enough (instant). Without one only the H.264 server can
+ * say, and its lookup takes 6–15 s — the opening answer's token says nothing, every id gets one,
+ * even made-up ones — so that's asked last, and the check as a whole has a time limit
+ * (availability.ts). Before, both copies' links were fetched in turn, up to 15 s each step.
+ */
 export async function onVidrift(what: Omit<What, 'season' | 'episode'> & { season?: number; episode?: number }): Promise<boolean> {
 	const full = { season: 0, episode: 0, ...what };
-	if (await vidriftStream(vidriftShareKey(full, 'hevc'))) return true;
+	const meta = (await boot(full))?.meta;
+	if (!meta || meta.unreleased) return false;
+	if (meta.orionStreams?.length) return true;
 	return Boolean(await vidriftStream(vidriftShareKey(full, 'avc')));
 }

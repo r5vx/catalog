@@ -1,4 +1,5 @@
-import { noteRefusal } from './slowRequests';
+import { febboxListing, FebboxRefused } from './febboxList';
+export { FebboxRefused };
 import { electronFetch, electronGetVideoUrl, electronGetSubtitles } from './electron-fetch';
 import { withoutQualifier } from './metadata/types';
 
@@ -191,28 +192,25 @@ export async function searchShowbox(query: string): Promise<ShowboxResult[]> {
 
 	if (merged.length > 0) return sortByRelevance(merged, query);
 
-	if (query.includes(':') || query.includes(' - ')) {
-		const parts = query.split(/[:–—]\s*/).map((s) => s.trim()).filter(Boolean);
-		for (const part of parts) {
-			addResults(await rawSearch(part));
-			if (merged.length > 0) return sortByRelevance(merged, query);
-		}
-	}
-
-	const words = query.split(/\s+/).filter((w) => w.length > 0);
-	if (words.length <= 1) return merged;
-
+	// Nothing for the whole name: parts of it, all asked at once (one after another made a
+	// missing title's check slow), the first in this order that finds anything wins.
 	const tries: string[] = [];
-	if (words.length > 2) {
-		tries.push(words.slice(1).join(' '));
-		tries.push(words.slice(0, -1).join(' '));
+	if (query.includes(':') || query.includes(' - ')) {
+		tries.push(...query.split(/[:–—]\s*/).map((s) => s.trim()).filter(Boolean));
 	}
-	if (words.length > 3) tries.push(words.slice(0, 3).join(' '));
-	tries.push(words.slice(0, 2).join(' '));
-	if (words.length > 2) tries.push(words.slice(-2).join(' '));
-
-	for (const t of tries) {
-		addResults(await rawSearch(t));
+	const words = query.split(/\s+/).filter((w) => w.length > 0);
+	if (words.length > 1) {
+		if (words.length > 2) {
+			tries.push(words.slice(1).join(' '));
+			tries.push(words.slice(0, -1).join(' '));
+		}
+		if (words.length > 3) tries.push(words.slice(0, 3).join(' '));
+		tries.push(words.slice(0, 2).join(' '));
+		if (words.length > 2) tries.push(words.slice(-2).join(' '));
+	}
+	const answers = await Promise.all(tries.map(rawSearch));
+	for (const answer of answers) {
+		addResults(answer);
 		if (merged.length > 0) return sortByRelevance(merged, query);
 	}
 
@@ -258,41 +256,22 @@ export function extractShareKey(url: string): string | null {
 	return m?.[1] ?? null;
 }
 
+/**
+ * A folder's files. Through the one gate every Febbox listing goes through (febboxList.ts: one at
+ * a time, rests after a refusal, recent listings reused). Throws `FebboxRefused` when Febbox won't
+ * list it right now and none was kept — callers must not take that as "no files".
+ */
 export async function listFebboxFiles(
 	shareUrl: string,
 	parentId = 0
 ): Promise<FebboxFile[]> {
 	const key = extractShareKey(shareUrl);
 	if (!key) return [];
-
-	// A folder comes 50 files at a time (Black Clover's season 1 has 170): every page, in turn.
-	const list: Record<string, unknown>[] = [];
-	for (let page = 1; page <= 20; page++) {
-		const data = await getJson(
-			`https://www.febbox.com/file/file_share_list?share_key=${key}&pwd=&parent_id=${parentId}&page=${page}`,
-			{
-				headers: {
-					'User-Agent':
-						'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-					Referer: 'https://www.febbox.com/'
-				}
-			}
-		);
-		const files = data?.data?.file_list;
-		if (!Array.isArray(files)) {
-			// A reply without a file list is the host saying no (busy, too many requests…): noted on
-			// /api/diagnostics, since to the player it looks just like an empty folder.
-			if (data) noteRefusal('www.febbox.com', '/file/file_share_list', `answered: ${data.msg ?? data.code ?? 'no file list'}`);
-			// A later page refused: what came before still counts.
-			if (page === 1) return [];
-			break;
-		}
-		const seen = new Set(list.map((f) => f.fid));
-		const fresh = files.filter((f: Record<string, unknown>) => !seen.has(f.fid));
-		list.push(...fresh);
-		if (files.length < 50 || !fresh.length) break;
-	}
-
+	const list = await febboxListing(key, parentId, {
+		'User-Agent':
+			'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+		Referer: 'https://www.febbox.com/'
+	});
 	return list.map((f: Record<string, unknown>) => ({
 		fid: Number(f.fid),
 		name: String(f.file_name ?? ''),
@@ -712,7 +691,8 @@ export async function findSubtitles(
 	shareUrl: string,
 	parentId = 0
 ): Promise<SubtitleOption[]> {
-	const files = await listFebboxFiles(shareUrl, parentId);
+	// Subtitles kept in the folder are a bonus: Febbox not listing just now means none this time.
+	const files = await listFebboxFiles(shareUrl, parentId).catch(() => [] as FebboxFile[]);
 	const subs: SubtitleOption[] = [];
 
 	for (const f of files) {
@@ -726,7 +706,7 @@ export async function findSubtitles(
 			(f) => f.isDir && /^(subs?|subtitles?)$/i.test(f.name)
 		);
 		for (const dir of subDirs) {
-			const inner = await listFebboxFiles(shareUrl, dir.fid);
+			const inner = await listFebboxFiles(shareUrl, dir.fid).catch(() => [] as FebboxFile[]);
 			for (const f of inner) {
 				if (!f.isDir && SUBTITLE_EXTS.test(f.name)) {
 					subs.push({ fid: f.fid, name: f.name, language: detectLanguage(f.name) });

@@ -127,7 +127,7 @@ export function listEntries(options: ListOptions = {}): EntryCard[] {
 		const spacelessNeedle = stripped ? `%${stripped.replace(/\s+/g, '').toLowerCase()}%` : null;
 
 		where.push(`(
-			e.title LIKE ? OR e.notes LIKE ?
+			e.title LIKE ? OR e.notes LIKE ? OR e.other_titles LIKE ?
 			${strippedNeedle ? "OR lower(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(e.title, '-', ''), ':', ''), '.', ''), '''', ''), ' ', '')) LIKE ?" : ''}
 			OR e.id IN (
 				SELECT ec.entry_id FROM entry_cast ec
@@ -135,7 +135,7 @@ export function listEntries(options: ListOptions = {}): EntryCard[] {
 				WHERE ${nameMatch}
 			)
 		)`);
-		params.push(needle, needle);
+		params.push(needle, needle, needle);
 		if (spacelessNeedle) params.push(spacelessNeedle);
 		params.push(...words.map((w) => `%${w}%`));
 	}

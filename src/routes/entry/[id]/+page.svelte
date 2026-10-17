@@ -59,11 +59,20 @@
 		if (entry.year) params.set('year', String(entry.year));
 		watchAvailable = null;
 		let stop = false;
-		fetch(`/api/watch/available?${params}`)
-			.then((r) => r.json())
-			.then((d) => { if (!stop) watchAvailable = d.available; })
+		const ask = () => fetch(`/api/watch/available?${params}`).then((r) => r.json());
+		let again: ReturnType<typeof setTimeout> | undefined;
+		ask()
+			.then((d) => {
+				if (stop) return;
+				watchAvailable = d.available;
+				// Not sure after 12 seconds: the check carries on, so it's asked once more a little later.
+				if (d.unsure) again = setTimeout(() => ask().then((later) => { if (!stop && later.available) watchAvailable = true; }).catch(() => {}), 6_000);
+			})
 			.catch(() => {});
-		return () => { stop = true; };
+		return () => {
+			stop = true;
+			clearTimeout(again);
+		};
 	});
 
 	const added = $derived(

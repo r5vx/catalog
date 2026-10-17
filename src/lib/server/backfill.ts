@@ -1,5 +1,6 @@
 import { mergeAnimeSeasons } from './seasonMerge';
 import { warmWatchOrders } from './watchOrders';
+import { fillAllOtherNames } from './otherNames';
 import { eraseExpiredNotes } from './db/notes';
 import { db } from './db';
 import { getEntry, saveScores, saveOverview, saveFacts } from './db/queries';
@@ -237,6 +238,11 @@ export function scheduleBackfill(delayMs = 8000): void {
 	} catch (error) {
 		console.error('[notes]', error);
 	}
+
+	// Other names for searching ("Dungeon Meshi"), for titles nobody has asked about yet.
+	setTimeout(() => {
+		fillAllOtherNames().catch((error) => console.error('[other-names]', error));
+	}, 30_000).unref?.();
 
 	// Watch orders open from saved answers; this refreshes old ones before you get there.
 	setTimeout(() => {

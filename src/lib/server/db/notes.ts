@@ -183,8 +183,22 @@ export function updateNote(id: number, title: string, body: string): void {
 	);
 }
 
-/** Into Recently deleted. Nothing is erased yet. */
+/**
+ * Into Recently deleted; nothing is erased yet. Except a page that never had anything on it (no
+ * title, no words or pictures, no earlier versions): there's nothing to get back, so it's simply
+ * gone rather than cluttering Recently deleted.
+ */
 export function deleteNote(id: number): void {
+	const note = db.prepare('SELECT title, body FROM notes WHERE id = ?').get(id) as { title: string | null; body: string | null } | undefined;
+	if (!note) return;
+	const title = (note.title ?? '').trim();
+	const body = note.body ?? '';
+	const words = body.replace(/<[^>]*>/g, '').replace(/&nbsp;|&#160;/g, ' ').trim();
+	const versions = (db.prepare('SELECT COUNT(*) AS n FROM note_versions WHERE note_id = ?').get(id) as { n: number }).n;
+	if ((!title || title === 'Untitled') && !words && !/<img\b/i.test(body) && versions === 0) {
+		eraseNote(id);
+		return;
+	}
 	db.prepare('UPDATE notes SET deleted_at = ? WHERE id = ?').run(new Date().toISOString(), id);
 }
 

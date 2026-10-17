@@ -168,7 +168,10 @@ const laterColumns: Record<string, string> = {
 	// Where you can stream it, as JSON, with the date it was fetched. Cached
 	// because availability moves slowly and the page shouldn't wait on it.
 	providers: 'TEXT',
-	providers_checked_at: 'TEXT'
+	providers_checked_at: 'TEXT',
+	// Its other names, one per line ("Dungeon Meshi" for Delicious in Dungeon), so searching
+	// finds it either way. NULL until asked (src/lib/server/otherNames.ts).
+	other_titles: 'TEXT'
 };
 
 for (const [name, type] of Object.entries(laterColumns)) {

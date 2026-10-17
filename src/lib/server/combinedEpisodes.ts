@@ -25,6 +25,7 @@ import {
 	extractShareKey,
 	listEpisodes,
 	resolveSlugId,
+	FebboxRefused,
 	type EpisodeInfo,
 	type ShowboxResult
 } from './showbox';
@@ -362,8 +363,15 @@ export async function combineEpisodes(
 		const qualities = new Set(main.qualities);
 
 		const companions = mainShowboxId ? await findCompanions(mainTitle, mainShowboxId, show, main) : [];
+		let companionRefused = false;
 		for (const companion of companions) {
-			const listed = await listEpisodes(`https://www.febbox.com/share/${companion.shareKey}`);
+			// Febbox not listing just now: this entry joins next time (the list isn't kept meanwhile).
+			const listed = await listEpisodes(`https://www.febbox.com/share/${companion.shareKey}`).catch((e) => {
+				if (!(e instanceof FebboxRefused)) throw e;
+				companionRefused = true;
+				return null;
+			});
+			if (!listed) continue;
 			const firstOwn = Math.min(...listed.seasons.filter((s) => s > 0), Infinity);
 			for (const e of listed.episodes) {
 				if (e.season === 0 || !Number.isFinite(firstOwn)) continue;
@@ -395,7 +403,7 @@ export async function combineEpisodes(
 		// stay first), and on their own where only Aniwave has it. Waited on for six seconds at
 		// most when Showbox has the show (a slower answer is kept for next time); longer when
 		// another source is all there is.
-		let partial = false;
+		let partial = companionRefused;
 		let others: Map<string, AniwaveCopies> | null = null;
 		if (show.anime) {
 			const wait = mainShowboxId ? 6000 : 30000;

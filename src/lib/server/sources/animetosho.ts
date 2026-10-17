@@ -109,6 +109,36 @@ function isEpisode(title: string, season: number, episode: number): boolean {
 	return (named ?? 1) === season;
 }
 
+/** Words a release may add to the show's name: its season, its audio, a year. */
+const EXTRA_WORDS = /^(season|s\d{1,2}|part|cour|\d{1,4}|\d+(st|nd|rd|th)|tv|english|eng|dub|dubbed|dual|multi|audio|sub|subs|subbed|uncensored)$/;
+
+/**
+ * Whether a release is of this show, not another with the same start: the name before its
+ * episode number must be one of `names`, give or take a season, a year or "English Dub".
+ * Searching "Bleach 01" also finds "Bleach - Sennen Kessen-hen - 01" (Thousand-Year Blood War),
+ * which used to be taken for Bleach's first episode.
+ */
+function isThisShow(title: string, names: string[]): boolean {
+	const marker = title.search(/\bS\d{1,2}E\d{1,3}\b|\s-\s\d{1,3}(?:v\d)?[\s[(]/i);
+	const named = (marker >= 0 ? title.slice(0, marker) : title).replace(/\[[^\]]*\]|\([^)]*\)/g, ' ');
+	const words = (text: string) => text.toLowerCase().replace(/['’`]/g, '').split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+	const release = words(named);
+	return names.some((name) => {
+		const show = words(name.replace(/\([^)]*\)/g, ' '));
+		if (!show.length) return false;
+		let i = 0;
+		for (const word of release) {
+			if (i < show.length && word === show[i]) i++;
+			// A season pack has no episode number: its name ends where the quality and the like begin.
+			else if (i === show.length && TECH_WORDS.test(word)) break;
+			else if (!EXTRA_WORDS.test(word)) return false;
+		}
+		return i === show.length;
+	});
+}
+
+const TECH_WORDS = /^(\d{3,4}p|\d+bit|bluray|bd|bdrip|web|webrip|webdl|hevc|avc|x26[45]|h26[45]|aac|flac|opus|complete|batch|remux|amzn|cr|nf|hidive|dsnp)$/;
+
 /** A season pack for this season: several files, the season in its name (none: a first season). */
 function isSeasonPack(release: Release, season: number): boolean {
 	return (release.num_files ?? 1) > 1 && (seasonOf(release.title) ?? 1) === season;
@@ -172,7 +202,8 @@ export async function toshoSubtitles(
 	const singles = new Map<number, Release>();
 	for (const r of await ask(queries)) {
 		const single = (r.num_files ?? 1) === 1;
-		if (single && (isEpisode(r.title, season, episode) || (counted && isEpisode(r.title, 1, counted)))) singles.set(r.id, r);
+		if (!single || !isThisShow(r.title, names)) continue;
+		if (isEpisode(r.title, season, episode) || (counted && isEpisode(r.title, 1, counted))) singles.set(r.id, r);
 	}
 
 	// Up to three copies of the episode, looked at together, best-looking first; one with the
@@ -191,7 +222,7 @@ export async function toshoSubtitles(
 	// No captions yet: season packs (older shows often only come whole).
 	const packs = new Map<number, Release>();
 	for (const r of await ask(names.flatMap((n) => [`${n} S${pad(season)}`, `${n} Season ${season}`]))) {
-		if (isSeasonPack(r, season)) packs.set(r.id, r);
+		if (isSeasonPack(r, season) && isThisShow(r.title, names)) packs.set(r.id, r);
 	}
 	const fromPacks = await Promise.all(
 		[...packs.values()].sort(byRank).slice(0, 4).map(async (r) => {

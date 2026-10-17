@@ -64,7 +64,11 @@
 					{ label: 'Free', offers: where.free },
 					{ label: 'Rent', offers: where.rent },
 					{ label: 'Buy', offers: where.buy }
-				].filter((row) => row.offers.length > 0)
+				]
+					// TMDB can list a service twice in one row (The CW, for Astro Boy), which stopped
+					// the whole section showing: once each.
+					.map((row) => ({ ...row, offers: row.offers.filter((o, i, all) => all.findIndex((x) => x.name === o.name) === i) }))
+					.filter((row) => row.offers.length > 0)
 			: []
 	);
 
