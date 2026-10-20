@@ -16,6 +16,7 @@ import { omdbConfigured } from '$lib/server/metadata/omdb';
 import { parseEntryForm } from '$lib/server/form';
 import { error, fail, redirect } from '@sveltejs/kit';
 import { safeBack } from '$lib/back';
+import { startMoreLikeThis } from '$lib/server/recommendations';
 import type { PageServerLoad, Actions } from './$types';
 
 const verifiedSources = new Set<number>();
@@ -40,6 +41,8 @@ async function verifySource(entry: { id: number; title: string; source: string; 
 export const load: PageServerLoad = async ({ params, url }) => {
 	const entry = getEntry(Number(params.id));
 	if (!entry) error(404, 'That entry does not exist.');
+	// "More like this" starts now, while the page loads.
+	if (entry.sourceId) startMoreLikeThis(entry.source, entry.sourceId, entry.title);
 
 	await verifySource(entry);
 

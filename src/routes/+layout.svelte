@@ -1,6 +1,7 @@
 <script lang="ts">
 	import '../app.css';
 	import UpdateBanner from '$lib/UpdateBanner.svelte';
+	import TvUpdated from '$lib/tv/TvUpdated.svelte';
 	import SigninBanner from '$lib/SigninBanner.svelte';
 	import ConfirmDialog from '$lib/ConfirmDialog.svelte';
 	import SideNav from '$lib/SideNav.svelte';
@@ -71,6 +72,7 @@
 		<div class="nav-progress" aria-hidden="true"></div>
 	{/if}
 	<UpdateBanner />
+	<TvUpdated />
 	<SigninBanner signin={data?.showboxSignin} />
 	{@render children()}
 	<ConfirmDialog />

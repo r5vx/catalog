@@ -54,6 +54,20 @@ const roots = new Map<number, number>();
 const SEASON_SUFFIX =
 	/^(?:|\d+|(?:ii|iii|iv|v|vi|vii)\b.*|.*\b(?:season|part|cour|\d+(?:st|nd|rd|th)|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|final|arc|hen|ovas?|oads?|ona|specials?|recap|picture drama|extras?)\b.*)$/;
 
+/**
+ * Whether two AniList names are one show by name alone: the same, or one is the other plus a
+ * season-like ending ("Frieren: Beyond Journey's End" and "… Season 2"). No lookups — for lists
+ * like "More like this", where asking AniList about each would run into its limit.
+ */
+export function sameShowByName(a: string, b: string): boolean {
+	const x = normalizeTitle(withoutQualifier(a));
+	const y = normalizeTitle(withoutQualifier(b));
+	if (!x || !y) return false;
+	if (x === y) return true;
+	const [short, long] = x.length < y.length ? [x, y] : [y, x];
+	return long.startsWith(`${short} `) && SEASON_SUFFIX.test(long.slice(short.length + 1));
+}
+
 function titlesOf(node: Node): string[] {
 	return [node.title.english, node.title.romaji]
 		.filter((t): t is string => Boolean(t))

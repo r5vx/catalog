@@ -8,7 +8,8 @@ import {
 	appVersion,
 	sourceIsStale,
 	failedUpdate,
-	nightUpdate
+	nightUpdate,
+	installNeedsPermission
 } from '$lib/server/updater';
 import { startRebuild, rebuildState } from '$lib/server/rebuild';
 import { readSettings, updateSettings } from '$lib/server/settings';
@@ -46,7 +47,7 @@ export const GET: RequestHandler = async () => {
 		offer,
 		muted,
 		failed: failedUpdate(),
-		night: { ...nightUpdate(), available: mode === 'release' && process.platform === 'win32' },
+		night: { ...nightUpdate(), available: mode === 'release' && process.platform === 'win32', needsPermission: installNeedsPermission() },
 		isMac: process.platform === 'darwin'
 	});
 };
@@ -92,7 +93,7 @@ export const POST: RequestHandler = async ({ url, request }) => {
 		const body = await request.json().catch(() => ({}));
 		const hour = Number(body.hour);
 		updateSettings({
-			nightUpdate: body.on ? '1' : undefined,
+			nightUpdate: body.on ? '1' : '0',
 			...(Number.isInteger(hour) && hour >= 0 && hour < 24 ? { nightUpdateHour: String(hour) } : {})
 		});
 		return json(nightUpdate());

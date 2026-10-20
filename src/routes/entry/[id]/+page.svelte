@@ -1,4 +1,5 @@
 <script lang="ts">
+	import MoreLikeThis from '$lib/MoreLikeThis.svelte';
 	import SourceChecks from '$lib/SourceChecks.svelte';
 	import { checkWatchable, type SourceCheck } from '$lib/watchCheck';
 	import { watchTypeOf } from '$lib/watchType';
@@ -19,6 +20,11 @@
 	import { confirmAction } from '$lib/confirm.svelte';
 	import type { SearchResult } from '$lib/server/metadata/types';
 	import type { PageData, ActionData } from './$types';
+	import { warmUpTitle, warmWhenResting } from '$lib/watch';
+
+	// The lookup and the video link start half a second after the check says it can be
+	// watched (flicking straight past a page starts nothing), or when the pointer rests on Watch.
+	const watchWarm = warmWhenResting(250);
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -67,6 +73,12 @@
 			watchAvailable = available;
 			watchSources = sources;
 		});
+	});
+	$effect(() => {
+		if (watchAvailable !== true) return;
+		const item = { title: entry.title, type: watchType, year: entry.year };
+		const timer = setTimeout(() => warmUpTitle(item), 500);
+		return () => clearTimeout(timer);
 	});
 
 	const added = $derived(
@@ -239,7 +251,14 @@
 			<!-- Where a title's page from Browse has them, so they're in the same place everywhere. -->
 			<div class="title-actions">
 				{#if watchAvailable === true}
-					<a href={watchHref} class="btn btn-watch">{pm ? p('▶ Watch') : '▶ Watch'}</a>
+					<a
+						href={watchHref}
+						class="btn btn-watch"
+						onpointerenter={() => watchWarm.start({ title: entry.title, type: watchType, year: entry.year })}
+						onpointerleave={watchWarm.stop}
+						onfocus={() => watchWarm.start({ title: entry.title, type: watchType, year: entry.year })}
+						onblur={watchWarm.stop}
+					>{pm ? p('▶ Watch') : '▶ Watch'}</a>
 				{:else if watchAvailable === false}
 					<span class="btn btn-watch unavailable">Not available</span>
 				{:else}
@@ -363,6 +382,9 @@
 			</form>
 		</div>
 	</details>
+	{#if entry.sourceId && (entry.source === 'tmdb' || entry.source === 'anilist')}
+		<MoreLikeThis source={entry.source} sourceId={entry.sourceId} title={entry.title} />
+	{/if}
 </article>
 
 <style>

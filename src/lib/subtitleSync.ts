@@ -29,6 +29,8 @@ export class SubtitleSync {
 	private told = false;
 	private applying: ReturnType<typeof setInterval> | undefined;
 	private running = false;
+	/** Downloading pieces of the sound track right now (for the player's stats and stop log). */
+	fetchingSound = false;
 
 	/** The sound track being fetched (its address without the signature), and how to stop it. */
 	private track = '';
@@ -282,7 +284,8 @@ export class SubtitleSync {
 				}
 				const group = track.pieces.slice(first, first + PIECES_AT_ONCE);
 				const last = group[group.length - 1];
-				const { at, samples } = await soundBetween(track, group[0].at, last.at + last.length, RATE, stop.signal);
+				this.fetchingSound = true;
+				const { at, samples } = await soundBetween(track, group[0].at, last.at + last.length, RATE, stop.signal).finally(() => (this.fetchingSound = false));
 				if (stop.signal.aborted) return true;
 				this.worker.postMessage({ kind: 'sound', at, samples, fresh: Math.abs(at - previousEnd) > 0.1 }, [samples.buffer]);
 				this.worker.postMessage({ kind: 'fit' });

@@ -1,7 +1,7 @@
 {
 	"name": "catalog",
 	"private": true,
-	"version": "3.2.0",
+	"version": "3.3.0",
 	"type": "module",
 	"description": "Your personal library of everything you've watched.",
 	"main": "electron/main.cjs",
@@ -52,6 +52,7 @@
 		"files": [
 			"build/**/*",
 			"electron/**/*",
+			"data/**/*",
 			"node_modules/**/*",
 			"package.json",
 			"RELEASE_NOTES.md"

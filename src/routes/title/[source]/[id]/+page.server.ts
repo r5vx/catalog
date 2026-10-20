@@ -8,6 +8,7 @@ import { knownPeople } from '$lib/server/db/people';
 import { addFromSource } from '$lib/server/entries';
 import { safeBack } from '$lib/back';
 import { playsAsFilm } from '$lib/watchType';
+import { startMoreLikeThis } from '$lib/server/recommendations';
 import { error, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 
@@ -23,6 +24,8 @@ export const load: PageServerLoad = async ({ params, url }) => {
 	const { source, id } = params;
 
 	if (source !== 'tmdb' && source !== 'anilist') error(404, 'Unknown source.');
+	// "More like this" starts now, while the page's own details load.
+	startMoreLikeThis(source, id);
 
 	let ownedEntryId = entryIdForSource(source, id);
 	// Owning any season of the show counts as owning this one.

@@ -13,7 +13,7 @@
 	let progress = $state<State>({ status: 'idle' });
 	let ready = $state<string | null>(null);
 	let installing = $state(false);
-	let night = $state({ on: false, hour: 4, available: false });
+	let night = $state({ on: true, hour: 4, available: false });
 
 	async function look() {
 		try {
@@ -89,7 +89,7 @@
 			{/if}
 			{#if night.available}
 				<button type="button" class="button" data-tv-item onclick={toggleNight}>
-					Install at night ({hourName(night.hour)}): {night.on ? 'On' : 'Off'}
+					Install updates by itself: {night.on ? 'On' : 'Off'}
 				</button>
 			{/if}
 		</div>

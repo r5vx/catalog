@@ -2,7 +2,15 @@
 	import { untrack } from 'svelte';
 	import { playHref, bigPicture } from '$lib/tv/tiles';
 	import { tvFocus } from '$lib/tvNav';
+	import TvRow from '$lib/tv/TvRow.svelte';
+	import TvCard from '$lib/tv/TvCard.svelte';
 	import type { PageData } from './$types';
+	import { warmWhenResting } from '$lib/watch';
+
+	// The highlight resting on Play (or an episode) for a moment starts the lookup and the video
+	// link, so OK opens it sooner. Longer than on a computer: Play is highlighted by itself when
+	// the page opens, and only a pause there means it's likely to be watched.
+	const watchWarm = warmWhenResting(1500);
 
 	let { data }: { data: PageData } = $props();
 
@@ -67,6 +75,43 @@
 	let seasonEps = $state<SeasonEpisode[]>([]);
 	let loadingEps = $state(false);
 	let down = $state(false);
+
+	/*
+	 * More like this, under everything else (src/lib/server/recommendations.ts): asked for once
+	 * the page is up. Moving down to it slides the page up until it shows.
+	 */
+	type Suggestion = { source: string; sourceId: string; title: string; posterUrl: string | null; watched?: boolean; watching?: boolean; more?: boolean };
+	let more = $state<Suggestion[]>([]);
+	// "Show more" adds the looser matches ten at a time; watched ones can be hidden (remembered
+	// on this TV).
+	let moreExtra = $state(0);
+	let showWatched = $state(true);
+	try {
+		showWatched = localStorage.getItem('catalog:recsShowWatched') !== '0';
+	} catch {}
+	function toggleWatched() {
+		showWatched = !showWatched;
+		try {
+			localStorage.setItem('catalog:recsShowWatched', showWatched ? '1' : '0');
+		} catch {}
+	}
+	const moreKept = $derived(more.filter((s) => showWatched || !(s.watched || s.watching)));
+	const moreShown = $derived(moreKept.slice(0, more.filter((s) => !s.more).length + moreExtra));
+	let moreEl: HTMLElement | undefined = $state();
+	let lift = $state<number | null>(null);
+	$effect(() => {
+		const params = new URLSearchParams({ source: data.source, id: data.id, title: d.title ?? '' });
+		let stale = false;
+		more = [];
+		moreExtra = 0;
+		fetch(`/api/recommendations?${params}`)
+			.then((r) => (r.ok ? r.json() : []))
+			.then((list: Suggestion[]) => {
+				if (!stale) more = list;
+			})
+			.catch(() => {});
+		return () => (stale = true);
+	});
 	$effect(() => {
 		season = data.show?.season ?? 0;
 	});
@@ -184,14 +229,14 @@
 
 <svelte:head><title>{d.title} · Catalog</title></svelte:head>
 
-<div class="title-screen" class:down>
+<div class="title-screen" class:down={down && lift === null}>
 	{#if d.backdropUrl || d.posterUrl}
 		<img class="art" class:poster-art={!d.backdropUrl} src={d.backdropUrl ?? bigPicture(d.posterUrl)} alt="" />
 	{/if}
 	<div class="shade"></div>
 
-	<div class="slide">
-	<div class="about" onfocusin={() => (down = false)}>
+	<div class="slide" style:transform={lift !== null ? `translateY(-${lift}px)` : undefined}>
+	<div class="about" onfocusin={() => { down = false; lift = null; }}>
 		<h1>{d.title}</h1>
 		{#if facts.length}<p class="facts">{facts.join(' · ')}</p>{/if}
 		{#if data.continuing?.progress}
@@ -212,12 +257,20 @@
 					data-tv-item
 					data-tv-autofocus
 					href={playHref(playTitle, data.type, data.continuing ? null : d.year, data.continuing?.season, data.continuing?.episode)}
+					onfocus={() => watchWarm.start({ title: playTitle, type: data.type, year: data.continuing ? null : d.year, season: data.continuing?.season, episode: data.continuing?.episode })}
+					onblur={watchWarm.stop}
 				>
 					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12.5-7.5z" /></svg>
 					{resumeLabel}
 				</a>
 				{#if data.continuing && data.type === 'tv'}
-					<a class="button" data-tv-item href={playHref(playTitle, data.type, null, 1, 1)}>From the start</a>
+					<a
+						class="button"
+						data-tv-item
+						href={playHref(playTitle, data.type, null, 1, 1)}
+						onfocus={() => watchWarm.start({ title: playTitle, type: data.type, season: 1, episode: 1 })}
+						onblur={watchWarm.stop}>From the start</a
+					>
 				{/if}
 			{/if}
 			<button type="button" class="button" data-tv-item onclick={addToList} disabled={adding}>
@@ -227,7 +280,7 @@
 	</div>
 
 	{#if data.show && !d.unreleased}
-		<section class="episodes" onfocusin={() => (down = true)}>
+		<section class="episodes" onfocusin={() => { down = true; lift = null; }}>
 			{#if seasonsShown.length > 1}
 				<div class="seasons" data-tv-row data-tv-strip>
 					{#each seasonsShown as one (one.number)}
@@ -243,7 +296,13 @@
 				<div class="eps" data-tv-row data-tv-strip>
 					{#each seasonEps as ep (ep.episode)}
 						{#if aired(ep) && !ep.missing}
-							<a class="ep" data-tv-item href={playHref(episodeTitle, 'tv', data.continuing ? null : d.year, season, ep.episode)}>
+							<a
+								class="ep"
+								data-tv-item
+								href={playHref(episodeTitle, 'tv', data.continuing ? null : d.year, season, ep.episode)}
+								onfocus={() => watchWarm.start({ title: episodeTitle, type: 'tv', year: data.continuing ? null : d.year, season, episode: ep.episode })}
+								onblur={watchWarm.stop}
+							>
 								<span class="still">
 									{#if ep.still}<img src={ep.still} alt="" loading="lazy" />{/if}
 									{#if ep.progress > 0}
@@ -264,6 +323,30 @@
 			{:else if loadingEps}
 				<p class="eps-note">Loading episodes…</p>
 			{/if}
+		</section>
+	{/if}
+
+	{#if more.length}
+		<section
+			class="more-like"
+			bind:this={moreEl}
+			onfocusin={() => {
+				if (moreEl) lift = Math.max(0, moreEl.offsetTop - window.innerHeight * 0.12);
+			}}
+		>
+			<TvRow label="More like this">
+				{#each moreShown as item (`${item.source}:${item.sourceId}`)}
+					<TvCard href="/tv/title/{item.source}/{item.sourceId}" title={item.title} poster={item.posterUrl} note={item.watched ? 'Watched' : item.watching ? 'Watching' : null} showTitle />
+				{/each}
+				{#if moreKept.length > moreShown.length}
+					<button type="button" class="more-tile" data-tv-item onclick={() => (moreExtra += 10)}><span class="tile-face">+</span><span>Show more</span></button>
+				{/if}
+				{#if more.length}
+					<button type="button" class="more-tile" data-tv-item onclick={toggleWatched}>
+						<span class="tile-face">{showWatched ? '✓' : '–'}</span><span>{showWatched ? 'Hide watched' : 'Show watched'}</span>
+					</button>
+				{/if}
+			</TvRow>
 		</section>
 	{/if}
 	</div>
@@ -405,6 +488,48 @@
 		background: var(--ink);
 		color: var(--paper);
 		transform: scale(1.06);
+	}
+
+	.more-tile {
+		flex: none;
+		width: 12.5vw;
+		display: flex;
+		flex-direction: column;
+		gap: 0.7vw;
+		padding: 0;
+		border: 0;
+		background: none;
+		font: inherit;
+		font-size: 1.2vw;
+		font-weight: 600;
+		color: var(--ink);
+		text-align: left;
+		outline: none;
+	}
+
+	.tile-face {
+		aspect-ratio: 2 / 3;
+		display: grid;
+		place-items: center;
+		border-radius: 0.6vw;
+		border: 0.2vw dashed var(--ink-soft);
+		font-size: 4vw;
+		color: var(--ink-soft);
+		transition: transform 0.15s ease, box-shadow 0.15s ease;
+		transform-origin: center bottom;
+	}
+
+	.more-tile:focus .tile-face,
+	.more-tile:global(.tv-focused) .tile-face {
+		transform: scale(1.08);
+		border-style: solid;
+		border-color: var(--ink);
+		color: var(--ink);
+	}
+
+	.more-like {
+		position: relative;
+		padding: 2vw 0 6vw 1vw;
 	}
 
 	.episodes {

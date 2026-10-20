@@ -15,38 +15,81 @@
  * have arrived. A few pieces are kept for a few minutes, so the next parts come from memory.
  */
 
+import { noteRelayPiece } from './playbackLog';
+import { trustedVideoHost } from './relayHosts';
+
 /** Pieces longer than this are split. */
 const LONG = 12;
 /** Roughly how long each part should be. */
 const PART = 6;
 /** No answer, or no new data, for this long counts as the video server having stopped. */
 const STALL_MS = 30_000;
+/**
+ * No answer yet after this long: the same thing is asked for again alongside, and whichever
+ * answers first is used. On 2026-10-20 one SVU piece hung for 53 s while every other came in
+ * under a second — a server that's busy now and then leaves one download hanging, and the
+ * video waited for it.
+ */
+const ASK_AGAIN_MS = 4_000;
+/**
+ * Once going, this long without a single new byte means it has hung (Movy's slow server still
+ * sends something every moment): the download is dropped and asked for afresh.
+ */
+const HUNG_MS = 12_000;
 const KEEP_PIECES = 4;
 const KEEP_MS = 3 * 60 * 1000;
 
 /* ------------------------------------------------ fetching without a time limit on the whole */
 
 /**
+ * The first answer to one or two tries (ASK_AGAIN_MS says when the second goes); the slower
+ * try is stopped. Not for Movy, whose server refuses more than five downloads at once and is
+ * already sent four.
+ */
+async function firstAnswer(url: URL | string, headers: Record<string, string>): Promise<{ response: Response; controller: AbortController }> {
+	const address = typeof url === 'string' ? new URL(url) : url;
+	const tries: AbortController[] = [];
+	const ask = (): Promise<{ response: Response; controller: AbortController }> => {
+		const controller = new AbortController();
+		tries.push(controller);
+		return fetch(address, { headers, signal: controller.signal }).then((response) => ({ response, controller }));
+	};
+	const giveUp = setTimeout(() => tries.forEach((t) => t.abort()), STALL_MS);
+	let again: ReturnType<typeof setTimeout> | undefined;
+	try {
+		const first = ask();
+		if (trustedVideoHost(address) === 'movy') return await first;
+		const second = new Promise<{ response: Response; controller: AbortController }>((resolve, reject) => {
+			again = setTimeout(() => ask().then(resolve, reject), ASK_AGAIN_MS);
+		});
+		// Whichever answers first; one failing still leaves the other.
+		const winner = await Promise.any([first, second]).catch((e: AggregateError) => {
+			throw e.errors[0];
+		});
+		for (const t of tries) if (t !== winner.controller) t.abort();
+		return winner;
+	} finally {
+		clearTimeout(giveUp);
+		clearTimeout(again);
+	}
+}
+
+/**
  * Fetches with a limit on silence rather than on the whole download: the answer must start
- * within 30 s, and once going, each next bit must come within 30 s. (A limit on the whole cut
+ * within 30 s (asked again after 4 s), and once going, each next bit must come within 12 s. (A limit on the whole cut
  * big pieces off partway when a TV fetched them slowly — the TV then threw the piece away and
  * started it again.) `read()` only counts the time spent waiting on the video server.
  */
 export async function fetchSteadily(url: URL | string, headers: Record<string, string>) {
-	const controller = new AbortController();
-	let timer = setTimeout(() => controller.abort(), STALL_MS);
-	let response: Response;
-	try {
-		response = await fetch(url, { headers, signal: controller.signal });
-	} finally {
-		clearTimeout(timer);
-	}
+	const { response, controller } = await firstAnswer(url, headers);
+	let timer: ReturnType<typeof setTimeout> | undefined;
 	const reader = response.body?.getReader();
+	const silence = trustedVideoHost(typeof url === 'string' ? new URL(url) : url) === 'movy' ? STALL_MS : HUNG_MS;
 	return {
 		response,
 		async read(): Promise<ReadableStreamReadResult<Uint8Array>> {
 			if (!reader) return { done: true, value: undefined };
-			timer = setTimeout(() => controller.abort(), STALL_MS);
+			timer = setTimeout(() => controller.abort(), silence);
 			try {
 				return await reader.read();
 			} finally {
@@ -166,6 +209,7 @@ export async function splitLongPieces(
 	const out: string[] = [];
 	let longest = 0;
 	let held: number | null = null;
+	let previousLong = '';
 	for (const line of lines) {
 		const trimmed = line.trim();
 		if (trimmed.startsWith('#EXTINF:')) {
@@ -183,6 +227,11 @@ export async function splitLongPieces(
 				held = null;
 				continue;
 			}
+			// Which long piece comes after which: the next is fetched as the player nears the end.
+			const piece = new URL(trimmed, base).href;
+			if (previousLong) nextLong.set(previousLong, piece);
+			previousLong = piece;
+			if (nextLong.size > 5000) nextLong.delete(nextLong.keys().next().value!);
 			const of = Math.round(held / PART);
 			const len = held / of;
 			for (let part = 0; part < of; part++) {
@@ -217,6 +266,8 @@ type Piece = {
 };
 
 const pieces = new Map<string, Piece>();
+/** The long piece after each one in its playlist. */
+const nextLong = new Map<string, string>();
 
 function forgetOld() {
 	const now = Date.now();
@@ -261,6 +312,8 @@ function download(url: string, headers: Record<string, string>, clock: { track: 
 			return size >= 8 ? size : -1;
 		};
 
+		const started = Date.now();
+		let got = 0;
 		const answer = await fetchSteadily(url, headers);
 		if (!answer.response.ok) throw new Error(`video server said ${answer.response.status}`);
 		// Not cut-up-able after all: everything so far, in order, then the rest as it comes.
@@ -271,6 +324,7 @@ function download(url: string, headers: Record<string, string>, clock: { track: 
 		};
 		for (let r = await answer.read(); !r.done; r = await answer.read()) {
 			const bytes = Buffer.from(r.value.buffer, r.value.byteOffset, r.value.byteLength);
+			got += bytes.length;
 			if (piece.unreadable) {
 				piece.raw.push(bytes);
 				continue;
@@ -310,6 +364,7 @@ function download(url: string, headers: Record<string, string>, clock: { track: 
 		const last = piece.chunks.at(-1);
 		if (last && lead.length) last.bytes = Buffer.concat([last.bytes, ...lead]);
 		if (!piece.unreadable && (!piece.chunks.length || current)) giveUp();
+		noteRelayPiece(url, got, Date.now() - started);
 		piece.done = true;
 		piece.tell();
 	})().catch(() => {
@@ -333,11 +388,15 @@ export async function piecePart(
 ): Promise<Buffer | null> {
 	forgetOld();
 	let piece = pieces.get(url);
+	const clock = { track: where.track, timescale: where.timescale };
 	if (!piece || piece.failed) {
-		piece = download(url, headers, { track: where.track, timescale: where.timescale });
+		piece = download(url, headers, clock);
 		pieces.set(url, piece);
 	}
 	piece.usedAt = Date.now();
+	// Nearing its end: the next piece starts downloading, so it's here when the player gets there.
+	const next = nextLong.get(url);
+	if (next && where.part >= where.of - 2 && !pieces.has(next)) pieces.set(next, download(next, headers, clock));
 
 	const partOf = (at: number) => Math.min(where.of - 1, Math.max(0, Math.floor((at + 0.05) / where.len)));
 	// Ready once a later part's chunk has begun arriving, or the piece is all here.

@@ -995,7 +995,11 @@ fine. 7Movies' H.264 copies come in **36-second fMP4 pieces of ~28 MB** (Aniwave
 seconds), and all of it goes TV → laptop's relay → edge.reelvault.click. Three things went wrong:
 - the relay's `AbortSignal.timeout(30000)` covered the **whole** download, so a TV pulling a big
   piece slowly got it cut off (measured: 19 of 28 MB at 600 KB/s), threw it away and started over.
-  Now `fetchSteadily` (relayPieces.ts): 30 s for the answer to start, then 30 s of silence at most;
+  Now `fetchSteadily` (relayPieces.ts): 30 s for the answer to start, then 30 s of silence at most
+  (2026-10-20: no answer after 4 s → the same request again alongside, first answer wins — one SVU
+  piece hung 53 s while the rest took <1 s; 12 s of silence mid-download = hung. Not for Movy,
+  which refuses a sixth download at once. The player's `fetchAhead.ts` does the same, and hls.js
+  `fragLoadPolicy` retries after 5 s with no first byte);
 - hls.js only uses a piece once it's all there, and Android WebView's video memory is small
   (Chromium: 150 MB, but ~30 MB on "low-end" ≤1 GB devices like smaller Fire TV sticks) — one
   28 MB piece nearly fills it, the next can't be added (`bufferFullError`, piece thrown away);
@@ -1021,6 +1025,37 @@ seconds), and all of it goes TV → laptop's relay → edge.reelvault.click. Thr
 `/api/watch/available?now=1` answers at once with `{ available | null, sources }`, and the title
 and entry pages poll it every second (`src/lib/watchCheck.ts`) with `SourceChecks.svelte` under
 the button. No 12-second limit or "unsure" there any more (the old blocking call still exists).
+
+### Starting sooner: warm-ups (2026-10-20)
+Measured: a title that exists answers the check in under 1 s; pressing Watch took 5–6 s,
+as two steps in a row — the lookup (`/api/watch/resolve`, ~2–4 s: search, Febbox listing, and
+for films the link) and, for shows, the episode's link (`/api/watch/stream`, ~2 s). Now:
+- `resolve?…&warm=1` (sent by the player and by warm-ups) starts the link for the episode the
+  player will most likely start (`warmLikelyEpisode`: `resume_s/resume_e`, else progress, else
+  `startSeason`, else the first; Showbox's best file), not awaited; `getStreamUrl` shares the
+  one under way. Pushing Daisies: link step 2.0 → 0.5 s, playing at 3.1 s instead of 5.7 s.
+  Without `warm=1` (the TV's `player-episodes`) no link is fetched.
+- Lookups of one title queue behind each other (`lookingUp` in resolve), so a warm-up and the
+  player's own never do the same Febbox listing side by side; the second reads the cache.
+- Title and entry pages call `warmUpTitle` 0.5 s after the check says yes (the owner asked
+  for page-open rather than hover only; the Febbox gate still spaces and rests listings).
+- `warmWhenResting` (`src/lib/watch.ts`): resting on Watch 250 ms (title and entry pages;
+  Continue Watching already did) or the TV highlight on Play / From the start / an episode for
+  1.5 s calls `warmUpTitle`, with the same title, type and year as the Watch link, so the
+  player's lookup key matches. Re-warms after 10 min (links last 15; the TV stays open for
+  days). The Prestige after 5 s on Watch: playing 1.3 s after the click.
+- **The packed app's own link lookup** (`get-video-url` in main.cjs) didn't know Febbox's
+  2026-10-19 page either (only showbox.ts was fixed then): no link matched, so every Showbox
+  video waited on the hidden window (3 s after load + a dozen JW Player looks) — Primetime 12 s
+  from Watch to picture. main.cjs now has its own `fromSourcesList` (AUTO first), reads the
+  rest comment-stripped and unescaped, and skips the hidden window on a refusal JSON
+  (`{"code":-1,"msg":"please login"}`: 10.6 s → 1.2 s on an unsigned test copy). **Any
+  change to Febbox's page needs both readers fixed.** The dev server can't show this path
+  (no Electron); test with `electron .` on port 5299 and a test copy.
+- Page-open warm-up is 0.5 s after the check says yes (was 1.5 s; the owner clicked as soon
+  as the sources showed).
+- Not done (on purpose): remembering "not available" longer; giving up
+  on 7Movies early (its "no" takes 6–15 s; quitting sooner would hide real copies).
 
 ### Movy (movy.sx), the fourth source (2026-10-17)
 For old films Showbox and 7Movies lack (The She Beast, Miami Beach). Keyed by TMDB id
@@ -1123,6 +1158,49 @@ in a watch order is worse than a missing one (it logs `[watch-orders] not on
 TMDB`). The user's chosen lists are `my_watch_orders`. The list page is awaited,
 not streamed, so the scroll position can be restored on coming back; links out
 carry `?back=` so title and entry pages return to the list.
+
+### More like this
+
+`src/lib/server/recommendations.ts`, shown by `MoreLikeThis.svelte` (and a row
+on the TV title page). Anime: AniList's user-voted recommendations. Films and
+shows: candidates from MovieLens taste neighbours (`data/film-neighbours.bin`,
+built by `scripts/build-film-neighbours.mjs`; films to mid-2023, newer sequels
+borrow their series' data), TMDB suggestions, the series, the director's work,
+specific studios and shared topics — then scored on all signals together.
+
+Lessons, each from a real bad pick:
+- **No single signal decides.** Topics alone gave The Marvels Alien ("outer
+  space"); taste alone gave X-Men: Days of Future Past two Star Trek films; a
+  shared producer gave Barbie Harry Potter. A studio only counts beside a real
+  topic or shared cast, and a match with no real evidence is scaled down.
+- **Don't hide watched titles** — the library is mostly finished, so hiding
+  them left only poor matches. They're marked Watched instead.
+- **At most three by one director** (Wicked was all Jon M. Chu: Step Up, Justin
+  Bieber). The cut-off is relative to the third-best, not the best, or one
+  standout (Better Call Saul) empties the row.
+- **Never a cartoon for live action or a documentary for a drama**; another
+  language counts against a pick unless the same people loved both.
+- **Shows are weaker**: no free taste data exists for TV, and TMDB's own show
+  suggestions are genre-only. No extra logins or keys (the owner said no to
+  Trakt).
+
+Marks come from `inLibrary` at read time (never cached): by id, by an anime season's saved
+root (`anime_roots`, one card per show), else by name (`showName` strips "Season 2"), which is
+also how family profiles are matched. Completed → Watched, watching → Watching; the switch
+hides both. AniList recs fold seasons of one show by name (`sameShowByName` in franchise.ts,
+no lookups); the title's own seasons are left out. Right-click: Watch, View details, View
+entry or the three Add choices (`/api/add`). Cache key `recs4|`, kept 30 days (marks are
+fresh each read). Page loads call `startMoreLikeThis` (title, entry, TV title), and `working`
+shares one working-out per title, so the row's request joins it. Turning Show watched on
+scrolls the row back to the start after `tick()` (with `overflow-anchor: none`).
+
+The API returns up to 60: the row's own, then looser ones marked `more` that
+"Show more" adds ten at a time. Show watched (localStorage
+`catalog:recsShowWatched`) hiding them refills the row from the looser ones so
+it keeps its length.
+
+`evalrecs.mjs`-style checks: clear `recs2|%` from a *copy* of the library's
+`watch_order_cache`, then call `/api/recommendations` for a spread of titles.
 
 ---
 

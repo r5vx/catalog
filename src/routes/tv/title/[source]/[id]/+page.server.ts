@@ -6,6 +6,7 @@ import { entryIdForSource, entryIdForShow, entryIdByTitle, getEntry, continueWat
 import { currentProfile, MAIN_PROFILE } from '$lib/server/profile';
 import { showRoots } from '$lib/server/metadata/franchise';
 import { keptPlayerList, showSeasons } from '$lib/server/tvEpisodes';
+import { startMoreLikeThis } from '$lib/server/recommendations';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -15,6 +16,8 @@ import type { PageServerLoad } from './$types';
 export const load: PageServerLoad = async ({ params }) => {
 	const { source, id } = params;
 	if (source !== 'tmdb' && source !== 'anilist') error(404, 'Nothing here.');
+	// "More like this" starts now, while the page's own details load.
+	startMoreLikeThis(source, id);
 
 	const mine = currentProfile() === MAIN_PROFILE;
 	let ownedId = mine ? entryIdForSource(source, id) : null;

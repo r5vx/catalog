@@ -12,6 +12,36 @@ without both.
 
 ## Unreleased
 
+## 3.3.0 — 2026-10-20 — More like this, faster starts, less buffering, and hands-free updates
+
+### New
+- **Titles**: More like this under every film, show and anime (and on the TV), matched on taste, topic, genre, director and series together; watched ones are marked
+- **Titles**: a Show watched switch beside More like this hides what you've seen, and Show more at the end of the row adds more
+- **Titles**: right-click a More like this poster to watch it, open it, or add it to the library
+- **Player**: Playback stats (in the player's settings) show how fast each piece is arriving, from which server, how much is loaded ahead, and what else is downloading
+- **Settings**: Playback lists every time a video stopped to load — on this computer or a TV watching through it — with those numbers and a best guess at why
+
+### Improved
+- **Player**: videos start sooner: a title's page starts finding the video a moment after it opens (as does the TV's highlight resting on Play or an episode), and a show's episode link is fetched while the rest is still loading
+- **Titles**: More like this shows up sooner: it starts as a title's page opens, and is kept for a month once worked out
+- **Titles**: More like this marks anime you've watched or are watching too, and shows each anime once rather than once per season (Frieren)
+- **Subtitles**: SubDL taken out of Services: one key fewer, and subtitles come from OpenSubtitles and Addic7ed as before
+- **Updates**: install by themselves with no click needed — at night, or once one has waited 6 hours, whenever nothing has played for half an hour (on unless turned off in Settings → Updates)
+- **TV**: after Catalog updates, the TV shows Reload (and reloads by itself if the remote isn't touched for 10 minutes), so the TV app never needs force-stopping
+
+### Fixed
+- **Player**: Showbox videos start several seconds sooner in the app: it reads Febbox's new player page straight away instead of waiting on a hidden window first (Primetime took 12 seconds)
+- **Player**: Showbox videos that loaded forever play again: Febbox changed its player page, and Catalog picked an old sample link out of it instead of the real one
+- **App**: closing Catalog closes it completely, even while it's looking something up in the background — opening it again no longer shows "Object has been destroyed"
+- **Player**: less stopping to load when a site's servers are busy (evenings): the next pieces of the video are fetched ahead, three at a time instead of one, on every source — by the player for Showbox, by the computer for 7Movies, Aniwave and Movy
+- **Player**: a video piece the site doesn't answer for is asked for again after 4 seconds, instead of the video waiting up to 30 seconds or more (one SVU piece took 53 seconds)
+- **Player**: the progress-bar pictures no longer download sound they never use (half their downloads)
+- **Player**: Movy videos no longer have pieces refused when the progress-bar pictures are being made
+- **Subtitles**: captions that showed nothing (Madagascar) work again: when OpenSubtitles sent back an error page instead of the file, Catalog kept it as the subtitles; now it's thrown away, the next file is tried, and picking one that can't be loaded says so
+- **Subtitles**: captions come back on when an English film is resumed (Madagascar 2) — only anime in English leaves plain subtitles off
+- **Subtitles**: another advert taken out of captions ("Watch Online Movies and Series for FREE")
+- **Player**: the settings gear lights up while its menu is open, like the other buttons
+
 ## 3.2.0 — 2026-10-17 — Movy, smoother 7Movies on TVs, and Mac updates without Terminal
 
 ### New

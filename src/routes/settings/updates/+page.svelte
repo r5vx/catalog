@@ -23,7 +23,7 @@
 	let muted = $state(false);
 	let isMac = $state(false);
 	/** Installing by itself at night: off unless turned on, at 4 AM unless changed. */
-	let night = $state({ on: false, hour: 4, available: false });
+	let night = $state({ on: true, hour: 4, available: false, needsPermission: false });
 
 	async function setNight(on: boolean, hour: number) {
 		night = { ...night, on, hour };
@@ -282,7 +282,10 @@
 						{/each}
 					</select>
 				</div>
-				<p class="faint hint">Catalog restarts to install it then, unless something played in the last 15 minutes.</p>
+				<p class="faint hint">Catalog restarts to install it then — or, once an update has waited 6 hours, whenever nothing has played for half an hour.</p>
+				{#if night.needsPermission}
+					<p class="faint hint">Catalog is installed for all users here, so Windows asks before each install and it can't install by itself. Reinstalling it for just this account fixes that.</p>
+				{/if}
 			{/if}
 		</section>
 	{/if}

@@ -4,6 +4,7 @@
 	import { beforeNavigate } from '$app/navigation';
 	import { onMount, onDestroy, tick, untrack } from 'svelte';
 	import Hls from 'hls.js';
+	import { fetchAheadLoader, recentPieces } from '$lib/fetchAhead';
 	import BackBar from '$lib/BackBar.svelte';
 	import { p, pRandom } from '$lib/poison';
 	import { pickFile, playableHere, PREFERRED_QUALITY } from '$lib/watch';
@@ -878,6 +879,70 @@
 		slowOffer = { lower, height: lower >= 0 ? (hlsInstance?.levels[lower]?.height ?? 0) : 0, freshLink };
 	}
 
+	/*
+	 * How playback is going, for the stats in the player and the log kept of every stop to load
+	 * (Settings → Playback; src/lib/server/playbackLog.ts): each recent piece's own download speed
+	 * and server, how much is loaded ahead, and what else Catalog is downloading meanwhile.
+	 */
+	const mbps = (bytes: number, ms: number) => Math.round(((bytes * 8) / Math.max(ms, 1) / 1000) * 10) / 10;
+	function playbackNow() {
+		const now = performance.now();
+		const video = recentPieces.filter((p) => p.kind === 'video' && now - p.at < 60_000).slice(-6);
+		const level = hlsInstance && hlsInstance.currentLevel >= 0 ? hlsInstance.levels[hlsInstance.currentLevel] : null;
+		return {
+			title: videoTitle,
+			source: activeFile?.source ?? 'Showbox',
+			quality: activeQuality,
+			height: videoEl?.videoHeight ?? 0,
+			tv: tvMode,
+			position: Math.round(currentTime),
+			aheadSeconds: Math.round(bufferedAhead()),
+			needsMbps: level?.bitrate ? Math.round(level.bitrate / 100_000) / 10 : null,
+			piecesMbps: video.map((p) => mbps(p.bytes, p.ms)),
+			fromMemory: video.filter((p) => p.ahead).length,
+			servers: [...new Set(video.map((p) => p.host))],
+			relayed: streamUrl.startsWith('/api/watch/relay?'),
+			previewsDownloading: strip?.busy ?? 0,
+			hearingSound: subSync?.fetchingSound ?? false
+		};
+	}
+
+	let lastStopLogged = 0;
+	/** A stop to load, kept with what was going on (once every 20 seconds at most). */
+	function logStop() {
+		if (!videoEl || isVideoSeeking || videoEl.currentTime < 5 || performance.now() - lastStopLogged < 20_000) return;
+		lastStopLogged = performance.now();
+		fetch('/api/watch/playback-log', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(playbackNow()),
+			keepalive: true
+		}).catch(() => {});
+	}
+
+	/** The stats in the corner of the player (Settings → Playback stats), per device. */
+	const STATS_KEY = 'catalog:playerStats';
+	let showStats = $state(untrack(() => {
+		try {
+			return localStorage.getItem(STATS_KEY) === '1';
+		} catch {
+			return false;
+		}
+	}));
+	let stats = $state<ReturnType<typeof playbackNow> | null>(null);
+	$effect(() => {
+		if (!showStats) return;
+		stats = playbackNow();
+		const timer = setInterval(() => (stats = playbackNow()), 1000);
+		return () => clearInterval(timer);
+	});
+	function toggleStats() {
+		showStats = !showStats;
+		try {
+			localStorage.setItem(STATS_KEY, showStats ? '1' : '0');
+		} catch {}
+	}
+
 	function slowChoice(choice: 'fresh' | 'lower' | 'keep') {
 		const offer = slowOffer;
 		slowOffer = null;
@@ -1572,6 +1637,8 @@
 			/(https?:\/\/|www\.)\S+/i.test(line) ||
 			/\b[a-z0-9-]{2,}\.(com|org|net|link|io|me|to|tv|cc|ws|info|xyz|site|club|mx|ag|ru|pt|ro)(\/\S*)?(?![a-z])/i.test(line) ||
 			/subtitles for any video|advertise your product|support us and become|become (a )?vip|downloaded from|proudly presents/i.test(line) ||
+			// "Watch Online Movies and Series for FREE" (the only line it caught in 56,120 kept ones)
+			/\bwatch\b.{0,25}\b(movies?|series|tv shows?|anime)\b.{0,25}\bfree\b|\bfree\b.{0,15}\b(movies?|series)\b.{0,15}\bonline\b/i.test(line) ||
 			/^[-–=[\s]*(subtitles?|subs|captions?|synch?(ed|roni[sz]ed)?|resynch?(ed)?|corrected|ripped|translated|transcribed|subtitled|timing|encoded)( (and|&) \w+)? by\b/i.test(line)
 		);
 	}
@@ -1864,10 +1931,12 @@
 	 * The subtitles that were on, back on. Not plain subtitles over the English dub: they were on
 	 * for Japanese audio (captions, which follow the dub, still come back).
 	 */
-	function restoreSavedSubs(place: SavedPlace) {
+	async function restoreSavedSubs(place: SavedPlace) {
 		const forDub = /\bCC\b|SDH/i.test(place.subFileName ?? '');
 		// Not over subtitles in the picture, nor for a show they were turned off for.
 		if (activeFile?.burnedIn || captionsOffForShow()) return;
+		// Whether English audio is a dub depends on this being anime (asked as it opened).
+		await animeKnown;
 		if (place.subUrl && (!hearingDub() || forDub)) {
 			loadSub({ id: '0', url: place.subUrl, lang: 'eng', language: 'English', fileName: place.subFileName || '' });
 			if (place.subDelay) subtitleDelay = place.subDelay;
@@ -2545,12 +2614,17 @@
 		fetchSubtitles();
 	}
 
-	/** The English dub or not: another source says, otherwise the audio track playing does. */
+	/**
+	 * The English dub or not: another source says (Aniwave), otherwise the audio track playing
+	 * does — but only for anime. An English film's English audio isn't a dub: taking it for one
+	 * left Madagascar 2's subtitles off when it was resumed (only captions come back over a dub).
+	 */
 	function hearingDub(): boolean {
+		if (activeFile?.audio) return /^(english|eng)\b/i.test(activeFile.audio);
+		if (!isAnime) return false;
 		// Before a Showbox video has loaded its audio tracks, the one picked last time (it's put back on).
 		const track = hlsAudioTracks.find((t) => t.id === hlsActiveAudio)?.name ?? (activeFile?.source ? '' : preferredAudioName);
-		const audio = activeFile?.audio ?? track ?? '';
-		return /^(english|eng)\b/i.test(audio);
+		return /^(english|eng)\b/i.test(track ?? '');
 	}
 
 	async function fetchSubtitles(autoMatch?: { fileName: string; language: string; delay: number }) {
@@ -2753,7 +2827,9 @@
 			const resp = await fetch(`/api/watch/subtitle-content?${params}`);
 			if (!resp.ok) return null;
 			const data = await resp.json();
-			if (data.content) return parseSrt(data.content);
+			// No lines in it at all counts as not had (so the next one is tried).
+			const cues = data.content ? parseSrt(data.content) : [];
+			if (cues.length) return cues;
 		} catch {}
 		return null;
 	}
@@ -2792,6 +2868,8 @@
 
 	/** Japanese original and animated (TMDB, via /api/watch/is-anime): starts in Japanese. */
 	let isAnime = false;
+	/** Settles once it's known whether this is anime (asked as each title opens). */
+	let animeKnown: Promise<boolean> = Promise.resolve(false);
 	const isJapaneseTrack = (t: { lang?: string; name?: string }) => /^ja/i.test(t.lang ?? '') || /\b(jpn|japanese)\b/i.test(t.name ?? '');
 	const isEnglishTrack = (t: { lang?: string; name?: string }) => /^en/i.test(t.lang ?? '') || /\b(eng|english)\b/i.test(t.name ?? '');
 
@@ -2944,7 +3022,10 @@
 			seekAfterLoad = 0;
 			// (untrack: what it reads mustn't make this effect run again and reload the video.)
 			const placeSoon: Promise<SavedPlace | null> = reloadAt > 0 ? Promise.resolve({ at: reloadAt }) : untrack(() => savedPlace());
+			// (Its pieces come a couple ahead: src/lib/fetchAhead.ts says why.)
+			let player: Hls | null = null;
 			const hls = new Hls({
+				fLoader: fetchAheadLoader(() => player),
 				autoStartLoad: false,
 				// Catalog draws its own subtitles: none of the browser's, from captions some videos
 				// carry inside them or a subtitle track their playlist lists.
@@ -2960,8 +3041,16 @@
 				enableWorker: true,
 				startFragPrefetch: true,
 				backBufferLength: 90,
-				fragLoadingMaxRetry: 4,
-				fragLoadingRetryDelay: 1000,
+				// A piece with no answer after 5 s is asked for again (a busy server leaves one
+				// hanging now and then); a slow one that is arriving is never cut off.
+				fragLoadPolicy: {
+					default: {
+						maxTimeToFirstByteMs: 5000,
+						maxLoadTimeMs: 120_000,
+						timeoutRetry: { maxNumRetry: 6, retryDelayMs: 0, maxRetryDelayMs: 0 },
+						errorRetry: { maxNumRetry: 4, retryDelayMs: 1000, maxRetryDelayMs: 8000 }
+					}
+				},
 				abrEwmaDefaultEstimate: 50_000_000,
 				xhrSetup: (xhr: XMLHttpRequest) => {
 					xhr.addEventListener('progress', markBytes);
@@ -3073,6 +3162,7 @@
 				refreshStream();
 			});
 			hlsInstance = hls;
+			player = hls;
 		} else {
 			videoEl.src = streamUrl;
 			if (!stayPaused) videoEl.play().catch(() => {});
@@ -3334,14 +3424,19 @@
 		lastResolveArgs = { title, type, year };
 		// Anime starts in Japanese (asked alongside; the audio is put right when it answers).
 		isAnime = false;
-		fetch(`/api/watch/is-anime?${new URLSearchParams({ title, type: type === 'movie' ? 'movie' : 'tv', year: year ?? '' })}`)
+		animeKnown = fetch(`/api/watch/is-anime?${new URLSearchParams({ title, type: type === 'movie' ? 'movie' : 'tv', year: year ?? '' })}`)
 			.then((r) => (r.ok ? r.json() : { anime: false }))
 			.then((r: { anime?: boolean }) => {
-				if (lastResolveArgs?.title !== title) return;
+				if (lastResolveArgs?.title !== title) return false;
 				isAnime = r.anime === true;
-				if (isAnime) applyPreferredAudio();
+				if (isAnime) {
+					applyPreferredAudio();
+					// Picked before this was known: English audio is the dub after all.
+					recheckSubsForAudio();
+				}
+				return isAnime;
 			})
-			.catch(() => {});
+			.catch(() => false);
 		// Nothing of the last title's carries over (its subtitles stayed on after "Wrong one?").
 		febboxSubs = [];
 		subsKey = '';
@@ -3353,10 +3448,16 @@
 		activeSubFileName = '';
 
 		try {
-			// A series asks for no stream here; it fetches only the episode it ends up playing.
-			const params = new URLSearchParams({ title, nostream: '1' });
+			// A series asks for no stream here; it fetches only the episode it ends up playing —
+			// but the computer starts that episode's link meanwhile (warm=1), so asking for it
+			// below picks up the one already on its way.
+			const params = new URLSearchParams({ title, nostream: '1', warm: '1' });
 			if (type) params.set('type', type);
 			if (year) params.set('year', year);
+			if (resumeSeason && resumeEpisode) {
+				params.set('resume_s', String(resumeSeason));
+				params.set('resume_e', String(resumeEpisode));
+			}
 
 			const resp = await fetch(`/api/watch/resolve?${params}`);
 			if (!resp.ok) throw new Error();
@@ -4063,6 +4164,7 @@
 						onwaiting={() => {
 							buffering = true;
 							noteSlowStop();
+							logStop();
 							if (!stalledOut) watchForStall();
 						}}
 						oncanplay={() => { buffering = false; }}
@@ -4121,6 +4223,17 @@
 							{#if slowOffer.freshLink}<button type="button" onclick={() => slowChoice('fresh')}>Try a fresh link</button>{/if}
 							{#if slowOffer.lower >= 0}<button type="button" onclick={() => slowChoice('lower')}>Lower quality ({slowOffer.height}p)</button>{/if}
 							<button type="button" onclick={() => slowChoice('keep')}>Keep loading</button>
+						</div>
+					{/if}
+
+					{#if showStats && stats}
+						<div class="playback-stats" aria-live="off">
+							<div><span>Source</span>{stats.source} · {stats.height ? `${stats.height}p` : stats.quality}{stats.relayed ? ' · through this computer' : ''}</div>
+							<div><span>Loaded ahead</span>{stats.aheadSeconds} s</div>
+							<div><span>Each piece</span>{stats.piecesMbps.length ? stats.piecesMbps.map((m) => `${m}`).join(' · ') + ' Mbps' : '—'}{stats.needsMbps ? ` (needs ${stats.needsMbps})` : ''}</div>
+							<div><span>From memory</span>{stats.fromMemory} of the last {stats.piecesMbps.length}</div>
+							<div><span>Server</span>{stats.servers.join(', ') || '—'}</div>
+							<div><span>Also downloading</span>{[stats.previewsDownloading ? 'preview pictures' : '', stats.hearingSound ? 'sound for auto-timing' : ''].filter(Boolean).join(', ') || 'nothing'}</div>
 						</div>
 					{/if}
 
@@ -4309,6 +4422,7 @@
 
 							<button
 								class="ctrl-btn"
+								class:active={showSettings}
 								onclick={() => { showSettings = !showSettings; showCaptions = false; showDelay = false; showAudioPicker = false; }}
 								title="Settings"
 							>
@@ -4362,6 +4476,8 @@
 								<p class="popup-label">File</p>
 								<p class="popup-item popup-info file-name-info">{#each parseFileTokens(activeFile.name) as tok}{#if tok.tip}<span class="file-token" data-tip={tok.tip}>{tok.text}</span>{:else}{tok.text}{/if}{/each} ({activeFile.size ? `${activeFile.size} · ` : ''}{activeFile.source ?? 'Showbox'})</p>
 							{/if}
+							<hr class="popup-divider" />
+							<button class="popup-item" onclick={toggleStats}>Playback stats: {showStats ? 'On' : 'Off'}</button>
 							<hr class="popup-divider" />
 							<p class="popup-label">Speed</p>
 							{#each SPEEDS as s (s.value)}
@@ -4460,7 +4576,7 @@
 												onclick={() => {
 													keepCaptionsOff(false);
 													if (sub.check) passNexusCheck();
-													else loadSub(sub);
+													else loadSub(sub).then((ok) => { if (!ok) showQualityToast("Those subtitles couldn't be loaded. Try another."); });
 												}}
 												title={sub.fileName || sub.language}
 											>
@@ -4682,6 +4798,24 @@
 
 	/* --------------------------------------------------------- top bar */
 	.player-bar { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: rgba(0, 0, 0, 0.8); border-bottom: 1px solid rgba(255, 255, 255, 0.08); z-index: 20; transition: opacity 0.3s ease, transform 0.3s ease; }
+	.playback-stats {
+		position: absolute;
+		top: 64px;
+		left: 16px;
+		z-index: 15;
+		padding: 10px 12px;
+		border-radius: 8px;
+		background: rgba(0, 0, 0, 0.72);
+		color: #fff;
+		font: 0.78rem/1.55 var(--mono);
+		pointer-events: none;
+		max-width: min(520px, calc(100% - 32px));
+	}
+	.playback-stats span {
+		display: inline-block;
+		min-width: 9.5em;
+		opacity: 0.65;
+	}
 	.player-bar.bar-hidden { opacity: 0; pointer-events: none; transform: translateY(-100%); }
 	.bar-btn { flex: none; font-size: 0.82rem; font-weight: 600; padding: 5px 12px; border-radius: var(--radius-sm); border: 1px solid rgba(255, 255, 255, 0.15); background: rgba(255, 255, 255, 0.06); color: #e0e0e0; cursor: pointer; text-decoration: none; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
 	.bar-btn:hover { border-color: rgba(255, 255, 255, 0.3); color: #fff; }

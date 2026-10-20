@@ -60,9 +60,8 @@ export type Settings = {
 	storageLimitMb?: string;
 	/** When '1', UI text gets replaced with Poison's vocabulary. */
 	poisonMode?: string;
-	/** Free key from subdl.com. Optional — adds more subtitle results. */
+	/** SubDL's key and its "seen" mark: no longer used (SubDL dropped 2026-10-20), cleared at start-up. */
 	subdlApiKey?: string;
-	/** Set once the user has visited Services and seen the SubDL option. */
 	subdlSeen?: string;
 	/** 'full' when the TV app shows the normal layout instead of the TV one (Settings → Watch on TV). */
 	tvLayout?: string;

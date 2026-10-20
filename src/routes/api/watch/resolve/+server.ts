@@ -15,8 +15,10 @@ import {
 	findEntryByTitle,
 	getSavedShowboxMatch,
 	saveShowboxMatch,
-	forgetShowboxMatch
+	forgetShowboxMatch,
+	watchedEpisodesForTitle
 } from '$lib/server/db/queries';
+import { pickFile, PREFERRED_QUALITY } from '$lib/watch';
 import { fetchAlternativeTitles, tmdbGet } from '$lib/server/metadata/tmdb';
 import { fetchRomajiTitle } from '$lib/server/metadata/anilist';
 import { combineEpisodes, tmdbShow, type EpisodeList } from '$lib/server/combinedEpisodes';
@@ -103,12 +105,67 @@ interface ResolveCache {
 const resolveCache = new Map<string, ResolveCache>();
 const RESOLVE_TTL = 30 * 60 * 1000;
 
-export const GET: RequestHandler = async ({ url }) => {
+/**
+ * The video link for the episode the player will most likely start, fetched now, while the rest
+ * of the lookup and the player's own steps go on — the player's request for it then picks up
+ * the one already under way (getStreamUrl shares it) instead of starting from nothing, about 2 s
+ * sooner. Chosen the way the player chooses: the episode asked for, else where the title was
+ * left (the next one if that was finished), else the season Showbox's entry starts at, else the
+ * first; Showbox's best file. A wrong guess costs one extra lookup and nothing else.
+ */
+function warmLikelyEpisode(list: EpisodeList, share: string, title: string, startSeason: number, asked: { season: number; episode: number }) {
+	const { febboxToken } = readSettings();
+	if (!febboxToken || !list.episodes.length) return;
+	const episodes = list.episodes;
+	const at = (season: number, episode: number) => episodes.find((e) => e.season === season && e.episode === episode);
+	let target = asked.season && asked.episode ? at(asked.season, asked.episode) : undefined;
+	if (!target && !asked.season) {
+		const watched = watchedEpisodesForTitle(title);
+		if (watched.length) {
+			const last = watched.reduce((best, e) => (e.season > best.season || (e.season === best.season && e.episode > best.episode) ? e : best));
+			const index = episodes.findIndex((e) => e.season === last.season && e.episode === last.episode);
+			target = last.pct >= 0.9 && index >= 0 ? episodes[index + 1] : at(last.season, last.episode);
+		}
+		if (!target && startSeason) target = episodes.find((e) => e.season === startSeason);
+	}
+	target ??= episodes[0];
+	const plays = (e: (typeof episodes)[number]) => e.available !== false && e.files.length > 0;
+	if (!plays(target)) target = episodes.find((e) => e.season === target!.season && plays(e)) ?? episodes.find(plays);
+	const file = target ? pickFile(target.files, PREFERRED_QUALITY) : null;
+	// Only Showbox's links: other sources' are fetched by the player as it always has.
+	if (!target || !file || file.source) return;
+	getStreamUrl(target.shareKey ?? share, file.fid, febboxToken).catch(() => {});
+}
+
+/**
+ * Lookups of one title wait for each other: a Watch button pointed at starts one (src/lib/watch.ts
+ * warmUpTitle), and the player's own, a moment later, then gets its answer from what that one
+ * kept instead of doing the same Showbox search and Febbox listing a second time beside it.
+ */
+const lookingUp = new Map<string, Promise<unknown>>();
+
+export const GET: RequestHandler = async (event) => {
+	const params = event.url.searchParams;
+	const key = `${params.get('title')?.trim().toLowerCase()}:${params.get('type') ?? ''}:${params.get('year') ?? ''}`;
+	const before = lookingUp.get(key);
+	const mine = (before ?? Promise.resolve()).catch(() => {}).then(() => lookUp(event.url));
+	lookingUp.set(key, mine);
+	try {
+		return await mine;
+	} finally {
+		if (lookingUp.get(key) === mine) lookingUp.delete(key);
+	}
+};
+
+async function lookUp(url: URL): Promise<Response> {
 	const title = url.searchParams.get('title')?.trim();
 	const type = url.searchParams.get('type') ?? '';
 	const year = url.searchParams.get('year') ?? '';
 	// For series the player picks the episode itself, then asks for that stream.
 	const skipEpisodeStream = url.searchParams.get('nostream') === '1';
+	// The player (or a Watch button pointed at) wants the likely episode's link started.
+	const warm = skipEpisodeStream && url.searchParams.get('warm') === '1';
+	const asked = { season: Number(url.searchParams.get('resume_s') ?? 0), episode: Number(url.searchParams.get('resume_e') ?? 0) };
 
 	if (!title) return error(400, 'Missing title');
 
@@ -134,6 +191,7 @@ export const GET: RequestHandler = async ({ url }) => {
 		episodeData = cached.episodes;
 		movieFileList = cached.files;
 		startSeason = cached.startSeason;
+		if (warm && matchType === 'tv' && episodeData && shareKey) warmLikelyEpisode(episodeData as EpisodeList, shareKey, matchTitle, startSeason, asked);
 	} else {
 		// Remembered from an earlier session: skips the Showbox search, but re-lists so new episodes show.
 		const saved = getSavedShowboxMatch(cacheKey);
@@ -299,6 +357,7 @@ export const GET: RequestHandler = async ({ url }) => {
 		// Other Showbox entries for the same show (JoJo's Steel Ball Run) and other sources join
 		// the list, and episodes no one has yet show greyed out. (Already done for a show only
 		// other sources have.)
+		if (warm && matchType === 'tv' && episodeData && shareKey) warmLikelyEpisode(episodeData as EpisodeList, shareKey, matchTitle, startSeason, asked);
 		if (matchType === 'tv' && episodeData && shareKey) {
 			episodeData = await combineEpisodes(episodeData as EpisodeList, matchTitle, matchId, year);
 		}
@@ -403,4 +462,4 @@ export const GET: RequestHandler = async ({ url }) => {
 		libraryEntry,
 		showboxBusy
 	});
-};
+}
