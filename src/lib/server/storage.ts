@@ -33,7 +33,7 @@ const MB = 1024 * 1024;
 export const SHARES = { appCache: 0.5, previews: 0.2, subtitles: 0.15, lookups: 0.15 } as const;
 
 /** Kept in the lookups but not a lookup: never trimmed. */
-const NOT_LOOKUPS = ['slow-requests'];
+const NOT_LOOKUPS = ['slow-requests', 'playback-log'];
 
 export function storageLimitMb(): number {
 	const saved = Number(readSettings().storageLimitMb);

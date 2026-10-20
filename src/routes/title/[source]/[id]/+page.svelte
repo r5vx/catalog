@@ -1,4 +1,5 @@
 <script lang="ts">
+	import MoreLikeThis from '$lib/MoreLikeThis.svelte';
 	import SourceChecks from '$lib/SourceChecks.svelte';
 	import { checkWatchable, type SourceCheck } from '$lib/watchCheck';
 	import { page } from '$app/state';
@@ -12,6 +13,11 @@
 	import { money } from '$lib/format';
 	import { untrack } from 'svelte';
 	import type { PageData } from './$types';
+	import { warmUpTitle, warmWhenResting } from '$lib/watch';
+
+	// The lookup and the video link start half a second after the check says it can be
+	// watched (flicking straight past a page starts nothing), or when the pointer rests on Watch.
+	const watchWarm = warmWhenResting(250);
 
 	let { data }: { data: PageData } = $props();
 
@@ -57,6 +63,12 @@
 			watchAvailable = available;
 			watchSources = sources;
 		});
+	});
+	$effect(() => {
+		if (watchAvailable !== true) return;
+		const item = { title: details.title ?? '', type: data.watchType, year: details.year };
+		const timer = setTimeout(() => warmUpTitle(item), 500);
+		return () => clearTimeout(timer);
 	});
 
 	const facts = $derived(
@@ -115,6 +127,10 @@
 					{#if watchAvailable === true}
 						<a
 							href="/watch?title={encodeURIComponent(details.title ?? '')}&type={data.watchType}{details.year ? `&year=${details.year}` : ''}&auto=1"
+							onpointerenter={() => watchWarm.start({ title: details.title ?? '', type: data.watchType, year: details.year })}
+							onpointerleave={watchWarm.stop}
+							onfocus={() => watchWarm.start({ title: details.title ?? '', type: data.watchType, year: details.year })}
+							onblur={watchWarm.stop}
 							class="btn btn-watch"
 						>▶ Watch</a>
 					{:else if watchAvailable === false}
@@ -184,6 +200,7 @@
 			>
 		</p>
 	{/if}
+	<MoreLikeThis source={data.source} sourceId={data.sourceId} title={details.title ?? ''} />
 </article>
 
 <style>

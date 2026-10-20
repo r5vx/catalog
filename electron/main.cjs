@@ -92,6 +92,30 @@ function startTvDiscovery() {
  */
 const FEBBOX_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
+/**
+ * The video link in Febbox's player page as it is since 2026-10-19: a `var sources = [...]`
+ * list (AUTO, 1080p, 720p, 360p, ORG) with its slashes escaped (`https:\/\/`), beside an old
+ * sample link left in a commented-out line. The same as showbox.ts' fromSourcesList. Without
+ * it, nothing in the page matched, and every Showbox video waited on the hidden window below —
+ * 3 s after it loaded plus a dozen looks for a player that isn't there — about 6–8 s each time.
+ */
+function fromSourcesList(html) {
+	const found = html.match(/var\s+sources\s*=\s*(\[[\s\S]*?\])\s*;/);
+	if (!found) return '';
+	let list;
+	try {
+		list = JSON.parse(found[1]);
+	} catch {
+		return '';
+	}
+	const playlists = list.filter((s) => s && s.file && /\.m3u8/i.test(s.file));
+	const auto = playlists.find((s) => /auto/i.test(s.label || ''));
+	if (auto) return auto.file;
+	const height = (s) => Number(((s.label || '').match(/(\d{3,4})p/i) || [])[1] || 0);
+	const best = [...playlists].sort((a, b) => height(b) - height(a))[0];
+	return best ? best.file : '';
+}
+
 /** One page of a Febbox folder listing, asked as this browser. */
 async function febboxList(url) {
 	const { net } = require('electron');
@@ -392,7 +416,11 @@ function startServer() {
 			CATALOG_UPDATE_MODE: SOURCE_MODE ? 'source' : 'release',
 			// Packed alongside the app, so "what's new" works with no connection.
 			CATALOG_NOTES: path.join(__dirname, '..', 'RELEASE_NOTES.md'),
+			// "More like this" film data (data/README.md).
+			CATALOG_DATA: path.join(__dirname, '..', 'data'),
 			CATALOG_VERSION: app.getVersion(),
+			// Installed for all users: Windows asks before each install, so it can't happen by itself.
+			CATALOG_INSTALL_NEEDS_PERMISSION: process.platform === 'win32' && app.isPackaged && !canWriteAppFolder() ? '1' : '',
 			// The server picks its own stable location for library.db, the same
 			// one `npm run dev` uses — so there's only ever one library.
 			ELECTRON_RUN_AS_NODE: '1'
@@ -514,10 +542,16 @@ function startServer() {
 					console.log('[video-url] fetch:', e.message);
 				}
 
-				// 2. Parse HTML for HD stream URL
-				if (playerHtml) {
-					// Find ALL m3u8 URLs in the HTML
-					const allM3u8 = [...playerHtml.matchAll(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/gi)]
+				// 2. Parse HTML for HD stream URL: the page's own list first.
+				const listed = playerHtml ? fromSourcesList(playerHtml) : '';
+				if (listed) {
+					capturedUrl = listed;
+					videoInfo = 'sources:' + listed.substring(0, 120);
+				}
+				if (playerHtml && !capturedUrl) {
+					// Find ALL m3u8 URLs in the HTML — not in commented-out lines, escaped slashes undone
+					const readable = playerHtml.replace(/^\s*\/\/.*$/gm, '').replace(/\\\//g, '/');
+					const allM3u8 = [...readable.matchAll(/(https?:\/\/[^\s"'<>\\]+\.m3u8[^\s"'<>\\]*)/gi)]
 						.map(m => m[1].replace(/&amp;/g, '&'));
 					// Prefer m3u8 from a non-febbox CDN
 					const cdnM3u8 = allM3u8.find(u => !u.includes('febbox.com'));
@@ -651,8 +685,12 @@ function startServer() {
 					}
 				}
 
-				// 4. Hidden window: load player page with network interception
-				if (!capturedUrl) {
+				// 4. Hidden window: load player page with network interception — not when Febbox
+				//    answered with a refusal ({"code":-1,"msg":"please login"}): the window gets the
+				//    same answer, after 10 s of waiting, before the server's own sign-in is tried.
+				const refused = /^\s*\{[\s\S]*"code"\s*:\s*-?\d+/.test(playerHtml) && playerHtml.length < 400;
+				if (refused) videoInfo = 'refused:' + playerHtml.substring(0, 80);
+				if (!capturedUrl && !refused) {
 					hidden = new BrowserWindow({
 						show: true,
 						x: -9999, y: -9999,
@@ -1174,6 +1212,14 @@ function createWindow() {
 	});
 
 	window.once('ready-to-show', () => window.show());
+	// Closing Catalog's window closes Catalog — the hidden windows it uses for lookups (Movy,
+	// preview pictures for a TV, hearing a sound track) don't keep it running unseen. They did:
+	// opening it again then found that copy, reached for its closed window and crashed
+	// ("Object has been destroyed"), until the hidden work finished hours later.
+	window.on('closed', () => {
+		window = null;
+		if (!quitting) app.quit();
+	});
 	addTextMenu(window.webContents);
 	window.loadURL(ORIGIN);
 
@@ -1337,7 +1383,11 @@ if (!app.requestSingleInstanceLock()) {
 	app.quit();
 } else {
 	app.on('second-instance', () => {
-		if (!window) return;
+		// Its window was closed while hidden work went on: a new one rather than a crash.
+		if (!window || window.isDestroyed()) {
+			if (app.isReady()) createWindow();
+			return;
+		}
 		if (window.isMinimized()) window.restore();
 		window.focus();
 	});

@@ -1,5 +1,5 @@
 import { error, redirect, type Handle, type RequestEvent } from '@sveltejs/kit';
-import { pinIsSet, sessionToken, setupNeeded, readSettings } from '$lib/server/settings';
+import { pinIsSet, sessionToken, setupNeeded, readSettings, updateSettings } from '$lib/server/settings';
 // Imported for its side effect: it starts listening for update progress from
 // the desktop app at boot, not the first time someone opens Settings.
 import '$lib/server/updater';
@@ -40,6 +40,8 @@ setInterval(keepWithinLimit, 60 * 60 * 1000).unref?.();
 
 // Subtitles kept for shows that are done with go now, and every hour after.
 forgetFinishedSubtitles();
+// SubDL is no longer asked (it needed a key and added little): its key isn't kept.
+if (readSettings().subdlApiKey || readSettings().subdlSeen) updateSettings({ subdlApiKey: undefined, subdlSeen: undefined });
 setInterval(forgetFinishedSubtitles, 60 * 60 * 1000).unref?.();
 
 // A renewed Showbox sign-in in the app's window is saved, shortly after opening and twice a day.

@@ -5,19 +5,8 @@ import { gunzipSync, inflateRawSync } from 'node:zlib';
 import xz from 'xz-decompress';
 
 const OS_REST = 'https://rest.opensubtitles.org/search';
-const SUBDL_API = 'https://api.subdl.com/api/v1/subtitles';
-const SUBDL_DL = 'https://dl.subdl.com';
 const GESTDOWN_API = 'https://api.gestdown.info';
 const UA = 'Catalog v1.0';
-
-const SUBDL_LANG_MAP: Record<string, string> = {
-	EN: 'eng', ES: 'spa', FR: 'fre', DE: 'ger', IT: 'ita', PT: 'por',
-	JA: 'jpn', KO: 'kor', ZH: 'chi', AR: 'ara', RU: 'rus', HI: 'hin',
-	NL: 'dut', PL: 'pol', TR: 'tur', SV: 'swe', NO: 'nor', DA: 'dan',
-	FI: 'fin', EL: 'gre', HE: 'heb', HU: 'hun', CS: 'cze', RO: 'rum',
-	ID: 'ind', TH: 'tha', VI: 'vie', MS: 'may', HR: 'hrv', BG: 'bul',
-	UK: 'ukr', FA: 'per', BN: 'ben', SK: 'slo', SQ: 'alb', BS: 'bos',
-};
 
 const LANG_NAMES: Record<string, string> = {
 	eng: 'English', spa: 'Spanish', fre: 'French', ger: 'German',
@@ -55,93 +44,6 @@ interface OSResult {
 	SubFormat?: string;
 	SeriesSeason?: string;
 	SeriesEpisode?: string;
-}
-
-interface SubDLSub {
-	release_name?: string;
-	name?: string;
-	lang?: string;
-	language?: string;
-	url?: string;
-}
-
-async function fetchSubDL(params: URLSearchParams): Promise<SubtitleOption[]> {
-	try {
-		const resp = await fetch(`${SUBDL_API}?${params}`, {
-			signal: AbortSignal.timeout(12000)
-		});
-		if (!resp.ok) return [];
-		const data = await resp.json();
-		if (!Array.isArray(data.subtitles)) return [];
-
-		return data.subtitles.map((s: SubDLSub, i: number) => {
-			const iso = (s.language ?? 'EN').toUpperCase();
-			const osLang = SUBDL_LANG_MAP[iso] ?? iso.toLowerCase();
-			const display = s.lang
-				? s.lang.charAt(0).toUpperCase() + s.lang.slice(1)
-				: langName(osLang);
-			const cleanUrl = s.url ? s.url.split('?')[0] : '';
-			return {
-				id: `subdl-${i}`,
-				url: cleanUrl ? `${SUBDL_DL}${cleanUrl}` : '',
-				lang: osLang,
-				language: display,
-				fileName: s.release_name ?? s.name ?? '',
-				source: 'SubDL'
-			};
-		}).filter((s: SubtitleOption) => s.url);
-	} catch {
-		return [];
-	}
-}
-
-async function querySubDL(
-	imdbId: string | null,
-	title: string,
-	type: 'movie' | 'tv',
-	season?: number,
-	episode?: number
-): Promise<SubtitleOption[]> {
-	const key = readSettings().subdlApiKey;
-	if (!key) return [];
-
-	const base: Record<string, string> = { api_key: key, subs_per_page: '30', type };
-	if (type === 'tv' && season) base.season_number = String(season);
-	if (type === 'tv' && episode) base.episode_number = String(episode);
-
-	// English asked for on its own: SubDL hands back 30 at most, and for some shows (anime)
-	// those are nearly all other languages.
-	const ask = async (which: Record<string, string>) => {
-		const [english, any] = await Promise.all([
-			fetchSubDL(new URLSearchParams({ ...base, ...which, languages: 'EN' })),
-			fetchSubDL(new URLSearchParams({ ...base, ...which }))
-		]);
-		const seen = new Set(english.map((s) => s.url));
-		return [...english, ...any.filter((s) => !seen.has(s.url))];
-	};
-
-	let results: SubtitleOption[] = [];
-	if (imdbId) results = await ask({ imdb_id: imdbId });
-	if (results.length === 0) results = await ask({ film_name: title });
-
-	if (type === 'tv' && episode) {
-		results = results.filter(s => {
-			const m = s.fileName.match(/[SE](\d{2,})/gi);
-			if (m) {
-				const eps = m.filter(p => /^E\d/i.test(p)).map(p => parseInt(p.slice(1)));
-				if (eps.length === 0) return false;
-				return eps.includes(episode);
-			}
-			const trail = [...s.fileName.matchAll(/[-–]\s*(\d{1,3})(?=[\s.)_\]\[,]|$)/g)];
-			if (trail.length > 0) {
-				const nums = trail.map(t => parseInt(t[1])).filter(n => n > 0 && n < 500);
-				if (nums.length > 0) return nums.includes(episode);
-			}
-			return true;
-		});
-	}
-
-	return results;
 }
 
 async function queryOS(path: string): Promise<OSResult[]> {
@@ -279,7 +181,7 @@ async function fromOpenSubtitles(
 	return subs;
 }
 
-/** OpenSubtitles first, then SubDL and Addic7ed; no repeats, and only so many per language. */
+/** OpenSubtitles first, then Addic7ed; no repeats, and only so many per language. */
 function mergeSubtitles(lists: SubtitleOption[][]): SubtitleOption[] {
 	const seen = new Set<string>();
 	const subs: SubtitleOption[] = [];
@@ -302,7 +204,7 @@ function mergeSubtitles(lists: SubtitleOption[][]): SubtitleOption[] {
 const complete = new Map<string, { list: SubtitleOption[]; at: number }>();
 
 /**
- * Subtitles from OpenSubtitles, SubDL and Addic7ed, all asked at once. The list goes back with
+ * Subtitles from OpenSubtitles and Addic7ed, both asked at once. The list goes back with
  * whatever has answered — 2.5 seconds after OpenSubtitles, six at most; one slow site used to
  * hold it up for half a minute — and the rest is kept for the next time it's asked for.
  */
@@ -320,10 +222,10 @@ export async function fetchSubtitlesForTitle(
 		let imdbId = await fetchImdbId(title, type);
 		if (!imdbId) imdbId = await fetchImdbId(title, type === 'tv' ? 'movie' : 'tv');
 
-		const answered: (SubtitleOption[] | null)[] = [null, null, null];
+		// (SubDL was dropped 2026-10-20: it needed a key and added little.)
+		const answered: (SubtitleOption[] | null)[] = [null, null];
 		const asking = [
 			fromOpenSubtitles(title, type, imdbId, season, episode),
-			querySubDL(imdbId, title, type, season, episode),
 			queryGestdown(title, type, season, episode)
 		].map((p, i) => p.catch(() => []).then((list) => (answered[i] = list)));
 

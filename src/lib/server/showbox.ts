@@ -403,7 +403,39 @@ export async function listMovieFiles(shareUrl: string): Promise<FileOption[]> {
 		.sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0));
 }
 
-function extractVideoUrl(html: string): string | null {
+/**
+ * The video address in Febbox's player page. Its own list comes first: `var sources = [...]`
+ * (AUTO — the playlist with every quality — then 1080p, 720p…, and "ORG", the original file,
+ * often HEVC). Since 2026-10-20 that list writes its addresses with escaped slashes
+ * (`https:\/\/…`), which the plain search below never matched — and the page also carries an
+ * old sample list in a comment (`// var ds = [...]`, a 360p 2019 episode of another show whose
+ * link expired in 2020), which it did match: every Showbox video "loaded" forever.
+ */
+function fromSourcesList(html: string): string | null {
+	const found = html.match(/var\s+sources\s*=\s*(\[[\s\S]*?\])\s*;/);
+	if (!found) return null;
+	let list: { file?: string; label?: string; h265?: string | number }[];
+	try {
+		list = JSON.parse(found[1]);
+	} catch {
+		return null;
+	}
+	const playlists = list.filter((s) => s.file && /\.m3u8/i.test(s.file));
+	const auto = playlists.find((s) => /auto/i.test(s.label ?? ''));
+	if (auto?.file) return auto.file;
+	const height = (s: { label?: string }) => Number(s.label?.match(/(\d{3,4})p/i)?.[1] ?? 0);
+	const best = [...playlists].sort((a, b) => height(b) - height(a))[0];
+	if (best?.file) return best.file;
+	// No playlist: a plain file, not the HEVC original if there's another.
+	const files = list.filter((s) => s.file);
+	return (files.find((s) => !Number(s.h265)) ?? files[0])?.file ?? null;
+}
+
+function extractVideoUrl(page: string): string | null {
+	const listed = fromSourcesList(page);
+	if (listed) return listed;
+	// Otherwise any address in the page — not in commented-out code, escaped slashes undone.
+	const html = page.replace(/^\s*\/\/.*$/gm, '').replace(/\\\//g, '/');
 	const allM3u8: string[] = [];
 	const seen = new Set<string>();
 	for (const m of html.matchAll(/(https?:\/\/[^\s"'<>\\]+\.m3u8[^\s"'<>\\]*)/gi)) {

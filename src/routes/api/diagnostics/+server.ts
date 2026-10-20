@@ -4,6 +4,7 @@ import { dbPath, dataDir } from '$lib/server/db';
 import { settingsPath, readSettings } from '$lib/server/settings';
 import type { RequestHandler } from './$types';
 import { slowRequests } from '$lib/server/slowRequests';
+import { playbackStops } from '$lib/server/playbackLog';
 
 const describe = (path: string) => {
 	if (!existsSync(path)) return { path, exists: false };
@@ -24,6 +25,8 @@ export const GET: RequestHandler = async () => {
 	return json({
 		// Outside requests that took over two seconds or were refused, newest first (site and path only).
 		slowRequests: slowRequests(),
+		// Times a video stopped to load, with what was going on (playbackLog.ts), newest first.
+		playbackStops: playbackStops().slice(0, 20),
 		settingsStoredIn: 'settings table inside library.db',
 		cwd: process.cwd(),
 		appdata: process.env.APPDATA ?? null,

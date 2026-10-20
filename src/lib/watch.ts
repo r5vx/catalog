@@ -44,43 +44,49 @@ export function pickFile<T extends Pickable>(files: T[], wanted: string, audio =
 	return sorted[0];
 }
 
-type EpisodeFiles = {
-	season: number;
-	episode: number;
-	files: { fid: number; quality: string; size: string; source?: string; shareKey?: string }[];
-	/** Set when the episode comes from another Showbox entry for the same show. */
-	shareKey?: string;
-};
-
-const warmed = new Set<string>();
+/** When each title was last warmed up: again after 10 minutes, as links last 15 (a TV stays open for days). */
+const warmed = new Map<string, number>();
+const WARM_AGAIN_MS = 10 * 60 * 1000;
 
 /**
- * Finds a title and its stream link in the background, so opening it is near-instant.
- * Asks with the same parameters the player will, so it fills the same server caches.
+ * Finds a title and starts its video link in the background, so opening it is near-instant:
+ * asked exactly as the player will ask (same title, type and year, so it fills the same
+ * server caches), with `warm=1` so the computer also starts the link for the episode the player
+ * will start (the one given, else where it was left off). Films get theirs as part of the lookup.
  */
-export async function warmUpTitle(item: { title: string; type: string; season: number; episode: number }) {
-	const key = `${item.title}:${item.type}:${item.season}:${item.episode}`;
-	if (warmed.has(key)) return;
-	warmed.add(key);
+export async function warmUpTitle(item: { title: string; type: string; year?: number | string | null; season?: number; episode?: number }) {
+	const key = `${item.title}:${item.type}:${item.year ?? ''}:${item.season ?? 0}:${item.episode ?? 0}`;
+	if (Date.now() - (warmed.get(key) ?? 0) < WARM_AGAIN_MS) return;
+	warmed.set(key, Date.now());
 	try {
-		const params = new URLSearchParams({ title: item.title, nostream: '1' });
+		const params = new URLSearchParams({ title: item.title, nostream: '1', warm: '1' });
 		if (item.type) params.set('type', item.type);
+		if (item.year) params.set('year', String(item.year));
+		if (item.type === 'tv' && item.season && item.episode) {
+			params.set('resume_s', String(item.season));
+			params.set('resume_e', String(item.episode));
+		}
 		const resp = await fetch(`/api/watch/resolve?${params}`);
 		if (!resp.ok) throw new Error();
-		const data = await resp.json();
-		// Films fetch their link as part of the lookup, so they're already warm.
-		if (data.error || !data.episodes) return;
-		const episodes = data.episodes.episodes as EpisodeFiles[];
-		const ep = episodes.find((e) => e.season === item.season && e.episode === item.episode) ?? episodes[0];
-		const file = ep ? pickFile(ep.files, PREFERRED_QUALITY) : null;
-		// Only Showbox links are fetched ahead.
-		if (!file || file.source || !(ep.shareKey ?? data.shareKey)) return;
-		await fetch('/api/watch/prefetch', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ share_key: ep.shareKey ?? data.shareKey, fids: [file.fid] })
-		});
 	} catch {
 		warmed.delete(key);
 	}
+}
+
+/**
+ * Warms a title up once the pointer (or the TV's highlight) has rested on its Watch button for
+ * a moment, so sweeping past buttons doesn't look up each one. `stop` when it moves off.
+ */
+export function warmWhenResting(wait: number) {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	return {
+		start(item: Parameters<typeof warmUpTitle>[0]) {
+			clearTimeout(timer);
+			timer = setTimeout(() => warmUpTitle(item), wait);
+		},
+		stop() {
+			clearTimeout(timer);
+			timer = undefined;
+		}
+	};
 }

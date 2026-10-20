@@ -378,6 +378,10 @@ export function savedSubtitle(url: string): string | undefined {
 	return row?.content;
 }
 
+export function forgetSubtitle(url: string): void {
+	db.prepare('DELETE FROM saved_subtitles WHERE url = ?').run(url);
+}
+
 export function saveSubtitle(url: string, show: string, content: string): void {
 	db.prepare(
 		'INSERT INTO saved_subtitles (url, show, content) VALUES (?, ?, ?) ON CONFLICT(url) DO UPDATE SET show = excluded.show, content = excluded.content'

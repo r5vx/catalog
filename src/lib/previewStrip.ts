@@ -49,11 +49,44 @@ export class PreviewStrip {
 		return this.options.step ?? 10;
 	}
 
+	/** How many of its copies are downloading a picture right now. */
+	get busy(): number {
+		return this.copies.filter((copy) => copy.busy).length;
+	}
+
 	/** Starts gathering (does nothing without hls.js support). */
 	start(): void {
-		if (!Hls.isSupported() || this.copies.length) return;
-		for (let i = 0; i < (this.options.copies ?? 1); i++) this.copies.push(this.makeCopy());
+		if (!Hls.isSupported() || this.copies.length || this.timer) return;
 		this.timer = setInterval(() => this.pump(), 1000);
+		this.pictureOnly().then((source) => {
+			if (this.stopped) return;
+			for (let i = 0; i < (this.options.copies ?? 1); i++) this.copies.push(this.makeCopy(source));
+		});
+	}
+
+	/**
+	 * The smallest picture's own playlist, so the copy loads that and nothing else — with the
+	 * whole list it also fetched a piece of sound for every picture, twice the downloads beside
+	 * the video being watched. Relayed ones (`whole=1`) come with their pieces whole and are
+	 * never fetched ahead (relayPieces.ts, relayReadAhead.ts). The whole list if it can't be read.
+	 */
+	private async pictureOnly(): Promise<string> {
+		const relayed = this.url.startsWith('/api/watch/relay?');
+		const list = relayed ? `${this.url}&whole=1` : this.url;
+		try {
+			const text = await (await fetch(list)).text();
+			const variants = [...text.matchAll(/#EXT-X-STREAM-INF:([^\n]*)\n([^\n#][^\n]*)/g)].map((m) => ({
+				bandwidth: Number(m[1].match(/BANDWIDTH=(\d+)/)?.[1] ?? Infinity),
+				hevc: /hvc1|hev1/i.test(m[1]),
+				uri: m[2].trim()
+			}));
+			const smallest = variants.filter((v) => !v.hevc).sort((a, b) => a.bandwidth - b.bandwidth)[0];
+			if (!smallest) return list;
+			const address = new URL(smallest.uri, new URL(list, location.href)).href;
+			return address.includes('/api/watch/relay?') && !address.includes('whole=1') ? `${address}&whole=1` : address;
+		} catch {
+			return list;
+		}
 	}
 
 	stop(): void {
@@ -69,7 +102,7 @@ export class PreviewStrip {
 		this.frames.clear();
 	}
 
-	private makeCopy(): Copy {
+	private makeCopy(source: string): Copy {
 		const video = document.createElement('video');
 		video.muted = true;
 		video.preload = 'auto';
@@ -101,9 +134,7 @@ export class PreviewStrip {
 			}
 			this.pump();
 		});
-		// Long pieces whole, not in parts (relayPieces.ts): only their first picture is wanted,
-		// and a part makes the computer fetch the whole piece.
-		hls.loadSource(this.url.startsWith('/api/watch/relay?') ? `${this.url}&whole=1` : this.url);
+		hls.loadSource(source);
 		hls.attachMedia(video);
 		return copy;
 	}

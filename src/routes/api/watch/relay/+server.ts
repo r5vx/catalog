@@ -41,9 +41,13 @@ export const GET: RequestHandler = async ({ url, request }) => {
 
 	const range = request.headers.get('range');
 
-	// Movy's server is slow per download: its pieces come fetched a few ahead (relayReadAhead.ts).
-	if (kind === 'movy' && !range && isNotedPiece(target.href)) {
-		const bytes = await pieceAhead(target.href, askWith);
+	// The video's pieces come fetched a few ahead (relayReadAhead.ts): three for Movy (slow per
+	// download, at most five at once), two for the others — for the video being watched only.
+	// The progress-bar pictures' pieces (`whole=1`) set off more downloads each, past the five
+	// Movy allows at once, and the video's were refused.
+	const background = url.searchParams.has('whole');
+	if (!range && !background && isNotedPiece(target.href)) {
+		const bytes = await pieceAhead(target.href, askWith, kind === 'movy' ? 3 : 2);
 		if (bytes) {
 			return new Response(new Uint8Array(bytes), {
 				headers: { 'Content-Type': 'video/mp2t', 'Content-Length': String(bytes.length), 'Cache-Control': 'private, max-age=21600' }
@@ -122,17 +126,18 @@ export const GET: RequestHandler = async ({ url, request }) => {
 		if (playsDirect(full)) return full.href;
 		// A server this playlist names is one the source sent us to as well.
 		trustVideoHost(full, kind);
-		return relayed(full.href);
+		// The progress-bar pictures' playlists keep saying so, down to each piece.
+		return relayed(full.href) + (background ? '&whole=1' : '');
 	};
 	// Very long pieces are listed as short parts (relayPieces.ts says why) — except for the
 	// progress-bar pictures (?whole=1), which only want each piece's first picture.
-	const split = url.searchParams.has('whole') ? async (lines: string[]) => lines : splitLongPieces;
+	const split = background ? async (lines: string[]) => lines : splitLongPieces;
 	const lines = await split(text.split('\n'), target, askWith, (address) => {
 		const full = new URL(address);
 		return playsDirect(full) ? null : point(address);
 	});
-	// A Movy playlist of pieces: their order, so the next ones can be fetched ahead.
-	if (kind === 'movy' && text.includes('#EXTINF')) {
+	// A playlist of pieces: their order, so the next ones can be fetched ahead.
+	if (!background && text.includes('#EXTINF')) {
 		notePieces(text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).map((l) => new URL(l, target).href));
 	}
 	const pointed = lines

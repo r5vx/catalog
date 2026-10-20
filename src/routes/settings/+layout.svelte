@@ -21,6 +21,7 @@
 		{ href: '/settings/personalization', label: 'Personalization', hint: 'Colour and sorting' },
 		{ href: '/settings/library', label: 'Library', hint: 'Export, where your files live' },
 		{ href: '/settings/storage', label: 'Storage', hint: 'Space kept to load faster' },
+		{ href: '/settings/playback', label: 'Playback', hint: 'Times a video stopped to load' },
 		{
 			href: '/settings/services',
 			label: 'Services',

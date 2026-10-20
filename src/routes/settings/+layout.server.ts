@@ -15,7 +15,7 @@ export const load: LayoutServerLoad = async () => {
 	 */
 	const settings = readSettings();
 	const needs = {
-		services: !settings.tmdbApiKey || !omdbConfigured() || !settings.subdlSeen,
+		services: !settings.tmdbApiKey || !omdbConfigured(),
 		updates:
 			(mode === 'release' && updateState().status === 'ready') ||
 			(mode === 'source' && sourceIsStale())
