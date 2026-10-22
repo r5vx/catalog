@@ -12,6 +12,39 @@ without both.
 
 ## Unreleased
 
+## 3.4.0 — 2026-10-22 — New episodes in Continue Watching
+
+### New
+- **Continue Watching**: a show you've caught up with comes back when a new episode can be played, marked "New episode" (on the TV too); the mark can be dismissed
+- **Settings**: a background picture behind every page (Personalization → Background), with Dim and Blur
+
+### Improved
+- **Player**: Skip Intro and Skip Credits work on every source now (7Movies, Movy, Aniwave), not only Showbox, on the TV too
+- **Player**: intro and credits times also come from Anime Skip and IntroDB, which cover many shows AniSkip doesn't (Dungeon Meshi, Bleach, SVU)
+- **Player**: a source that's slow to answer no longer holds an episode up: after 5 seconds another copy in the same language plays
+- **Player**: another episode can be picked while one is still loading
+- **Player**: on Japanese audio, English subtitles made for the Japanese release come first and turn on by themselves; on the dub, English CC comes first
+- **Continue Watching**: a show only leaves when you've watched its last episode out, or remove it — not because it's marked completed
+- **Player**: marking episodes watched also moves the show's "episode reached" forward
+- **Player**: auto-timing starts listening as soon as the video plays, so subtitles are usually timed the moment they're turned on
+
+### Fixed
+- **Player**: picking another episode stops the one playing at once; it used to play on under the new episode's name, and its place could be saved as the new episode's
+- **Player**: when the picture freezes while the sound plays on, it's put right by itself (and noted in Settings → Playback)
+- **Showbox**: shows had no Showbox episodes after Febbox changed how it lists folders
+- **Player**: when a copy won't play, it no longer switches to the English dub by itself (only when the dub is all there is, and it says so)
+- **Player**: Next Episode starts at once on 7Movies and Movy too (their next link is fetched ahead)
+- **Player**: "Video failed to load" no longer sticks on 7Movies and Movy; a fresh link is fetched instead
+- **Player**: "These subtitles don't match" waits until enough has been heard, so it no longer shows for subtitles that fit
+- **Player**: auto-timing no longer moves subtitles on too little evidence, and puts them back if they turn out not to fit (Venom 2 was moved 22 s)
+- **Player**: subtitles made for cinema recordings (CAM, TS) are listed last, as they're timed to another version of the film
+- **Player**: more subtitle adverts and credits are removed (getray.app, tryray.app, explosiveskull, "Captioned by…", "Subtitles by…" and others)
+- **Player**: real lines that looked like adverts are kept ("The Central Park Zoo proudly presents", "Awww..")
+- **Subtitles**: when OpenSubtitles says the day's download limit is reached, it's left alone for a few hours instead of asked again
+- **Player**: subtitles picked to go on by themselves for Japanese audio no longer go on for the dub too
+- **Player**: subtitle files that came scrambled (lines of random letters) are skipped, and another English track is used
+- **Player**: in full screen, the top bar stays up while moving from the cast or episode list to its button
+
 ## 3.3.0 — 2026-10-20 — More like this, faster starts, less buffering, and hands-free updates
 
 ### New

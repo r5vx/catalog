@@ -20,7 +20,9 @@
 	const resumeLabel = $derived(
 		data.continuing
 			? data.type === 'tv' && data.continuing.season
-				? `Resume S${data.continuing.season}E${data.continuing.episode}`
+				? data.continuing.newEpisode
+					? `Play new episode S${data.continuing.season}E${data.continuing.episode}`
+					: `Resume S${data.continuing.season}E${data.continuing.episode}`
 				: 'Resume'
 			: 'Play'
 	);

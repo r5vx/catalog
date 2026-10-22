@@ -60,6 +60,12 @@ export type Settings = {
 	storageLimitMb?: string;
 	/** When '1', UI text gets replaced with Poison's vocabulary. */
 	poisonMode?: string;
+	/** A picture behind the pages (Settings → Personalization): its "/media/…" address. */
+	backgroundImage?: string;
+	/** How far the picture fades toward the theme's background, 0–90 (%). 55 when unset. */
+	backgroundDim?: string;
+	/** How blurred the picture is, 0–20 (px). 0 when unset. */
+	backgroundBlur?: string;
 	/** SubDL's key and its "seen" mark: no longer used (SubDL dropped 2026-10-20), cleared at start-up. */
 	subdlApiKey?: string;
 	subdlSeen?: string;

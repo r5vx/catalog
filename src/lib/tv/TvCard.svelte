@@ -9,6 +9,7 @@
 		title,
 		poster,
 		note = null,
+		noteNew = false,
 		progress = null,
 		showTitle = false,
 		autofocus = false,
@@ -20,6 +21,8 @@
 		poster: string | null;
 		/** Small text over the bottom of the poster: "S2E6", "Watching". */
 		note?: string | null;
+		/** The note in the accent color: a new episode is out. */
+		noteNew?: boolean;
 		/** How far through it you are, 0 to 1: a bar along the bottom. */
 		progress?: number | null;
 		/** The name under the poster (where there's no banner saying it). */
@@ -38,7 +41,7 @@
 		{:else}
 			<span class="no-poster">{title}</span>
 		{/if}
-		{#if note}<span class="note">{note}</span>{/if}
+		{#if note}<span class="note" class:new={noteNew}>{note}</span>{/if}
 		{#if progress !== null && progress > 0}
 			<span class="bar"><span class="fill" style:width="{Math.min(100, Math.max(4, progress * 100))}%"></span></span>
 		{/if}
@@ -117,6 +120,11 @@
 		color: #fff;
 		font-size: 1.05vw;
 		font-weight: 700;
+	}
+
+	.note.new {
+		background: var(--accent);
+		color: var(--accent-ink);
 	}
 
 	.bar {

@@ -1,5 +1,5 @@
 import { json, error } from '@sveltejs/kit';
-import { downloadSubtitle } from '$lib/server/showbox-subs';
+import { downloadSubtitle, isScrambled } from '$lib/server/showbox-subs';
 import { forgetSubtitle, savedSubtitle, saveSubtitle } from '$lib/server/db/queries';
 import type { RequestHandler } from './$types';
 
@@ -28,8 +28,8 @@ export const GET: RequestHandler = async ({ url }) => {
 	// A season pack holds every episode, so its copy is only reused for the same episode.
 	const key = season && episode ? `${subUrl}#${season}x${episode}` : subUrl;
 	const kept = savedSubtitle(key);
-	if (kept && isSubtitles(kept)) return json({ content: kept });
-	// An error page kept by mistake before: thrown away, and fetched again.
+	if (kept && isSubtitles(kept) && !isScrambled(kept)) return json({ content: kept });
+	// An error page (or a scrambled file) kept by mistake before: thrown away, and fetched again.
 	if (kept) forgetSubtitle(key);
 
 	const content = await downloadSubtitle(subUrl, season, episode);

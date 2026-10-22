@@ -8,6 +8,9 @@ Runs as a desktop app on their PC and is reachable from their phone.
 hard-won lessons, each one paid for, and the design reasoning behind the odd
 decisions. This file is only the part that must never be got wrong.
 
+**Read `HANDOFF.md` too** — where things stand right now, who uses Catalog, how
+to test and release, and the ideas still open. Update it when that changes.
+
 ## Never
 
 - **Never force-close `Catalog.exe`.** `taskkill /F` mid-write has corrupted the

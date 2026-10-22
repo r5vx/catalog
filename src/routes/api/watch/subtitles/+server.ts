@@ -106,7 +106,16 @@ export const GET: RequestHandler = async ({ url }) => {
 			? await within(nexusSubtitlesFor(show, title, nexusSeason, nexusEpisode), 8000, [])
 			: [];
 
-	const [playerTracks, others] = await Promise.all([playerTracksSoon, othersSoon]);
+	const [playerTracks, kept] = await Promise.all([playerTracksSoon, othersSoon]);
+	// Copies: the lists are kept between requests, and marking one `default` here mustn't carry
+	// over to the next (the Japanese-audio pick showed as on for the dub).
+	// Subtitles made for a recording from the cinema (CAM, TS, HDTS…, and c1nem4/SUNSCREEN's
+	// pre-release rips) go last: they're timed to another version of the film. Venom 2's top one
+	// was 22 s out for its first 20 minutes; the BluRay and WEB ones fit throughout.
+	const fromCinema = (s: Option) => /(^|[^a-z])(hd)?(cam|ts|tc|telesync|telecine|hdts|hdtc|hqcam)([^a-z]|$)|c1nem4|sunscreen/i.test(s.fileName);
+	const others: Option[] = kept
+		.map((s) => ({ ...s, default: undefined }))
+		.sort((a, b) => Number(fromCinema(a)) - Number(fromCinema(b)));
 
 	const nexus = nexusAnswer === 'check' ? [] : nexusAnswer;
 	const english = (label: string) => /^english/i.test(label);
@@ -155,15 +164,23 @@ export const GET: RequestHandler = async ({ url }) => {
 			? [{ id: 'nexus-check', url: '', lang: 'en', language: 'English', fileName: 'Get anime.nexus subtitles ↗', source: 'anime.nexus', check: true }]
 			: [];
 
+	// English made for the Japanese release, by its name: "…S01E06.JAPANESE.WEBRip.NF.en[cc].srt" is
+	// Netflix's English for the Japanese audio, timed to it. On Japanese audio it comes first (and
+	// goes on by itself); on the dub it's never taken for the dub's captions.
+	const madeForJapanese = (s: Option) => s.language === 'English' && /(^|[^a-z])(japanese|jpn)([^a-z]|$)/i.test(s.fileName);
+	const japaneseRelease = anime && !dub ? others.filter(madeForJapanese) : [];
+
 	// The dub with no official captions found: another site's English file named as captions
 	// ("…English[CC]", "SDH") goes first instead.
 	const officialCaptions = [...fromTosho, ...fromNexus].some((s) => s.fileName === 'English CC');
 	const markedCaptions =
-		dub && !officialCaptions ? others.filter((s) => s.language === 'English' && /\bCC\b|\bSDH\b/i.test(s.fileName)) : [];
-	const rest = others.filter((s) => !markedCaptions.includes(s));
+		dub && !officialCaptions
+			? others.filter((s) => s.language === 'English' && /\bCC\b|\bSDH\b/i.test(s.fileName) && !madeForJapanese(s))
+			: [];
+	const rest = others.filter((s) => !markedCaptions.includes(s) && !japaneseRelease.includes(s));
 
 	// Aniwave's own subtitle server often doesn't answer, so its files go last.
-	const list: Option[] = [...askCheck, ...markedCaptions, ...fromTosho, ...fromNexus, ...rest, ...fromPlayer];
+	const list: Option[] = [...askCheck, ...japaneseRelease, ...markedCaptions, ...fromTosho, ...fromNexus, ...rest, ...fromPlayer];
 
 	// Anime in Japanese: subtitles on from the start, the best English there is. (The player
 	// moves on to the next English one if this one won't download.)
@@ -171,6 +188,7 @@ export const GET: RequestHandler = async ({ url }) => {
 	if (anime && !dub && share?.kind !== 'sub') {
 		const usable = list.filter((s) => !s.check);
 		const pick =
+			japaneseRelease[0] ??
 			usable.find((s) => (s.source === 'anime.nexus' || s.source === 'AnimeTosho') && s.fileName === 'English') ??
 			usable.find((s) => s.language === 'English' && s.source !== 'Aniwave') ??
 			usable.find((s) => s.language === 'English');

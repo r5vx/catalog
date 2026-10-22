@@ -290,7 +290,8 @@ function cueShare(text: string): number {
  * inside and the one full of sound cues is the captions. Kept for a week.
  */
 async function englishTracks(copy: Copy): Promise<ToshoSubtitle[]> {
-	const key = `tosho-english|${copy.page}`;
+	// "2": lists made before scrambled files were dropped (2026-10-21) are looked at again.
+	const key = `tosho-english2|${copy.page}`;
 	const known = saved<ToshoSubtitle[]>(key, 7 * 24 * HOUR);
 	if (known) return known;
 

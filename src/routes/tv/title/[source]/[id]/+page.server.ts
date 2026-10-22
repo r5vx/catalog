@@ -79,7 +79,8 @@ export const load: PageServerLoad = async ({ params }) => {
 					season: continuing.season,
 					episode: continuing.episode,
 					left: continuing.duration > 0 ? Math.round((continuing.duration - continuing.currentTime) / 60) : null,
-					progress: continuing.duration > 0 ? continuing.currentTime / continuing.duration : 0
+					progress: continuing.duration > 0 ? continuing.currentTime / continuing.duration : 0,
+					newEpisode: continuing.newEpisode
 				}
 			: null
 	};

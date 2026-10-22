@@ -5,6 +5,7 @@ import { settingsPath, readSettings } from '$lib/server/settings';
 import type { RequestHandler } from './$types';
 import { slowRequests } from '$lib/server/slowRequests';
 import { playbackStops } from '$lib/server/playbackLog';
+import { caughtUpSummary } from '$lib/server/db/queries';
 
 const describe = (path: string) => {
 	if (!existsSync(path)) return { path, exists: false };
@@ -27,6 +28,8 @@ export const GET: RequestHandler = async () => {
 		slowRequests: slowRequests(),
 		// Times a video stopped to load, with what was going on (playbackLog.ts), newest first.
 		playbackStops: playbackStops().slice(0, 20),
+		// Shows watched to their last episode, and new episodes found for them (newEpisodes.ts).
+		caughtUp: caughtUpSummary(),
 		settingsStoredIn: 'settings table inside library.db',
 		cwd: process.cwd(),
 		appdata: process.env.APPDATA ?? null,

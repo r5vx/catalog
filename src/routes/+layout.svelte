@@ -11,6 +11,7 @@
 	import { onMount } from 'svelte';
 	import { startTv } from '$lib/tv';
 	import { inkFor, DEFAULT_ACCENT } from '$lib/accent';
+	import { backgroundPreview } from '$lib/backgroundPreview.svelte';
 	import type { Snippet } from 'svelte';
 	import type { LayoutData } from './$types';
 
@@ -23,6 +24,17 @@
 	const sideNav = $derived(
 		Boolean(data?.sideNav) && !/^\/(watch|tv|strip-maker|skip-maker|speech-maker|login|welcome)(\/|$)/.test(page.url.pathname)
 	);
+
+	// The picture behind the pages, if one is picked (Settings → Personalization): not behind the
+	// player or the TV's own layout, which have their own pictures.
+	const background = $derived(
+		data?.background && !/^\/(watch|tv|strip-maker|skip-maker|speech-maker)(\/|$)/.test(page.url.pathname) ? data.background : null
+	);
+	const backgroundDim = $derived(backgroundPreview.dim ?? background?.dim ?? 0);
+	const backgroundBlur = $derived(backgroundPreview.blur ?? background?.blur ?? 0);
+	$effect(() => {
+		document.documentElement.classList.toggle('has-background', Boolean(background));
+	});
 
 	// On a TV (the Fire TV app), the remote's arrows move around the page.
 	onMount(startTv);
@@ -65,6 +77,16 @@
 	<meta name="theme-color" content={accent} />
 </svelte:head>
 
+{#if background}
+	<div
+		class="page-background"
+		class:blurred={backgroundBlur > 0}
+		aria-hidden="true"
+		style:background-image="url('{background.image}')"
+		style:filter={backgroundBlur > 0 ? `blur(${backgroundBlur}px)` : null}
+		style:--dim={backgroundDim / 100}
+	></div>
+{/if}
 {#if sideNav}<div style={accentCss}><SideNav /></div>{/if}
 <div class="app" class:wide={data?.wideLayout} class:beside-nav={sideNav} style={accentCss}>
 	<!-- Shows a click was heard while the next page loads; hidden for quick ones. -->
@@ -79,6 +101,33 @@
 </div>
 
 <style>
+	/*
+	 * The picture behind the pages. It fades toward the theme's own background by --dim (the
+	 * Dim slider), so text stays readable in light and dark themes alike. Cards stay solid.
+	 */
+	.page-background {
+		position: fixed;
+		inset: 0;
+		z-index: -1;
+		background-position: center;
+		background-size: cover;
+		background-repeat: no-repeat;
+		pointer-events: none;
+	}
+
+	/* Blurring softens the edges too: drawn a little bigger so they stay off screen. */
+	.page-background.blurred {
+		inset: -48px;
+	}
+
+	.page-background::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		background: var(--paper);
+		opacity: var(--dim);
+	}
+
 	.app {
 		max-width: 1180px;
 		margin: 0 auto;

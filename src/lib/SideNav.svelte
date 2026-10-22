@@ -59,6 +59,11 @@
 		z-index: 50;
 	}
 
+	/* With a background picture (Settings → Personalization), it shows through a little. */
+	:global(html.has-background) .side {
+		background: color-mix(in srgb, var(--paper) 78%, transparent);
+	}
+
 	.label {
 		font-size: 0.72rem;
 		font-weight: 600;

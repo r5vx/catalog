@@ -2,6 +2,7 @@ import { readSettings } from '$lib/server/settings';
 import { listCategories, countsByCategory, sharedCatalogCount, continueWatchingList } from '$lib/server/db/queries';
 import { countNotes } from '$lib/server/db/notes';
 import { DEFAULT_ACCENT, isHexColour } from '$lib/accent';
+import { backgroundFrom } from '$lib/background';
 import { warmBrowseCache } from '$lib/server/metadata';
 import { showboxSignin } from '$lib/server/showboxSignin';
 import type { LayoutServerLoad } from './$types';
@@ -45,6 +46,7 @@ export const load: LayoutServerLoad = async () => {
 		wideLayout: settings.wideLayout !== '0',
 		sideNav,
 		poisonMode: settings.poisonMode === '1',
+		background: backgroundFrom(settings),
 		showboxSignin: showboxSignin()
 	};
 };

@@ -1,4 +1,5 @@
-import { readSettings, updateSettings } from '$lib/server/settings';
+import { readSettings, updateSettings, type Settings } from '$lib/server/settings';
+import { backgroundFrom, clampTo, isOwnPicture, DEFAULT_DIM, MAX_DIM, MAX_BLUR } from '$lib/background';
 import { DEFAULT_ACCENT, isHexColour } from '$lib/accent';
 import { SORTS } from '$lib/constants';
 import { fail } from '@sveltejs/kit';
@@ -18,7 +19,8 @@ export const load: PageServerLoad = async () => {
 		theme: settings.theme ?? '',
 		wideLayout: settings.wideLayout !== '0',
 		sideNav: settings.sideNav !== '0',
-		poisonMode: settings.poisonMode === '1'
+		poisonMode: settings.poisonMode === '1',
+		background: backgroundFrom(settings)
 	};
 };
 
@@ -64,6 +66,26 @@ export const actions: Actions = {
 	saveSideNav: async ({ request }) => {
 		const on = (await request.formData()).get('sideNav') === '1';
 		updateSettings({ sideNav: on ? '1' : '0' });
+	},
+
+	/** The background picture (an address /api/media handed back), and its Dim and Blur. */
+	saveBackground: async ({ request }) => {
+		const form = await request.formData();
+		const patch: Partial<Settings> = {};
+		const image = form.get('image');
+		if (image !== null) {
+			if (!isOwnPicture(String(image))) return fail(400, { backgroundError: 'That picture could not be used.' });
+			patch.backgroundImage = String(image);
+		}
+		if (form.has('dim')) patch.backgroundDim = String(clampTo(form.get('dim'), MAX_DIM, DEFAULT_DIM));
+		if (form.has('blur')) patch.backgroundBlur = String(clampTo(form.get('blur'), MAX_BLUR, 0));
+		updateSettings(patch);
+		return { backgroundOk: true };
+	},
+
+	removeBackground: async () => {
+		updateSettings({ backgroundImage: undefined, backgroundDim: undefined, backgroundBlur: undefined });
+		return { backgroundOk: true };
 	},
 
 	savePoison: async ({ request }) => {

@@ -2,6 +2,8 @@
 	import { untrack } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
 	import { ACCENT_PRESETS } from '$lib/accent';
+	import { DEFAULT_DIM, MAX_DIM, MAX_BLUR } from '$lib/background';
+	import { backgroundPreview } from '$lib/backgroundPreview.svelte';
 	import { SORTS, SORT_GROUPS } from '$lib/constants';
 	import type { PageData, ActionData } from './$types';
 
@@ -39,6 +41,54 @@
 		const body = new FormData();
 		body.set('theme', value);
 		await fetch('?/saveTheme', { method: 'POST', body });
+	}
+
+	/* ------------------------------------------------------- background picture */
+
+	let dim = $state(untrack(() => data.background?.dim ?? DEFAULT_DIM));
+	let blur = $state(untrack(() => data.background?.blur ?? 0));
+	let uploading = $state(false);
+	let backgroundError = $state('');
+
+	async function saveBackground(fields: Record<string, string>) {
+		const body = new FormData();
+		for (const [key, value] of Object.entries(fields)) body.set(key, value);
+		await fetch('?/saveBackground', { method: 'POST', body });
+		await invalidateAll();
+		backgroundPreview.dim = null;
+		backgroundPreview.blur = null;
+	}
+
+	/** Stored like a note's pictures (on this computer), then put behind the pages. */
+	async function choosePicture(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		input.value = '';
+		if (!file) return;
+		uploading = true;
+		backgroundError = '';
+		try {
+			const body = new FormData();
+			body.set('file', file);
+			const resp = await fetch('/api/media', { method: 'POST', body });
+			if (!resp.ok) {
+				backgroundError = resp.status === 413 ? 'That picture is larger than 20 MB.' : 'That picture could not be used.';
+				return;
+			}
+			const { url } = await resp.json();
+			await saveBackground({ image: url, dim: String(dim), blur: String(blur) });
+		} catch {
+			backgroundError = 'That picture could not be used.';
+		} finally {
+			uploading = false;
+		}
+	}
+
+	async function removeBackground() {
+		await fetch('?/removeBackground', { method: 'POST', body: new FormData() });
+		dim = DEFAULT_DIM;
+		blur = 0;
+		await invalidateAll();
 	}
 
 	const isHex = (v: string) => /^#[0-9a-f]{6}$/i.test(v.trim());
@@ -81,6 +131,59 @@
 			</button>
 		{/each}
 	</div>
+</section>
+
+<section>
+	<div class="head"><h2>Background</h2></div>
+	<p class="muted">A picture behind every page except the player.</p>
+
+	{#if backgroundError}<p class="msg bad" role="alert">{backgroundError}</p>{/if}
+
+	<div class="background-row">
+		{#if data.background}
+			<span class="background-thumb" style:background-image="url('{data.background.image}')">
+				<span class="background-thumb-dim" style:opacity={dim / 100}></span>
+			</span>
+		{/if}
+		<div class="background-actions">
+			<label class="btn" class:disabled={uploading}>
+				{uploading ? 'Uploading…' : data.background ? 'Change picture' : 'Choose picture'}
+				<input type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.avif" onchange={choosePicture} disabled={uploading} hidden />
+			</label>
+			{#if data.background}
+				<button type="button" class="btn btn-danger" onclick={removeBackground}>Remove</button>
+			{/if}
+		</div>
+	</div>
+
+	{#if data.background}
+		<div class="sliders">
+			<label class="slider">
+				<span class="label">Dim</span>
+				<input
+					type="range"
+					min="0"
+					max={MAX_DIM}
+					bind:value={dim}
+					oninput={() => (backgroundPreview.dim = dim)}
+					onchange={() => saveBackground({ dim: String(dim) })}
+				/>
+				<span class="faint tabular">{dim}%</span>
+			</label>
+			<label class="slider">
+				<span class="label">Blur</span>
+				<input
+					type="range"
+					min="0"
+					max={MAX_BLUR}
+					bind:value={blur}
+					oninput={() => (backgroundPreview.blur = blur)}
+					onchange={() => saveBackground({ blur: String(blur) })}
+				/>
+				<span class="faint tabular">{blur}</span>
+			</label>
+		</div>
+	{/if}
 </section>
 
 <section>
@@ -460,6 +563,59 @@
 
 	.theme-desc {
 		font-size: 0.72rem;
+	}
+
+	.background-row {
+		display: flex;
+		align-items: center;
+		gap: 14px;
+		flex-wrap: wrap;
+	}
+
+	.background-thumb {
+		position: relative;
+		width: 160px;
+		height: 90px;
+		border-radius: var(--radius-sm);
+		border: 1px solid var(--rule-firm);
+		background-size: cover;
+		background-position: center;
+		overflow: hidden;
+	}
+
+	.background-thumb-dim {
+		position: absolute;
+		inset: 0;
+		background: var(--paper);
+	}
+
+	.background-actions {
+		display: flex;
+		gap: 8px;
+	}
+
+	.background-actions .disabled {
+		opacity: 0.6;
+		pointer-events: none;
+	}
+
+	.sliders {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		width: min(100%, 420px);
+	}
+
+	.slider {
+		display: grid;
+		grid-template-columns: 48px 1fr 44px;
+		align-items: center;
+		gap: 12px;
+	}
+
+	.slider input {
+		width: 100%;
+		accent-color: var(--accent);
 	}
 
 	.layout-options {

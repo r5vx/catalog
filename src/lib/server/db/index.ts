@@ -457,6 +457,69 @@ once('progress-per-profile', () => {
 });
 
 /**
+ * Shows someone has watched to the last episode there was to play (src/lib/server/newEpisodes.ts).
+ * They leave Continue Watching, and come back with a "New" mark when a later episode can be
+ * played. `known_*`: the last episode that could be played when last looked (NULL: not looked yet,
+ * so nothing found on the first look counts as new). `new_*`: the first new one, once found.
+ */
+db.exec(`
+	CREATE TABLE IF NOT EXISTS caught_up (
+		profile INTEGER NOT NULL,
+		title TEXT NOT NULL,
+		year TEXT NOT NULL DEFAULT '',
+		season INTEGER NOT NULL,
+		episode INTEGER NOT NULL,
+		known_season INTEGER,
+		known_episode INTEGER,
+		finished_at TEXT NOT NULL DEFAULT (datetime('now')),
+		new_season INTEGER,
+		new_episode INTEGER,
+		found_at TEXT,
+		dismissed INTEGER NOT NULL DEFAULT 0,
+		checked_at TEXT,
+		PRIMARY KEY (profile, title)
+	)
+`);
+
+// Continue Watching used to drop a show marked completed once its latest episode was 90% in —
+// Re:Zero vanished at 25:00 of 27:29 midway through season 2. Now only reaching the last episode
+// there is, or Remove, takes a show off. So nothing jumps back on, what that rule was hiding stays
+// hidden: watched to the end, it counts as caught up (and gets new-episode checks); left midway, it's
+// as if Remove had been pressed (it comes back when played again).
+once('continue-not-by-status', () => {
+	const hidden = db
+		.prepare(`
+			SELECT w.profile, w.title, w.season, w.episode, w.updated_at AS updatedAt,
+				w.duration > 0 AND CAST(w."current_time" AS REAL) / w.duration >= 0.9 AS finished
+			FROM watch_progress w
+			WHERE w.type = 'tv' AND w.rowid = (
+				SELECT w2.rowid FROM watch_progress w2
+				WHERE w2.profile = w.profile AND w2.title = w.title AND w2.type = w.type
+				ORDER BY w2.updated_at DESC, w2.season DESC, w2.episode DESC LIMIT 1
+			)
+			AND EXISTS (
+				SELECT 1 FROM (
+					SELECT 0 AS profile, title, status, updated_at FROM entries
+					UNION ALL SELECT profile, title, status, updated_at FROM profile_titles
+				) e
+				WHERE e.profile = w.profile AND lower(e.title) = lower(w.title) AND e.status = 'completed'
+					AND (w.duration = 0 OR CAST(w."current_time" AS REAL) / w.duration >= 0.9
+						OR datetime(w.updated_at) <= datetime(e.updated_at))
+			)
+		`)
+		.all() as { profile: number; title: string; season: number; episode: number; updatedAt: string; finished: number }[];
+	const caughtUp = db.prepare('INSERT OR IGNORE INTO caught_up (profile, title, season, episode, finished_at) VALUES (?, ?, ?, ?, ?)');
+	const hide = db.prepare(`
+		INSERT INTO continue_hidden (profile, title, type, hidden_at) VALUES (?, ?, 'tv', datetime('now'))
+		ON CONFLICT (profile, title, type) DO UPDATE SET hidden_at = excluded.hidden_at
+	`);
+	for (const row of hidden) {
+		if (row.finished) caughtUp.run(row.profile, row.title, row.season, row.episode, row.updatedAt);
+		else hide.run(row.profile, row.title);
+	}
+});
+
+/**
  * node:sqlite hands back null-prototype objects. SvelteKit needs plain ones to
  * send them to the browser, so every query result goes through here.
  */

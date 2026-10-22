@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { findAndKeepSkips } from '$lib/skipFinder';
+	import { findAndKeepSkips, skipKeyOf } from '$lib/skipFinder';
 
 	/**
 	 * The computer finding an episode's intro and credits by itself, in a window nobody sees
@@ -9,7 +9,7 @@
 	 * Finds the episode like the player does, compares its sound with a neighbour's, keeps the
 	 * answer for both (src/lib/skipFinder.ts) and closes.
 	 */
-	type File = { fid: number; quality: string; source?: string };
+	type File = { fid: number; quality: string; source?: string; shareKey?: string; hevc?: boolean };
 	type Episode = { season: number; episode: number; files: File[]; shareKey?: string; available?: boolean };
 
 	let status = $state('Starting…');
@@ -37,15 +37,17 @@
 				status = 'Not found.';
 				return;
 			}
-			const share = ep.shareKey || data.shareKey || '';
-			const link = await fetch(`/api/watch/stream?share_key=${share}&fid=${fid}`)
+			// Another source's copy plays from its own share key (7Movies' Orion copy has a
+			// separate sound track too; ones that don't can't be compared here).
+			const share = file.source ? (file.shareKey ?? '') : ep.shareKey || data.shareKey || '';
+			const link = await fetch(`/api/watch/stream?share_key=${encodeURIComponent(share)}&fid=${fid}`)
 				.then((r) => (r.ok ? (r.json() as Promise<{ url?: string }>) : {}))
 				.then((r: { url?: string }) => r.url ?? '');
 			const found = await findAndKeepSkips({
 				episodes,
 				season,
 				episode,
-				fid,
+				key: skipKeyOf(file),
 				quality: file.quality,
 				master: link,
 				mainShareKey: data.shareKey ?? '',

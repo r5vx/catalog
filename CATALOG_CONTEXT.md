@@ -1057,6 +1057,266 @@ for films the link) and, for shows, the episode's link (`/api/watch/stream`, ~2 
 - Not done (on purpose): remembering "not available" longer; giving up
   on 7Movies early (its "no" takes 6–15 s; quitting sooner would hide real copies).
 
+### Continue Watching, caught up, and new episodes (2026-10-21)
+**The owner's rule:** a show leaves Continue Watching only when its last episode out has been
+watched, or Remove is pressed. The status label doesn't count. Before, a show marked completed
+left as soon as its latest episode passed 90%. Re:Zero had been imported as Completed and vanished
+at 25:00 of 27:29 in S2E15. Autosync's "reached" update also bumps `entries.updated_at`, so the
+"completed after you watched" check fired too.
+- `caught_up` (db/index.ts) holds one row per profile and title. The player writes it
+  (`noteCaughtUp`, `/api/watch/caught-up`) near the end of an episode with nothing playable after
+  it, and when episodes are ticked by hand. It never writes while Showbox is missing from the list
+  (`episodeListWhole`). Caught up at the latest row and ≥90% means the show is off Continue Watching.
+- `src/lib/server/newEpisodes.ts` runs 3 minutes after start, then every 6 h, and looks at each show
+  at most once every 12 h. It asks TMDB first (one request, no Febbox). Only when something aired
+  within 14 days of finishing does it ask the player's own lookup (`/api/watch/resolve?nostream=1`,
+  self-fetched with the PIN cookie), one show at a time, 20 s apart. A playable episode after
+  `known_*` makes the show come back at that episode with `newEpisode`. That also overrides an
+  earlier Remove, if the episode was found later. "Airs …" placeholders don't count, so an SVU
+  episode only appears once a source has it.
+- On a first look (`known_*` NULL, from the one-time fix) it only notes what's out. Ended shows
+  aren't looked up at all.
+- Shown as a "New episode" badge with × on the computer, and as an accent "New · S28E2" note on the
+  TV. The TV's ☰ menu has "Dismiss new episode", and the title page says "Play new episode SxEy".
+- One-time fix `continue-not-by-status` keeps what the old rule hid hidden. Finished shows become
+  caught up; ones left midway get a `continue_hidden` row.
+- The test server listens only on localhost, while the app listens on 0.0.0.0. The self-fetch tries
+  127.0.0.1, then localhost. `/api/diagnostics` → `caughtUp`. `GET /api/watch/caught-up?check=1`
+  runs a round now.
+- Marking episodes watched in the player also moves `last_season/last_episode` forward.
+
+### Febbox's listing fields turned into text (2026-10-21)
+On the evening of 2026-10-21, `file_share_list` began sending every field as a string (`is_dir: "1"`,
+`fid: "52249131"`). That morning they were numbers. `listFebboxFiles` tested `is_dir === 1`, so
+every season folder read as a file. **Every show lost Showbox** and fell back to Aniwave, 7Movies and
+Movy. Films kept working, because their files sit at the top of the folder.
+- Now it uses `Number(f.is_dir) === 1`.
+- How to spot it: shows have no Showbox while films do, with no 429s in `slowRequests`.
+- Compare a kept `febbox-list|…` entry from before with one from after: the field types tell.
+
+### Never switch to the dub by itself (2026-10-21)
+`linkFor` used to try every other copy, in list order, when the picked one gave no link. Someone
+watching in Japanese was then put on Aniwave's Dub. Now:
+- `linkFor` only falls back to copies with the same audio (`isDub`);
+- `pickFile` with no Showbox copy never takes the dub unless English was asked for;
+- a switch Catalog makes by itself (`changeToFile(…, true)`) no longer saves `catalog:animeAudio`.
+
+If the dub is the only copy, it still plays, with a short notice (`sayIfOnlyDub`).
+
+### What "Showbox only" checks cost while Showbox was down (2026-10-21)
+With Showbox gone for shows, several things quietly stopped, because they keyed on the show's
+Showbox `shareKey` or a Showbox file:
+- `prefetchNextEpisode` returned on `!shareKey`, so Next Episode took ~30 s. It now uses each
+  copy's own share key.
+- `/api/watch/prefetch` only warmed Aniwave and Showbox. It now warms 7Movies (`vidriftStream`, kept
+  20 min) and Movy (`movyStream`, kept 40 min) too. A cold 7Movies lookup took 16 s; a warmed one
+  answers at once.
+- A fatal hls error with no Showbox key showed "Video failed to load (fragLoadTimeOut)" for good,
+  even though the video played on. It now checks `shareOf(activeFile)` and gets a fresh link, and the
+  banner clears after 3 s more of playing (`loadProblemAt`).
+- Skip Intro by comparison (`loadSkipTimes`) only runs on Showbox files. On other sources only
+  AniSkip answers: it has nothing for Dungeon Meshi E1/E4, and E5 is timed on a 24:32 cut, so it's
+  dropped. Other sources' copies are different releases: Dungeon Meshi E4 is 1546 s on Showbox,
+  1575/1579 s on 7Movies, 1545 s on Aniwave. So Showbox's times can't simply be reused. Their sound
+  is inside the video pieces (7Movies' H.264 pieces are 28 MB), so comparing them would cost
+  hundreds of MB. **Not done.**
+- Re:Zero S2E11–16 on Showbox found nothing: those episodes share no ≥20 s run in the first 6 or
+  last 5 minutes (no regular opening). The finder itself is fine: Dungeon Meshi E4/E5 still give
+  0–90 s plus both credits.
+- Auto-timing on 7Movies and Movy hears the video only as it loads (`hearAppended`), so its first
+  move comes once talking after the opening is downloaded. "Don't match" now waits until a no-fit
+  holds over 180 s more heard, or 80% of the video (`mismatchFrom`). Dungeon Meshi E6's Netflix CC
+  fits Showbox's 1441 s copy; 7Movies' are 1474 s and 1525 s.
+
+### Subtitle order by audio (2026-10-21)
+`/api/watch/subtitles` treats English files named for the Japanese release (`madeForJapanese`:
+"JAPANESE"/"JPN" in the name, e.g. `…S01E06.JAPANESE.WEBRip.NF.en[cc].srt`, Netflix's English for the
+Japanese audio) as follows:
+- On Japanese audio (anime), they go first and are the `default`.
+- On the dub, they're never taken as the dub's captions; English CC stays first.
+
+The `others` list is cached between requests, so it's copied with `default` cleared. Marking it in
+place had made the Japanese-audio pick show as on for the dub as well.
+
+### Skip Intro on every source, and Anime Skip (2026-10-21, later the same day)
+- **Anime Skip** (`src/lib/server/metadata/animeskip.ts`) uses the owner's client ID (60 requests a
+  minute). It does one search plus one `findEpisodesByShowId` per show, kept a day
+  (`animeskip|<name>`). It matches the player's season and episode first, then the overall number.
+  It's used only within 30 s of `baseDuration`, and each part runs until the next timestamp.
+  `/api/watch/skip-times` asks AniSkip and Anime Skip at once; each kind of part comes from the
+  first that has it. The player now sends `season` and `number` too.
+- **Found times are kept per copy** (`skipKeyOf`): a Showbox file number, or another source's share
+  key (`vidrift:tv:207784:1:4:avc`). The other sources' file numbers are the same for every episode,
+  so they can't be the key. `skip-found` takes `?key=`. Old Showbox keys are unchanged.
+- **The neighbour** is read from any copy with a separate sound track: Showbox, then 7Movies' Orion
+  (`hevc`) copy. 7Movies' H.264, Aniwave and Movy pack their sound into the picture.
+- **The copy being watched:** if it has its own track, it's compared as before (`findSkips`).
+  Otherwise its sound is heard from the player's downloads (`DownloadedSound`: BUFFER_APPENDING
+  pieces, only the first 6 and last 5 minutes, decoded at 8 kHz) and `fromDownloads` does this:
+  1. it takes the neighbour's own intro and credits, kept or found by comparing the neighbour with
+     the episode beyond it;
+  2. it looks for that sound in what's downloaded so far (`locate`, again each time more arrives),
+     where 20 s of a match places it.
+
+  The player only keeps about 30 s ahead, so waiting for minutes of the start would find the intro
+  after it had played. Tested on Dungeon Meshi E4 via 7Movies H.264 (1579 s long): Skip Intro showed
+  3 s after starting. Kept: intro 1–91.2, credits 1455.3–1546.8 (this copy runs on about 30 s after
+  the credits).
+- **TVs:** for a copy with a separate track, the TV asks the computer (`/skip-maker`), as before. For
+  one with its sound inside the picture (Bleach on Aniwave), the TV runs `fromDownloads` itself but
+  with `referenceFrom`: the computer works out the neighbour's times (prepare with that copy's
+  fid/key), and the TV only locates them in its own downloads. `locate` looks again only after 15 s
+  more has arrived. Tested as a TV (`localStorage catalog:tv=1`) on Dungeon Meshi E3, Aniwave
+  burned-in copy (1509 s): intro 11.1–101.3, credits 1360.4–1452. AniSkip's 0–100 would have been
+  11 s off there.
+
+### The owner's first test of the build, and what it found (2026-10-22)
+- **The old episode replayed under "Loading episode…".** I added `hearDownloadsOf(activeFile)` to the
+  `$effect` that builds hls.js, which made the effect track `activeFile`. Picking an episode changes
+  `activeEpisode`, and through it `activeFile`, so hls was rebuilt at once with the *old* `streamUrl`
+  and the old episode played from 0:00 while the new link was fetched. It's now `untrack`ed.
+  **Anything read inside that effect must be untracked.**
+- **`playEpisode` let the old video play on** while the next link was fetched, and progress saves
+  wrote its position onto the new episode: E6 was marked 98% watched from E5's position (1469/1501).
+  Now it pauses and stops loading first. The switch is marked before the pause, or the pause counts
+  as the user's. `buildProgressBody` saves nothing while switching or loading. The title shows the new
+  episode at once. A newer pick takes over (`episodeSwitch`). Episode buttons are no longer disabled
+  while loading; that was "it doesn't let me click episode 6".
+- **`linkFor`:** the copy picked gets 5 s. Then the others in the same audio answer, and the first with
+  a link plays. Order: the same source's other copy, Showbox's best, the rest. The first two are
+  asked alongside from the start. Before, a show set to Movy waited out Movy's lookup (50 s) with
+  Showbox right there, and the fallbacks never included Showbox. The kept source now notes `hevc`
+  (7Movies' two copies).
+- **`changeToFile`** clears "… couldn't play this one" once a link comes.
+- **Skip finding from downloads now prefers the same episode's twin** (its Showbox or Orion copy):
+  1. it places the intro;
+  2. it shifts the twin's credits by the same amount, so they show at once;
+  3. it checks them later.
+
+  A copy with a kept intro but no credits (from the first build) is looked at again (`incomplete`).
+  With a kept intro (`known`), the shift needs no downloads, which helps when resumed past the intro.
+  Small sound-track reads aren't gated on the video's buffer (`anyTime`): the 30 s gate stalled Movy
+  and 7Movies "until paused".
+- **IntroDB** (`metadata/introdb.ts`): `GET api.introdb.app/segments?imdb_id&season&episode`. No key.
+  The IMDb id comes from TMDB `/tv/{id}/external_ids`. It has Dungeon Meshi (nearly all), Bleach, and
+  SVU's credits. It doesn't say which cut, so it ranks after AniSkip and Anime Skip, and Catalog's own
+  per-copy times override it. TheIntroDB (`api.theintrodb.org/v2/media?tmdb_id&season&episode`) also
+  answers, but gave Dungeon Meshi E4's credits as 5–100 s: not used.
+
+### Auto-timing moved Venom 2 by 22 s (2026-10-22)
+A friend on 3.3.0 had Venom: Let There Be Carnage's subtitles "synced horribly wrong", and right
+with auto-timing off. Reproduced:
+- **The top subtitle was SUNSCREEN-HI**, a c1nem4 pre-release rip. Pre-release (and HDTS) subtitles
+  are timed to another version of the film: about 22 s off in the first 20 minutes, close to right
+  later on.
+- **One clear stretch, after 2 minutes heard, gave "−22.3 s".** Later answers said the file didn't
+  fit, but a non-fit never undid a delay already applied.
+- **The hearing itself was fine.** BluRay and WEB-DL files score clearly at −1 to 0 s across the
+  whole film.
+
+Fixes:
+- `fitAtRate` needs 3 clear stretches before answering.
+- If fewer than 40% of stretches are clear, the answer must agree (within 2 s) with a confident
+  `quickShift` over everything heard.
+- `SubtitleSync` remembers the delay before it first moved them (`before`) and puts it back when a
+  plan stops fitting.
+- `/api/watch/subtitles` lists cinema-recording subtitles last (`fromCinema`: CAM/TS/TC/HDTS…,
+  c1nem4, SUNSCREEN).
+
+Checked against Venom 2's whole-film hearing (`speech-2541104-en`) and Re:Zero S2E10/12/13/15:
+- Venom 2: BluRay −0.8 s, WEB −0.3 s, EVO +0.2 s; both cinema files no longer fit the whole film.
+- Re:Zero: every file fits within 0.4 s, on 81–100% of stretches.
+
+**Testing note:** `window.subSync` (dev only) has `heardSoFar()` and `last`. Saved hearings live
+in `previews/speech-<fid>-<lang>.bin`; copy them to a test copy's `previews/` to replay `fitDelays`.
+
+### Auto-timing sooner (2026-10-22)
+The owner asked whether the 5–10 s wait could be shorter. Measured on Frieren, Showbox 1080p:
+- **A separate sound track was only heard once subtitles were on and downloaded.** It now starts
+  when the video does (`ownTrack` in the player; not on a TV). With subtitles off it stops after
+  `HEARD_AHEAD` (600 s, about 2% of a 1080p episode; `wholeTrack` false). Turning them on carries on.
+- **Showbox's audio pieces are 6.5 s, so a group of 20 was only 130 s.** A first answer needs about
+  240 s (three 3-minute stretches 30 s apart), which meant two rounds. The first group is now
+  `FIRST_ANSWER` (270 s), fetched in one go.
+- **Nothing was fetched until 30 s of video was buffered.** The first group may go at 8 s
+  (`canFetch(first)`).
+- **Silero takes about 2.4 s per 270 s heard, and that's now most of the wait.** I tried running
+  8 parts of the sound side by side (batch dimension): only 2.4 → 1.7 s, and 1–2% of talk/no-talk
+  marks changed, because the model needs well over a second to settle. Not kept.
+- **Opening songs need more heard.** Since the 3-stretch rule, Frieren S1E13 needed about 9 minutes
+  heard for a first answer, hence 600 s ahead.
+- **Fetches can be slow while the player buffers.** Sound fetches compete with the video for the
+  connection; one 130 s group took about 25 s.
+
+### OpenSubtitles' daily download limit (2026-10-22)
+Never bulk-download subtitles to survey them. About 350 downloads in an hour (to look for adverts)
+used up the owner's internet connection's anonymous daily allowance. `dl.opensubtitles.org` then
+answers 404 with a page saying "… exceeded. If you will continue trying to download, your IP will
+be blocked by our firewall", lifted after about 24 h. Searching still works; only downloads stop.
+`downloadSubtitleText` now leaves OpenSubtitles alone for 3 h once it says "exceeded". The player
+moves on to the next file each time one won't download, so without that it kept knocking. Survey
+from `saved_subtitles` in a library copy, or download a handful at most.
+
+### Subtitle credits and adverts, surveyed (2026-10-22)
+Through 209 English files of 32 films and shows, before the limit above was hit:
+- **`isCredit(cue)`** drops a whole subtitle when a credit spans lines: "Subtitles by / SDI Media
+  Group", "Captioning made possible by / Touchstone…", "Captioned by Deluxe", "Press play.
+  Subtitles appear. / … tryray.app", "Provided by explosiveskull", "Copyright from SI Media",
+  "Synch: …", "Titles Re edited by …", and "[ENGLISH SDH]" labels.
+- **`isAdvert(line)`** also drops spaced-out addresses ("www  .  OpenSubtitles  .  org"),
+  "-=xXSwesubsXx=-", and letters drawn out of letters (Shrek's "SIMEDIA" banner).
+- **Two older rules were dropping dialogue.** "proudly presents" took Madagascar's "The Central Park
+  Zoo proudly presents…" (it now needs a subtitle team's name before it). "www." took "Awww..
+  Hey.." (it now needs a word boundary).
+- **Still dropped:** Spider-Man: No Way Home's "TheDailyBugle.net" lines (said in the film) look
+  like a web address.
+
+### Frozen picture watch (2026-10-21)
+Friends on 3.3.0 reported Deadpool going wrong halfway through: the sound went out of time and the
+picture froze, and it happened again after reloading. I couldn't reproduce it: Deadpool & Wolverine
+played from halfway at 24 frames a second, and the player keeps to H.264 levels. The 4K files do
+carry HEVC HDR levels (Deadpool 2's with no CODECS at all), and the 1080p ones Dolby `ec-3` variants
+(dropped where the browser can't play them).
+
+Whatever the cause, a picture stuck with the clock running was never noticed, because the stall watch
+only looks at a stopped clock. `checkFrozenPicture` runs every 2 s while playing: 4 s on the clock
+with fewer than 3 new frames (`getVideoPlaybackQuality`) counts as frozen. Then:
+1. `recoverMediaError` plus a seek to the same spot;
+2. if it happens again within 2 minutes, `refreshStream`;
+3. a third time, a toast suggesting another quality or source.
+
+Each is logged in the stop log with `what`. Tested by freezing the frame count: it was caught in
+about 7 s and recovered.
+
+### Intro sources compared (2026-10-21)
+- **AniSkip** (in use): crowd-sourced and keyed by MAL id plus episode. Thin: nothing for Dungeon Meshi
+  E1/E4.
+- **Anime Skip** (anime-skip.com, GraphQL at `api.anime-skip.com/graphql`): needs an `X-Client-ID`
+  header. Their playground page carries one; an app should get its own. Its timestamps are timed on
+  Crunchyroll and carry `baseDuration`. Checked: no Dungeon Meshi at all; Re:Zero 38 of 38 in one
+  entry; Frieren 35/35; Bleach 106/140. Not built: it needs the owner's own client ID.
+- **Comparing sound** (skipFinder): it works on any show with a regular opening, including ones no
+  site has. It misses openings that start after 6 minutes or aren't shared (Re:Zero S2), and runs only
+  on Showbox.
+
+### Background picture (2026-10-21)
+Settings → Personalization → Background.
+- The picture uploads through `/api/media` (the notes' upload).
+- It's saved as `backgroundImage` / `backgroundDim` (0–90, default 55) / `backgroundBlur` (0–20) in
+  settings, so it's never exported. `src/lib/background.ts` reads them.
+- `+layout.svelte` draws a fixed `.page-background` at z-index −1, with a `var(--paper)` layer over it
+  at `--dim`. Dim fades toward the theme's own background, so text stays readable in every theme.
+- It isn't drawn on `/watch` or `/tv`. Cards stay solid; the sidebar gets 78% opacity via
+  `html.has-background`.
+- While a slider is dragged, `backgroundPreview` (svelte state) changes the picture live; it's saved
+  on release.
+
+### Scrambled subtitle files (2026-10-21)
+Peekaboo's Re:Zero S2E15 on AnimeTosho has real timings, but every line is base64-encrypted
+gibberish. `isScrambled` (showbox-subs.ts) refuses a file when more than half its lines are base64.
+`downloadSubtitle` returns '' for those, so they're dropped from AnimeTosho's track list. That
+list's cache key is `tosho-english2|`. Kept copies are rechecked on read.
+
 ### Movy (movy.sx), the fourth source (2026-10-17)
 For old films Showbox and 7Movies lack (The She Beast, Miami Beach). Keyed by TMDB id
 (`/movie/<id>?play=true`, `/tv/<id>/<s>/<e>?play=true`). Its lookup (`api.wecollege.net/<city>/
