@@ -52,6 +52,7 @@
 							title={tile.title}
 							poster={tile.poster}
 							note={tile.note}
+							noteNew={tile.noteNew}
 							progress={tile.progress}
 							menu={tile.menu}
 							autofocus={r === 0 && i === 0}

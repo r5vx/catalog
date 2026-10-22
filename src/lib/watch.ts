@@ -30,7 +30,11 @@ export function pickFile<T extends Pickable>(files: T[], wanted: string, audio =
 	files = files.filter(playableHere);
 	if (!files.length) return null;
 	const showbox = files.filter((f) => !f.source);
-	if (!showbox.length) return files.find((f) => audio && f.audio === audio) ?? files[0];
+	// No Showbox copy: the language asked for; failing that, never the English dub unless it was
+	// asked for (someone watching in Japanese isn't switched to it just because it's listed first).
+	if (!showbox.length) {
+		return files.find((f) => audio && f.audio === audio) ?? files.find((f) => audio === 'English' || f.audio !== 'English') ?? files[0];
+	}
 	const exact = showbox.find((f) => f.quality === wanted);
 	if (exact) return exact;
 	const sorted = [...showbox].sort((a, b) => {

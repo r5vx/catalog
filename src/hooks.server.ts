@@ -13,6 +13,7 @@ import { keepShowboxSigninFresh } from '$lib/server/showboxSignin';
 import { clearOldStrips } from '$lib/server/previewStrips';
 import { keepWithinLimit, tellAppItsShare } from '$lib/server/storage';
 import { moveOffAniList } from '$lib/server/offAniList';
+import { noteOwnAddress, scheduleNewEpisodeChecks } from '$lib/server/newEpisodes';
 
 // Before anything asks another site for something: a time limit for every outside request,
 // and a note of the slow ones (on /api/diagnostics).
@@ -43,6 +44,9 @@ forgetFinishedSubtitles();
 // SubDL is no longer asked (it needed a key and added little): its key isn't kept.
 if (readSettings().subdlApiKey || readSettings().subdlSeen) updateSettings({ subdlApiKey: undefined, subdlSeen: undefined });
 setInterval(forgetFinishedSubtitles, 60 * 60 * 1000).unref?.();
+
+// Shows watched to their last episode come back to Continue Watching when a new one is out.
+scheduleNewEpisodeChecks();
 
 // A renewed Showbox sign-in in the app's window is saved, shortly after opening and twice a day.
 setTimeout(keepShowboxSigninFresh, 30 * 1000).unref?.();
@@ -130,6 +134,7 @@ function profileFor(event: RequestEvent): number {
  */
 export const handle: Handle = async ({ event, resolve }) => {
 	checkSameOrigin(event);
+	noteOwnAddress(event.url);
 
 	const theme = readSettings().theme;
 	const resolveWith = (e: typeof event) =>

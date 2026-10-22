@@ -905,15 +905,33 @@ export function deleteWatchProgress(title: string, type: string, season: number,
 		.run(currentProfile(), title, type, season, episode);
 }
 
-export function continueWatchingList(): (WatchProgress & { updatedAt: string; posterUrl: string | null; entryId: number | null; entryStatus: string | null })[] {
+export type ContinueItem = WatchProgress & {
+	updatedAt: string;
+	posterUrl: string | null;
+	entryId: number | null;
+	entryStatus: string | null;
+	/** A new episode came out after the show was caught up: season/episode are that one's. */
+	newEpisode: boolean;
+};
+
+/**
+ * What you're in the middle of, newest first. A show stays until Remove is pressed, or its last
+ * episode there is has been watched (`caught_up`) — not because it's marked completed: Re:Zero,
+ * marked completed long ago, vanished halfway through season 2 that way. A caught-up show comes
+ * back when a later episode can be played, at that episode, marked new (`newEpisode`) until
+ * that's dismissed; it comes back even after Remove, as long as the new episode turned up later.
+ */
+export function continueWatchingList(): ContinueItem[] {
 	cleanupCompletedProgress();
 	// The owner's list is the library; anyone else's is their own titles.
 	const profile = currentProfile();
 	const list = profile === MAIN_PROFILE ? 'entries' : `(SELECT * FROM profile_titles WHERE profile = ${Number(profile)})`;
 	try {
-		return db
+		const rows = db
 			.prepare(`
-				SELECT w.title, w.type, w.season, w.episode, w."current_time" AS currentTime, w.duration, w.updated_at AS updatedAt,
+				SELECT w.title, w.type, w.season, w.episode, w."current_time" AS currentTime, w.duration,
+						MAX(w.updated_at, COALESCE(c.found_at, '')) AS updatedAt,
+						c.new_season AS newSeason, c.new_episode AS newEpisodeNumber, c.dismissed AS dismissed,
 						-- The library entry with the same name; for a show, one whose name starts the other's
 						-- ("Kaiju No. 8" for "Kaiju No. 8 Season 2"). Never a name found somewhere inside
 						-- another: "Re:ZERO … The Frozen Bond" took Disney's Frozen's poster that way.
@@ -931,6 +949,9 @@ export function continueWatchingList(): (WatchProgress & { updatedAt: string; po
 							(SELECT e.status FROM ${list} e WHERE w.type = 'tv' AND (instr(lower(e.title), lower(w.title)) = 1 OR instr(lower(w.title), lower(e.title)) = 1) LIMIT 1)
 						) AS entryStatus
 				FROM watch_progress w
+				-- Caught up at the episode watched last (not one since): done, unless a new one is out.
+				LEFT JOIN caught_up c ON w.type = 'tv' AND c.profile = w.profile AND c.title = w.title
+					AND c.season = w.season AND c.episode = w.episode
 				WHERE w.profile = :profile AND w.rowid = (
 					SELECT w2.rowid FROM watch_progress w2
 					WHERE w2.profile = w.profile AND w2.title = w.title AND w2.type = w.type
@@ -941,23 +962,23 @@ export function continueWatchingList(): (WatchProgress & { updatedAt: string; po
 					w.type = 'tv'
 					OR (w.type = 'movie' AND w.duration > 0 AND w."current_time" > 30 AND (CAST(w."current_time" AS REAL) / w.duration) < 0.95)
 				)
-				-- Hidden until it's watched again after being removed.
+				-- Hidden until it's watched again after being removed, or a new episode comes out.
 				AND NOT EXISTS (
 					SELECT 1 FROM continue_hidden h
-					WHERE h.profile = w.profile AND h.title = w.title AND h.type = w.type AND h.hidden_at >= w.updated_at
+					WHERE h.profile = w.profile AND h.title = w.title AND h.type = w.type
+						AND h.hidden_at >= MAX(w.updated_at, COALESCE(c.found_at, ''))
 				)
-				-- A show marked completed (by hand, or by Autosync after its last episode) is done:
-				-- it only comes back when an episode is started again after that (a rewatch, a new season).
-				AND NOT (w.type = 'tv' AND EXISTS (
-					SELECT 1 FROM ${list} e
-					WHERE lower(e.title) = lower(w.title) AND e.status = 'completed'
-						AND (w.duration = 0 OR CAST(w."current_time" AS REAL) / w.duration >= 0.9
-							OR datetime(w.updated_at) <= datetime(e.updated_at))
-				))
-				ORDER BY w.updated_at DESC
+				AND NOT (c.title IS NOT NULL AND c.new_season IS NULL
+					AND w.duration > 0 AND CAST(w."current_time" AS REAL) / w.duration >= 0.9)
+				ORDER BY updatedAt DESC
 				LIMIT 20
 			`)
-			.all({ profile }) as unknown as (WatchProgress & { updatedAt: string; posterUrl: string | null; entryId: number | null; entryStatus: string | null })[];
+			.all({ profile }) as unknown as (ContinueItem & { newSeason: number | null; newEpisodeNumber: number | null; dismissed: number | null })[];
+		return rows.map(({ newSeason, newEpisodeNumber, dismissed, ...item }) =>
+			newSeason !== null && newEpisodeNumber !== null
+				? { ...item, season: newSeason, episode: newEpisodeNumber, currentTime: 0, duration: 0, newEpisode: !dismissed }
+				: { ...item, newEpisode: false }
+		);
 	} catch (e) {
 		console.error('[continueWatchingList]', e);
 		return [];
@@ -969,6 +990,81 @@ export function hideFromContinueWatching(title: string, type: string): void {
 		INSERT INTO continue_hidden (profile, title, type, hidden_at) VALUES (?, ?, ?, datetime('now'))
 		ON CONFLICT (profile, title, type) DO UPDATE SET hidden_at = excluded.hidden_at
 	`).run(currentProfile(), title, type);
+}
+
+/* ------------------------------------------------------- caught up, and new episodes */
+
+/**
+ * This profile has watched `season`/`episode` of a show, and nothing after it could be played:
+ * it leaves Continue Watching until a new episode can (src/lib/server/newEpisodes.ts). Again
+ * after a new episode was found: that one's watched now, so it's looked for afresh.
+ */
+export function noteCaughtUp(title: string, year: string, season: number, episode: number): void {
+	db.prepare(`
+		INSERT INTO caught_up (profile, title, year, season, episode, known_season, known_episode, finished_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		ON CONFLICT (profile, title) DO UPDATE SET
+			year = excluded.year, season = excluded.season, episode = excluded.episode,
+			known_season = excluded.known_season, known_episode = excluded.known_episode,
+			finished_at = excluded.finished_at, new_season = NULL, new_episode = NULL,
+			found_at = NULL, dismissed = 0, checked_at = NULL
+	`).run(currentProfile(), title, year, season, episode, season, episode);
+}
+
+/** The "New" mark on a show goes; the show stays in Continue Watching, at the new episode. */
+export function dismissNewEpisode(title: string): void {
+	db.prepare('UPDATE caught_up SET dismissed = 1 WHERE profile = ? AND title = ?').run(currentProfile(), title);
+}
+
+export type CaughtUp = {
+	profile: number;
+	title: string;
+	year: string;
+	season: number;
+	episode: number;
+	knownSeason: number | null;
+	knownEpisode: number | null;
+	finishedAt: string;
+	checkedAt: string | null;
+};
+
+/** Every profile's caught-up shows with no new episode found yet. */
+export function caughtUpWaiting(): CaughtUp[] {
+	return db
+		.prepare(`
+			SELECT profile, title, year, season, episode, known_season AS knownSeason, known_episode AS knownEpisode,
+				finished_at AS finishedAt, checked_at AS checkedAt
+			FROM caught_up WHERE new_season IS NULL ORDER BY finished_at DESC
+		`)
+		.all()
+		.map((row) => ({ ...(row as CaughtUp) }));
+}
+
+/** A look at a caught-up show: the last episode that can be played now, and the new one if any. */
+export function caughtUpChecked(
+	row: { profile: number; title: string },
+	known: { season: number; episode: number } | null,
+	found: { season: number; episode: number } | null
+): void {
+	db.prepare(`
+		UPDATE caught_up SET checked_at = datetime('now'),
+			known_season = COALESCE(?, known_season), known_episode = COALESCE(?, known_episode),
+			new_season = ?, new_episode = ?, found_at = CASE WHEN ? IS NULL THEN NULL ELSE datetime('now') END
+		WHERE profile = ? AND title = ?
+	`).run(known?.season ?? null, known?.episode ?? null, found?.season ?? null, found?.episode ?? null, found?.season ?? null, row.profile, row.title);
+}
+
+/** For /api/diagnostics: what's caught up and what's been found. */
+export function caughtUpSummary(): unknown[] {
+	return db
+		.prepare(`
+			SELECT profile, title, season, episode, known_season AS knownSeason, known_episode AS knownEpisode,
+				new_season AS newSeason, new_episode AS newEpisode, dismissed, finished_at AS finishedAt,
+				checked_at AS checkedAt, found_at AS foundAt
+			FROM caught_up ORDER BY COALESCE(found_at, finished_at) DESC LIMIT 50
+		`)
+		.all()
+		.map((row) => ({ ...(row as object) }));
 }
 
 export function deleteTitleProgress(title: string, type: string): void {

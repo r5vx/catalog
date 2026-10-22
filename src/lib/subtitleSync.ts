@@ -20,6 +20,10 @@ import { readSoundTrack, soundBetween, soundTrackIn } from './soundTrack';
 const RATE = 16000; // what the speech model listens at
 const SAMPLES = 512; // one slice (32 ms)
 const PIECES_AT_ONCE = 20; // sound-track pieces fetched together (~2 minutes)
+const FIRST_ANSWER = 270; // seconds of sound a first answer needs (three 3-minute stretches, 30 s apart)
+// Seconds heard before subtitles go on. (An opening song leaves little to go by: Frieren S1E13's
+// first answer came with nine minutes heard. Ten minutes of sound is about 2% of a 1080p episode.)
+const HEARD_AHEAD = 600;
 
 export class SubtitleSync {
 	private worker: Worker;
@@ -27,6 +31,8 @@ export class SubtitleSync {
 	private lastSet: number | null = null;
 	private heldByHand = false;
 	private told = false;
+	/** Seconds heard when a plan first said they don't fit (null: none has since one did). */
+	private mismatchFrom: number | null = null;
 	private applying: ReturnType<typeof setInterval> | undefined;
 	private running = false;
 	/** Downloading pieces of the sound track right now (for the player's stats and stop log). */
@@ -69,8 +75,11 @@ export class SubtitleSync {
 		private readonly video: HTMLVideoElement,
 		private readonly cues: () => TimedCue[],
 		private readonly delay: () => number,
-		/** Whether fetching more of the sound track now is fine (the video has plenty buffered). */
-		private readonly canFetch: () => boolean
+		/**
+		 * Whether fetching more of the sound track now is fine (the video has plenty buffered).
+		 * `first`: the first few minutes' worth, which is small and wanted soon.
+		 */
+		private readonly canFetch: (first: boolean) => boolean
 	) {
 		this.worker = new Worker(new URL('./subtitleTiming.worker.ts', import.meta.url), { type: 'module' });
 		this.worker.onmessage = (event) => {
@@ -83,9 +92,26 @@ export class SubtitleSync {
 			if (event.data.kind !== 'plan' || event.data.round !== this.round) return;
 			this.plan = event.data.plan;
 			this.last = { plan: this.plan, heard: Math.round(event.data.heard) };
+			// "Don't match" only once it still doesn't after three more minutes heard (or most of
+			// the video). A video heard bit by bit as it loads (7Movies, Movy) was judged on its first
+			// minutes: Netflix captions on 7Movies' longer copy of Dungeon Meshi E6 were called
+			// wrong, then fitted.
+			if (this.plan?.fits) this.mismatchFrom = null;
+			// No longer fitting, after it moved them: put back where they were. (Venom 2's cinema-copy
+			// subtitles fit at −22 s for the first minutes, then not at all — and the −22 s stayed.)
+			if (this.plan && !this.plan.fits && this.lastSet !== null && !this.heldByHand && this.before !== null) {
+				this.lastSet = null;
+				this.onDelay?.(this.before);
+				this.onRate?.(1);
+			}
 			if (this.plan && !this.plan.fits && !this.told) {
-				this.told = true;
-				this.onMismatch?.();
+				const heard = Number(event.data.heard) || 0;
+				this.mismatchFrom ??= heard;
+				const duration = Number.isFinite(this.video.duration) ? this.video.duration : Infinity;
+				if (heard >= this.mismatchFrom + 180 || heard >= duration * 0.8) {
+					this.told = true;
+					this.onMismatch?.();
+				}
 			}
 			this.apply();
 		};
@@ -142,8 +168,10 @@ export class SubtitleSync {
 		this.plan = plan;
 		this.onRate?.(plan?.fits ? plan.rate : 1);
 		this.lastSet = null;
+		this.before = null;
 		this.heldByHand = false;
 		this.told = false;
+		this.mismatchFrom = null;
 		this.round++;
 		this.worker.postMessage({ kind: 'cues', cues, round: this.round });
 	}
@@ -198,9 +226,13 @@ export class SubtitleSync {
 		this.onRate?.(this.plan.rate);
 		const wanted = delayAt(this.plan.steps, this.video.currentTime);
 		if (Math.abs(wanted - current) < 0.1) return;
+		// The delay before it first moved them, to go back to if they stop fitting.
+		if (this.lastSet === null) this.before = current;
 		this.lastSet = wanted;
 		this.onDelay(wanted);
 	}
+	/** The delay before auto-timing first moved these subtitles (null: it hasn't). */
+	private before: number | null = null;
 
 	/**
 	 * The talking already heard in Showbox file `fid` (kept on the computer by an earlier watch,
@@ -270,19 +302,26 @@ export class SubtitleSync {
 				this.track = '';
 				return false;
 			}
-			// Groups of pieces, the one playing now first.
-			const starts: number[] = [];
-			for (let i = 0; i < track.pieces.length; i += PIECES_AT_ONCE) starts.push(i);
-			const now = starts.findIndex((s, i) => i === starts.length - 1 || track.pieces[starts[i + 1]].at > this.video.currentTime);
-			const order = [...starts.slice(Math.max(0, now)), ...starts.slice(0, Math.max(0, now))];
+			// Groups of pieces, from the one playing now to the end, then the start. The first is as
+			// long as a first answer needs, fetched in one go (Showbox's pieces are 6½ s, so it took
+			// two rounds of twenty), so the timing's ready a few seconds sooner.
+			const count = track.pieces.length;
+			const here = Math.max(0, track.pieces.findIndex((p) => p.at + p.length > this.video.currentTime));
+			let enough = here + 1;
+			while (enough < count && track.pieces[enough].at - track.pieces[here].at < FIRST_ANSWER) enough++;
+			const groups: [number, number][] = [[here, enough]];
+			for (let i = enough; i < count; i += PIECES_AT_ONCE) groups.push([i, Math.min(count, i + PIECES_AT_ONCE)]);
+			for (let i = 0; i < here; i += PIECES_AT_ONCE) groups.push([i, Math.min(here, i + PIECES_AT_ONCE)]);
 
 			let previousEnd = -1;
-			for (const first of order) {
-				while (!this.canFetch()) {
+			let heard = 0;
+			for (const [first, end] of groups) {
+				// With subtitles off, only the first ten minutes or so (wholeTrack).
+				while (!this.canFetch(heard === 0) || (heard >= HEARD_AHEAD && !this.wholeTrack)) {
 					await new Promise((r) => setTimeout(r, 1000));
 					if (stop.signal.aborted) return true;
 				}
-				const group = track.pieces.slice(first, first + PIECES_AT_ONCE);
+				const group = track.pieces.slice(first, end);
 				const last = group[group.length - 1];
 				this.fetchingSound = true;
 				const { at, samples } = await soundBetween(track, group[0].at, last.at + last.length, RATE, stop.signal).finally(() => (this.fetchingSound = false));
@@ -290,6 +329,7 @@ export class SubtitleSync {
 				this.worker.postMessage({ kind: 'sound', at, samples, fresh: Math.abs(at - previousEnd) > 0.1 }, [samples.buffer]);
 				this.worker.postMessage({ kind: 'fit' });
 				previousEnd = at + samples.length / RATE;
+				heard += samples.length / RATE;
 			}
 			if (keepAs && !stop.signal.aborted) await this.keepHeard(keepAs, language);
 			return true;
@@ -307,6 +347,13 @@ export class SubtitleSync {
 	 * is fetched, it's exact (listening through the speakers was about a second out and needed
 	 * minutes), and the player keeps five minutes ahead, so that much is timed before it's seen.
 	 */
+	/**
+	 * Whether the whole sound track is wanted (subtitles are on). Before they go on, only the
+	 * first few minutes are heard, so the timing is ready the moment they do, without fetching
+	 * a whole film's sound for someone who never turns them on.
+	 */
+	wholeTrack = true;
+
 	private appendInit: Uint8Array | null = null;
 	private appendQueue: { at: number; length: number; data: Uint8Array }[] = [];
 	private appendTimer: ReturnType<typeof setTimeout> | undefined;

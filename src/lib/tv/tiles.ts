@@ -13,6 +13,8 @@ export type Tile = {
 	overview: string | null;
 	/** Small text over the poster: "S2E6". */
 	note?: string | null;
+	/** The note stands out: a new episode is out ("New · S27E5"). */
+	noteNew?: boolean;
 	progress?: number | null;
 	/** What the remote's menu button offers for it (src/lib/tv/TvMenu.svelte). */
 	menu?: TileMenu;
@@ -20,7 +22,7 @@ export type Tile = {
 
 /** Which kind of poster it is, and what's needed to act on it from its menu. */
 export type TileMenu =
-	| { kind: 'continue'; title: string; type: string; entryId: number | null; link: { source: string; id: string } | null }
+	| { kind: 'continue'; title: string; type: string; entryId: number | null; link: { source: string; id: string } | null; newEpisode?: boolean }
 	| { kind: 'library'; id: number; status: string }
 	| { kind: 'result'; source: string; sourceId: string };
 
@@ -128,20 +130,26 @@ type Continuing = {
 	entryId?: number | null;
 	/** Its own page, when it's known which title it is. */
 	link?: { source: string; id: string } | null;
+	/** A new episode is out (season/episode are its), not yet dismissed. */
+	newEpisode?: boolean;
 };
 
 export function fromContinue(item: Continuing, overview: string | null = null): Tile {
 	const episode = item.type === 'tv' && item.season ? `S${item.season}E${item.episode}` : null;
 	const left = item.duration > 0 ? Math.max(0, Math.round((item.duration - item.currentTime) / 60)) : null;
+	const fresh = Boolean(item.newEpisode && episode);
 	return {
 		key: `cw-${item.type}-${item.title}`,
 		href: item.link ? titleHref(item.link.source, item.link.id) : playHref(item.title, item.type, null, item.season, item.episode),
 		title: item.title,
 		poster: item.posterUrl,
-		meta: [episode, left !== null && left > 0 ? `${left} min left` : null].filter(Boolean).join(' · ') || 'Continue watching',
+		meta: fresh
+			? `New episode · ${episode}`
+			: [episode, left !== null && left > 0 ? `${left} min left` : null].filter(Boolean).join(' · ') || 'Continue watching',
 		overview,
-		note: episode,
+		note: fresh ? `New · ${episode}` : episode,
+		noteNew: fresh,
 		progress: item.duration > 0 ? item.currentTime / item.duration : null,
-		menu: { kind: 'continue', title: item.title, type: item.type, entryId: item.entryId ?? null, link: item.link ?? null }
+		menu: { kind: 'continue', title: item.title, type: item.type, entryId: item.entryId ?? null, link: item.link ?? null, newEpisode: fresh }
 	};
 }

@@ -89,6 +89,16 @@
 		if (warmTimer) { clearTimeout(warmTimer); warmTimer = null; }
 	}
 
+	/** The "New episode" mark goes; the show stays, at the new episode. */
+	async function dismissNew(title: string) {
+		await fetch('/api/watch/caught-up', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title, dismiss: true })
+		});
+		invalidateAll();
+	}
+
 	async function removeContinue(title: string, type: string) {
 		dismissed = new Set([...dismissed, `${title}:${type}`]);
 		// Hide only — deleting here wiped every episode's green tick for the show.
@@ -255,6 +265,12 @@
 							</p>
 						</div>
 					</a>
+					{#if item.newEpisode}
+						<div class="new-badge">
+							New episode
+							<button type="button" title="Dismiss" aria-label="Dismiss" onclick={() => dismissNew(item.title)}>&times;</button>
+						</div>
+					{/if}
 					<div class="watching-actions">
 						{#if item.entryId && item.entryStatus === 'completed'}
 							<button
@@ -703,6 +719,38 @@
 		display: block;
 		height: 100%;
 		background: var(--accent);
+	}
+
+	/* A new episode came out of a show that was caught up. */
+	.new-badge {
+		position: absolute;
+		top: 6px;
+		left: 6px;
+		z-index: 1;
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		padding: 2px 4px 2px 8px;
+		border-radius: 999px;
+		background: var(--accent);
+		color: var(--accent-ink);
+		font-size: 0.72rem;
+		font-weight: 700;
+	}
+
+	.new-badge button {
+		border: none;
+		background: none;
+		color: inherit;
+		font-size: 0.95rem;
+		line-height: 1;
+		padding: 0 3px;
+		cursor: pointer;
+		opacity: 0.75;
+	}
+
+	.new-badge button:hover {
+		opacity: 1;
 	}
 
 	.watching-actions {

@@ -220,7 +220,17 @@ function fitAtRate(speech: Float32Array, cues: TimedCue[], rate: number): DelayP
 	}
 	// "Doesn't fit" only once a good part of the video has been heard (a dozen stretches).
 	if (tried >= 12 && points.length / tried < 0.2) return { steps: [], fits: false };
-	if (!points.length) return null;
+	// Too little to go by yet. One clear stretch once moved Venom 2's subtitles 22 s (they were
+	// right as they were): an answer needs three stretches that agree.
+	if (points.length < 3) return null;
+	// Most stretches unclear: only believed if the whole of what's been heard says the same.
+	// Venom 2's HI subtitles "fitted" at −19.4 s on a fifth of the stretches, while the film as a
+	// whole had no clear delay at all.
+	if (points.length / tried < 0.4) {
+		const whole = quickShift(speech, cues, first, last, -FAR, FAR);
+		const middle = [...points].sort((a, b) => a.delay - b.delay)[Math.floor(points.length / 2)].delay;
+		if (!confident(whole) || Math.abs(whole.shift - middle) > 2) return tried >= 12 ? { steps: [], fits: false } : null;
+	}
 
 	// An answer that disagrees with both of its neighbours, which agree with each other, is noise.
 	const kept = points.filter((p, i) => {

@@ -327,17 +327,49 @@ function extractFromZipScan(buf: Buffer): string {
 	return '';
 }
 
-export async function downloadSubtitle(url: string, season?: number, episode?: number): Promise<string> {
-	return slimSubtitle(await downloadSubtitleText(url, season, episode));
+/**
+ * A subtitle file whose lines are scrambled: every line is base64 ("efuxTo9uhGGaCGUkbRzgGg==")
+ * instead of words. Peekaboo's Re:Zero S2E15 on AnimeTosho is like this — the timings are
+ * real but the text was encrypted by whoever made it, so it can never be shown.
+ */
+export function isScrambled(text: string): boolean {
+	const rows = text.replace(/\r/g, '').split('\n');
+	const spoken = text.includes('Dialogue:')
+		? rows.filter((l) => l.startsWith('Dialogue:')).map((l) => l.split(',').slice(9).join(',').trim())
+		: rows.map((l) => l.trim()).filter((l) => l && !/^\d+$/.test(l) && !l.includes('-->'));
+	if (spoken.length < 10) return false;
+	const coded = spoken.filter((l) => /^[A-Za-z0-9+/]{16,}={0,2}$/.test(l)).length;
+	return coded / spoken.length > 0.5;
 }
+
+/** A subtitle file's text, or '' when it couldn't be had or is scrambled (`isScrambled`). */
+export async function downloadSubtitle(url: string, season?: number, episode?: number): Promise<string> {
+	const text = await downloadSubtitleText(url, season, episode);
+	return isScrambled(text) ? '' : slimSubtitle(text);
+}
+
+/**
+ * OpenSubtitles allows each internet connection so many downloads a day without an account;
+ * past that it answers with a page saying the limit's "exceeded" for about 24 hours, and warns
+ * that more tries get the connection blocked by its firewall. So once it says so, it isn't asked
+ * again for a few hours (the player moves on to the next file each time one won't download).
+ */
+let openSubtitlesRestUntil = 0;
+const isOpenSubtitlesFile = (url: string) => /(^|\.)opensubtitles\.(org|com)$/i.test(new URL(url).hostname);
 
 async function downloadSubtitleText(url: string, season?: number, episode?: number): Promise<string> {
 	try {
+		if (isOpenSubtitlesFile(url) && Date.now() < openSubtitlesRestUntil) return '';
 		const resp = await fetch(url, {
 			headers: { 'User-Agent': UA },
 			signal: AbortSignal.timeout(15000)
 		});
-		if (!resp.ok) return '';
+		if (!resp.ok) {
+			if (isOpenSubtitlesFile(url) && /exceeded/i.test(await resp.text().catch(() => ''))) {
+				openSubtitlesRestUntil = Date.now() + 3 * 3600_000;
+			}
+			return '';
+		}
 
 		const buf = Buffer.from(await resp.arrayBuffer());
 		if (buf[0] === 0x50 && buf[1] === 0x4b) return extractFromZip(buf, season, episode);

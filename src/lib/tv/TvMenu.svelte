@@ -39,7 +39,11 @@
 
 	function actionsFor(what: TileMenu): Action[] {
 		if (what.kind === 'continue') {
+			const dismissNew: Action[] = what.newEpisode
+				? [{ label: 'Dismiss new episode', run: () => send('/api/watch/caught-up', { title: what.title, dismiss: true }) }]
+				: [];
 			return [
+				...dismissNew,
 				{
 					label: 'Mark as watched',
 					run: async () => {

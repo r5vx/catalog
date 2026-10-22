@@ -276,7 +276,9 @@ export async function listFebboxFiles(
 		fid: Number(f.fid),
 		name: String(f.file_name ?? ''),
 		size: String(f.file_size ?? ''),
-		isDir: f.is_dir === 1,
+		// Febbox sent 1 until 2026-10-21, then "1": every season folder read as a file, and every
+		// show lost its Showbox episodes. Either is taken.
+		isDir: Number(f.is_dir) === 1,
 		parentId: Number(f.parent_id ?? 0)
 	}));
 }
