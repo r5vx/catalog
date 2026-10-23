@@ -12,6 +12,18 @@ without both.
 
 ## Unreleased
 
+## 3.4.2 — 2026-10-23 — Moving Catalog to your account
+
+### New
+- **Updates**: Catalog installed for all users can move itself to just your account (Settings → Updates), so updates install by themselves; the library, profiles and TVs stay as they are
+
+### Improved
+- **Player**: an episode only 7Movies or Movy have starts looking for its link as soon as you point at Watch (Movy can take 20 s)
+
+### Fixed
+- **Player**: a source that can't play the episode says so in a passing message while the one playing carries on, instead of a red line that never goes
+- **Player**: the stream info is about the copy that's playing, not one tried before it
+
 ## 3.4.1 — 2026-10-23 — Subtitles that fit, and fewer dead ends
 
 ### Improved

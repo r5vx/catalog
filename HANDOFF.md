@@ -49,8 +49,16 @@ like changing the look themselves (colors and fonts are at the top of `src/app.c
 - `latest.yml` was fetched anonymously and the installer's sha512 matched;
 - the Mac build succeeded (DMG, zip and `latest-mac.yml`).
 
+**3.4.2 ("Moving Catalog to your account") was released 2026-10-23 on the owner's go-ahead.**
+- **Settings → Updates → "Move to just my account"** for all-users installs (mom's laptop), in
+  `electron/moveInstall.cjs`. Only dry-run tested: the first real use is mom's. If it goes wrong,
+  her update.log has every "move:" step.
+- **Player fixes:** a failed source switch shows a passing message, and the stream info describes
+  the copy that's playing.
+- **Faster start:** 7Movies and Movy links are fetched ahead for episodes Showbox doesn't have.
+
 **3.4.1 ("Subtitles that fit, and fewer dead ends") was released 2026-10-22 on the owner's
-go-ahead**, after they tested the build. It brought:
+go-ahead** and verified (latest.yml fetched anonymously, sha512 matched; Mac DMG, zip and latest-mac.yml built). It brought:
 - "Mixed" endings (story over the song) are never auto-skipped.
 - The Febbox daily limit is detected and explained.
 - Subtitles fall back to Stremio when OpenSubtitles blocks downloads.

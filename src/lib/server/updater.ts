@@ -70,6 +70,21 @@ export function installUpdate(): boolean {
 	return true;
 }
 
+/**
+ * Moving from "all users" to just this Windows account, so updates install by themselves
+ * (electron/moveInstall.cjs). How it's going, as the desktop app says.
+ */
+export type MoveState = { status: 'idle' | 'downloading' | 'closing' | 'error'; message?: string };
+let move: MoveState = { status: 'idle' };
+export const moveState = (): MoveState => move;
+
+export function moveInstall(): boolean {
+	if (!process.send) return false;
+	move = { status: 'downloading' };
+	process.send({ type: 'move-install' });
+	return true;
+}
+
 /* ---------------------------------------------------------- installing at night */
 
 /**
@@ -125,6 +140,7 @@ process.on('message', (message: unknown) => {
 		state = note.state;
 	}
 	if (note?.type === 'update-failed') failed = (note as { version?: string }).version ?? null;
+	if (note?.type === 'move-state') move = (note as { state: MoveState }).state;
 });
 
 /* --------------------------------------------------- is an update waiting? */

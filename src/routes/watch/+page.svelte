@@ -3941,7 +3941,9 @@
 					: (pm ? pRandom() : 'Getting stream...');
 				const got = await linkFor(ep.files, file);
 				const url = got.url;
-				if (got.debug) debugInfo = got.debug;
+				// About the copy that plays: the first one looked up may have had nothing ("7Movies has
+				// nothing for this right now" showed under Movy's stream).
+				if (url || got.debug) debugInfo = got.debug ?? '';
 				if (url) {
 					activeQuality = got.file.quality;
 					activeFileFid = got.file.fid;
@@ -4075,7 +4077,8 @@
 				if (fresh) fetchSubtitles();
 				// "… couldn't play this one" from a try before: this one has a link.
 				problem = '';
-				if (data.debug) debugInfo = data.debug;
+				// (What's said about this copy, not about one tried before.)
+				debugInfo = data.debug ?? '';
 				qualityTimer = setTimeout(() => {
 					qualityTimer = null;
 					if (!prevStreamUrl) return;
@@ -4090,12 +4093,19 @@
 				}, 20000);
 			} else {
 				prevStreamUrl = '';
-				problem = file.source ? `${file.source} couldn't play this one right now.` : 'Could not get that quality.';
-				if (data.debug) debugInfo = data.debug;
+				const said = file.source ? `${file.source} couldn't play this one right now.` : 'Could not get that quality.';
+				// Something still playing: it carries on, so a passing message, and the stream info
+				// stays about it. (It was a red line that never went, and "7Movies has nothing for
+				// this right now" under Movy's stream info.)
+				if (fresh) {
+					problem = said;
+					if (data.debug) debugInfo = data.debug;
+				} else showQualityToast(said);
 			}
 		} catch {
 			prevStreamUrl = '';
-			problem = 'Failed to switch quality.';
+			if (fresh) problem = 'Failed to switch quality.';
+			else showQualityToast('Could not switch to that one.');
 		} finally {
 			changingQuality = false;
 			if (takingOver) fetchWatchedEpisodes();
@@ -4190,6 +4200,8 @@
 				streamNonce++;
 				activeQuality = data.file.quality;
 				activeFileFid = data.file.fid;
+				// What's said about the copy that plays (the others' "nothing here" isn't about it).
+				debugInfo = data.debug ?? '';
 				sayIfOnlyDub(data.file);
 				fetchSubtitles(prevSub);
 			} else {

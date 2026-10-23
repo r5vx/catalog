@@ -12,6 +12,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const dgram = require('node:dgram');
 const os = require('node:os');
+const { moveToThisAccount } = require('./moveInstall.cjs');
 
 app.commandLine.appendSwitch('enable-features', 'PlatformHEVCDecoderSupport,PlatformHEVCEncoderSupport');
 
@@ -444,6 +445,29 @@ function startServer() {
 		if (message?.type === 'clear-app-cache') session.defaultSession.clearCache().catch(() => {});
 
 		if (message?.type === 'check-for-updates') checkForUpdates();
+
+		// Settings → Updates: from "all users" to just this account (moveInstall.cjs).
+		if (message?.type === 'move-install') {
+			if (process.platform !== 'win32' || !app.isPackaged || canWriteAppFolder()) {
+				server?.send({ type: 'move-state', state: { status: 'error', message: 'Catalog is already installed for just this account.' } });
+				return;
+			}
+			moveToThisAccount({
+				log: updateLog,
+				say: (state) => {
+					try { server?.send({ type: 'move-state', state }); } catch {}
+					if (state.status === 'closing' && window) {
+						window.loadURL(`data:text/html,
+							<html><body style="background:#111;color:#fff;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:12px">
+							<h2 style="font-weight:600;font-size:1.4rem">Moving Catalog to your account…</h2>
+							<p style="opacity:0.6;font-size:0.9rem">Windows will ask for permission once. Catalog opens again by itself.</p>
+							</body></html>
+						`);
+					}
+				},
+				quit: () => app.quit()
+			});
+		}
 
 		if (message?.type === 'movy-find') {
 			findOnMovy(String(message.url), message.id).then((result) => server?.send({ type: 'movy-find-result', id: message.id, ...result }));

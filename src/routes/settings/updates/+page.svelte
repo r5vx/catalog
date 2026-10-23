@@ -24,6 +24,23 @@
 	let isMac = $state(false);
 	/** Installing by itself at night: off unless turned on, at 4 AM unless changed. */
 	let night = $state({ on: true, hour: 4, available: false, needsPermission: false });
+	/** Moving from "all users" to just this account (electron/moveInstall.cjs). */
+	let move = $state<{ status: 'idle' | 'downloading' | 'closing' | 'error'; message?: string }>({ status: 'idle' });
+
+	async function moveToMyAccount() {
+		move = { status: 'downloading' };
+		const response = await fetch('/api/update?action=move', { method: 'POST' }).catch(() => null);
+		if (!response?.ok) {
+			move = { status: 'error', message: 'This only works in the desktop app.' };
+			return;
+		}
+		// How it's going, until Catalog closes for it (or it stops before that).
+		const until = Date.now() + 5 * 60_000;
+		while (move.status === 'downloading' && Date.now() < until) {
+			await new Promise((resolve) => setTimeout(resolve, 1000));
+			await read();
+		}
+	}
 
 	async function setNight(on: boolean, hour: number) {
 		night = { ...night, on, hour };
@@ -77,6 +94,7 @@
 			rebuild = payload.rebuild;
 			muted = payload.muted ?? muted;
 			if (payload.night) night = payload.night;
+			if (payload.move && move.status !== 'idle') move = payload.move;
 			isMac = payload.isMac ?? false;
 		} catch {
 			// The app is closing for the swap. Leave the last state on screen.
@@ -284,7 +302,17 @@
 				</div>
 				<p class="faint hint">Catalog restarts to install it then — or, once an update has waited 6 hours, whenever nothing has played for half an hour.</p>
 				{#if night.needsPermission}
-					<p class="faint hint">Catalog is installed for all users here, so Windows asks before each install and it can't install by itself. Reinstalling it for just this account fixes that.</p>
+					<p class="faint hint">Catalog is installed for all users here, so Windows asks before each install and it can't install by itself. Moving it to just this account fixes that. The library, profiles, TVs and settings stay as they are; Windows asks for permission once, and Catalog opens again by itself.</p>
+					{#if move.status === 'downloading'}
+						<p class="faint hint">Getting the installer…</p>
+					{:else if move.status === 'closing'}
+						<p class="faint hint">Closing to move…</p>
+					{:else}
+						<button type="button" class="btn" onclick={moveToMyAccount}>Move to just my account</button>
+						{#if move.status === 'error'}
+							<p class="msg bad">Couldn't start the move: {move.message}</p>
+						{/if}
+					{/if}
 				{/if}
 			{/if}
 		</section>

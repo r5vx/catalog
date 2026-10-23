@@ -1759,3 +1759,45 @@ Re:Zero, so Showbox is the only 1080p.
   runs the old copy's uninstaller (`/S /allusers`, one Windows prompt), then the new installer
   (`/S /currentuser`), then starts Catalog. (b) can't be tested here without making an all-users
   install on the owner's PC.
+
+### After 3.4.1: SVU S28E3 on Movy (2026-10-23)
+- **Movy's E3 is the real E3.** Its picture at 5, 15 and 25 minutes differs from both E1 and E2
+  (32×18 thumbnails; mean differences 27–109 out of 255), and its length (41:43) fits E3's own
+  subtitles (last line 39:49). It comes from Movy's slower server (sun.paleoak.top), a single
+  720p playlist, while E1 and E2 come from moon.zenoak.top in 1080p. 7Movies simply hadn't added
+  it yet. Mom's "older episode" was the night before it aired, which 3.4.1's `hasAired` stops.
+- **A failed switch left a red line that never went**, and the stream info said "7Movies has
+  nothing for this right now" under Movy. `changeToFile` failing while something still plays now
+  gives a toast, and leaves `problem` and `debugInfo` alone. Every successful link sets
+  `debugInfo` to its own debug, or clears it.
+- **25 s to start.** linkFor already asks every copy at once when there's no Showbox one. E3 is
+  on Movy's late server, about 20 s (E2 answers in 1 s). `warmLikelyEpisode` now also warms
+  7Movies and Movy copies when the likely episode has no Showbox file (a Movy check with
+  start/keep tied to the last title warmed). It only helps when Watch is pointed at, or
+  highlighted, before it's pressed.
+
+### Moving an all-users install to just this account (2026-10-23)
+- **Why it's needed.** An all-users install (Program Files) means every update needs Windows'
+  permission, so night installs are skipped (mom's laptop). The NSIS installer can't switch on its
+  own: "only for me" doesn't remove an all-users copy, and two installs corrupted the library once.
+- **`electron/moveInstall.cjs`.** Settings → Updates → "Move to just my account", shown when
+  `CATALOG_INSTALL_NEEDS_PERMISSION`. Steps:
+  1. With Catalog open, it downloads the latest installer and checks it against latest.yml's
+     sha512.
+  2. It starts a hidden PowerShell helper, and Catalog quits.
+  3. The helper waits for every Catalog.exe from the old folder to exit, the server process too.
+     It never force-closes: after 90 s it gives up.
+  4. One Windows prompt runs `remove-all-users.ps1`: the old copy's own uninstaller with
+     `/S /KEEP_APP_DATA /allusers _?=<dir>` (the command the installer itself uses), removal of
+     the folder, and a firewall rule letting the new exe in on private and domain networks. The
+     old permission was for the old exe's path, and the TVs need it.
+  5. Only if the old Catalog.exe is really gone, the installer runs with `/S /currentuser`, then
+     starts `%LOCALAPPDATA%\Programs\Catalog\Catalog.exe`.
+  Declining the prompt, or the old copy staying, starts the old copy again with nothing changed.
+  A failed install opens the installer. Every step goes to update.log as "move: …".
+- **What stays.** %APPDATA%\Catalog (library, profiles, TV settings, Febbox sign-in) is never
+  touched, and the TVs find the laptop by UDP discovery each time.
+- **Tested:** both scripts parse; dry runs of the helper with stand-ins for the prompt, the
+  installer and the starts (old copy stays, old copy removed, install fails).
+- **Not tested:** the real prompt, the real all-users uninstaller, and netsh with elevation. Each
+  needs an all-users install on the owner's PC.
