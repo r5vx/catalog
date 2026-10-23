@@ -49,7 +49,23 @@ like changing the look themselves (colors and fonts are at the top of `src/app.c
 - `latest.yml` was fetched anonymously and the installer's sha512 matched;
 - the Mac build succeeded (DMG, zip and `latest-mac.yml`).
 
-**3.4.0 ("New episodes in Continue Watching") was released 2026-10-22 on the owner's go-ahead.**
+**3.4.1 ("Subtitles that fit, and fewer dead ends") was released 2026-10-22 on the owner's
+go-ahead**, after they tested the build. It brought:
+- "Mixed" endings (story over the song) are never auto-skipped.
+- The Febbox daily limit is detected and explained.
+- Subtitles fall back to Stremio when OpenSubtitles blocks downloads.
+- The old episode is hidden and locked while another loads.
+- Episodes are listed only once they've aired.
+- A wrong Febbox password is caught.
+- Films still in cinemas show "In cinemas".
+- Subtitles are ordered by the cut that's playing.
+- "Show details" is on the buffering prompt.
+
+See `CATALOG_CONTEXT.md` from "Febbox's daily high-speed flow" on. Still open:
+- mom's buffering (waiting for her playback log);
+- the one-click "move to just this account" reinstall, offered but not built.
+
+**3.4.0 ("New episodes in Continue Watching") was released 2026-10-22 on the owner's go-ahead and verified** (`latest.yml` fetched anonymously, installer sha512 matched; Mac DMG, zip and `latest-mac.yml` built).
 The owner tested the 2026-10-22 test build first. Venom 2's subtitles fitted from the first line,
 and Dungeon Meshi E5's intro and credits were right. What it brought (details in
 `RELEASE_NOTES.md` and `CATALOG_CONTEXT.md`):

@@ -5,6 +5,8 @@
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 	let loggingIn = $state(false);
+	/** The login window closed without Febbox signing anyone in (a wrong password, say). */
+	let loginFailed = $state(false);
 	let copied = $state(false);
 
 	function copyKey() {
@@ -30,6 +32,7 @@
 
 	function loginToFebbox() {
 		loggingIn = true;
+		loginFailed = false;
 		const popup = window.open('https://www.febbox.com/login', '_blank');
 		if (!popup) {
 			loggingIn = false;
@@ -38,7 +41,10 @@
 		const poll = setInterval(async () => {
 			if (popup.closed) {
 				clearInterval(poll);
-				await fetch('/api/watch/sync-cookies', { method: 'POST' });
+				const result = await fetch('/api/watch/sync-cookies', { method: 'POST' })
+					.then((r) => r.json())
+					.catch(() => null);
+				loginFailed = result?.signedIn === false;
 				loggingIn = false;
 				invalidateAll();
 			}
@@ -167,7 +173,9 @@
 			To share with a friend, have them paste your key below.
 		</p>
 
-		{#if form?.febboxError}
+		{#if loginFailed}
+			<p class="msg bad" role="alert">Febbox didn't log you in. Check the email and password, and try again.</p>
+		{:else if form?.febboxError}
 			<p class="msg bad" role="alert">{form.febboxError}</p>
 		{:else if form?.febboxOk}
 			<p class="msg good" role="status">{form.febboxOk}</p>

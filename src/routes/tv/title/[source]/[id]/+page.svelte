@@ -218,8 +218,9 @@
 			});
 	});
 
-	const today = new Date().toISOString().slice(0, 10);
-	const aired = (ep: SeasonEpisode) => !ep.airDate || ep.airDate <= today;
+	// Out from 06:00 UTC the day after its US air date (hasAired on the server): one airing
+	// tonight isn't offered yet.
+	const aired = (ep: SeasonEpisode) => !ep.airDate || Date.now() >= Date.parse(`${ep.airDate}T00:00:00Z`) + 30 * 60 * 60 * 1000;
 	const airsOn = (date: string) =>
 		new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 

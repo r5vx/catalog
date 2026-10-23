@@ -34,6 +34,11 @@ export interface SubtitleOption {
 	language: string;
 	fileName: string;
 	source?: string;
+	/**
+	 * When its last line ends, in seconds (OpenSubtitles says, as SubLastTS). Which cut it was made
+	 * for: Deadpool 2's cinema version ends at 1:53:30, its Super Duper Cut at 2:13:50.
+	 */
+	lastAt?: number;
 }
 
 interface OSResult {
@@ -44,6 +49,7 @@ interface OSResult {
 	SubFormat?: string;
 	SeriesSeason?: string;
 	SeriesEpisode?: string;
+	SubLastTS?: string;
 }
 
 async function queryOS(path: string): Promise<OSResult[]> {
@@ -101,6 +107,13 @@ async function queryGestdown(
 	}
 }
 
+/** "01:53:30" as `{ lastAt: 6810 }`; nothing when it isn't said ("00:00:00"). */
+function lastLine(ts: string | undefined): { lastAt?: number } {
+	const m = ts?.match(/^(\d+):(\d+):(\d+)/);
+	const seconds = m ? +m[1] * 3600 + +m[2] * 60 + +m[3] : 0;
+	return seconds > 0 ? { lastAt: seconds } : {};
+}
+
 /** OpenSubtitles, by IMDb id, or by name when that finds nothing. */
 async function fromOpenSubtitles(
 	title: string,
@@ -127,7 +140,8 @@ async function fromOpenSubtitles(
 			lang: s.SubLanguageID,
 			language: langName(s.SubLanguageID),
 			fileName: s.SubFileName ?? '',
-			source: 'OpenSubtitles'
+			source: 'OpenSubtitles',
+			...lastLine(s.SubLastTS)
 		});
 	};
 
@@ -353,13 +367,30 @@ export async function downloadSubtitle(url: string, season?: number, episode?: n
  * past that it answers with a page saying the limit's "exceeded" for about 24 hours, and warns
  * that more tries get the connection blocked by its firewall. So once it says so, it isn't asked
  * again for a few hours (the player moves on to the next file each time one won't download).
+ * Meanwhile its files come through Stremio's copy of OpenSubtitles instead (`throughStremio`).
  */
 let openSubtitlesRestUntil = 0;
 const isOpenSubtitlesFile = (url: string) => /(^|\.)opensubtitles\.(org|com)$/i.test(new URL(url).hostname);
 
+/**
+ * An OpenSubtitles file fetched by Stremio's server instead, so it doesn't count against this
+ * connection's allowance. Its addresses go by the same file number
+ * (…/filead/1953225438.gz → …/src-api/file/1953225438), and come back as plain UTF-8 text.
+ */
+async function throughStremio(url: string, season?: number, episode?: number): Promise<string> {
+	const file = url.match(/\/filead\/(\d+)/)?.[1];
+	if (!file) return '';
+	const resp = await fetch(`https://subs5.strem.io/en/download/subencoding-stremio-utf8/src-api/file/${file}`, {
+		headers: { 'User-Agent': UA },
+		signal: AbortSignal.timeout(15000)
+	});
+	if (!resp.ok) return '';
+	return fromBytes(Buffer.from(await resp.arrayBuffer()), season, episode);
+}
+
 async function downloadSubtitleText(url: string, season?: number, episode?: number): Promise<string> {
 	try {
-		if (isOpenSubtitlesFile(url) && Date.now() < openSubtitlesRestUntil) return '';
+		if (isOpenSubtitlesFile(url) && Date.now() < openSubtitlesRestUntil) return await throughStremio(url, season, episode);
 		const resp = await fetch(url, {
 			headers: { 'User-Agent': UA },
 			signal: AbortSignal.timeout(15000)
@@ -367,22 +398,26 @@ async function downloadSubtitleText(url: string, season?: number, episode?: numb
 		if (!resp.ok) {
 			if (isOpenSubtitlesFile(url) && /exceeded/i.test(await resp.text().catch(() => ''))) {
 				openSubtitlesRestUntil = Date.now() + 3 * 3600_000;
+				return await throughStremio(url, season, episode);
 			}
 			return '';
 		}
-
-		const buf = Buffer.from(await resp.arrayBuffer());
-		if (buf[0] === 0x50 && buf[1] === 0x4b) return extractFromZip(buf, season, episode);
-		if (buf[0] === 0x1f && buf[1] === 0x8b) {
-			return gunzipSync(buf).toString('utf-8');
-		}
-		// xz (AnimeTosho's subtitle downloads): FD 37 7A 58 5A 00.
-		if (buf[0] === 0xfd && buf[1] === 0x37 && buf[2] === 0x7a && buf[3] === 0x58) {
-			const stream = new Blob([buf]).stream();
-			return await new Response(new xz.XzReadableStream(stream)).text();
-		}
-		return buf.toString('utf-8');
+		return await fromBytes(Buffer.from(await resp.arrayBuffer()), season, episode);
 	} catch {
 		return '';
 	}
+}
+
+/** A download's text, unpacked if it came zipped, gzipped or xz'd. */
+async function fromBytes(buf: Buffer<ArrayBuffer>, season?: number, episode?: number): Promise<string> {
+	if (buf[0] === 0x50 && buf[1] === 0x4b) return extractFromZip(buf, season, episode);
+	if (buf[0] === 0x1f && buf[1] === 0x8b) {
+		return gunzipSync(buf).toString('utf-8');
+	}
+	// xz (AnimeTosho's subtitle downloads): FD 37 7A 58 5A 00.
+	if (buf[0] === 0xfd && buf[1] === 0x37 && buf[2] === 0x7a && buf[3] === 0x58) {
+		const stream = new Blob([buf]).stream();
+		return await new Response(new xz.XzReadableStream(stream)).text();
+	}
+	return buf.toString('utf-8');
 }

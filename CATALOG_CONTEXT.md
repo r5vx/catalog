@@ -1662,3 +1662,100 @@ way sets `setupDone` permanently.
   be able to change the UI themselves — readability beats cleverness.
 - Styling tokens all live at the top of `src/app.css`.
 - Every database query is plain SQL in `src/lib/server/db/queries.ts`.
+
+### Showbox all 360p: the account's daily high-speed flow (2026-10-22)
+The owner found every Showbox title "only available in 360p" (each one switched to another source).
+- **Not Catalog, and not every user.** febbox.com/console said "Run Out of High-Speed Flow, High Speed
+  Flow Usage 11.49 GB / 10 GB, Flow Reset 4 Hours", and "10 GB / Day for free users, reset every
+  day". After that, the player page lists only 360p.
+- **Each person's account has its own 10 GB.**
+- **Testing ate into it:** the test server signs in as the owner (copied settings), and Frieren and
+  Venom 2 had been played at 1080p in tests that day.
+- **The older note was wrong:** the 2026-10-16 note says the "limit" text is only a template. That's
+  true of the player page's notice, but the real figure is on /console.
+- **What Catalog does:** switches to another source, which is right.
+- **Not built:** telling the viewer it's Febbox's daily limit, and when it resets, rather than "only in
+  360p".
+
+**Subtitles through Stremio.** When OpenSubtitles says a connection's downloads are "exceeded",
+`downloadSubtitleText` fetches the same file from Stremio's copy instead. It uses the same file
+number: `subs5.strem.io/en/download/subencoding-stremio-utf8/src-api/file/<n>` for
+`…/filead/<n>.gz`. Stremio's server does the downloading, so it doesn't count against the
+connection. Tested on Madagascar 3 while the owner's connection was blocked.
+
+**Built after that (unreleased):**
+- `febboxFlow.ts` reads Usage and Flow Reset from /console, kept 5 min. `/api/watch/febbox-flow`
+  serves it.
+- `showboxHeldBack` asks it before deciding why a file came in 360p. When the allowance is out, it
+  notes `catalog:febboxOut` until the reset and shows "Febbox's daily HD limit is used up for about
+  N more hours". `pickFor` then goes straight to another source's HD copy.
+- The "360p-only" notes made during the limit are cleared once (`catalog:lowOnlyCleared`).
+
+### Story over the ending: never auto-skipped (2026-10-22)
+Re:Zero S2E16's ending song plays over the episode's last scene, and auto-skip jumped to the next
+episode. IntroDB had it as a plain outro (one submission); Anime Skip as "Mixed Credits".
+- **The databases' word is kept.** `SkipSegment.mixed` comes from AniSkip's `mixed-op`/`mixed-ed` and
+  Anime Skip's "Mixed …". `/api/watch/skip-times` marks a part mixed if any source overlapping it
+  says so. It also does if Anime Skip says so for any cut of the episode (`animeSkipMixed`): its
+  29:30 cut's mark also covers a 28:33 copy. The player's own finds borrow it (`withFound`, within
+  30 s).
+- **Or the subtitles say so.** `storyDuring(seg)` counts 3+ talking lines inside the part. It skips
+  ASS lines styled as songs or signs (song, lyric, OP/ED, sign, title…, or `\pos`/`\move`), ♪ lines
+  and "[sounds]". Checked: Dungeon Meshi's saved endings have 0 talking lines; Re:Zero season 2's
+  files have 6–44 in that window.
+- **What changes:** such a part is never auto-skipped (the Skip button stays). The TV's "next
+  episode 10 s into the credits" waits for the end instead.
+
+### Re:Zero on Aniwave is 720p (2026-10-22)
+Aniwave lists three servers for S2E16 (`aniwave:75449:3:sub`). The one Catalog reads, Vidplay
+(play.echovideo.ru), has a single 1280×720 level. BYFMS and DGHG are other players Catalog doesn't
+read. The Japanese copy is labelled "1080p" but its playlist is 720p. 7Movies and Movy don't have
+Re:Zero, so Showbox is the only 1080p.
+
+### Owner's and mom's reports, 2026-10-22 evening
+- **Old episode playing under "Loading episode".** Clicking SVU S28E3 paused E2, but E2 stayed in the
+  video. E3 wasn't on 7Movies and was waiting on Movy (up to 50 s), and play played E2 under E3's
+  name. The source menu didn't take over either: other sources' copies share one fid across
+  episodes, so `changeToFile` saw "already playing". Now:
+  - `oldPicture` hides the old picture and refuses play until this episode has a stream;
+  - `changeToFile` during a load drops the load (`episodeSwitch++`) and starts at 0:00, with
+    nothing to fall back to.
+  - Tested with a slowed lookup.
+- **"Latest episode is an older one" (mom, SVU S28E3).** 7Movies and Movy copies were listed from
+  the start of the TMDB air date in UTC, about a day before a US evening airing. Movy then answered
+  with another video. Now `hasAired()`: from 06:00 UTC the day after the air date. The player's and
+  the TV page's "Airs …" use the same rule.
+- **The update asked Windows for permission (mom).** That's an install in a protected folder:
+  `canWriteAppFolder()` is false, so the installer window shows. The night install is skipped.
+  Fix by reinstalling "only for me" (the library in %APPDATA% stays).
+- **Wrong Febbox password showed "Logged in" (a friend).** sync-cookies saved any Febbox cookie.
+  The login page sets one by itself. Now `isSignedIn()` asks /console first: a 302 to /login means
+  "no", and nothing is saved. Settings and the player say so.
+- **Mom's constant buffering (Homeland S8, then 7Movies too; better after a reload).** Not
+  reproduced, and her stop log is needed. Skip finding on the laptop doesn't download video:
+  `neighbourTrack` only uses separate sound tracks.
+
+### Films only in cinemas; subtitles for the right cut (2026-10-22, late)
+- **Clayface (US cinemas 23 Oct 2026) showed Watch, and Movy searched for 50 s.** Showbox had its
+  page with no files, and `onShowbox` only checks that a page exists. 7Movies had a 720p HEVC
+  recording made in a cinema. Now `metadata/cinemas.ts`: `onlyInCinemas` reads TMDB release dates
+  by kind (2/3 cinema, 4/5/6 at home). A film counts as out from its first home date; with none
+  known, 45 days after cinemas. Until then the title page says "In cinemas · to watch from …" and
+  `availability.ts` says no to every source without asking (no Movy). Kept answers were renamed
+  `available2|`, so old "yes" answers go.
+- **Deadpool 2's captions "wouldn't sync at all" (a friend, 3.4.0).** The cuts differ by copy:
+  Showbox's 1080p is the 1:59 cinema version, while its 4K and 7Movies' Orion copy are the 2:14
+  Super Duper Cut. The list mixed both cuts' subtitles. OpenSubtitles' `SubLastTS` says when each
+  file's last line ends (1:53:30 against 2:13:50), and it's carried as `lastAt`. The player's
+  `byCut` puts files that fit the playing video's length first: not past the end (allowing 5% for
+  film speed), and not 16+ minutes short. Only files with `lastAt` move, among themselves.
+  `fromCinema` now also catches DVDScr/SCR/screener.
+- **"Show details" in the Keeps-stopping prompt** turns the stats box on for this video only (on
+  the TV too, bigger there), for mom to photograph.
+- **A reinstall button: not built.** electron-builder's installer only removes an older copy of the
+  same kind, or a "just me" copy when installing "for all users". Installing "only for me" over an
+  "all users" copy leaves both, and two installs is how the library got corrupted. Safe options:
+  (a) uninstall from Windows Settings, then reinstall with "Only for me"; or (b) a button that
+  runs the old copy's uninstaller (`/S /allusers`, one Windows prompt), then the new installer
+  (`/S /currentuser`), then starts Catalog. (b) can't be tested here without making an all-users
+  install on the owner's PC.

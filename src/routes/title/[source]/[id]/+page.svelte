@@ -47,14 +47,15 @@
 	}
 
 	// Something not out yet can only be wanted.
-	let selectedStatus = $state(untrack(() => (data.details.unreleased ? 'planned' : 'completed')));
+	let selectedStatus = $state(untrack(() => (data.details.unreleased || data.details.inCinemas ? 'planned' : 'completed')));
 
 	let watchAvailable = $state<boolean | null>(null);
 	let watchSources = $state<SourceCheck[]>([]);
 
 	// Every source asked at once; each one's progress shows under the button while it waits.
 	$effect(() => {
-		if (details.unreleased) return;
+		// (A film only in cinemas so far isn't looked for: cinemas.ts.)
+		if (details.unreleased || details.inCinemas) return;
 		const params = new URLSearchParams({ title: details.title ?? '', type: data.watchType });
 		if (details.year) params.set('year', String(details.year));
 		watchAvailable = null;
@@ -123,7 +124,11 @@
 			/>
 
 			<div class="title-actions">
-				{#if !details.unreleased}
+				{#if details.inCinemas}
+					<span class="btn btn-watch unavailable">
+						In cinemas{details.homeFrom ? ` · to watch from ${new Date(`${details.homeFrom}T12:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}` : ''}
+					</span>
+				{:else if !details.unreleased}
 					{#if watchAvailable === true}
 						<a
 							href="/watch?title={encodeURIComponent(details.title ?? '')}&type={data.watchType}{details.year ? `&year=${details.year}` : ''}&auto=1"

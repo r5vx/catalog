@@ -5,6 +5,7 @@ const DAY = 24 * 60 * 60 * 1000;
 import { env } from '$env/dynamic/private';
 import { readSettings } from '../settings';
 import { plainText } from './types';
+import { allDates, onlyInCinemas } from './cinemas';
 
 /** A tag and what sort of thing it is, so the filter can group them. */
 export type DerivedTag = { name: string; kind: 'genre' | 'studio' | 'director' | 'franchise' };
@@ -45,6 +46,9 @@ export type TitleDetails = {
 	kind: string;
 	categorySlug: 'anime' | 'movies' | 'tv';
 	unreleased?: boolean;
+	/** A film out in cinemas but not yet to watch at home; `homeFrom`: when it will be ('' not known). */
+	inCinemas?: boolean;
+	homeFrom?: string;
 };
 
 const EMPTY: TitleDetails = {
@@ -229,9 +233,10 @@ async function fromTmdb(sourceId: string): Promise<TitleDetails> {
 	 *
 	 * external_ids is where a series keeps its IMDb id; a film carries its own.
 	 */
+	// (A film's release dates by kind say whether it's only in cinemas so far: cinemas.ts.)
 	url.searchParams.set(
 		'append_to_response',
-		`${isSeries ? 'aggregate_credits' : 'credits'},external_ids`
+		`${isSeries ? 'aggregate_credits' : 'credits,release_dates'},external_ids`
 	);
 
 	const init = key.startsWith('eyJ')
@@ -326,9 +331,12 @@ async function fromTmdb(sourceId: string): Promise<TitleDetails> {
 		homepage: data.homepage || null,
 		kind: isSeries ? 'TV' : 'Movie',
 		categorySlug: isAnime ? 'anime' : (isSeries ? 'tv' : 'movies'),
-		unreleased: releaseDate.length > 0 && releaseDate > new Date().toISOString().slice(0, 10)
+		unreleased: releaseDate.length > 0 && releaseDate > new Date().toISOString().slice(0, 10),
+		...(isSeries ? {} : cinemaOnly(onlyInCinemas(allDates(data.release_dates))))
 	};
 }
+
+const cinemaOnly = (homeFrom: string | null) => (homeFrom === null ? {} : { inCinemas: true, homeFrom });
 
 async function fromAniList(id: string): Promise<TitleDetails> {
 	const body = JSON.stringify({
