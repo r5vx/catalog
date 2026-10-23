@@ -110,6 +110,17 @@ export async function tmdbShow(title: string, year: string): Promise<TmdbShow | 
 }
 
 /** When each episode of a season airs, for the greyed-out ones. */
+/**
+ * Whether an episode with TMDB air date `date` (YYYY-MM-DD, the US date) is out to watch: from
+ * 06:00 UTC the day after, 2 AM in New York. Counting from the start of the air date in UTC put
+ * it a day early: SVU S28E3 airs 22 October at 9 PM Eastern, and it was offered from the evening
+ * before, when Movy answered with another episode's video.
+ */
+export function hasAired(date: string): boolean {
+	const start = Date.parse(`${date}T00:00:00Z`);
+	return Number.isFinite(start) && Date.now() >= start + 30 * 60 * 60 * 1000;
+}
+
 async function airDates(showId: number, season: number): Promise<Map<number, string | null>> {
 	const key = `tmdb-airdates|${showId}|${season}`;
 	let list = saved<{ episode: number; airDate: string | null }[]>(key, DAY);
@@ -440,13 +451,12 @@ export async function combineEpisodes(
 		// their players use), alongside the other sources' copies. Only when Showbox numbers
 		// seasons the same way.
 		if (sameNumbering) {
-			const today = new Date().toISOString().slice(0, 10);
 			const out = show.seasons.filter((s) => s.number > 0 && s.count > 0);
 			const dated = await Promise.all(out.map(async (s) => [s, await airDates(show.id, s.number)] as const));
 			for (const [season, dates] of dated) {
 				for (let episode = 1; episode <= season.count; episode++) {
 					const aired = dates.get(episode);
-					if (!aired || aired > today) continue;
+					if (!aired || !hasAired(aired)) continue;
 					const what = { type: 'tv' as const, id: show.id, season: season.number, episode };
 					const files = [...vidriftCopies(what), movyCopy(what)];
 					const listed = episodes.find((e) => e.season === season.number && e.episode === episode);

@@ -10,7 +10,11 @@
  * a second and doesn't ration questions the way AniList, which this used before, does).
  */
 
-export type SkipSegment = { type: 'intro' | 'recap' | 'credits'; start: number; end: number };
+/**
+ * `mixed`: the story carries on over the song (AniSkip's mixed-ed, Anime Skip's Mixed Credits):
+ * the Skip button shows, but it's never skipped by itself.
+ */
+export type SkipSegment = { type: 'intro' | 'recap' | 'credits'; start: number; end: number; mixed?: boolean };
 
 type KitsuAnime = {
 	id: string;
@@ -176,7 +180,7 @@ export async function skipTimesFor(
 		// Timed against a noticeably different cut, the times wouldn't line up with this file.
 		if (!type || Math.abs(result.episodeLength - duration) > 30) continue;
 		if (endTime - startTime < 5 || segments.some((segment) => segment.type === type)) continue;
-		segments.push({ type, start: startTime, end: endTime });
+		segments.push({ type, start: startTime, end: endTime, ...(result.skipType.startsWith('mixed') ? { mixed: true } : {}) });
 	}
 
 	segmentsCache.set(key, { segments, checkedAt: Date.now() });

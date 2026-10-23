@@ -81,6 +81,14 @@
 	 * where another source has a better copy (7Movies' H.264 is 1080p).
 	 */
 	const LOW_ONLY = 'catalog:lowOnly:';
+	// Once: on 2026-10-22 Febbox's daily limit made every file look 360p-only, and they were all
+	// noted as such (see FEBBOX_OUT). Those notes go.
+	try {
+		if (!localStorage.getItem('catalog:lowOnlyCleared')) {
+			for (const key of Object.keys(localStorage)) if (key.startsWith(LOW_ONLY)) localStorage.removeItem(key);
+			localStorage.setItem('catalog:lowOnlyCleared', '1');
+		}
+	} catch {}
 	function lowOnly(fid: number): boolean {
 		try {
 			return Date.now() - Number(localStorage.getItem(LOW_ONLY + fid) || 0) < 24 * 60 * 60 * 1000;
@@ -106,16 +114,42 @@
 	 */
 	function showboxHeldBack(heights: number[]): boolean {
 		const best = Math.max(0, ...heights);
-		if (!activeFile || activeFile.source || (parseInt(activeFile.quality) || 0) < 720 || !best || best > 480) return false;
-		try { localStorage.setItem(LOW_ONLY + activeFile.fid, String(Date.now())); } catch {}
+		const file = activeFile;
+		if (!file || file.source || (parseInt(file.quality) || 0) < 720 || !best || best > 480) return false;
 		const better = betterThanShowbox(currentFiles);
-		if (!better) {
-			showQualityToast(`Showbox only has ${best}p of this one`);
-			return false;
-		}
-		showQualityToast(`Showbox only has ${best}p of this one: playing ${better.source} in HD instead`);
+		// Why: Febbox's daily allowance (then every file is 360p for now), or this one file. Asked
+		// alongside; the switch doesn't wait for it.
+		fetch('/api/watch/febbox-flow')
+			.then((r) => (r.ok ? (r.json() as Promise<{ out: boolean; resetsAt: number | null } | null>) : null))
+			.catch(() => null)
+			.then((flow) => {
+				if (flow?.out) {
+					try { localStorage.setItem(FEBBOX_OUT, String(flow.resetsAt ?? Date.now() + 3600_000)); } catch {}
+					const hours = flow.resetsAt ? Math.round((flow.resetsAt - Date.now()) / 3600_000) : 0;
+					const back = hours > 1 ? ` for about ${hours} more hours` : hours === 1 ? ' for about another hour' : '';
+					showQualityToast(`Febbox's daily HD limit is used up${back}: ${better ? `playing ${better.source} instead` : '360p only'}`);
+					return;
+				}
+				try { localStorage.setItem(LOW_ONLY + file.fid, String(Date.now())); } catch {}
+				showQualityToast(better ? `Showbox only has ${best}p of this one: playing ${better.source} in HD instead` : `Showbox only has ${best}p of this one`);
+			});
+		if (!better) return false;
 		setTimeout(() => changeToFile(better, true), 0);
 		return true;
+	}
+
+	/*
+	 * Febbox gives each account so much fast video a day (10 GB free; src/lib/server/febboxFlow.ts),
+	 * then only 360p until it resets. Until then Showbox isn't tried first where another source has
+	 * an HD copy, and its files aren't remembered as 360p-only (they aren't).
+	 */
+	const FEBBOX_OUT = 'catalog:febboxOut';
+	function febboxOut(): boolean {
+		try {
+			return Date.now() < Number(localStorage.getItem(FEBBOX_OUT) || 0);
+		} catch {
+			return false;
+		}
 	}
 
 	/**
@@ -129,8 +163,9 @@
 		const same = kept && files.find((f) => f.source === kept.source && (f.audio ?? '') === kept.audio && !!f.burnedIn === kept.burnedIn && (kept.hevc === undefined || !!f.hevc === kept.hevc) && playableHere(f));
 		if (same) return same;
 		const showboxPick = pickFile(files, preferredQuality, animeAudio());
-		// A Showbox file known to come only in 360p: another source's copy instead, if there is one.
-		if (showboxPick && !showboxPick.source && lowOnly(showboxPick.fid)) return betterThanShowbox(files) ?? showboxPick;
+		// A Showbox file known to come only in 360p (or Febbox's daily limit is used up): another
+		// source's copy instead, if there is one.
+		if (showboxPick && !showboxPick.source && (lowOnly(showboxPick.fid) || febboxOut())) return betterThanShowbox(files) ?? showboxPick;
 		return showboxPick;
 	};
 
@@ -239,6 +274,25 @@
 		default?: boolean;
 		/** Not a subtitle: passing anime.nexus's human check gets its subtitles. */
 		check?: boolean;
+		/** When its last line ends, in seconds (OpenSubtitles says): which cut it was made for. */
+		lastAt?: number;
+	}
+
+	/**
+	 * The subtitles made for the cut that's playing go first. A film's copies can be different cuts:
+	 * Deadpool 2 is 1:59 on Showbox's 1080p file but 2:14 on its 4K one and on 7Movies (the Super
+	 * Duper Cut), and the other cut's subtitles can't be lined up (a friend: "they wouldn't sync at
+	 * all"). A file whose last line comes after the end of the video (allowing for a film-speed
+	 * difference), or more than 16 minutes before it (credits are shorter), was made for another
+	 * cut. Only files that say when they end are moved, among themselves; the rest keep their place.
+	 */
+	function byCut(list: SubOption[], length: number): SubOption[] {
+		if (!(length > 600)) return list;
+		const fits = (s: SubOption) => (s.lastAt! > length * 1.05 + 60 || length - s.lastAt! > 16 * 60 ? 1 : 0);
+		const timed = list.filter((s) => s.lastAt);
+		const ordered = [...timed].sort((a, b) => fits(a) - fits(b));
+		let next = 0;
+		return list.map((s) => (s.lastAt ? ordered[next++] : s));
 	}
 
 	/* --------------------------------------------------------------- content state */
@@ -383,6 +437,12 @@
 	let autoplayFired = false;
 	let skipResume = false;
 	let switchingEpisode = false;
+	/**
+	 * The episode before is still in the video while another loads (its picture, its sound
+	 * downloaded): hidden, and it won't play. It used to: pressing play while a new episode waited
+	 * on Movy played the old one under the new one's name and "Loading episode".
+	 */
+	let oldPicture = $state(false);
 	let refreshingStream = false;
 	/** Bumped to reload the player even when a fresh link comes back identical. */
 	let streamNonce = $state(0);
@@ -406,7 +466,8 @@
 	let nextPrefetchKey = '';
 	let resolveFailed = $state(false);
 
-	interface SkipSegment { type: 'intro' | 'recap' | 'credits'; start: number; end: number; }
+	/** `mixed`: the story goes on over the song (see storyDuring). */
+	interface SkipSegment { type: 'intro' | 'recap' | 'credits'; start: number; end: number; mixed?: boolean; }
 	let skipSegments = $state<SkipSegment[]>([]);
 	let skipLookupKey = '';
 	let seekAfterLoad = 0;
@@ -466,7 +527,8 @@
 	let playerPageEl: HTMLDivElement | undefined = $state();
 
 	/** `text` is already-escaped HTML (only i/b/u survive); `top` came from an {\an8}-style tag. */
-	interface Cue { start: number; end: number; text: string; top: boolean; }
+	/** `song`: a song's words or a sign on screen (by its style in the file), not anyone talking. */
+	interface Cue { start: number; end: number; text: string; top: boolean; song?: boolean; }
 	let subtitleCues = $state<Cue[]>([]);
 	let subtitlesOn = $state(false);
 	let subtitleDelay = $state(0);
@@ -532,7 +594,9 @@
 	 * episode follows ten seconds into them; otherwise at the very end. The Next Episode button
 	 * counts down to it and is highlighted when it appears, so OK plays it straight away.
 	 */
-	const creditsStart = $derived(skipSegments.find((s) => s.type === 'credits' && s.end >= duration - 20)?.start ?? null);
+	const creditsStart = $derived(
+		skipSegments.find((s) => s.type === 'credits' && s.end >= duration - 20 && !storyDuring(s))?.start ?? null
+	);
 	const advanceAt = $derived(creditsStart !== null ? Math.min(duration, creditsStart + 10) : duration);
 	const countdown = $derived(
 		isTv() && autoplayNext && nextEp && advanceAt - currentTime <= 30 ? Math.max(0, Math.ceil(advanceAt - currentTime)) : null
@@ -627,7 +691,7 @@
 	let loadPaused = false;
 
 	function togglePlay() {
-		if (!videoEl) return;
+		if (!videoEl || oldPicture) return;
 		if (videoEl.paused) {
 			userPaused = false;
 			videoEl.play();
@@ -813,6 +877,15 @@
 			if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
 			// Heard before the volume boost, so turning it past 100% changes nothing.
 			subSync.listen(audioCtx, audioSource);
+		});
+	});
+
+	// The list came before the video's length was known: put in order once it is (byCut).
+	$effect(() => {
+		const length = duration;
+		untrack(() => {
+			const ordered = byCut(febboxSubs, length);
+			if (ordered.some((s, i) => s !== febboxSubs[i])) febboxSubs = ordered;
 		});
 	});
 
@@ -1796,8 +1869,13 @@
 			const s = parseTimestamp(parts[1]);
 			const e = parseTimestamp(parts[2]);
 			if (!isFinite(s) || !isFinite(e)) continue;
-			const cue = cleanCue(parts.slice(9).join(','));
-			if (cue) cues.push({ start: s, end: e, ...cue });
+			const raw = parts.slice(9).join(',');
+			const cue = cleanCue(raw);
+			// Songs' words and signs, by their style ("ED", "Song_Romaji", "Sign") or a placed line.
+			const song =
+				/song|lyric|karaoke|insert|opening|ending|sign|title|kfx|(^|[^a-z])(op|ed)([^a-z]|$)/i.test(parts[3] ?? '') ||
+				/\\(pos|move)\(/.test(raw);
+			if (cue) cues.push({ start: s, end: e, ...cue, ...(song ? { song } : {}) });
 		}
 		// Some files (anime.nexus's English CC) make every line bold; that's their style, not
 		// emphasis, so it's dropped and the player's own subtitle style shows.
@@ -2101,7 +2179,7 @@
 		const fileQuality = parseInt(activeFile?.quality ?? '') || 0;
 		if (!activeFile || activeFile.source || fileQuality < 720 || !height || height > 480) return;
 		// Held back a second time (or Febbox's limit already seen): another source, if there is one.
-		if (lowQualityRetried.has(activeFile.fid) || lowOnly(activeFile.fid)) {
+		if (lowQualityRetried.has(activeFile.fid) || lowOnly(activeFile.fid) || febboxOut()) {
 			showboxHeldBack([height]);
 			return;
 		}
@@ -2396,7 +2474,11 @@
 	}
 
 	function withFound(fromAniSkip: SkipSegment[], found: SkipSegment[]): SkipSegment[] {
-		return [...found, ...fromAniSkip.filter((s) => !found.some((f) => f.type === s.type))].sort((a, b) => a.start - b.start);
+		// This copy's own times, but a database's word that the story goes on over the song holds.
+		const mixed = (f: SkipSegment) =>
+			fromAniSkip.some((s) => s.mixed && s.type === f.type && s.start - 30 < f.end && f.start < s.end + 30);
+		const own = found.map((f) => (mixed(f) ? { ...f, mixed: true } : f));
+		return [...own, ...fromAniSkip.filter((s) => !found.some((f) => f.type === s.type))].sort((a, b) => a.start - b.start);
 	}
 
 	async function findSkipsFor(ep: Episode, file: FileOption, key: string, copy: string, fromAniSkip: SkipSegment[], onTv = false, known: SkipSegment[] | null = null) {
@@ -2524,8 +2606,9 @@
 
 	/** What a greyed-out episode says: when it airs, or that no source has it. */
 	function notAvailableText(ep: Episode): string {
-		const today = new Date().toISOString().slice(0, 10);
-		if (ep.airDate && ep.airDate > today) {
+		// Not aired yet, by the same rule the server lists episodes by (hasAired: from 06:00 UTC the
+		// day after its US air date), so an episode airing tonight says when.
+		if (ep.airDate && Date.now() < Date.parse(`${ep.airDate}T00:00:00Z`) + 30 * 60 * 60 * 1000) {
 			const day = new Date(`${ep.airDate}T00:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 			return `Airs ${day}`;
 		}
@@ -2627,6 +2710,28 @@
 	let autoSkip = $state(false);
 	const autoSkipped = new Set<string>();
 
+	/**
+	 * Whether the story carries on during an intro or ending: a database says so (`mixed`), or the
+	 * subtitles have people talking in it (three lines or more, not counting the song's words, signs
+	 * or sounds in brackets). Re:Zero S2E16's ending song plays over the episode's last scene, and
+	 * auto-skip jumped straight to the next episode. Such a part is never skipped by itself, and the
+	 * TV doesn't start the next episode partway into it.
+	 */
+	function storyDuring(seg: SkipSegment): boolean {
+		if (seg.mixed) return true;
+		if (seg.type === 'recap' || !subtitleCues.length) return false;
+		const from = subTimeAt(seg.start + 3);
+		const to = subTimeAt(seg.end - 3);
+		let talking = 0;
+		for (const cue of subtitleCues) {
+			if (cue.song || cue.start < from || cue.start > to) continue;
+			const words = plainSubText(cue.text).trim();
+			if (!words || /♪|♫|^#|#$/.test(words) || /^[([][^)\]]*[)\]]$/s.test(words)) continue;
+			if (++talking >= 3) return true;
+		}
+		return false;
+	}
+
 	function toggleAutoSkip() {
 		autoSkip = !autoSkip;
 		try { localStorage.setItem(AUTOSKIP_KEY, autoSkip ? '1' : '0'); } catch {}
@@ -2641,6 +2746,8 @@
 		const key = `${skipLookupKey}|${seg.type}|${seg.start}`;
 		if (autoSkipped.has(key)) return;
 		autoSkipped.add(key);
+		// Story over the song: watched, not skipped (the Skip button is still there).
+		if (storyDuring(seg)) return;
 		const next = nextEpisode();
 		if (seg.type === 'credits' && seg.end >= duration - 20 && next && playable(next)) {
 			showQualityToast('Skipped the credits');
@@ -2897,7 +3004,7 @@
 		} catch {}
 		if (key !== subsKey) return;
 		subsInFlight = false;
-		febboxSubs = list;
+		febboxSubs = byCut(list, duration);
 		loadingSubs = false;
 
 		if (autoMatch && febboxSubs.length > 0) {
@@ -3912,7 +4019,15 @@
 
 	/** `byItself`: Catalog switched (Showbox held to low quality), not you: nothing is remembered. */
 	async function changeToFile(file: FileOption, byItself = false) {
-		if (!file || file.fid === activeFileFid) return;
+		// (Other sources' copies share one fid across episodes: the episode before's isn't this one's.)
+		if (!file || (file.fid === activeFileFid && !oldPicture)) return;
+		// Picked while the episode is still loading (waiting on a slow source): this takes over, and
+		// the load's answer is dropped. The source menu used to do nothing then.
+		const takingOver = loadingEpisode;
+		if (takingOver) {
+			episodeSwitch++;
+			loadingEpisode = false;
+		}
 		if (!byItself) preferredQuality = file.quality;
 		streamRefreshes = 0;
 		if (stalledOut) { stalledOut = false; problem = ''; }
@@ -3939,21 +4054,25 @@
 		useIframe = false;
 
 		if (qualityTimer) { clearTimeout(qualityTimer); qualityTimer = null; }
-		prevStreamUrl = streamUrl;
+		// Nothing to go back to, or carry on from, while the video still holds the episode before.
+		const fresh = oldPicture;
+		prevStreamUrl = fresh ? '' : streamUrl;
 		prevFileFid = activeFileFid;
 		prevQuality = activeQuality;
 		changingQuality = true;
-		const savedTime = videoEl?.currentTime ?? 0;
+		const savedTime = fresh ? 0 : (videoEl?.currentTime ?? 0);
 		try {
 			const resp = await fetch(`/api/watch/stream?share_key=${shareOf(file)}&fid=${file.fid}`);
 			if (!resp.ok) throw new Error();
 			const data = await resp.json();
 			if (data.url) {
+				oldPicture = false;
 				seekAfterLoad = savedTime;
 				streamUrl = data.url;
 				streamNonce++;
 				activeQuality = file.quality;
 				activeFileFid = file.fid;
+				if (fresh) fetchSubtitles();
 				// "… couldn't play this one" from a try before: this one has a link.
 				problem = '';
 				if (data.debug) debugInfo = data.debug;
@@ -3979,6 +4098,7 @@
 			problem = 'Failed to switch quality.';
 		} finally {
 			changingQuality = false;
+			if (takingOver) fetchWatchedEpisodes();
 		}
 	}
 
@@ -3995,6 +4115,7 @@
 		// (Marked as switching first, or the pause would count as you pausing.)
 		skipResume = true;
 		switchingEpisode = true;
+		oldPicture = true;
 		videoEl?.pause();
 		hlsInstance?.stopLoad();
 		if (inPiP) cleanupPiP();
@@ -4064,6 +4185,7 @@
 			// Another episode was picked meanwhile: that one carries on, this answer is dropped.
 			if (mine !== episodeSwitch) return;
 			if (data.url) {
+				oldPicture = false;
 				streamUrl = data.url;
 				streamNonce++;
 				activeQuality = data.file.quality;
@@ -4145,7 +4267,13 @@
 			try {
 				if (popup.closed) {
 					clearInterval(check);
-					await fetch('/api/watch/sync-cookies', { method: 'POST' });
+					const result = await fetch('/api/watch/sync-cookies', { method: 'POST' })
+						.then((r) => r.json())
+						.catch(() => null);
+					if (result?.signedIn === false) {
+						problem = "Febbox didn't log you in. Check the email and password, and try again.";
+						return;
+					}
 					if (lastResolveArgs)
 						resolve(lastResolveArgs.title, lastResolveArgs.type, lastResolveArgs.year);
 				}
@@ -4409,11 +4537,16 @@
 						playsinline
 						style:object-fit={videoFit}
 						class:buffering={loadingEpisode || changingQuality}
+						class:old-picture={oldPicture}
 						ontimeupdate={onTimeUpdate}
 						ondurationchange={() => {
 							if (videoEl && !switchingEpisode) duration = videoEl.duration;
 						}}
 						onplay={() => {
+							if (oldPicture) {
+								videoEl?.pause();
+								return;
+							}
 							playing = true;
 							userPaused = false;
 							scheduleHide();
@@ -4498,6 +4631,8 @@
 							{#if slowOffer.freshLink}<button type="button" onclick={() => slowChoice('fresh')}>Try a fresh link</button>{/if}
 							{#if slowOffer.lower >= 0}<button type="button" onclick={() => slowChoice('lower')}>Lower quality ({slowOffer.height}p)</button>{/if}
 							<button type="button" onclick={() => slowChoice('keep')}>Keep loading</button>
+							<!-- What's slow, in the corner, for a photo to send (on the TV too): this video only. -->
+							{#if !showStats}<button type="button" onclick={() => (showStats = true)}>Show details</button>{/if}
 						</div>
 					{/if}
 
@@ -5091,6 +5226,8 @@
 		min-width: 9.5em;
 		opacity: 0.65;
 	}
+	/* Big enough to read in a photo of the TV, and below the "Keeps stopping" choice. */
+	:global(html.tv) .playback-stats { top: 130px; font-size: 1.15rem; max-width: min(900px, calc(100% - 32px)); }
 	.player-bar.bar-hidden { opacity: 0; pointer-events: none; transform: translateY(-100%); }
 	.bar-btn { flex: none; font-size: 0.82rem; font-weight: 600; padding: 5px 12px; border-radius: var(--radius-sm); border: 1px solid rgba(255, 255, 255, 0.15); background: rgba(255, 255, 255, 0.06); color: #e0e0e0; cursor: pointer; text-decoration: none; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
 	.bar-btn:hover { border-color: rgba(255, 255, 255, 0.3); color: #fff; }
@@ -5194,6 +5331,7 @@
 
 	.video-area video { width: 100%; height: 100%; display: block; outline: none; }
 	.video-area video.buffering { opacity: 0.3; }
+	.video-area video.old-picture { opacity: 0; }
 
 	.hidden-webview { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; overflow: hidden; }
 

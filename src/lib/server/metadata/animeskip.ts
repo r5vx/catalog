@@ -96,6 +96,30 @@ export async function animeSkipTimes(title: string, season: number, episode: num
 	// Timed against this cut (or one within 30 s of it): other cuts' times would be off.
 	const match = candidates.find((e) => e.baseDuration && Math.abs(e.baseDuration - duration) <= 30);
 	if (!match) return [];
+	return partsOf(match, duration);
+}
+
+/**
+ * Which kinds of part have the story going on over the song in this episode, in any cut ("Mixed
+ * Credits"). That's the episode, not the cut: a copy a minute shorter has the same scene under its
+ * ending (Re:Zero S2E16: Anime Skip has it at 29:30, IntroDB's plain outro fits a 28:33 copy).
+ */
+export async function animeSkipMixed(title: string, season: number, episode: number, overall: number): Promise<SkipSegment['type'][]> {
+	const episodes = await episodesFor(title);
+	if (!episodes?.length) return [];
+	const n = (v: string | null) => (v === null ? NaN : Number(v));
+	const candidates = episodes.filter(
+		(e) =>
+			(n(e.season) === season && n(e.number) === episode) ||
+			n(e.absoluteNumber) === overall ||
+			(n(e.number) === overall && (e.season === null || n(e.season) === 1))
+	);
+	const kinds = new Set<SkipSegment['type']>();
+	for (const e of candidates) for (const s of partsOf(e, e.baseDuration ?? 0)) if (s.mixed) kinds.add(s.type);
+	return [...kinds];
+}
+
+function partsOf(match: Episode, duration: number): SkipSegment[] {
 
 	const stamps = [...match.timestamps].sort((a, b) => a.at - b.at);
 	const segments: SkipSegment[] = [];
@@ -103,7 +127,8 @@ export async function animeSkipTimes(title: string, season: number, episode: num
 		const type = kindOf(stamp.type?.name ?? '');
 		if (!type || segments.some((s) => s.type === type)) return;
 		const end = stamps[i + 1]?.at ?? match.baseDuration ?? duration;
-		if (end - stamp.at >= 5) segments.push({ type, start: stamp.at, end });
+		// "Mixed Credits": the story goes on over the ending song (Re:Zero S2E16).
+		if (end - stamp.at >= 5) segments.push({ type, start: stamp.at, end, ...(/mixed/i.test(stamp.type?.name ?? '') ? { mixed: true } : {}) });
 	});
 	return segments;
 }

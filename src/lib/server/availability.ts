@@ -14,6 +14,7 @@ import { aniwaveFiles, aniwaveFilm } from './sources';
 import { onVidrift } from './sources/vidrift';
 import { onMovy, type Wanted } from './sources/movy';
 import { tmdbGet } from './metadata/tmdb';
+import { filmOnlyInCinemas } from './metadata/cinemas';
 import { getOrderCache, saveOrderCache } from './db/queries';
 
 const HOUR = 60 * 60 * 1000;
@@ -116,6 +117,12 @@ function firstYes(checks: Promise<boolean>[]): Promise<boolean> {
 	});
 }
 
+/**
+ * Where a title's answer is kept. ("available2": answers kept before films only in cinemas were
+ * left out had Clayface down as watchable for a day.)
+ */
+const availabilityKey = (title: string, type: string, year: string) => `available2|${title.toLowerCase()}|${type}|${year}`;
+
 /** How long the Watch button's check waits before saying "not available" for now. */
 const LIMIT = 12_000;
 
@@ -125,7 +132,7 @@ const LIMIT = 12_000;
  * 7Movies lookup kept "Checking availability…" up for 20 seconds or more (She-Beast).
  */
 export async function isAvailable(title: string, type: string, year: string): Promise<{ available: boolean; unsure?: boolean }> {
-	const key = `available|${title.toLowerCase()}|${type}|${year}`;
+	const key = availabilityKey(title, type, year);
 	const known = getOrderCache(key);
 	if (known && Date.now() - known.at < (known.value ? 24 * HOUR : HOUR)) return { available: Boolean(known.value) };
 
@@ -142,15 +149,21 @@ function startCheck(key: string, title: string, type: string, year: string): Pro
 	if (check) return check;
 	const list: SourceCheck[] = [];
 	progress.set(key, list);
+	// A film only in cinemas so far isn't looked for: the sources would only have a recording made
+	// in a cinema, or an empty page (cinemas.ts). Movy's 50-second search isn't started either.
+	const inCinemas = type === 'movie'
+		? byTmdbId(title, type, year).then(async (what) => Boolean(what && (await filmOnlyInCinemas(what.id)) !== null)).catch(() => false)
+		: Promise.resolve(false);
+	const unlessInCinemas = (check: () => Promise<boolean>) => inCinemas.then((only) => (only ? false : check()));
 	const checks = [
-		noted(list, 'Showbox', onShowbox(title, type, year)),
-		noted(list, '7Movies', on7Movies(title, type, year)),
-		noted(list, 'Aniwave', onAniwave(title, type, year)),
-		noted(list, 'Movy', onMovyToo(title, type, year, {
+		noted(list, 'Showbox', unlessInCinemas(() => onShowbox(title, type, year))),
+		noted(list, '7Movies', unlessInCinemas(() => on7Movies(title, type, year))),
+		noted(list, 'Aniwave', unlessInCinemas(() => onAniwave(title, type, year))),
+		noted(list, 'Movy', unlessInCinemas(() => onMovyToo(title, type, year, {
 			// Not started once another source has it, unless it's the title being looked at.
 			start: () => key === latest || (stillOpen(key) && !list.some((s) => s.state === 'yes')),
 			keep: () => stillOpen(key)
-		}))
+		})))
 	];
 	// The sources' progress stays until every one has answered, and a minute more for the page.
 	Promise.allSettled(checks).then(() => setTimeout(() => progress.delete(key), 60_000));
@@ -169,7 +182,7 @@ function startCheck(key: string, title: string, type: string, year: string): Pro
  * progress meanwhile (empty when the answer was already known).
  */
 export function availabilityNow(title: string, type: string, year: string): { available: boolean | null; sources: SourceCheck[] } {
-	const key = `available|${title.toLowerCase()}|${type}|${year}`;
+	const key = availabilityKey(title, type, year);
 	asked(key);
 	const known = getOrderCache(key);
 	if (known && Date.now() - known.at < (known.value ? 24 * HOUR : HOUR) && !underWay.has(key)) {

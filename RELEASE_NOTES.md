@@ -12,6 +12,23 @@ without both.
 
 ## Unreleased
 
+## 3.4.1 — 2026-10-23 — Subtitles that fit, and fewer dead ends
+
+### Improved
+- **Player**: when Febbox's daily HD allowance is used up, it says so and roughly when it resets, and plays another source's HD copy straight away until then
+- **Player**: "Keeps stopping to load" has a Show details button, for a photo of what's slow (on the TV too)
+- **Subtitles**: the ones made for the version of the film that's playing come first (Deadpool 2's cinema version and its Super Duper Cut)
+- **Films**: a film only in cinemas says "In cinemas" instead of offering Watch, and no source is searched for it
+
+### Fixed
+- **Player**: auto-skip no longer skips an ending or intro with the story still going on over it, and the TV waits for the end of it before the next episode
+- **Player**: Showbox files are no longer remembered as "360p only" because Febbox's daily allowance ran out
+- **Player**: while another episode loads, the one before is hidden and can't be played under the new one's name
+- **Player**: picking a source while an episode is still loading switches to it straight away
+- **Episodes**: a new episode is listed once it has aired in the US, not from the morning of its air date (SVU S28E3 played another episode)
+- **Showbox**: a wrong Febbox password no longer shows as "Logged in"
+- **Subtitles**: when OpenSubtitles stops a connection's downloads for the day, its subtitles come through Stremio's copy of it instead of saying they're unavailable
+
 ## 3.4.0 — 2026-10-22 — New episodes in Continue Watching
 
 ### New

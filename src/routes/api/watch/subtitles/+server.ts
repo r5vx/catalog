@@ -112,7 +112,9 @@ export const GET: RequestHandler = async ({ url }) => {
 	// Subtitles made for a recording from the cinema (CAM, TS, HDTS…, and c1nem4/SUNSCREEN's
 	// pre-release rips) go last: they're timed to another version of the film. Venom 2's top one
 	// was 22 s out for its first 20 minutes; the BluRay and WEB ones fit throughout.
-	const fromCinema = (s: Option) => /(^|[^a-z])(hd)?(cam|ts|tc|telesync|telecine|hdts|hdtc|hqcam)([^a-z]|$)|c1nem4|sunscreen/i.test(s.fileName);
+	// (And screeners sent out before release: Deadpool 2's "HQ DVDScr" was second in its list.)
+	const fromCinema = (s: Option) =>
+		/(^|[^a-z])(hd)?(cam|ts|tc|telesync|telecine|hdts|hdtc|hqcam|scr|dvdscr|screener)([^a-z]|$)|c1nem4|sunscreen/i.test(s.fileName);
 	const others: Option[] = kept
 		.map((s) => ({ ...s, default: undefined }))
 		.sort((a, b) => Number(fromCinema(a)) - Number(fromCinema(b)));
