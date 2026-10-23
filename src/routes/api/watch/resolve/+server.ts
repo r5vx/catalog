@@ -24,8 +24,8 @@ import { fetchRomajiTitle } from '$lib/server/metadata/anilist';
 import { combineEpisodes, tmdbShow, type EpisodeList } from '$lib/server/combinedEpisodes';
 import { aniwaveFilm } from '$lib/server/sources';
 import { aniwaveStream, parseAniwaveShareKey } from '$lib/server/sources/aniwave';
-import { vidriftCopies } from '$lib/server/sources/vidrift';
-import { movyCopy } from '$lib/server/sources/movy';
+import { vidriftCopies, vidriftStream } from '$lib/server/sources/vidrift';
+import { movyCopy, movyStream } from '$lib/server/sources/movy';
 import type { FileOption } from '$lib/server/showbox';
 import type { RequestHandler } from './$types';
 
@@ -113,9 +113,11 @@ const RESOLVE_TTL = 30 * 60 * 1000;
  * left (the next one if that was finished), else the season Showbox's entry starts at, else the
  * first; Showbox's best file. A wrong guess costs one extra lookup and nothing else.
  */
+/** The title other sources' links were last warmed for. */
+let warming = '';
+
 function warmLikelyEpisode(list: EpisodeList, share: string, title: string, startSeason: number, asked: { season: number; episode: number }) {
-	const { febboxToken } = readSettings();
-	if (!febboxToken || !list.episodes.length) return;
+	if (!list.episodes.length) return;
 	const episodes = list.episodes;
 	const at = (season: number, episode: number) => episodes.find((e) => e.season === season && e.episode === episode);
 	let target = asked.season && asked.episode ? at(asked.season, asked.episode) : undefined;
@@ -131,9 +133,25 @@ function warmLikelyEpisode(list: EpisodeList, share: string, title: string, star
 	target ??= episodes[0];
 	const plays = (e: (typeof episodes)[number]) => e.available !== false && e.files.length > 0;
 	if (!plays(target)) target = episodes.find((e) => e.season === target!.season && plays(e)) ?? episodes.find(plays);
-	const file = target ? pickFile(target.files, PREFERRED_QUALITY) : null;
-	// Only Showbox's links: other sources' are fetched by the player as it always has.
-	if (!target || !file || file.source) return;
+	if (!target) return;
+	// No Showbox copy: 7Movies' and Movy's links are looked up now instead, as checks that make
+	// way for anything about to play. Movy takes 15–20 s on its own: SVU S28E3, on Movy before
+	// 7Movies had it, took 25 s to start.
+	if (!target.files.some((f) => !f.source)) {
+		// (Called off once another title is warmed: the TV's highlight passing over shows doesn't
+		// queue Movy's searches up.)
+		warming = title;
+		const stillWanted = () => warming === title;
+		for (const copy of target.files) {
+			if (!copy.shareKey) continue;
+			if (copy.source === '7Movies') vidriftStream(copy.shareKey).catch(() => null);
+			else if (copy.source === 'Movy') movyStream(copy.shareKey, false, { start: stillWanted, keep: stillWanted }).catch(() => null);
+		}
+		return;
+	}
+	const { febboxToken } = readSettings();
+	const file = pickFile(target.files, PREFERRED_QUALITY);
+	if (!febboxToken || !file || file.source || !(target.shareKey ?? share)) return;
 	getStreamUrl(target.shareKey ?? share, file.fid, febboxToken).catch(() => {});
 }
 
@@ -191,7 +209,7 @@ async function lookUp(url: URL): Promise<Response> {
 		episodeData = cached.episodes;
 		movieFileList = cached.files;
 		startSeason = cached.startSeason;
-		if (warm && matchType === 'tv' && episodeData && shareKey) warmLikelyEpisode(episodeData as EpisodeList, shareKey, matchTitle, startSeason, asked);
+		if (warm && matchType === 'tv' && episodeData) warmLikelyEpisode(episodeData as EpisodeList, shareKey ?? '', matchTitle, startSeason, asked);
 	} else {
 		// Remembered from an earlier session: skips the Showbox search, but re-lists so new episodes show.
 		const saved = getSavedShowboxMatch(cacheKey);
@@ -357,7 +375,7 @@ async function lookUp(url: URL): Promise<Response> {
 		// Other Showbox entries for the same show (JoJo's Steel Ball Run) and other sources join
 		// the list, and episodes no one has yet show greyed out. (Already done for a show only
 		// other sources have.)
-		if (warm && matchType === 'tv' && episodeData && shareKey) warmLikelyEpisode(episodeData as EpisodeList, shareKey, matchTitle, startSeason, asked);
+		if (warm && matchType === 'tv' && episodeData) warmLikelyEpisode(episodeData as EpisodeList, shareKey ?? '', matchTitle, startSeason, asked);
 		if (matchType === 'tv' && episodeData && shareKey) {
 			episodeData = await combineEpisodes(episodeData as EpisodeList, matchTitle, matchId, year);
 		}

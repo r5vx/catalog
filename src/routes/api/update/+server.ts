@@ -9,7 +9,9 @@ import {
 	sourceIsStale,
 	failedUpdate,
 	nightUpdate,
-	installNeedsPermission
+	installNeedsPermission,
+	moveInstall,
+	moveState
 } from '$lib/server/updater';
 import { startRebuild, rebuildState } from '$lib/server/rebuild';
 import { readSettings, updateSettings } from '$lib/server/settings';
@@ -48,6 +50,7 @@ export const GET: RequestHandler = async () => {
 		muted,
 		failed: failedUpdate(),
 		night: { ...nightUpdate(), available: mode === 'release' && process.platform === 'win32', needsPermission: installNeedsPermission() },
+		move: moveState(),
 		isMac: process.platform === 'darwin'
 	});
 };
@@ -74,6 +77,12 @@ export const POST: RequestHandler = async ({ url, request }) => {
 
 	if (action === 'install') {
 		if (!installUpdate()) error(400, 'Updating is only available in the desktop app.');
+		return json({ started: true });
+	}
+
+	// From "all users" to just this account (electron/moveInstall.cjs).
+	if (action === 'move') {
+		if (!installNeedsPermission() || !moveInstall()) error(400, 'Catalog is already installed for just this account.');
 		return json({ started: true });
 	}
 
