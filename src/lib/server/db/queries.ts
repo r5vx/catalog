@@ -545,9 +545,77 @@ export function updateEntry(id: number, input: EntryInput): void {
 	);
 }
 
+/**
+ * Today's date where the computer is (YYYY-MM-DD). The UTC date ran a day ahead from 5 pm in
+ * California: finished "tomorrow" (2026-10-23).
+ */
+export function localToday(): string {
+	const now = new Date();
+	return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+}
+
+/** The parts of an entry you change with a click on its page (or the player's "Rate it"). */
+export type QuickFields = {
+	rating?: number | null;
+	status?: string;
+	favorite?: boolean;
+	rewatches?: number;
+	lastSeason?: number | null;
+	lastEpisode?: number | null;
+};
+
+/** Saves only the fields given; everything else stays. Says the finished date it has now. */
+export function setEntryFields(id: number, fields: QuickFields): { finishedOn: string | null } {
+	const columns: Record<keyof QuickFields, string> = {
+		rating: 'rating',
+		status: 'status',
+		favorite: 'favorite',
+		rewatches: 'rewatches',
+		lastSeason: 'last_season',
+		lastEpisode: 'last_episode'
+	};
+	const sets: string[] = [];
+	const values: (string | number | null)[] = [];
+	for (const [key, column] of Object.entries(columns) as [keyof QuickFields, string][]) {
+		if (!(key in fields)) continue;
+		const value = fields[key];
+		sets.push(`${column} = ?`);
+		values.push(typeof value === 'boolean' ? toInt(value) : (value ?? null));
+	}
+	// Finishing it dates it, as "Mark as completed" does (a date already there is kept).
+	if (fields.status === 'completed') {
+		sets.push('finished_on = COALESCE(finished_on, ?)');
+		values.push(localToday());
+	}
+	if (sets.length) db.prepare(`UPDATE entries SET ${sets.join(', ')}, updated_at = ? WHERE id = ?`).run(...values, new Date().toISOString(), id);
+	const row = db.prepare('SELECT finished_on AS finishedOn FROM entries WHERE id = ?').get(id) as { finishedOn: string | null } | undefined;
+	return { finishedOn: row?.finishedOn ?? null };
+}
+
+/** The "More details" part of an entry's page: what the quick controls above it don't cover. */
+export function updateEntryDetails(
+	id: number,
+	input: Pick<EntryInput, 'categoryId' | 'title' | 'year' | 'notes' | 'startedOn' | 'finishedOn' | 'posterUrl'>
+): void {
+	db.prepare(
+		`UPDATE entries SET category_id = ?, title = ?, year = ?, notes = ?, started_on = ?, finished_on = ?,
+			poster_url = ?, updated_at = ? WHERE id = ?`
+	).run(
+		input.categoryId,
+		input.title,
+		input.year ?? null,
+		input.notes ?? '',
+		input.startedOn ?? null,
+		input.finishedOn ?? null,
+		input.posterUrl ?? null,
+		new Date().toISOString(),
+		id
+	);
+}
+
 export function markEntryCompleted(id: number): void {
 	db.prepare('UPDATE entries SET status = ?, finished_on = ?, updated_at = ? WHERE id = ?')
-		.run('completed', new Date().toISOString().slice(0, 10), new Date().toISOString(), id);
+		.run('completed', localToday(), new Date().toISOString(), id);
 }
 
 export function incrementRewatches(id: number): void {
@@ -775,18 +843,21 @@ export function entryIdForSource(source: string, sourceId: string): number | nul
 }
 
 /** The library entry by that name; for someone else's profile, the title on their own list. */
-export function findEntryByTitle(title: string): { id: number; status: string; posterUrl: string; lastSeason: number; lastEpisode: number } | null {
+type FoundEntry = { id: number; status: string; posterUrl: string; lastSeason: number; lastEpisode: number; rating: number | null; rateable: boolean };
+
+/** `rateable`: the library's own entry (another profile's list has no ratings). */
+export function findEntryByTitle(title: string): FoundEntry | null {
 	const profile = currentProfile();
 	const row = (
 		profile === MAIN_PROFILE
 			? db
-					.prepare('SELECT id, status, poster_url AS posterUrl, last_season AS lastSeason, last_episode AS lastEpisode FROM entries WHERE title = ? COLLATE NOCASE LIMIT 1')
+					.prepare('SELECT id, status, poster_url AS posterUrl, last_season AS lastSeason, last_episode AS lastEpisode, rating, 1 AS rateable FROM entries WHERE title = ? COLLATE NOCASE LIMIT 1')
 					.get(title)
 			: db
-					.prepare('SELECT id, status, poster_url AS posterUrl, last_season AS lastSeason, last_episode AS lastEpisode FROM profile_titles WHERE profile = ? AND title = ? COLLATE NOCASE LIMIT 1')
+					.prepare('SELECT id, status, poster_url AS posterUrl, last_season AS lastSeason, last_episode AS lastEpisode, NULL AS rating, 0 AS rateable FROM profile_titles WHERE profile = ? AND title = ? COLLATE NOCASE LIMIT 1')
 					.get(profile, title)
-	) as { id: number; status: string; posterUrl: string; lastSeason: number; lastEpisode: number } | undefined;
-	return row ? { ...row } : null;
+	) as (Omit<FoundEntry, 'rateable'> & { rateable: number }) | undefined;
+	return row ? { ...row, rateable: Boolean(row.rateable) } : null;
 }
 
 interface WatchProgress {

@@ -2,6 +2,7 @@ import { febboxListing, FebboxRefused } from './febboxList';
 export { FebboxRefused };
 import { electronFetch, electronGetVideoUrl, electronGetSubtitles } from './electron-fetch';
 import { withoutQualifier } from './metadata/types';
+import { onFebboxAccountChange } from './settings';
 
 const BASE = 'https://showbox.media';
 
@@ -15,6 +16,8 @@ const STREAM_CACHE_TTL = 15 * 60 * 1000;
 export function invalidateStreamCache(fid: number) {
 	streamCache.delete(fid);
 }
+// Another account's links (360p when its allowance was used up) aren't this one's.
+onFebboxAccountChange(() => streamCache.clear());
 
 export async function isShowboxUp(): Promise<boolean> {
 	if (cachedUp !== null && Date.now() - cachedAt < 60_000) return cachedUp;

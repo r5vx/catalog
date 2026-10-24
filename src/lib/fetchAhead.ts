@@ -138,15 +138,36 @@ export function fetchAheadLoader(hls: () => Hls | null): FragmentLoaderConstruct
 			const entry = fetched.get(context.url);
 			if (!entry) return this.plain(context, config, callbacks, kind);
 
-			// Already on its way (or here): handed over from memory.
+			// Already on its way (or here): handed over from memory. Handed over, it has none of the
+			// player's own time limits, so one arriving in a trickle held the player until it was
+			// whole (or HUNG_MS without a byte). Not here ASK_AGAIN_MS after the player asked: asked
+			// for the usual way too, and whichever is whole first is used.
 			fetched.delete(context.url);
 			this.waiting = true;
 			const stats = this.stats;
 			stats.loading.start = performance.now();
-			entry.bytes.then((data) => {
+			let alsoAsked = false;
+			const first = <T extends unknown[]>(answer: ((...args: T) => void) | undefined) =>
+				(...args: T) => {
+					if (!this.waiting) return;
+					this.waiting = false;
+					answer?.(...args);
+				};
+			const slow = setTimeout(() => {
 				if (!this.waiting) return;
+				alsoAsked = true;
+				this.plain(context, config, { ...callbacks, onSuccess: first(callbacks.onSuccess), onError: first(callbacks.onError), onTimeout: first(callbacks.onTimeout) }, kind);
+			}, ASK_AGAIN_MS);
+			entry.bytes.then((data) => {
+				clearTimeout(slow);
+				if (!this.waiting) return;
+				// Nothing came from memory: the usual way, unless that's already under way.
+				if (!data) {
+					if (alsoAsked) return;
+					this.waiting = false;
+					return this.plain(context, config, callbacks, kind);
+				}
 				this.waiting = false;
-				if (!data) return this.plain(context, config, callbacks, kind);
 				stats.loading.first = stats.loading.end = performance.now();
 				stats.loaded = stats.total = data.byteLength;
 				this.context = context;
@@ -162,6 +183,12 @@ export function fetchAheadLoader(hls: () => Hls | null): FragmentLoaderConstruct
 		/** Asked for the usual way (one at a time), and noted. */
 		private plain(context: LoaderContext, config: LoaderConfiguration, callbacks: LoaderCallbacks<LoaderContext>, kind: PieceNote['kind']) {
 			const start = performance.now();
+			// hls.js's loader refuses a second start ("Loader can only be used once") once its start
+			// time is set, and it was, by the handover from memory. So a piece fetched ahead that
+			// failed threw here, the player's request was never answered, and that track stopped
+			// loading until the stall watch restarted it: fast pieces, then "0 s loaded ahead"
+			// (Dungeon Meshi E7, 2026-10-23).
+			this.stats.loading.start = 0;
 			super.load(context, config, {
 				...callbacks,
 				onSuccess: (response, stats, ctx, details) => {

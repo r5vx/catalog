@@ -4,7 +4,7 @@
  * looked like every Showbox file being 360p-only (2026-10-22: "11.5 GB / 10 GB, Flow Reset 4
  * Hours"). Read from the account's own page, febbox.com/console, which shows both figures.
  */
-import { readSettings } from './settings';
+import { onFebboxAccountChange, readSettings } from './settings';
 
 export type Flow = {
 	/** Gigabytes used today, and the day's allowance. */
@@ -19,6 +19,7 @@ export type Flow = {
 /** Kept for a few minutes: the page is 300 KB, and the answer doesn't change by the second. */
 let kept: { flow: Flow | null; at: number } | null = null;
 const KEEP = 5 * 60 * 1000;
+onFebboxAccountChange(() => (kept = null));
 
 const GB: Record<string, number> = { B: 1 / 1024 ** 3, KB: 1 / 1024 ** 2, MB: 1 / 1024, GB: 1, TB: 1024 };
 const gigabytes = (amount: string, unit: string) => parseFloat(amount) * (GB[unit.toUpperCase()] ?? NaN);
