@@ -35,17 +35,21 @@ export function pickFile<T extends Pickable>(files: T[], wanted: string, audio =
 	if (!showbox.length) {
 		return files.find((f) => audio && f.audio === audio) ?? files.find((f) => audio === 'English' || f.audio !== 'English') ?? files[0];
 	}
-	const exact = showbox.find((f) => f.quality === wanted);
-	if (exact) return exact;
-	const sorted = [...showbox].sort((a, b) => {
-		const aq = parseInt(a.quality) || 0;
-		const bq = parseInt(b.quality) || 0;
-		if (bq !== aq) return bq - aq;
-		const aSize = parseFloat(a.size) || 0;
-		const bSize = parseFloat(b.size) || 0;
-		return bSize - aSize;
-	});
-	return sorted[0];
+	// The largest of the wanted quality. (It took the first one listed: Dungeon Meshi E8 lists a
+	// 503 MB single-file copy before its 2.45 GB one, which has the usual playlist and both
+	// languages. And sizes were compared without their units, so "503.66 MB" beat "2.45 GB".)
+	const largest = (list: T[]) => [...list].sort((a, b) => bytesOf(b.size) - bytesOf(a.size))[0];
+	const exact = showbox.filter((f) => f.quality === wanted);
+	if (exact.length) return largest(exact);
+	const top = Math.max(...showbox.map((f) => parseInt(f.quality) || 0));
+	return largest(showbox.filter((f) => (parseInt(f.quality) || 0) === top));
+}
+
+/** "503.66 MB", "2.45 GB" → bytes (0 when it can't be read). */
+export function bytesOf(size: string): number {
+	const match = /([\d.]+)\s*([KMGT]?)B/i.exec(size ?? '');
+	if (!match) return 0;
+	return parseFloat(match[1]) * 1024 ** ' KMGT'.indexOf(match[2].toUpperCase() || ' ');
 }
 
 /** When each title was last warmed up: again after 10 minutes, as links last 15 (a TV stays open for days). */

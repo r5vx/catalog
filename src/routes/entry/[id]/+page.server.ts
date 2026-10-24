@@ -1,7 +1,7 @@
 import {
 	listCategories,
 	getEntry,
-	updateEntry,
+	updateEntryDetails,
 	updateEntrySource,
 	deleteEntry,
 	saveOverview,
@@ -58,13 +58,17 @@ export const load: PageServerLoad = async ({ params, url }) => {
 };
 
 export const actions: Actions = {
-	save: async ({ request, params }) => {
+	/**
+	 * "More details": name, category, year, dates, notes and poster. Rating, status and the rest
+	 * save themselves at the top of the page (QuickEdit), so this never writes over them.
+	 */
+	details: async ({ request, params }) => {
 		const form = await request.formData();
 		const { error: problem, values } = parseEntryForm(form);
 
 		if (problem) return fail(400, { error: problem });
 
-		updateEntry(Number(params.id), values);
+		updateEntryDetails(Number(params.id), values);
 		return { saved: true };
 	},
 

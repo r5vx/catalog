@@ -1801,3 +1801,140 @@ Re:Zero, so Showbox is the only 1080p.
   installer and the starts (old copy stays, old copy removed, install fails).
 - **Not tested:** the real prompt, the real all-users uninstaller, and netsh with elevation. Each
   needs an all-users install on the owner's PC.
+
+### Owner's and a friend's reports, 2026-10-23 evening
+- **Dungeon Meshi E8 had no sound, and "0:07 / 0:00".** E8's 503 MB Showbox file is a plain MP4
+  (`tv_mp4_h264`, no playlist: "vi: no-vid"), not HLS. ffprobe: H.264 + AAC stereo, 24:02, so the
+  file was fine. With subtitles on, auto-timing listens to a plain file through the page's audio
+  (`createMediaElementSource`), and a cross-site `<video>` without `crossorigin` gives that silence,
+  which then is all that plays. Proven in Electron: same file, loudest sample 0.000 without, 0.125
+  with `crossorigin="anonymous"`. Febbox's CDN sends `Access-Control-Allow-Origin: *`. Now a
+  cross-site plain file gets `crossorigin`; if it errors before loading, it's loaded again without,
+  and `soundBlocked` keeps it out of the page's audio (no listening, no volume past 100%). Once an
+  element has gone through `createMediaElementSource` it can't come out, so a later no-CORS file
+  after a boosted one would still be silent: rare, not handled. Its length: `ondurationchange`
+  ignores lengths while `switchingEpisode`, which a plain file only clears on `loadedmetadata`
+  (just after), so the length is now taken there too.
+- **Reopening E8 landed on Aniwave with burned-in subtitles.** `linkFor` gives the pick 5 s, and for
+  a Showbox pick its fallbacks never included Showbox's other copy, so Aniwave (fast) won when
+  Febbox was slow. Now the same source's other copies come first for Showbox too, and a burned-in
+  copy (when the pick isn't one) only wins `BURNED_IN_WAIT` (6 s) after it answered, if nothing
+  else has. Tested with slowed lookups: the 830 MB copy played instead; with every Showbox copy
+  slowed, Aniwave played after the wait. (It could also have been the kept source, if Aniwave
+  was picked by hand while looking into it.)
+- **E7 stopped to load with 20–80 Mbps pieces and "0 s ahead".** `fetchAhead.ts`: hls.js's loader
+  throws "Loader can only be used once" if its start time is set, and the handover from memory set
+  it. So a piece fetched ahead that failed (error, 12 s silence, tiny reply) threw in a promise, the
+  player's request was never answered, and that track (picture or the separate sound track)
+  stopped loading until the stall watch restarted it about 10 s after the video ran dry. Also, a
+  handed-over piece had none of hls.js's time limits, so a trickling one held the player. Now
+  `plain()` clears the start time, and a piece not here 4 s after the player asks is asked for the
+  usual way too (first whole one wins). Tested with the real file on a local playlist: before, one
+  failed or trickling piece left it stuck at 31 s of 60; after, it loads to the end. The stop log
+  now keeps `pictureAhead`, `soundAhead` (from BUFFER_APPENDED's per-track ranges) and
+  `soundPiecesSeconds`. Mom's buffering may be the same thing (not proven).
+- **Mini player froze while the sound went on (a friend).** It shows a canvas copy (for subtitles),
+  so its own play/pause acted on the copy. Now passed on to the video, and the copy follows the
+  video's play/pause. Ruled out by test: the draw loop and the video keep going when Catalog is
+  minimized, covered by another window, or behind the "Playing in picture-in-picture" panel.
+
+### A bug sweep before releasing (2026-10-23, late)
+The owner asked for more testing before releasing. What was checked, and found:
+- **Every page** loads (server and browser) on a library copy with no errors. **Exports** (json, share, csv,
+  txt) carry no settings. The only key in one is the TMDB key, written inside one of the owner's own notes.
+- **The `crossorigin` fix failed in the real app.** `main.cjs` added `access-control-allow-origin` beside
+  the server's own `Access-Control-Allow-Origin`, and the doubled header ("*, *") fails a CORS media
+  request (error 4). Tested in Electron with the same header code on E8's real file. The fallback would
+  still have played the sound, but without listening. Now it replaces the header: 0.102 loudest
+  sample through the page's audio.
+- **Which copy plays.** `pickFile` took the first file of the wanted quality. Febbox lists E8's 503 MB MP4
+  first and every other episode's big copy first, which is how E8 got the file with no playlist. Its
+  size tie-break also ignored units ("503.66 MB" beat "2.45 GB"). Now: the largest of the wanted
+  quality (`bytesOf`), else the largest of the top quality. The server's warm-up (`resolve`: the first
+  episode's file and the film's file) uses `pickFile` too, so it warms the link that plays.
+- **A hand-ticked episode replayed.** `markEpisodes` keeps a tick as 1 s of 1. `savedPlace` only judged
+  "finished" when more than 5 s were saved, so Continue Watching (it points at the latest-updated
+  episode, the last one ticked) played it from 0:00, and its tick went once a few seconds were saved.
+  Reproduced with E11–E12 ticked; now it goes on to E13 and E12 keeps 1/1.
+- **fetchAhead's race** (both copies arrive): checked with a late early-copy, a failure, and none. All
+  load to the end.
+
+### Up next, the Showbox copy kept, and mini player buttons (2026-10-23, night)
+The owner asked for three of the ideas offered after the sweep:
+- **Continue Watching moves on at 95%.** `noteUpNext()` posts the next episode (duration 0, "Up next")
+  once 95% of an episode is watched. It used to wait for the last frame (`episodeEnded`), so stopping
+  in the credits left "S2E17 · 97% · 0m left". It's sent again after every save of the episode
+  (the save on leaving too), or that save, newer, would put the watched one back on top. Tested:
+  E10 at 96.6% → the card moved to E11.
+- **The Showbox copy picked is kept per show** (`KeptSource.showbox`). It's kept as the file's name
+  with its numbers taken out (`nameKind`: "danjon.meshi.#.#p.dual.mkv"), its quality, and whether it
+  was the larger. `keptShowboxCopy` finds the same kind next episode, or else the larger or smaller
+  one. Before, picking Showbox by hand forgot any kept source and picked by the default.
+- **Mini player buttons.** The canvas copy in picture-in-picture gets **no play/pause button at all**
+  (a live stream). With media-session handlers it shows previous, play/pause and next. Seen on screen
+  in Electron 38 (desktopCapturer with the pointer over it). `skipad` shows a button reading "Skip Ad",
+  so Skip Intro was left out. `setPiPActions` sets them while it's open, and previous/next are null
+  where there's none. The mini player now stays open across episode changes, drawing black while
+  `oldPicture`. So **the earlier "PiP pause button froze it" explanation for the friend's freeze is
+  unlikely: there was no such button.** That freeze is still unexplained.
+- **`mayMoveOn`.** "Finished: on to the next one" in `savedPlace` is only for the episode the player
+  opened on. Clicking a ticked E12 jumped to E13: `playEpisode`'s `skipResume` is spent on the first
+  ask, and a reload at 0:00 (a copy that wouldn't play) asked again. This was there before for really
+  finished episodes; the hand-tick fix widened it.
+- **Testing used up the owner's Febbox day:** 11.7 of 10 GB (each test episode loads up to 300 s
+  ahead). Test player features on 7Movies/Aniwave (the relay), not Showbox.
+
+### Owner's round, 2026-10-23 late night
+- **The library filtered itself by a studio** (Dungeon Meshi → "Ultra Super Pictures"). The app
+  preloads a page on hover (`data-sveltekit-preload-data="hover"`), and the library's `load`
+  *saved* the address's filters as the kept view. So pointing at a tag chip (`/?tag=…`) on a title's
+  page saved that filter. SvelteKit doesn't mark preloads, so the load only reads now. It returns
+  `rememberView`, and the page posts it to `/api/library-view` once it's really shown. Tested:
+  hovering preloaded `/?tag=1850` and the library stayed 438; clicking filtered it, and that was
+  remembered. **No load function should write anything** (hover runs it).
+- **Another Febbox account kept the old one's "used up for 14 hours" and 360p.** Three things were
+  kept: the player's `catalog:febboxOut` note in localStorage (until the old account's reset);
+  `febboxFlow`'s 5-minute reading; and `showbox.ts`'s 15-minute link cache (360p links). Now
+  `settings.ts` tells listeners when the account changes (`onFebboxAccountChange`, by
+  `febboxAccountOf`: the "ui" cookie's `data.uid`, hashed, so the same account signing in again
+  keeps its name). The flow reading and link cache go, the note is kept as `until|account`, and
+  "360p only" notes go when the account differs from last time (`catalog:febboxAccount`). Tested on
+  the test server with a fake second uid. The video links themselves come through the Electron
+  session's cookies, which the login window clears for a new sign-in. Pasting a key in Settings
+  doesn't change those cookies.
+- **Mini player is now a window** (`electron/miniPlayer.cjs`, `/api/desktop/mini`). The owner didn't
+  like Chromium's picture-in-picture: it dims the whole picture on hover, has only play/pause, and
+  can't be styled. On the computer (`inDesktopApp`: an Electron user agent), the PiP button opens a
+  frameless, always-on-top 480×270 window (16:9, resizable, bottom right) on `/watch?…&mini=1&fid=`.
+  `startFid` makes `pickFor` start on the same copy; `saveProgressSync` first, so it resumes at the
+  same spot. The big page sets `inMini` (pauses, `stopLoad`, saves nothing, "Playing in the mini
+  player"), and the main window is minimized. In mini mode, the player hides its top bar, lists and
+  settings. `.mini-top` is the drag strip (`-webkit-app-region: drag`), with back ↗ and close ✕.
+  `leaveMini` posts {back, playing, season, episode, fid}; the app closes the mini window, restores
+  the main one and calls `window.catalogBackFromMini(said)`. The same spot and copy seek there;
+  another episode or copy reloads the page on it; closed another way, `said` is null and it reads
+  the saved place. Phones keep the canvas PiP. Tested in the real desktop app over the debugging
+  port (`--remote-debugging-port`, a CDP script): opens at the same spot, back carries on playing,
+  ✕ and an outside close come back paused at its spot.
+- **Editing reworked.** `QuickEdit` on a title's page saves each click
+  (`PATCH /api/entries {action:'set', fields}` → `setEntryFields`, only those columns): `StarRating`
+  (5 stars = 10 points, left third of a star is the half), `StatusPicker`, favourite, times
+  watched, and `ProgressPicker`. Its dropdowns come from `metadata/seasons.ts` (TMDB `/tv/{id}`
+  seasons, specials left out, kept 12 h; AniList one season). "More details" is `EntryForm
+  mode="details"` saving only name/category/year/dates/notes/poster (`updateEntryDetails`), so it
+  never writes over a click. It's `{#key entry.finishedOn}`, because Completed dates it, and a stale
+  form saved the empty date back over it (caught in testing). `localToday()`: finished dates were
+  UTC (a day ahead in California evenings), and `entries.ts`'s `today()` too.
+- **Rate it.** At 95% of a film, or of a series' last playable episode, if it's in the library
+  unrated, on the computer (not a TV or the mini player): `rateOffer`, bottom left, once per visit.
+  None of the 438 titles had a rating.
+
+### A piece 7Movies' own server trickles (2026-10-23, before 3.5.0)
+The Marvels on 7Movies, jumped to 1:00:00, stuck at 1:00:30. Its piece #605 comes from
+edge.reelvault.click at about 0.35 Mbps (1.8 of 5.6 MB in 40 s, fetched directly with curl,
+twice), while the pieces around it come at 47–2,400 Mbps. Catalog's relay holds a read-ahead piece
+until it's whole (`pieceAhead`), and the player's `maxTimeToFirstByteMs` is 5 s, so every ask was
+cut off; the stall watch then got a fresh link (same piece, same trickle). Not changed in 3.5.0.
+Ideas: play the same spot from the title's other copy once a piece stays stuck, or step past it.
+Testing tools: `playtest.mjs`/`stuck.mjs`-style CDP scripts against the built app on
+`--remote-debugging-port`, and `scripts/dev/tvsim.mjs` (it wants a `localhost` base and address).

@@ -7,14 +7,26 @@
 	import { fetchAheadLoader, recentPieces } from '$lib/fetchAhead';
 	import BackBar from '$lib/BackBar.svelte';
 	import { p, pRandom } from '$lib/poison';
-	import { pickFile, playableHere, PREFERRED_QUALITY } from '$lib/watch';
+	import { bytesOf, pickFile, playableHere, PREFERRED_QUALITY } from '$lib/watch';
 	import { isTv, tvPlayer } from '$lib/tv';
 	import { PreviewStrip, keepPictures, keptPictures, askComputerForPictures, type StripVideo } from '$lib/previewStrip';
 	import { SubtitleSync } from '$lib/subtitleSync';
 	import { findAndKeepSkips, skipKeyOf, type Found } from '$lib/skipFinder';
 	import { DownloadedSound } from '$lib/downloadedSound';
+	import StarRating from '$lib/StarRating.svelte';
 
 	const pm = $derived(page.data.poisonMode);
+
+	/*
+	 * The computer's mini player (electron/miniPlayer.cjs) is this page in a small window of its
+	 * own (`mini=1`), started on the copy the big player had (`fid`). The big one waits, paused and
+	 * saving nothing (`inMini`), and carries on where the mini player got to (`backFromMini`).
+	 */
+	const miniMode = page.url.searchParams.get('mini') === '1';
+	let startFid: number | null = Number(page.url.searchParams.get('fid')) || null;
+	let inMini = $state(false);
+	/** In Catalog's own window on the computer (not a phone's or a TV's browser). */
+	const inDesktopApp = typeof navigator !== 'undefined' && /Electron\//.test(navigator.userAgent);
 
 	interface Result {
 		id: number;
@@ -120,11 +132,11 @@
 		// Why: Febbox's daily allowance (then every file is 360p for now), or this one file. Asked
 		// alongside; the switch doesn't wait for it.
 		fetch('/api/watch/febbox-flow')
-			.then((r) => (r.ok ? (r.json() as Promise<{ out: boolean; resetsAt: number | null } | null>) : null))
+			.then((r) => (r.ok ? (r.json() as Promise<{ out: boolean; resetsAt: number | null; account: string } | null>) : null))
 			.catch(() => null)
 			.then((flow) => {
 				if (flow?.out) {
-					try { localStorage.setItem(FEBBOX_OUT, String(flow.resetsAt ?? Date.now() + 3600_000)); } catch {}
+					try { localStorage.setItem(FEBBOX_OUT, `${flow.resetsAt ?? Date.now() + 3600_000}|${flow.account}`); } catch {}
 					const hours = flow.resetsAt ? Math.round((flow.resetsAt - Date.now()) / 3600_000) : 0;
 					const back = hours > 1 ? ` for about ${hours} more hours` : hours === 1 ? ' for about another hour' : '';
 					showQualityToast(`Febbox's daily HD limit is used up${back}: ${better ? `playing ${better.source} instead` : '360p only'}`);
@@ -141,12 +153,17 @@
 	/*
 	 * Febbox gives each account so much fast video a day (10 GB free; src/lib/server/febboxFlow.ts),
 	 * then only 360p until it resets. Until then Showbox isn't tried first where another source has
-	 * an HD copy, and its files aren't remembered as 360p-only (they aren't).
+	 * an HD copy, and its files aren't remembered as 360p-only (they aren't). Kept as "until|account":
+	 * signing in with another account starts afresh (it used to carry on for the old one's 14 hours).
 	 */
 	const FEBBOX_OUT = 'catalog:febboxOut';
+	/** The Febbox account signed in on the computer (a short name from /api/watch/resolve). */
+	let febboxAccount = '';
+	const FEBBOX_ACCOUNT = 'catalog:febboxAccount';
 	function febboxOut(): boolean {
 		try {
-			return Date.now() < Number(localStorage.getItem(FEBBOX_OUT) || 0);
+			const [until, account] = (localStorage.getItem(FEBBOX_OUT) ?? '').split('|');
+			return Date.now() < Number(until || 0) && account === febboxAccount;
 		} catch {
 			return false;
 		}
@@ -158,19 +175,52 @@
 	 * picture, say), which then stays picked episode after episode.
 	 */
 	const pickFor = (files: FileOption[]) => {
+		// The mini player starts on the copy the big player had.
+		if (startFid !== null) {
+			const start = files.find((f) => f.fid === startFid && playableHere(f));
+			if (start) {
+				startFid = null;
+				return start;
+			}
+		}
 		const kept = keptSource();
 		// (7Movies has two copies: the one picked, where it was noted — older notes didn't say.)
 		const same = kept && files.find((f) => f.source === kept.source && (f.audio ?? '') === kept.audio && !!f.burnedIn === kept.burnedIn && (kept.hevc === undefined || !!f.hevc === kept.hevc) && playableHere(f));
 		if (same) return same;
-		const showboxPick = pickFile(files, preferredQuality, animeAudio());
+		const showboxPick = keptShowboxCopy(files) ?? pickFile(files, preferredQuality, animeAudio());
 		// A Showbox file known to come only in 360p (or Febbox's daily limit is used up): another
 		// source's copy instead, if there is one.
 		if (showboxPick && !showboxPick.source && (lowOnly(showboxPick.fid) || febboxOut())) return betterThanShowbox(files) ?? showboxPick;
 		return showboxPick;
 	};
 
-	/* The source picked for a show, kept on this device (Showbox needs nothing kept: it's the default). */
-	type KeptSource = { source: string; audio: string; burnedIn: boolean; hevc?: boolean };
+	/*
+	 * The source picked for a show, kept on this device. For Showbox, which of its copies: many
+	 * shows have two of each episode (Dungeon Meshi: both languages in one, Japanese alone in the
+	 * other), and the kind picked by hand carries on to the next episodes. It's told by the file's
+	 * name with the numbers taken out, or else by being the bigger or the smaller one.
+	 */
+	type KeptSource = {
+		source: string;
+		audio: string;
+		burnedIn: boolean;
+		hevc?: boolean;
+		showbox?: { quality: string; name: string; larger: boolean };
+	};
+
+	/** A file's name with its numbers taken out: "Danjon.meshi.s01e08.1080p.dual.mkv" → "danjon.meshi.#.#p.dual.mkv". */
+	const nameKind = (name: string) => name.toLowerCase().replace(/s\d+\s*e\d+/g, '#').replace(/\d+/g, '#');
+
+	/** The Showbox copy of the kind picked for this show last time, if one was. */
+	function keptShowboxCopy(files: FileOption[]): FileOption | null {
+		const kept = keptSource()?.showbox;
+		if (!kept) return null;
+		const own = files.filter((f) => !f.source && playableHere(f) && f.quality === kept.quality);
+		const sameKind = own.find((f) => nameKind(f.name) === kept.name);
+		if (sameKind || own.length < 2) return sameKind ?? null;
+		const bySize = [...own].sort((a, b) => bytesOf(b.size) - bytesOf(a.size));
+		return kept.larger ? bySize[0] : bySize[bySize.length - 1];
+	}
 	const keptSourceKey = () => `catalog:source:${(lastResolveArgs?.title ?? '').toLowerCase()}`;
 
 	function keptSource(): KeptSource | null {
@@ -185,9 +235,12 @@
 		try {
 			if (file.source) {
 				localStorage.setItem(keptSourceKey(), JSON.stringify({ source: file.source, audio: file.audio ?? '', burnedIn: !!file.burnedIn, hevc: !!file.hevc }));
-			} else {
-				localStorage.removeItem(keptSourceKey());
+				return;
 			}
+			const own = currentFiles.filter((f) => !f.source && f.quality === file.quality);
+			const larger = own.every((f) => bytesOf(f.size) <= bytesOf(file.size));
+			const kept: KeptSource = { source: '', audio: '', burnedIn: false, showbox: { quality: file.quality, name: nameKind(file.name), larger } };
+			localStorage.setItem(keptSourceKey(), JSON.stringify(kept));
 		} catch {}
 	}
 
@@ -195,18 +248,24 @@
 	 * A link for this copy, or — when its source has nothing right now — for the next copy from
 	 * another source (Aniwave, 7Movies) this device can play. Empty `url` if none answers.
 	 */
+	const BURNED_IN_WAIT = 6000;
 	async function linkFor(files: FileOption[], file: FileOption): Promise<{ file: FileOption; url: string; debug?: string }> {
 		// Never a change of language by itself: someone watching in Japanese whose copy won't play
 		// isn't put on the English dub (it stays in the list, to pick by hand).
 		const wantDub = file.audio ? isDub(file) : hearingDub();
 		const sameAudio = files.filter((f) => f !== file && playableHere(f) && isDub(f) === wantDub);
-		// In this order: the same source's other copy (7Movies has two), Showbox's best, the rest.
+		// In this order: the same source's other copy (7Movies has two, Showbox often two sizes),
+		// Showbox's best, the rest. (A Showbox pick used to have no Showbox copy to fall back on, so
+		// a slow Febbox start put Dungeon Meshi E8 on Aniwave, 2026-10-23.)
 		const showboxBest = file.source ? pickFile(sameAudio.filter((f) => !f.source), preferredQuality) : null;
 		const others = [
-			...sameAudio.filter((f) => f.source && f.source === file.source),
+			...sameAudio.filter((f) => (f.source ?? '') === (file.source ?? '')),
 			...(showboxBest ? [showboxBest] : []),
 			...sameAudio.filter((f) => f.source && f.source !== file.source)
 		];
+		// Subtitles in the picture can't be turned off or changed: such a copy only plays when
+		// nothing else has answered a few seconds after it did (unless one was picked).
+		const unwanted = (copy: FileOption) => Boolean(copy.burnedIn) && !file.burnedIn;
 		const ask = async (copy: FileOption): Promise<{ url: string; debug?: string }> => {
 			try {
 				const resp = await fetch(`/api/watch/stream?share_key=${encodeURIComponent(shareOf(copy))}&fid=${copy.fid}`);
@@ -227,15 +286,21 @@
 		if (quick?.url) return { file, url: quick.url, debug: quick.debug };
 		const asked = soon.map((answer, i) => answer ?? ask(others[i]));
 		let debug: string | undefined;
+		const answers = [[file, first] as const, ...others.map((copy, i) => [copy, asked[i]] as const)].map(([copy, answer]) => ({
+			copy,
+			link: answer.then((data) => {
+				debug = data.debug ?? debug;
+				if (!data.url) throw new Error('no link');
+				return { file: copy, url: data.url, debug: data.debug };
+			})
+		}));
+		const wanted = answers.filter((a) => !unwanted(a.copy)).map((a) => a.link);
+		const burnedIn = answers.filter((a) => unwanted(a.copy)).map((a) => a.link);
+		const burnedInLater = burnedIn.length
+			? Promise.any(burnedIn).then((link) => new Promise<typeof link>((r) => setTimeout(() => r(link), BURNED_IN_WAIT)))
+			: null;
 		try {
-			return await Promise.any(
-				[[file, first] as const, ...others.map((copy, i) => [copy, asked[i]] as const)].map(async ([copy, answer]) => {
-					const data = await answer;
-					debug = data.debug ?? debug;
-					if (!data.url) throw new Error('no link');
-					return { file: copy, url: data.url, debug: data.debug };
-				})
-			);
+			return await Promise.any(burnedInLater ? [...wanted, burnedInLater] : wanted);
 		} catch {
 			return { file, url: '', debug };
 		}
@@ -429,6 +494,8 @@
 
 	let libraryEntryId = $state<number | null>(null);
 	let libraryEntryStatus = $state('');
+	/** Your rating of it (null: not rated), for "Rate it" when it's finished. */
+	let libraryEntryRating = $state<number | null>(null);
 	let libLastSeason = $state(0);
 	let libLastEpisode = $state(0);
 	let addingToLibrary = $state(false);
@@ -436,6 +503,12 @@
 	let autoplayNext = $state(false);
 	let autoplayFired = false;
 	let skipResume = false;
+	/**
+	 * "Finished already: on to the next one" is only for the episode the player opened on. One
+	 * picked by hand plays, even finished: a reload at 0:00 just after the pick (a copy that
+	 * wouldn't play, so another was tried) asked again and jumped on, E12 to E13 (2026-10-23).
+	 */
+	let mayMoveOn = true;
 	let switchingEpisode = false;
 	/**
 	 * The episode before is still in the video while another loads (its picture, its sound
@@ -502,6 +575,8 @@
 	let gainNode: GainNode | undefined = $state();
 	let audioCtx: AudioContext | undefined;
 	let audioSource: MediaElementAudioSourceNode | undefined;
+	/** This video's sound can't go through the page's audio (another site's file without CORS): it would be silent there. */
+	let soundBlocked = false;
 	let playbackRate = $state(1);
 	let isFullscreen = $state(false);
 
@@ -871,7 +946,7 @@
 			const activated =
 				pageActivated ||
 				((navigator as Navigator & { userActivation?: { hasBeenActive: boolean } }).userActivation?.hasBeenActive ?? true);
-			if (!activated) return;
+			if (!activated || soundBlocked) return;
 			ensureGain();
 			if (!audioCtx || !audioSource) return;
 			if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
@@ -922,12 +997,12 @@
 
 	function applyVolume(v: number) {
 		if (!videoEl) return;
-		if (v > 1) {
+		if (v > 1 && !soundBlocked) {
 			ensureGain();
 			videoEl.volume = 1;
 			if (gainNode) gainNode.gain.value = v;
 		} else {
-			videoEl.volume = v;
+			videoEl.volume = Math.min(v, 1);
 			if (gainNode) gainNode.gain.value = 1;
 		}
 		if (v > 0) videoEl.muted = false;
@@ -996,6 +1071,7 @@
 	function playbackNow() {
 		const now = performance.now();
 		const video = recentPieces.filter((p) => p.kind === 'video' && now - p.at < 60_000).slice(-6);
+		const sound = recentPieces.filter((p) => p.kind === 'audio' && now - p.at < 60_000).slice(-6);
 		const level = hlsInstance && hlsInstance.currentLevel >= 0 ? hlsInstance.levels[hlsInstance.currentLevel] : null;
 		return {
 			title: videoTitle,
@@ -1011,9 +1087,17 @@
 			servers: [...new Set(video.map((p) => p.host))],
 			relayed: streamUrl.startsWith('/api/watch/relay?'),
 			previewsDownloading: strip?.busy ?? 0,
-			hearingSound: subSync?.fetchingSound ?? false
+			hearingSound: subSync?.fetchingSound ?? false,
+			// A separate sound track can run out on its own: both are kept, and how long each of
+			// its last pieces took (they're small, so speeds say little).
+			pictureAhead: trackRanges.video ? Math.round(aheadIn(trackRanges.video)) : null,
+			soundAhead: trackRanges.audio ? Math.round(aheadIn(trackRanges.audio)) : null,
+			soundPiecesSeconds: sound.map((p) => Math.round(p.ms / 100) / 10)
 		};
 	}
+
+	/** The separate picture and sound tracks' loaded parts, as last added to. */
+	let trackRanges: Partial<Record<string, TimeRanges>> = {};
 
 	let lastStopLogged = 0;
 	/** A stop to load, kept with what was going on (once every 20 seconds at most). */
@@ -1155,9 +1239,15 @@
 		if (pipCanvas.width !== vw) pipCanvas.width = vw;
 		if (pipCanvas.height !== vh) pipCanvas.height = vh;
 
-		pipCtx.drawImage(videoEl, 0, 0, vw, vh);
+		// (The episode before, while the next one loads, is hidden here too.)
+		if (oldPicture) {
+			pipCtx.fillStyle = '#000';
+			pipCtx.fillRect(0, 0, vw, vh);
+		} else {
+			pipCtx.drawImage(videoEl, 0, 0, vw, vh);
+		}
 
-		if (subtitlesOn) {
+		if (subtitlesOn && !oldPicture) {
 			const subs = subsAt(subTimeAt(videoEl.currentTime || 0));
 			const text = plainSubText(subs.bottom || subs.top);
 			if (text) {
@@ -1193,10 +1283,142 @@
 		pipAnimFrame = requestAnimationFrame(drawPiPFrame);
 	}
 
+	/*
+	 * The mini player shows a copy of the picture (drawn with the subtitles). Its buttons are the
+	 * page's media controls (`setPiPActions`): play/pause work on the video, not the copy, and
+	 * previous/next change episode, with the mini player staying open. (A live copy gets no
+	 * play/pause button of its own, and Chromium's only skip button reads "Skip Ad", so there's no
+	 * Skip Intro here.) The copy follows the video's play/pause too.
+	 */
+	function onPiPPause() {
+		if (!videoEl || videoEl.paused) return;
+		userPaused = true;
+		videoEl.pause();
+	}
+
+	function onPiPPlay() {
+		if (!videoEl || !videoEl.paused || oldPicture) return;
+		userPaused = false;
+		videoEl.play().catch(() => {});
+	}
+
+	/** This video's address, for the mini player or for coming back from it, on `fid` (and episode). */
+	function watchAddress(extra: Record<string, string>, episode = activeEpisode, fid = activeFileFid): string {
+		const args = lastResolveArgs;
+		const params = new URLSearchParams({
+			title: args?.title ?? videoTitle.replace(/ S\d+E\d+$/, ''),
+			type: args?.type ?? showType,
+			year: args?.year ?? '',
+			auto: '1',
+			fid: String(fid),
+			...extra
+		});
+		if (showType === 'tv' && episode) {
+			params.set('resume_s', String(episode.season));
+			params.set('resume_e', String(episode.episode));
+		}
+		return `/watch?${params}`;
+	}
+
+	/** Opens the computer's mini player here (false: not in the desktop app, so the browser's own). */
+	async function openMiniPlayer(): Promise<boolean> {
+		if (!videoEl || !activeFileFid) return false;
+		// Its place saved first: the mini player starts from it.
+		saveProgressSync();
+		const resp = await fetch('/api/desktop/mini', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ open: watchAddress({ mini: '1' }) })
+		}).catch(() => null);
+		if (!resp?.ok) return false;
+		inMini = true;
+		userPaused = true;
+		videoEl.pause();
+		hlsInstance?.stopLoad();
+		return true;
+	}
+
+	type MiniBack = { at: number | null; playing: boolean; season?: number; episode?: number; fid?: number };
+
+	/** The mini player is done: back to it here, where it got to (or where it last saved). */
+	async function backFromMini(back: MiniBack | null) {
+		if (!inMini) return;
+		inMini = false;
+		// It went on to another episode, or another copy: this page opens that one.
+		const episode = back?.season ? episodes.find((e) => e.season === back.season && e.episode === back.episode) : activeEpisode;
+		if ((episode && episode !== activeEpisode) || (back?.fid && back.fid !== activeFileFid)) {
+			location.href = watchAddress({}, episode ?? activeEpisode, back?.fid || activeFileFid);
+			return;
+		}
+		if (!videoEl) return;
+		let at = back?.at ?? null;
+		if (at === null) {
+			const s = activeEpisode?.season ?? 0;
+			const e = activeEpisode?.episode ?? 0;
+			const title = encodeURIComponent(videoTitle.replace(/ S\d+E\d+$/, ''));
+			const saved = await fetch(`/api/watch/progress?title=${title}&type=${showType}&season=${s}&episode=${e}`)
+				.then((r) => (r.ok ? r.json() : null))
+				.catch(() => null);
+			at = saved?.currentTime ?? null;
+		}
+		if (at !== null) seekTo(at);
+		else hlsInstance?.startLoad(-1);
+		if (back?.playing) {
+			userPaused = false;
+			videoEl.play().catch(() => {});
+		}
+	}
+
+	/** In the mini player: back to Catalog's window, playing on (or not, when it's closed). */
+	function leaveMini(playOn: boolean) {
+		saveProgressSync();
+		fetch('/api/desktop/mini', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				back: videoEl?.currentTime ?? 0,
+				playing: playOn && Boolean(videoEl && !videoEl.paused),
+				season: activeEpisode?.season,
+				episode: activeEpisode?.episode,
+				fid: activeFileFid
+			}),
+			keepalive: true
+		}).catch(() => {});
+	}
+
+	onMount(() => {
+		(window as unknown as { catalogBackFromMini?: typeof backFromMini }).catalogBackFromMini = backFromMini;
+	});
+	onDestroy(() => {
+		if (typeof window !== 'undefined') delete (window as unknown as { catalogBackFromMini?: unknown }).catalogBackFromMini;
+	});
+
+	const PIP_ACTIONS = ['play', 'pause', 'previoustrack', 'nexttrack'] as const;
+
+	/** The mini player's buttons: on while it's open (previous/next only where there's one), else off. */
+	function setPiPActions(on: boolean) {
+		const session = navigator.mediaSession;
+		if (!session) return;
+		const handlers: Record<(typeof PIP_ACTIONS)[number], (() => void) | null> = {
+			play: onPiPPlay,
+			pause: onPiPPause,
+			previoustrack: previousEpisode() ? () => { const ep = previousEpisode(); if (ep) playEpisode(ep); } : null,
+			nexttrack: nextEpisode() ? () => { const ep = nextEpisode(); if (ep) playEpisode(ep); } : null
+		};
+		for (const action of PIP_ACTIONS) {
+			try {
+				session.setActionHandler(action, on ? handlers[action] : null);
+			} catch {}
+		}
+	}
+
 	function cleanupPiP() {
+		setPiPActions(false);
 		if (pipAnimFrame) { cancelAnimationFrame(pipAnimFrame); pipAnimFrame = null; }
 		if (pipVideo) {
 			pipVideo.removeEventListener('leavepictureinpicture', cleanupPiP);
+			pipVideo.removeEventListener('pause', onPiPPause);
+			pipVideo.removeEventListener('play', onPiPPlay);
 			pipVideo.pause();
 			pipVideo.srcObject = null;
 			pipVideo.remove();
@@ -1209,6 +1431,7 @@
 
 	async function togglePiP() {
 		if (!videoEl) return;
+		if (!inPiP && inDesktopApp && !miniMode && (await openMiniPlayer())) return;
 		try {
 			if (inPiP) {
 				if (document.pictureInPictureElement) await document.exitPictureInPicture();
@@ -1242,10 +1465,18 @@
 			await pv.requestPictureInPicture();
 			pipVideo = pv;
 			inPiP = true;
+			pv.addEventListener('pause', onPiPPause);
+			pv.addEventListener('play', onPiPPlay);
+			if (videoEl.paused) pv.pause();
+			setPiPActions(true);
 		} catch (err) {
 			console.error('PiP failed:', err);
 			cleanupPiP();
-			try { await videoEl.requestPictureInPicture(); inPiP = true; } catch {}
+			try {
+				await videoEl.requestPictureInPicture();
+				inPiP = true;
+				videoEl.addEventListener('leavepictureinpicture', () => (inPiP = false), { once: true });
+			} catch {}
 		}
 	}
 
@@ -2031,8 +2262,9 @@
 	/* --------------------------------------------------------------- watch progress */
 
 	function buildProgressBody(): string | null {
-		// Between episodes the video is still the one before: its place isn't this episode's.
-		if (!videoTitle || !videoEl || switchingEpisode || loadingEpisode) return null;
+		// Between episodes the video is still the one before: its place isn't this episode's. (And
+		// while the mini player plays, it's the one saving.)
+		if (!videoTitle || !videoEl || switchingEpisode || loadingEpisode || inMini) return null;
 		const ct = videoEl.currentTime;
 		const dur = videoEl.duration;
 		if (!dur || !isFinite(dur) || dur < 10 || ct < 3) return null;
@@ -2059,6 +2291,7 @@
 			xhr.setRequestHeader('Content-Type', 'application/json');
 			xhr.send(body);
 		} catch {}
+		noteUpNext();
 	}
 
 	function saveProgress() {
@@ -2079,14 +2312,68 @@
 						watchedEpisodeMap = new Map(watchedEpisodeMap).set(key, pct);
 					}
 				}
+				noteUpNext();
+				askForRating();
 			}
 		}).catch(() => {});
+	}
+
+	/*
+	 * Finished a film, or a series' last episode there is: "Rate it", with the stars right there.
+	 * Nobody opened a title's page, scrolled to Edit and saved just to rate it (2026-10-23: none of
+	 * 438 titles had a rating). Once per visit, only for what's in the library and not yet rated,
+	 * on the computer (not a TV, whose profiles' lists have no ratings, nor the mini player).
+	 */
+	let ratingAsked = false;
+	let rateOffer = $state<{ title: string; rated: number | null } | null>(null);
+
+	function askForRating() {
+		if (ratingAsked || tvMode || miniMode || !libraryEntryId || libraryEntryRating !== null || !videoEl) return;
+		const length = videoEl.duration;
+		if (!length || !isFinite(length) || videoEl.currentTime / length < 0.95) return;
+		if (showType === 'tv' && nextEpisode()) return;
+		ratingAsked = true;
+		rateOffer = { title: videoTitle.replace(/ S\d+E\d+$/, ''), rated: null };
+	}
+
+	async function rateIt(value: number | null) {
+		if (!rateOffer || !libraryEntryId || value === null) return;
+		rateOffer = { ...rateOffer, rated: value };
+		const resp = await fetch('/api/entries', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ id: libraryEntryId, action: 'set', fields: { rating: value } })
+		}).catch(() => null);
+		if (resp?.ok) libraryEntryRating = value;
+		setTimeout(() => (rateOffer = null), 1200);
 	}
 
 	function saveProgressBeacon() {
 		const body = buildProgressBody();
 		if (!body) return;
 		navigator.sendBeacon('/api/watch/progress', new Blob([body], { type: 'application/json' }));
+		noteUpNext();
+	}
+
+	/*
+	 * Most of an episode watched (the credits rolling): Continue Watching moves on to the next
+	 * one, "Up next". It used to wait for the last frame, so stopping in the credits left the card
+	 * on the episode just watched ("S2E17 · 97% · 0m left"). Sent again after every save of this
+	 * episode, or that save would put this one back on top.
+	 */
+	function noteUpNext() {
+		if (showType !== 'tv' || !videoEl || switchingEpisode || loadingEpisode) return;
+		const length = videoEl.duration;
+		if (!length || !isFinite(length) || videoEl.currentTime / length < 0.95) return;
+		const next = nextEpisode();
+		if (!next) return;
+		const payload = JSON.stringify({
+			title: videoTitle.replace(/ S\d+E\d+$/, ''), type: 'tv',
+			season: next.season, episode: next.episode,
+			currentTime: 0, duration: 0,
+			posterUrl: watchPosterUrl
+		});
+		navigator.sendBeacon('/api/watch/progress', new Blob([payload], { type: 'application/json' }));
 	}
 
 	function startProgressSaving() {
@@ -2117,16 +2404,18 @@
 			const data = await resp.json();
 			if (!data) return { at: 0 };
 			let at = 0;
-			if (data.currentTime > 5 && data.duration > 0) {
-				const pct = data.currentTime / data.duration;
-				if (pct >= 0.95 && showType === 'tv') {
-					const next = nextEpisode();
-					// Finished already: on to the next one, leaving this one's finished place as it is.
-					if (next) { playEpisode(next, true); return null; }
-				}
-				// Finished with nothing after it (the last episode, a film): from the start, not the end.
-				if (pct < 0.95) at = data.currentTime;
+			const pct = data.duration > 0 ? data.currentTime / data.duration : 0;
+			// Finished already: on to the next one, leaving this one's finished place as it is. (Also
+			// one ticked by hand, kept as 1 s of 1: it was played again from its start, and its tick
+			// went once it had played a few seconds.)
+			const moveOn = mayMoveOn;
+			mayMoveOn = false;
+			if (pct >= 0.95 && showType === 'tv' && moveOn) {
+				const next = nextEpisode();
+				if (next) { playEpisode(next, true); return null; }
 			}
+			// Finished with nothing after it (the last episode, a film): from the start, not the end.
+			if (data.currentTime > 5 && pct < 0.95) at = data.currentTime;
 			return { at, subUrl: data.subUrl, subFileName: data.subFileName, subDelay: data.subDelay };
 		} catch {
 			return { at: 0 };
@@ -2240,10 +2529,15 @@
 	}
 
 	function bufferedAhead(): number {
+		return videoEl ? aheadIn(videoEl.buffered) : 0;
+	}
+
+	/** How far past the current spot `ranges` reach without a gap. */
+	function aheadIn(ranges: TimeRanges): number {
 		if (!videoEl) return 0;
 		const t = videoEl.currentTime;
-		for (let i = 0; i < videoEl.buffered.length; i++) {
-			if (videoEl.buffered.start(i) <= t + 0.5 && videoEl.buffered.end(i) > t) return videoEl.buffered.end(i) - t;
+		for (let i = 0; i < ranges.length; i++) {
+			if (ranges.start(i) <= t + 0.5 && ranges.end(i) > t) return ranges.end(i) - t;
 		}
 		return 0;
 	}
@@ -2304,6 +2598,7 @@
 		playing = false;
 		showControls = true;
 		saveProgress();
+		askForRating();
 		const next = nextEpisode();
 		if (showType === 'tv' && next) {
 			const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
@@ -2664,6 +2959,17 @@
 		const next = episodes.slice(idx + 1).find(playable) ?? null;
 		if (next && next.season === 0 && current.season !== 0) return null;
 		return next;
+	}
+
+	/** The playable episode before this one (specials aside, unless this is one). */
+	function previousEpisode(): Episode | null {
+		if (!activeEpisode) return null;
+		const current = activeEpisode;
+		const idx = episodes.findIndex(ep => ep.season === current.season && ep.episode === current.episode);
+		if (idx <= 0) return null;
+		const before = episodes.slice(0, idx).reverse().find(playable) ?? null;
+		if (before && before.season === 0 && current.season !== 0) return null;
+		return before;
 	}
 
 	async function addToLibraryQuick() {
@@ -3356,6 +3662,8 @@
 		videoEl.autoplay = !stayPaused;
 		videoEl.pause();
 		videoEl.removeAttribute('src');
+		videoEl.removeAttribute('crossorigin');
+		soundBlocked = false;
 		videoEl.load();
 
 		if (isPlaylist(streamUrl) && Hls.isSupported()) {
@@ -3404,6 +3712,8 @@
 			});
 			hls.subtitleDisplay = false;
 			appendedSound = [];
+			trackRanges = {};
+			hls.on(Hls.Events.BUFFER_APPENDED, (_e, data) => (trackRanges = { ...trackRanges, ...data.timeRanges }));
 			// (untrack: reading the copy here made this effect run again the moment another episode
 			// was picked, replaying the one before from its start under "Loading episode…".)
 			untrack(() => hearDownloadsOf(activeFile));
@@ -3516,12 +3826,32 @@
 			hlsInstance = hls;
 			player = hls;
 		} else {
-			videoEl.src = streamUrl;
+			// Another site's file is asked for with CORS, so its sound can go through the page's audio
+			// (auto-timing listens there, and volume past 100% is made there). Without it the browser
+			// hands the page silence, and silence is all that plays: Dungeon Meshi E8's Showbox file,
+			// a plain MP4, had no sound at all (2026-10-23). A site that refuses CORS is asked again
+			// without it, and its sound is left out of the page's audio (`soundBlocked`).
+			const url = streamUrl;
+			const crossSite = new URL(url, location.href).origin !== location.origin;
+			if (crossSite) videoEl.crossOrigin = 'anonymous';
+			videoEl.src = url;
 			if (!stayPaused) videoEl.play().catch(() => {});
 			hlsAudioTracks = [];
+			if (crossSite) {
+				videoEl.addEventListener('error', () => {
+					if (!videoEl || videoEl.src !== url || videoEl.readyState > 0) return;
+					soundBlocked = true;
+					videoEl.removeAttribute('crossorigin');
+					videoEl.src = url;
+					if (!stayPaused) videoEl.play().catch(() => {});
+				}, { once: true });
+			}
 			videoEl.addEventListener('loadedmetadata', () => {
 				switchingEpisode = false;
 				autoplayFired = false;
+				// (Its length came just before, while still switching, so it wasn't taken then:
+				// the bar read "0:07 / 0:00".)
+				if (videoEl) duration = videoEl.duration;
 				if (seekAfterLoad > 0) {
 					const t = seekAfterLoad;
 					seekAfterLoad = 0;
@@ -3553,6 +3883,15 @@
 
 	$effect(() => {
 		if (inPiP) return () => cleanupPiP();
+	});
+
+	// Another episode in the mini player: previous/next are for that one now.
+	$effect(() => {
+		void activeEpisode;
+		void episodes;
+		untrack(() => {
+			if (pipVideo) setPiPActions(true);
+		});
 	});
 
 	$effect(() => {
@@ -3849,6 +4188,7 @@
 			mainShareKey = data.shareKey;
 			libraryEntryId = data.libraryEntry?.id ?? null;
 			libraryEntryStatus = data.libraryEntry?.status ?? '';
+			libraryEntryRating = data.libraryEntry?.rating ?? null;
 			libLastSeason = data.libraryEntry?.lastSeason ?? 0;
 			libLastEpisode = data.libraryEntry?.lastEpisode ?? 0;
 			watchPosterUrl = data.posterUrl ?? '';
@@ -3912,6 +4252,17 @@
 			}
 
 			loggedIn = Boolean(data.hasToken);
+			if (typeof data.febboxAccount === 'string') {
+				febboxAccount = data.febboxAccount;
+				// Another account than last time: files noted "360p only" may have been the last
+				// account's used-up allowance (its links were still in use for a while). They go.
+				try {
+					if (localStorage.getItem(FEBBOX_ACCOUNT) !== febboxAccount) {
+						for (const key of Object.keys(localStorage)) if (key.startsWith(LOW_ONLY)) localStorage.removeItem(key);
+						localStorage.setItem(FEBBOX_ACCOUNT, febboxAccount);
+					}
+				} catch {}
+			}
 
 			if (data.debug) debugInfo = data.debug;
 
@@ -3972,6 +4323,18 @@
 				return;
 			}
 
+			// The mini player, on another Showbox copy than the one the computer fetched a link for.
+			const start = startFid !== null ? currentFiles.find((f) => f.fid === startFid && !f.source) : null;
+			if (start && start.fid !== data.fid) {
+				startFid = null;
+				const got = await linkFor(currentFiles, start);
+				if (got.url) {
+					activeQuality = got.file.quality;
+					activeFileFid = got.file.fid;
+					streamUrl = got.url;
+					return;
+				}
+			}
 			if (data.streamUrl) {
 				streamUrl = data.streamUrl;
 				const af = currentFiles.find((f) => f.fid === data.fid);
@@ -4118,6 +4481,7 @@
 	async function playEpisode(ep: Episode, passingFinished = false) {
 		if (ep === activeEpisode || !playable(ep)) return;
 		const mine = ++episodeSwitch;
+		mayMoveOn = false;
 		if (!passingFinished && !loadingEpisode) saveProgress();
 		// The episode before stops here and now. It used to play on while the next one's link was
 		// fetched (Movy: up to 50 s), under the next one's name — and its place was saved as the
@@ -4128,7 +4492,9 @@
 		oldPicture = true;
 		videoEl?.pause();
 		hlsInstance?.stopLoad();
-		if (inPiP) cleanupPiP();
+		// The mini player stays open for the next episode (its next button is how it got here). Only
+		// the browser's own one, showing the video itself, closes.
+		if (inPiP && !pipVideo) cleanupPiP();
 		lastCastKey = '';
 
 		// Subtitles picked by hand carry on to the next episode; ones that went on by themselves
@@ -4329,7 +4695,8 @@
 	<!-- ============================================================= PLAYER VIEW -->
 	<div
 		class="player-page"
-		class:has-sidebar={castOpen || (showType === 'tv' && seasons.length > 0 && sidebarOpen)}
+		class:mini={miniMode}
+		class:has-sidebar={!miniMode && (castOpen || (showType === 'tv' && seasons.length > 0 && sidebarOpen))}
 		class:hide-cursor={isFullscreen && cursorIdle && !showControls && playing}
 		bind:this={playerPageEl}
 		data-tv-player={streamUrl || useIframe ? '' : undefined}
@@ -4450,7 +4817,7 @@
 				if (playing && !showSettings && !showCaptions && !showAudioPicker) showControls = false;
 			}}
 		>
-			{#if showType === 'tv' && seasons.length > 0 && sidebarOpen}
+			{#if showType === 'tv' && seasons.length > 0 && sidebarOpen && !miniMode}
 				<aside class="sidebar">
 					<div class="season-tabs">
 						{#each seasons as s (s)}
@@ -4562,6 +4929,7 @@
 							playing = true;
 							userPaused = false;
 							scheduleHide();
+							if (pipVideo?.paused) pipVideo.play().catch(() => {});
 						}}
 						onpause={() => {
 							// Paused by hand (media keys, picture-in-picture), not by a reload clearing the old video.
@@ -4569,6 +4937,7 @@
 							playing = false;
 							showControls = true;
 							saveProgress();
+							if (pipVideo && !pipVideo.paused) pipVideo.pause();
 						}}
 						onvolumechange={() => {
 							if (videoEl) {
@@ -4608,6 +4977,8 @@
 
 					{#if inPiP}
 						<div class="pip-placeholder">Playing in picture-in-picture</div>
+					{:else if inMini}
+						<div class="pip-placeholder">Playing in the mini player</div>
 					{/if}
 
 					<!-- click-to-play / double-click-fullscreen layer -->
@@ -4670,6 +5041,17 @@
 						{/if}
 					{/if}
 
+					<!-- "Rate it", once it's finished -->
+					{#if rateOffer}
+						<div class="rate-offer">
+							<span class="rate-title">{rateOffer.rated === null ? `Rate ${rateOffer.title}` : 'Rated'}</span>
+							<StarRating large value={rateOffer.rated} label="Rate {rateOffer.title}" onchange={rateIt} />
+							<button type="button" class="rate-close" onclick={() => (rateOffer = null)} aria-label="Not now">
+								<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+							</button>
+						</div>
+					{/if}
+
 					<!-- skip intro / next episode -->
 					{#if activeSkip || nextEp}
 						<div class="next-ep-overlay">
@@ -4693,6 +5075,19 @@
 									<span class="next-ep-title">S{nextEp.season}E{nextEp.episode}{nameOf(nextEp) ? ` — ${nameOf(nextEp)}` : ''}</span>
 								</button>
 							{/if}
+						</div>
+					{/if}
+
+					<!-- the mini player's own: dragged by its top edge, back to Catalog and close in its corner -->
+					{#if miniMode}
+						<div class="mini-top" class:visible={showControls}>
+							<span class="mini-title">{videoTitle}</span>
+							<button type="button" class="mini-btn" onclick={() => leaveMini(true)} title="Back to Catalog">
+								<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M19 19H5V5h7V3H5a2 2 0 00-2 2v14a2 2 0 002 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
+							</button>
+							<button type="button" class="mini-btn" onclick={() => leaveMini(false)} title="Close">
+								<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+							</button>
 						</div>
 					{/if}
 
@@ -4761,6 +5156,17 @@
 									<text x="12" y="16" text-anchor="middle" font-size="7" font-weight="700" font-family="sans-serif">10</text>
 								</svg>
 							</button>
+
+							{#if miniMode && showType === 'tv' && previousEpisode()}
+								<button
+									class="ctrl-btn"
+									disabled={loadingEpisode}
+									onclick={() => { const ep = previousEpisode(); if (ep) playEpisode(ep); }}
+									title="Previous episode"
+								>
+									<svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+								</button>
+							{/if}
 
 							{#if upcomingEp}
 								{@const next = upcomingEp}
@@ -5218,6 +5624,36 @@
 	/* --------------------------------------------------------- player page (full viewport) */
 	.player-page { position: fixed; inset: 0; display: flex; flex-direction: column; z-index: 100; background: #000; }
 
+	/* ---------------------------------------------------------------- the mini player */
+	/* Only the video, its play buttons and the bar: no top bar, lists or settings. */
+	.player-page.mini .player-bar,
+	.player-page.mini .player-error,
+	.player-page.mini .vol-slider,
+	.player-page.mini .delay-wrap,
+	.player-page.mini .ctrl-spacer ~ .ctrl-btn { display: none; }
+	.player-page.mini .controls { padding: 18px 10px 6px; background: linear-gradient(transparent, rgba(0, 0, 0, 0.6)); }
+	.player-page.mini .ctrl-row { gap: 2px; }
+	.player-page.mini .time-display { font-size: 0.78rem; }
+	.player-page.mini .subtitle-display { font-size: 0.95rem !important; }
+	.player-page.mini .next-ep-overlay { transform: scale(0.75); transform-origin: bottom right; }
+	/* The top edge moves the window (the buttons in it still click). */
+	.mini-top {
+		position: absolute; top: 0; left: 0; right: 0; height: 34px; z-index: 12;
+		display: flex; align-items: center; gap: 4px; padding: 0 6px 0 10px;
+		background: linear-gradient(rgba(0, 0, 0, 0.55), transparent);
+		opacity: 0; transition: opacity 0.3s ease;
+		-webkit-app-region: drag;
+	}
+	.mini-top.visible { opacity: 1; }
+	.mini-title { flex: 1; min-width: 0; font-size: 0.78rem; color: #ddd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.mini-btn {
+		-webkit-app-region: no-drag;
+		display: flex; align-items: center; justify-content: center;
+		width: 28px; height: 28px; border: none; border-radius: 6px;
+		background: transparent; color: #fff; cursor: pointer;
+	}
+	.mini-btn:hover { background: rgba(255, 255, 255, 0.15); }
+
 	/* --------------------------------------------------------- top bar */
 	.player-bar { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: rgba(0, 0, 0, 0.8); border-bottom: 1px solid rgba(255, 255, 255, 0.08); z-index: 20; transition: opacity 0.3s ease, transform 0.3s ease; }
 	.playback-stats {
@@ -5459,6 +5895,18 @@
 
 	.scan-badge { position: absolute; top: 50%; left: 50%; z-index: 9; transform: translate(-50%, -50%); padding: 14px 26px; border-radius: 10px; background: rgba(0, 0, 0, 0.7); color: #fff; font-size: 2rem; font-weight: 700; pointer-events: none; }
 	:global(html.tv) .next-ep-btn:focus { border-color: #fff; background: #fff; color: #000; outline: none; }
+	/* "Rate it": bottom left, out of the way of Next Episode on the right. Stars: --star in app.css. */
+	.rate-offer {
+		position: absolute; bottom: 100px; left: 24px; z-index: 8;
+		display: flex; align-items: center; gap: 12px;
+		padding: 10px 10px 10px 16px; border-radius: 10px;
+		background: rgba(20, 20, 20, 0.85); color: #fff;
+		--ink-faint: #9aa5a0;
+		animation: fadeSlideIn 0.4s ease;
+	}
+	.rate-title { font-size: 0.92rem; font-weight: 600; max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.rate-close { display: flex; padding: 6px; border: none; border-radius: 6px; background: transparent; color: #ccc; cursor: pointer; }
+	.rate-close:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
 	.next-ep-overlay { position: absolute; bottom: 100px; right: 24px; z-index: 8; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; animation: fadeSlideIn 0.4s ease; }
 	.skip-btn { padding: 11px 22px; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 6px; background: rgba(0, 0, 0, 0.75); color: #fff; font-size: 0.95rem; font-weight: 600; cursor: pointer; transition: background 0.2s, border-color 0.2s; }
 	.skip-btn:hover { background: rgba(30, 30, 30, 0.95); border-color: var(--accent); }

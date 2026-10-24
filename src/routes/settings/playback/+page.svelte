@@ -18,6 +18,9 @@
 		relayed?: boolean;
 		previewsDownloading?: number;
 		hearingSound?: boolean;
+		pictureAhead?: number | null;
+		soundAhead?: number | null;
+		soundPiecesSeconds?: number[];
 		computer?: { host: string; pieces: number; mbpsEach: number; slowestSeconds: number }[];
 	};
 	const stops = $derived(data.stops as Stop[]);
@@ -34,6 +37,10 @@
 		if (stop.relayed && site && need && site.mbpsEach < need) return `The site was slow sending to this computer (${site.mbpsEach} Mbps a piece).`;
 		if (stop.relayed && site && each !== null && need && each < need) return 'This computer had it, but it reached the TV slowly (Wi-Fi between them).';
 		if (each !== null && need && each < need) return `The video server was slow (${each} Mbps a piece, ${need} needed).`;
+		if (stop.pictureAhead != null && stop.soundAhead != null && stop.soundAhead < 2 && stop.pictureAhead >= 10)
+			return `The sound track ran out while the picture was ${stop.pictureAhead} s ahead.`;
+		if (stop.pictureAhead != null && stop.soundAhead != null && stop.pictureAhead < 2 && stop.soundAhead >= 10)
+			return `The picture ran out while the sound was ${stop.soundAhead} s ahead.`;
 		if (stop.previewsDownloading || stop.hearingSound) return 'Catalog was downloading other things at the same time.';
 		return 'No clear cause in the numbers.';
 	}
@@ -59,11 +66,14 @@
 						<p class="why">{guess(stop)}</p>
 						<dl>
 							<dt>Source</dt><dd>{stop.source ?? '—'} · {stop.height ? `${stop.height}p` : (stop.quality ?? '')}{stop.relayed ? ' · through this computer' : ''}</dd>
-							<dt>Loaded ahead</dt><dd>{stop.aheadSeconds ?? '—'} s</dd>
+							<dt>Loaded ahead</dt><dd>{stop.aheadSeconds ?? '—'} s{stop.pictureAhead != null && stop.soundAhead != null ? ` (picture ${stop.pictureAhead} s, sound ${stop.soundAhead} s)` : ''}</dd>
 							<dt>Each piece</dt><dd>{stop.piecesMbps?.length ? `${stop.piecesMbps.join(' · ')} Mbps` : '—'}{stop.needsMbps ? ` (needs ${stop.needsMbps})` : ''}</dd>
 							{#if stop.relayed}
 								<dt>This computer</dt>
 								<dd>{stop.computer?.length ? stop.computer.map((c) => `${c.host}: ${c.mbpsEach} Mbps a piece, slowest ${c.slowestSeconds} s`).join('; ') : 'nothing fetched in the last 90 s'}</dd>
+							{/if}
+							{#if stop.soundPiecesSeconds?.length}
+								<dt>Sound pieces</dt><dd>{stop.soundPiecesSeconds.join(' · ')} s each</dd>
 							{/if}
 							<dt>Server</dt><dd>{stop.servers?.join(', ') || '—'}</dd>
 							<dt>Also downloading</dt><dd>{[stop.previewsDownloading ? 'preview pictures' : '', stop.hearingSound ? 'sound for auto-timing' : ''].filter(Boolean).join(', ') || 'nothing'}</dd>

@@ -68,6 +68,17 @@
 		rememberLibrary(page.url.search);
 	});
 
+	// The filters shown are remembered for next time (see keptView in +page.server.ts).
+	$effect(() => {
+		const view = data.rememberView;
+		if (view === null || view === undefined) return;
+		fetch('/api/library-view', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ view })
+		}).catch(() => {});
+	});
+
 	const isFiltered = $derived(
 		Boolean(data.filters.q || data.filters.cat || data.filters.status || data.filters.tags.length > 0 || data.filters.yearFrom || data.filters.yearTo)
 	);

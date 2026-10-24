@@ -2,17 +2,22 @@ import { listCategories, listEntries, countsByCategory, completedCount, complete
 import { countNotes } from '$lib/server/db/notes';
 import { listTags } from '$lib/server/db/tags';
 import { SORTS, KEPT_FILTERS } from '$lib/constants';
-import { readSettings, updateSettings } from '$lib/server/settings';
+import { readSettings } from '$lib/server/settings';
 import { continueWatchingWithPosters } from '$lib/server/continueWatching';
 import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 
 /**
  * Status, sort, tags and years stay as you last set them, even after closing the app.
- * Whatever the address says wins (and is remembered); anything it leaves out comes from
- * last time. Clearing one puts it in the address empty ("status="), so it clears for good.
+ * Whatever the address says wins; anything it leaves out comes from last time. Clearing one
+ * puts it in the address empty ("status="), so it clears for good.
+ *
+ * Remembered by the page once it's really been opened (`remember`), not here: this also runs
+ * when a link to the library is only pointed at (the app loads a page ahead on hover), and
+ * pointing at a studio's chip on Dungeon Meshi's page filtered the library by "Ultra Super
+ * Pictures" (2026-10-23).
  */
-function keptView(url: URL): URLSearchParams {
+function keptView(url: URL): { view: URLSearchParams; remember: string | null } {
 	const saved = new URLSearchParams(readSettings().libraryView ?? '');
 	const view = new URLSearchParams();
 	let changed = false;
@@ -21,8 +26,7 @@ function keptView(url: URL): URLSearchParams {
 		if (from === url.searchParams) changed = true;
 		for (const value of from.getAll(key)) if (value) view.append(key, value);
 	}
-	if (changed && view.toString() !== saved.toString()) updateSettings({ libraryView: view.toString() });
-	return view;
+	return { view, remember: changed && view.toString() !== saved.toString() ? view.toString() : null };
 }
 
 export const load: PageServerLoad = async ({ url, request }) => {
@@ -31,7 +35,7 @@ export const load: PageServerLoad = async ({ url, request }) => {
 	if (/CatalogTV\//.test(request.headers.get('user-agent') ?? '') && readSettings().tvLayout !== 'full') {
 		redirect(303, '/tv/profiles');
 	}
-	const view = keptView(url);
+	const { view, remember } = keptView(url);
 	const q = (url.searchParams.get('q') ?? '').trim();
 	const cat = url.searchParams.get('cat') ?? '';
 	const status = view.get('status') ?? '';
@@ -72,6 +76,8 @@ export const load: PageServerLoad = async ({ url, request }) => {
 		noteCount: countNotes(),
 		tags: listTags(),
 		filters: { q, cat, status, sort: sort.value, tags: tagIds, yearFrom, yearTo },
+		/** The view to remember for next time, once this page is shown (null: nothing new). */
+		rememberView: remember,
 		continueWatching: await continueWatchingWithPosters(),
 		friendCount: sharedCatalogCount(),
 		ownedKeys: [...existingSourceKeys()],

@@ -12,6 +12,32 @@ without both.
 
 ## Unreleased
 
+## 3.5.0 — 2026-10-24 — Rate it, mini player, and fewer stops
+
+### New
+- **Your library**: rating, status, favourite, times watched and the episode you're on change with one click on a title's page, no Edit and Save
+- **Your library**: "Season reached" and "Episode reached" are dropdowns that fit the show's own seasons and episodes
+- **Player**: when you finish a film, or a series' last episode, you can rate it right there
+- **Mini player**: a small Catalog window that stays on top in the corner, with its own buttons and nothing dimmed; Catalog carries on where it got to (on the computer)
+- **Mini player**: previous and next episode buttons, and it stays open from one episode to the next
+
+### Improved
+- **Your library**: the edit page is tidier, with only what isn't on the title's page under "More details"
+- **Continue Watching**: once most of an episode is watched, the card moves on to the next one, "Up next", even if you stop during the credits
+- **Player**: the Showbox copy you pick for a show (both languages, or Japanese only) is picked again for its next episodes
+- **Player**: when the Showbox copy is slow to start, Showbox's other copy is tried before another source, and a copy with subtitles in the picture only plays if nothing else answers
+- **Settings → Playback**: each stop shows how far ahead the picture and the sound each were
+
+### Fixed
+- **Player**: Showbox videos that come as a single file play with sound, and show their length after the previous episode
+- **Player**: a video piece that failed to download no longer stops the video from loading until it stalls
+- **Player**: when an episode has two copies in the same quality, the bigger one plays, rather than whichever Febbox lists first
+- **Continue Watching**: an episode ticked as watched by hand goes on to the next one, instead of playing again from the start and losing its tick
+- **Player**: an episode you pick plays, even one already watched, rather than sometimes jumping on to the next
+- **Player**: signing in to Showbox with another account no longer keeps the last account's used-up daily limit and 360p links
+- **Library**: pointing at a studio or tag on a title's page no longer filters your library by it
+- **Library**: titles finished in the evening are dated that day, not the next
+
 ## 3.4.2 — 2026-10-23 — Moving Catalog to your account
 
 ### New

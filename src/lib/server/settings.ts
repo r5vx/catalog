@@ -89,6 +89,7 @@ export function readSettings(): Settings {
 }
 
 export function updateSettings(patch: Partial<Settings>): Settings {
+	const accountBefore = 'febboxToken' in patch ? febboxAccountOf(readSettings().febboxToken) : null;
 	const set = db.prepare(
 		'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
 	);
@@ -99,7 +100,37 @@ export function updateSettings(patch: Partial<Settings>): Settings {
 		else set.run(key, String(value));
 	}
 
-	return readSettings();
+	const settings = readSettings();
+	if (accountBefore !== null && febboxAccountOf(settings.febboxToken) !== accountBefore) {
+		for (const forget of febboxAccountChanged) forget();
+	}
+	return settings;
+}
+
+/*
+ * Another Febbox account signed in (or signed out): what was kept for the one before goes —
+ * its daily allowance, and its video links (360p ones, once its allowance was used up). After
+ * signing in with another account, Catalog still said the limit had 14 hours to go and played
+ * 360p (2026-10-23).
+ */
+const febboxAccountChanged: (() => void)[] = [];
+export function onFebboxAccountChange(forget: () => void): void {
+	febboxAccountChanged.push(forget);
+}
+
+/**
+ * A short name for the Febbox account a sign-in belongs to (never the sign-in itself): its user
+ * number from the "ui" cookie, hashed. The same account signing in again keeps its name.
+ */
+export function febboxAccountOf(token: string | undefined): string {
+	if (!token) return '';
+	const ui = token.match(/(?:^|;\s*)ui=([^;]+)/)?.[1] ?? '';
+	let who = '';
+	try {
+		who = String(JSON.parse(Buffer.from(ui.split('.')[1] ?? '', 'base64url').toString('utf8'))?.data?.uid ?? '');
+	} catch {}
+	// (No user number: the sign-in as a whole.)
+	return createHash('sha256').update(who || token).digest('hex').slice(0, 12);
 }
 
 /** One-time move of an old settings.json into the database. */

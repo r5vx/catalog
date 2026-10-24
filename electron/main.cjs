@@ -6,6 +6,7 @@
  * and shows the window — so from your side it opens like any other program.
  */
 const { app, BrowserWindow, shell, Menu, session } = require('electron');
+const { openMini, closeMini } = require('./miniPlayer.cjs');
 const { fork } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -443,6 +444,12 @@ function startServer() {
 		if (message?.type === 'make-strip') makeStrip(String(message.path));
 
 		if (message?.type === 'clear-app-cache') session.defaultSession.clearCache().catch(() => {});
+
+		// The mini player (miniPlayer.cjs): opened from the player, and back again.
+		if (message?.type === 'mini-open') {
+			openMini(window, ORIGIN, String(message.path ?? ''), path.join(__dirname, '..', 'build', 'client', 'icon.ico'));
+		}
+		if (message?.type === 'mini-back') closeMini(message);
 
 		if (message?.type === 'check-for-updates') checkForUpdates();
 
@@ -1453,6 +1460,11 @@ if (!app.requestSingleInstanceLock()) {
 					details.resourceType === 'xmlhttprequest' ||
 					details.resourceType === 'other') {
 					const headers = { ...details.responseHeaders };
+					// Replaced, not added beside the server's own (often "Access-Control-Allow-Origin"):
+					// two of them read as "*, *", which fails a CORS media request (2026-10-23).
+					for (const name of Object.keys(headers)) {
+						if (/^access-control-allow-(origin|headers|methods)$/i.test(name)) delete headers[name];
+					}
 					headers['access-control-allow-origin'] = ['*'];
 					headers['access-control-allow-headers'] = ['*'];
 					headers['access-control-allow-methods'] = ['GET, HEAD, OPTIONS'];

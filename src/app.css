@@ -24,6 +24,8 @@
 	--good-bg: #e4ede7;
 	--warn: #8a5d14;
 	--warn-bg: #f7eedc;
+	/* Your star ratings (the same in every theme). */
+	--star: #e0a526;
 	--shadow: 0 1px 2px rgb(20 32 29 / 6%), 0 6px 20px -12px rgb(20 32 29 / 25%);
 
 	/* --- type --- */

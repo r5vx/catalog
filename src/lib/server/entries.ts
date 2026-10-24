@@ -1,4 +1,4 @@
-import { insertEntry, categoryIdForSlug, saveFacts, entryIdForSource, entryIdForShow } from './db/queries';
+import { insertEntry, categoryIdForSlug, saveFacts, entryIdForSource, entryIdForShow, localToday } from './db/queries';
 import { showRoots } from './metadata/franchise';
 import { setTags } from './db/tags';
 import { setCast } from './db/people';
@@ -6,7 +6,7 @@ import { fetchDetails } from './metadata/details';
 import { fillOtherNames } from './otherNames';
 import type { SearchResult } from './metadata';
 
-export const today = () => new Date().toISOString().slice(0, 10);
+export const today = () => localToday();
 
 type Overrides = {
 	categoryId?: number | null;

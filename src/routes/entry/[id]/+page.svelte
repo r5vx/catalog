@@ -7,6 +7,7 @@
 	import { page } from '$app/state';
 	import BackBar from '$lib/BackBar.svelte';
 	import EntryForm from '$lib/EntryForm.svelte';
+	import QuickEdit from '$lib/QuickEdit.svelte';
 	import TitleSearch from '$lib/TitleSearch.svelte';
 	import ScoreStrip from '$lib/ScoreStrip.svelte';
 	import Synopsis from '$lib/Synopsis.svelte';
@@ -14,7 +15,6 @@
 	import CastRow from '$lib/CastRow.svelte';
 	import WhereToWatch from '$lib/WhereToWatch.svelte';
 	import { progressSummary } from '$lib/progress';
-	import { statusLabel } from '$lib/constants';
 	import { money } from '$lib/format';
 	import { p } from '$lib/poison';
 	import { confirmAction } from '$lib/confirm.svelte';
@@ -45,7 +45,17 @@
 		}
 	});
 
-	const entry = $derived(data.entry);
+	/** What's been changed at the top of the page since it loaded (QuickEdit saves it at once). */
+	let changed = $state<Partial<typeof data.entry>>({});
+	let changedFor = 0;
+	$effect.pre(() => {
+		// Another title's page: nothing changed on it yet.
+		if (data.entry.id !== changedFor) {
+			changedFor = data.entry.id;
+			changed = {};
+		}
+	});
+	const entry = $derived({ ...data.entry, ...changed });
 
 	const category = $derived(
 		data.categories.find((one) => one.id === entry.categoryId) ?? null
@@ -55,6 +65,8 @@
 	const isMovie = $derived(category?.slug === 'movies');
 
 	const watchType = $derived(watchTypeOf({ categorySlug: category?.slug, sourceId: entry.sourceId, episodesTotal: entry.episodesTotal }));
+	// (Its own copy of the title, so a click below doesn't ask again whether it can be watched.)
+	const checkKey = $derived(`${data.entry.title}|${watchType}|${data.entry.year ?? ''}`);
 	const watchHref = $derived(
 		`/watch?title=${encodeURIComponent(entry.title)}&type=${watchType}${entry.year ? `&year=${entry.year}` : ''}&auto=1`
 	);
@@ -65,8 +77,9 @@
 	let watchAvailable = $state<boolean | null>(null);
 	let watchSources = $state<SourceCheck[]>([]);
 	$effect(() => {
-		const params = new URLSearchParams({ title: entry.title, type: watchType });
-		if (entry.year) params.set('year', String(entry.year));
+		const [title, type, year] = checkKey.split('|');
+		const params = new URLSearchParams({ title, type });
+		if (year) params.set('year', year);
 		watchAvailable = null;
 		watchSources = [];
 		return checkWatchable(params, (available, sources) => {
@@ -129,7 +142,7 @@
 	);
 
 	$effect(() => {
-		const current = entry;
+		const current = data.entry;
 
 		// Seed from what's stored, then go and get whatever's missing.
 		overview = current.overview;
@@ -227,11 +240,6 @@
 		</div>
 
 		<div class="meta">
-			<div class="pills">
-				<span class="pill {entry.status}">{pm ? p(statusLabel(entry.status)) : statusLabel(entry.status)}</span>
-				{#if entry.favorite}<span class="pill fav">{pm ? '★ Finch approved' : '★ Favourite'}</span>{/if}
-			</div>
-
 			<h1>{entry.title}</h1>
 			<p class="facts faint tabular">{facts.join(' · ')}</p>
 
@@ -308,6 +316,14 @@
 		</div>
 	</header>
 
+	{#key data.entry.id}
+		<QuickEdit
+			entry={data.entry}
+			series={watchType === 'tv' && category?.slug !== 'movies'}
+			onsaved={(fields) => (changed = { ...changed, ...fields })}
+		/>
+	{/key}
+
 	<Synopsis text={overview} pending={looking} />
 
 	{#if entry.sourceId}
@@ -326,17 +342,20 @@
 	<CastRow {cast} back={page.url.pathname + page.url.search} />
 
 	<!-- Closed by default: opening a film should show you the film, not a
-	     wall of empty text boxes. -->
+	     wall of text boxes. Rating and status are in the box above it. -->
 	<details class="editor">
 		<summary>
-			<span class="summary-title">{pm ? p('Edit') : 'Edit'}</span>
-			<span class="summary-sub faint">rating, status, dates, your own notes</span>
+			<span class="summary-title">{pm ? p('More details') : 'More details'}</span>
+			<span class="summary-sub faint">name, dates, notes, poster, and more</span>
 		</summary>
 
 		<div class="editor-body">
-			<form method="POST" action="?/save">
-				<EntryForm categories={data.categories} {entry} submitLabel="Save changes" />
-			</form>
+			<!-- Made again when a click above dates it (Completed), or saving this would undo the date. -->
+			{#key entry.finishedOn}
+				<form method="POST" action="?/details">
+					<EntryForm categories={data.categories} {entry} mode="details" submitLabel="Save" />
+				</form>
+			{/key}
 
 			<form method="POST" action="?/refresh" class="sub-tool">
 				<div>
@@ -388,16 +407,6 @@
 </article>
 
 <style>
-	.back {
-		font-size: 0.85rem;
-		display: inline-block;
-		margin-bottom: 14px;
-	}
-
-	.back:hover {
-		color: var(--accent);
-	}
-
 	.notice {
 		border-radius: var(--radius-sm);
 		padding: 10px 14px;
@@ -458,18 +467,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 10px;
-	}
-
-	.pills {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 6px;
-	}
-
-	.pill.fav {
-		background: var(--accent-bg);
-		color: var(--accent);
-		border-color: color-mix(in srgb, var(--accent) 35%, transparent);
 	}
 
 	.title-actions {

@@ -10,7 +10,7 @@ import {
 	bestMatch,
 	resolveSlugId
 } from '$lib/server/showbox';
-import { readSettings } from '$lib/server/settings';
+import { readSettings, febboxAccountOf } from '$lib/server/settings';
 import {
 	findEntryByTitle,
 	getSavedShowboxMatch,
@@ -414,7 +414,8 @@ async function lookUp(url: URL): Promise<Response> {
 			const seasonEp = playable.find(ep => ep.season === startSeason);
 			if (seasonEp) targetEp = seasonEp;
 		}
-		const firstFile = targetEp?.files[0];
+		// The file the player will pick (warming another one's link was wasted).
+		const firstFile = targetEp ? (pickFile(targetEp.files, PREFERRED_QUALITY) ?? targetEp.files[0]) : undefined;
 		// An episode from another Showbox entry plays from that entry's share.
 		const targetShare = targetEp?.shareKey ?? shareKey;
 		let streamUrl = '';
@@ -434,6 +435,7 @@ async function lookUp(url: URL): Promise<Response> {
 			streamUrl,
 			fid: firstFile?.fid ?? 0,
 			hasToken: Boolean(febboxToken),
+			febboxAccount: febboxAccountOf(febboxToken),
 			episodes: epData,
 			debug: streamDebug,
 			posterUrl,
@@ -447,11 +449,7 @@ async function lookUp(url: URL): Promise<Response> {
 	const files = movieFileList as FileOption[];
 	// Showbox's best file first; the player asks for another source's link itself.
 	const showboxFiles = files.filter((f) => !f.source);
-	const defaultFile =
-		showboxFiles.find((f) => f.quality === '1080p') ??
-		showboxFiles.find((f) => f.quality === '720p') ??
-		showboxFiles[0] ??
-		files[0];
+	const defaultFile = pickFile(showboxFiles, PREFERRED_QUALITY) ?? showboxFiles[0] ?? files[0];
 
 	let streamUrl = '';
 	let streamDebug: string | undefined;
@@ -474,6 +472,7 @@ async function lookUp(url: URL): Promise<Response> {
 		streamUrl,
 		fid: defaultFile.fid,
 		hasToken: Boolean(febboxToken),
+		febboxAccount: febboxAccountOf(febboxToken),
 		files,
 		debug: streamDebug,
 		posterUrl,
