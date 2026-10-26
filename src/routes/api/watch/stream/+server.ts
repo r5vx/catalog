@@ -22,18 +22,19 @@ export const GET: RequestHandler = async ({ url }) => {
 		return json({ url: `/api/watch/relay?u=${encodeURIComponent(stream.url)}` });
 	}
 
-	// 7Movies: its playlist comes through the relay too (the video pieces mostly don't).
+	// 7Movies: its playlist comes through the relay too (the video pieces mostly don't). It and
+	// Movy say which copy they are (`copy`), as their episodes are downloaded ahead by that name.
 	if (parseVidriftShareKey(shareKey)) {
 		const playlist = await vidriftStream(shareKey, refresh);
 		if (!playlist) return json({ url: '', debug: '7Movies has nothing for this right now' });
-		return json({ url: `/api/watch/relay?u=${encodeURIComponent(playlist)}` });
+		return json({ url: `/api/watch/relay?u=${encodeURIComponent(playlist)}&copy=${encodeURIComponent(shareKey)}` });
 	}
 
 	// Movy: found by its own page, out of sight (sources/movy.ts); played through the relay.
 	if (parseMovyShareKey(shareKey)) {
 		const playlist = await movyStream(shareKey, refresh);
 		if (!playlist) return json({ url: '', debug: 'Movy has nothing for this right now' });
-		return json({ url: `/api/watch/relay?u=${encodeURIComponent(playlist)}` });
+		return json({ url: `/api/watch/relay?u=${encodeURIComponent(playlist)}&copy=${encodeURIComponent(shareKey)}` });
 	}
 
 	const { febboxToken } = readSettings();

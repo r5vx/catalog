@@ -1,7 +1,7 @@
 /** The quality the player reaches for first. */
 export const PREFERRED_QUALITY = '1080p';
 
-type Pickable = { quality: string; size: string; source?: string; audio?: string; hevc?: boolean };
+type Pickable = { quality: string; size: string; name?: string; source?: string; audio?: string; hevc?: boolean };
 
 let hevcAnswer: boolean | null = null;
 
@@ -35,15 +35,20 @@ export function pickFile<T extends Pickable>(files: T[], wanted: string, audio =
 	if (!showbox.length) {
 		return files.find((f) => audio && f.audio === audio) ?? files.find((f) => audio === 'English' || f.audio !== 'English') ?? files[0];
 	}
-	// The largest of the wanted quality. (It took the first one listed: Dungeon Meshi E8 lists a
-	// 503 MB single-file copy before its 2.45 GB one, which has the usual playlist and both
-	// languages. And sizes were compared without their units, so "503.66 MB" beat "2.45 GB".)
-	const largest = (list: T[]) => [...list].sort((a, b) => bytesOf(b.size) - bytesOf(a.size))[0];
-	const exact = showbox.filter((f) => f.quality === wanted);
-	if (exact.length) return largest(exact);
+	// Of the wanted quality: one with both languages first, then the largest. (It took the first
+	// one listed: Dungeon Meshi E8 lists a 503 MB single-file copy before its 2.45 GB one. Then
+	// "largest" alone put Re:Zero S2 on its 1.67 GB Japanese-only copy, past the 458 MB "dual"
+	// one with the English dub that was being watched, 2026-10-24.)
+	const best = (list: T[]) =>
+		[...list].sort((a, b) => Number(bothLanguages(b)) - Number(bothLanguages(a)) || bytesOf(b.size) - bytesOf(a.size))[0];
+	const exact = showbox.filter((f) => f.quality.toLowerCase() === wanted.toLowerCase());
+	if (exact.length) return best(exact);
 	const top = Math.max(...showbox.map((f) => parseInt(f.quality) || 0));
-	return largest(showbox.filter((f) => (parseInt(f.quality) || 0) === top));
+	return best(showbox.filter((f) => (parseInt(f.quality) || 0) === top));
 }
+
+/** A copy whose name says it has more than one language ("….1080p.dual.mkv", "Dual-Audio", "Multi"). */
+export const bothLanguages = (file: { name?: string }) => /(^|[^a-z])(dual|multi)([^a-z]|$)/i.test(file.name ?? '');
 
 /** "503.66 MB", "2.45 GB" → bytes (0 when it can't be read). */
 export function bytesOf(size: string): number {

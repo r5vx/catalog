@@ -16,6 +16,7 @@
  */
 import { delayAt, spoken, type DelayPlan, type TimedCue } from './subtitleAlign';
 import { readSoundTrack, soundBetween, soundTrackIn } from './soundTrack';
+import { aacTrackOf, adtsOf, type AacTrack } from './aacFrames';
 
 const RATE = 16000; // what the speech model listens at
 const SAMPLES = 512; // one slice (32 ms)
@@ -31,6 +32,8 @@ export class SubtitleSync {
 	private lastSet: number | null = null;
 	private heldByHand = false;
 	private told = false;
+	/** Seconds heard when a plan last said these subtitles fit. */
+	private fittedWith = 0;
 	/** Seconds heard when a plan first said they don't fit (null: none has since one did). */
 	private mismatchFrom: number | null = null;
 	private applying: ReturnType<typeof setInterval> | undefined;
@@ -90,6 +93,15 @@ export class SubtitleSync {
 				return;
 			}
 			if (event.data.kind !== 'plan' || event.data.round !== this.round) return;
+			// Fitting over a good part of the video already: a later "doesn't fit" (a long noisy
+			// part heard — a friend's Hurt Locker at 1:50, 2026-10-25, put the subtitles back out
+			// of time and said they didn't match) keeps the timing that fitted.
+			const heardNow = Number(event.data.heard) || 0;
+			if (event.data.plan?.fits) this.fittedWith = heardNow;
+			else if (event.data.plan && this.plan?.fits && this.fittedWith >= 900) {
+				this.last = { ...this.last, heard: Math.round(heardNow), keptFit: true };
+				return;
+			}
 			this.plan = event.data.plan;
 			this.last = { plan: this.plan, heard: Math.round(event.data.heard) };
 			// "Don't match" only once it still doesn't after three more minutes heard (or most of
@@ -166,6 +178,7 @@ export class SubtitleSync {
 
 	private useCues(cues: TimedCue[], plan: DelayPlan | null): void {
 		this.plan = plan;
+		this.fittedWith = 0;
 		this.onRate?.(plan?.fits ? plan.rate : 1);
 		this.lastSet = null;
 		this.before = null;
@@ -355,16 +368,23 @@ export class SubtitleSync {
 	wholeTrack = true;
 
 	private appendInit: Uint8Array | null = null;
-	private appendQueue: { at: number; length: number; data: Uint8Array }[] = [];
+	/** Its AAC sound track, when there is one: pieces are kept as plain AAC (aacFrames.ts). */
+	private appendTrack: AacTrack | null = null;
+	/** `adts`: plain AAC, decoded on its own; else the piece as it came, decoded after the format piece. */
+	private appendQueue: { at: number; length: number; data: Uint8Array; adts: boolean }[] = [];
 	private appendTimer: ReturnType<typeof setTimeout> | undefined;
 	private appendBusy = false;
 	private appendEnd = -1;
 
-	/** Times from the sound the player downloads (see above) instead of a separate sound track. */
-	useAppended(): void {
-		if (this.track === 'appended') return;
+	/**
+	 * Times from the sound the player downloads (see above) instead of a separate sound track.
+	 * True when it's newly started (so the pieces downloaded before can be handed over once).
+	 */
+	useAppended(): boolean {
+		if (this.track === 'appended') return false;
 		this.reset();
 		this.track = 'appended';
+		return true;
 	}
 
 	/** A copy of a piece of audio the player just handed the browser (`isInit`: the format piece). */
@@ -372,9 +392,12 @@ export class SubtitleSync {
 		if (this.track !== 'appended') return;
 		if (isInit) {
 			this.appendInit = data.slice();
+			this.appendTrack = aacTrackOf(data);
 			return;
 		}
-		this.appendQueue.push({ at, length, data: data.slice() });
+		// Only the sound is kept: a 7Movies piece is up to 25 MB, most of it picture.
+		const adts = this.appendTrack ? adtsOf(this.appendTrack, data) : null;
+		this.appendQueue.push({ at, length, data: adts ?? data.slice(), adts: Boolean(adts) });
 		clearTimeout(this.appendTimer);
 		// About a minute at a time, or whatever has come once it goes quiet.
 		if (this.appendQueue.length >= 10) void this.decodeAppended();
@@ -393,12 +416,14 @@ export class SubtitleSync {
 			while (count < Math.min(10, this.appendQueue.length)) {
 				const before = this.appendQueue[count - 1];
 				if (Math.abs(this.appendQueue[count].at - (before.at + before.length)) > 0.5) break;
+				if (this.appendQueue[count].adts !== before.adts) break;
 				bytesSoFar += this.appendQueue[count].data.length;
 				if (bytesSoFar > 40_000_000) break;
 				count++;
 			}
 			const batch = this.appendQueue.splice(0, count);
-			const parts = [this.appendInit, ...batch.map((p) => p.data)];
+			// Plain AAC needs nothing in front; MP4 pieces need their format piece.
+			const parts = batch[0].adts ? batch.map((p) => p.data) : [this.appendInit, ...batch.map((p) => p.data)];
 			const bytes = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
 			let offset = 0;
 			for (const p of parts) {

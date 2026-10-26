@@ -57,6 +57,24 @@
 	</section>
 
 	<section>
+		<div class="head"><h2>Episodes downloaded ahead</h2></div>
+		<ul class="sizes">
+			<li><span>7Movies and Movy</span><span class="faint">the episodes playing on every screen and the next ones, deleted 6 hours after</span><b class="tabular">{size(r.downloadsAhead)} <span class="of faint">of {data.downloadLimitGb} GB</span></b></li>
+		</ul>
+		<form method="POST" action="?/downloads" use:enhance class="limit">
+			<label class="field">
+				<span>Keep at most</span>
+				<select name="gb" value={String(data.downloadLimitGb)} onchange={(e) => e.currentTarget.form?.requestSubmit()}>
+					{#each data.downloadLimits as gb (gb)}
+						<option value={String(gb)}>{gb} GB</option>
+					{/each}
+				</select>
+			</label>
+			<p class="faint hint">Separate from the limit above. An episode takes about 0.5 to 2 GB; with several TVs watching, each has its own. It never leaves less than 5 GB free on the disk.</p>
+		</form>
+	</section>
+
+	<section>
 		<div class="head"><h2>Never cleared</h2></div>
 		<ul class="sizes">
 			<li><span>Your library</span><span class="faint">titles, ratings, notes, where you're up to</span><b class="tabular">{size(r.library)}</b></li>

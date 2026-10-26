@@ -30,6 +30,45 @@
 		);
 	})();
 
+	const inDesktopApp = typeof navigator !== 'undefined' && /Electron\//.test(navigator.userAgent);
+	const others = $derived(data.febboxAccounts.filter((a) => !a.main));
+	const mainAccount = $derived(data.febboxAccounts.find((a) => a.main));
+	let addingMore = $state(false);
+	let moreFailed = $state(false);
+
+	/** "2.4 of 10 GB used today", or when a used-up allowance comes back. */
+	function usage(account: (typeof data.febboxAccounts)[number]): string {
+		if (account.expired) return 'Logged out: remove it and add it again';
+		const flow = account.flow;
+		if (!flow) return '';
+		if (flow.out) {
+			const hours = flow.resetsAt ? Math.max(1, Math.round((flow.resetsAt - Date.now()) / 3600_000)) : 0;
+			return hours ? `HD used up for today, back in about ${hours} ${hours === 1 ? 'hour' : 'hours'}` : 'HD used up for today';
+		}
+		return `${flow.used} of ${flow.allowance} GB of HD used today`;
+	}
+
+	/** Another Febbox account's sign-in, in a window of its own (the main account stays signed in). */
+	function addAccount() {
+		addingMore = true;
+		moreFailed = false;
+		const before = others.length;
+		const popup = window.open('https://www.febbox.com/login#catalog-more', '_blank');
+		if (!popup) {
+			addingMore = false;
+			return;
+		}
+		const poll = setInterval(async () => {
+			if (!popup.closed) return;
+			clearInterval(poll);
+			// The window saves the sign-in as it closes: a moment for that, then look again.
+			await new Promise((r) => setTimeout(r, 2500));
+			await invalidateAll();
+			moreFailed = others.length === before;
+			addingMore = false;
+		}, 500);
+	}
+
 	function loginToFebbox() {
 		loggingIn = true;
 		loginFailed = false;
@@ -183,7 +222,7 @@
 
 		{#if data.febboxKeySaved}
 			<div class="saved-row">
-				<span class="muted">Logged in.</span>
+				<span class="muted">Logged in.{#if mainAccount && usage(mainAccount)}<span class="usage">{usage(mainAccount)}</span>{/if}</span>
 				<div class="saved-actions">
 					<button type="button" class="btn" onclick={copyKey}>
 						{copied ? 'Copied' : 'Copy key'}
@@ -208,6 +247,41 @@
 					<button type="submit" class="btn btn-primary">Save</button>
 				</form>
 			</details>
+			<div class="more">
+				<h3>More accounts</h3>
+				<p class="muted">
+					Each Febbox account gets its own HD allowance a day. With more than one, every video uses
+					whichever has the most left, so several TVs can watch at once without dropping to 360p.
+				</p>
+				{#if form?.moreError}
+					<p class="msg bad" role="alert">{form.moreError}</p>
+				{:else if form?.moreOk}
+					<p class="msg good" role="status">{form.moreOk}</p>
+				{:else if moreFailed}
+					<p class="msg bad" role="alert">No account was added. A different account than the ones above has to log in.</p>
+				{/if}
+				{#each others as account, at (account.key)}
+					<div class="saved-row">
+						<span class="muted">Account {at + 2}{#if usage(account)}<span class="usage">{usage(account)}</span>{/if}</span>
+						<form method="POST" action="?/removeFebboxMore">
+							<input type="hidden" name="key" value={account.key} />
+							<button type="submit" class="btn btn-danger">Remove</button>
+						</form>
+					</div>
+				{/each}
+				{#if inDesktopApp}
+					<button type="button" class="btn" onclick={addAccount} disabled={addingMore}>
+						{addingMore ? 'Logging in…' : 'Add another account'}
+					</button>
+				{/if}
+				<details>
+					<summary>{inDesktopApp ? 'Paste its key instead' : "Paste another account's key"}</summary>
+					<form method="POST" action="?/saveFebboxMore" class="inline-form">
+						<input type="password" name="febboxKey" placeholder="Paste a key" autocomplete="off" />
+						<button type="submit" class="btn btn-primary">Add</button>
+					</form>
+				</details>
+			</div>
 		{:else}
 			<button type="button" class="btn btn-primary login-btn" onclick={loginToFebbox} disabled={loggingIn}>
 				{loggingIn ? 'Logging in…' : 'Log in with Google'}
@@ -359,5 +433,34 @@
 		background: var(--good-bg);
 		border: 1px solid var(--good);
 		color: var(--good);
+	}
+
+	.usage {
+		display: block;
+		font-size: 0.82rem;
+		color: var(--ink-faint);
+	}
+
+	.more {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 10px;
+		margin-top: 8px;
+		padding-top: 16px;
+		border-top: 1px solid var(--rule);
+	}
+
+	.more h3 {
+		margin: 0;
+		font-size: 1rem;
+	}
+
+	.more p {
+		margin: 0;
+	}
+
+	.more .saved-row {
+		align-self: stretch;
 	}
 </style>

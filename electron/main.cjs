@@ -7,6 +7,7 @@
  */
 const { app, BrowserWindow, shell, Menu, session } = require('electron');
 const { openMini, closeMini } = require('./miniPlayer.cjs');
+const { captureLive } = require('./liveCapture.cjs');
 const { fork } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -116,6 +117,26 @@ function fromSourcesList(html) {
 	const height = (s) => Number(((s.label || '').match(/(\d{3,4})p/i) || [])[1] || 0);
 	const best = [...playlists].sort((a, b) => height(b) - height(a))[0];
 	return best ? best.file : '';
+}
+
+/**
+ * Another Febbox account's sign-in, put into its own cookie store (once per sign-in): each of its
+ * cookies, for febbox.com. The store keeps them, so this only happens when the sign-in changes.
+ */
+const heldSignins = new Map();
+async function holdFebboxSignin(ses, partition, token) {
+	if (heldSignins.get(partition) === token) return;
+	const until = Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
+	for (const pair of token.split(';')) {
+		const at = pair.indexOf('=');
+		if (at <= 0) continue;
+		const name = pair.slice(0, at).trim();
+		const value = pair.slice(at + 1).trim();
+		await ses.cookies
+			.set({ url: 'https://www.febbox.com', domain: '.febbox.com', path: '/', name, value, secure: true, expirationDate: until })
+			.catch(() => {});
+	}
+	heldSignins.set(partition, token);
 }
 
 /** One page of a Febbox folder listing, asked as this browser. */
@@ -482,6 +503,13 @@ function startServer() {
 
 		if (message?.type === 'movy-stop') movyStops.get(message.id)?.();
 
+		// Live TV: a channel's stream address, read from its page out of sight (liveCapture.cjs).
+		if (message?.type === 'live-capture') {
+			captureLive(String(message.page), message.referrer ? String(message.referrer) : '')
+				.catch((e) => ({ error: String(e?.message ?? e) }))
+				.then((result) => server?.send({ type: 'live-capture-result', id: message.id, ...result }));
+		}
+
 		if (message?.type === 'page-answer') {
 			readPageAnswer(String(message.url), String(message.answerFrom), Boolean(message.visible)).then((result) =>
 				server?.send({ type: 'page-answer-result', id: message.id, ...result })
@@ -530,20 +558,24 @@ function startServer() {
 			let playerHtml = '';
 			let videoInfo = '';
 
+			// Another Febbox account than the main one: asked in its own cookie store, holding its
+			// sign-in (src/lib/server/febboxAccounts.ts), so its allowance pays for this video.
+			const ses = message.partition ? session.fromPartition(String(message.partition)) : ses;
+
 			try {
-				const { net } = require('electron');
+				if (message.partition && message.token) await holdFebboxSignin(ses, String(message.partition), String(message.token));
 				const chromeUA = FEBBOX_UA;
 
 				// Log session cookies for debugging (names show in stream info too)
 				let cookieNames = '';
 				try {
-					const cks = await session.defaultSession.cookies.get({ url: 'https://www.febbox.com' });
+					const cks = await ses.cookies.get({ url: 'https://www.febbox.com' });
 					cookieNames = cks.map(c => c.name).join(',');
 					console.log('[video-url] cookies:', cookieNames);
 				} catch {}
 
 				try {
-					await net.fetch(`https://www.febbox.com/file/file_info?fid=${fid}`, {
+					await ses.fetch(`https://www.febbox.com/file/file_info?fid=${fid}`, {
 						headers: {
 							'User-Agent': chromeUA,
 							'Referer': 'https://www.febbox.com/',
@@ -554,7 +586,7 @@ function startServer() {
 				} catch {}
 
 				try {
-					const resp = await net.fetch('https://www.febbox.com/file/player', {
+					const resp = await ses.fetch('https://www.febbox.com/file/player', {
 						method: 'POST',
 						headers: {
 							'Content-Type': 'application/x-www-form-urlencoded',
@@ -594,7 +626,7 @@ function startServer() {
 								const parsed = new URL(cdnM3u8);
 								parsed.searchParams.delete('quality');
 								const noQualUrl = parsed.toString();
-								const probe = await net.fetch(noQualUrl, {
+								const probe = await ses.fetch(noQualUrl, {
 									headers: { 'Referer': 'https://www.febbox.com/', 'Origin': 'https://www.febbox.com' },
 									signal: AbortSignal.timeout(5000)
 								});
@@ -635,7 +667,7 @@ function startServer() {
 								videoInfo = 'jw-file:' + fileUrl.substring(0, 120);
 							} else if (!/\.(m3u8|mp4)/i.test(fileUrl)) {
 								try {
-									const r = await net.fetch(fileUrl, {
+									const r = await ses.fetch(fileUrl, {
 										headers: { 'Referer': 'https://www.febbox.com/' },
 										redirect: 'manual',
 										signal: AbortSignal.timeout(8000)
@@ -673,7 +705,7 @@ function startServer() {
 					try {
 						ctxWin = new BrowserWindow({
 							show: false, width: 800, height: 600,
-							webPreferences: { nodeIntegration: false, contextIsolation: true }
+							webPreferences: { session: ses, nodeIntegration: false, contextIsolation: true }
 						});
 
 						await new Promise(resolve => {
@@ -728,6 +760,7 @@ function startServer() {
 						width: 1280,
 						height: 720,
 						webPreferences: {
+							session: ses,
 							nodeIntegration: false,
 							contextIsolation: true,
 							autoplayPolicy: 'no-user-gesture-required'
@@ -738,7 +771,7 @@ function startServer() {
 					let onCaptured = null;
 
 					// Intercept requests to the HD CDN — only this window's, never the video already playing.
-					session.defaultSession.webRequest.onBeforeRequest(
+					ses.webRequest.onBeforeRequest(
 						{ urls: ['*://*.shegu.net/*', '*://*/*.m3u8*'] },
 						(details, callback) => {
 							if (!capturedUrl && details.webContentsId === hiddenId &&
@@ -801,7 +834,7 @@ function startServer() {
 						}
 					} finally {
 						// The page plays the video muted; left open, it would stream in the background until restart.
-						try { session.defaultSession.webRequest.onBeforeRequest(null); } catch {}
+						try { ses.webRequest.onBeforeRequest(null); } catch {}
 						try { hidden.destroy(); } catch {}
 						hidden = null;
 					}
@@ -811,7 +844,7 @@ function startServer() {
 					server.send({ type: 'get-video-url-result', id: message.id, playerHtml, dlText: '', capturedUrl, videoInfo: videoInfo + ' | ck:' + cookieNames });
 				} catch {}
 			} catch (e) {
-				try { session.defaultSession.webRequest.onBeforeRequest(null); } catch {}
+				try { ses.webRequest.onBeforeRequest(null); } catch {}
 				if (hidden) try { hidden.destroy(); } catch {}
 				try {
 					server.send({
@@ -1273,6 +1306,8 @@ function createWindow() {
 
 	// Febbox login needs its own window — Google OAuth blocks iframes.
 	// The child window shares the default session, so cookies carry over.
+	// Signing in another account (Settings → Services, "#catalog-more"): a window of its own
+	// cookie store, so the main account stays signed in.
 	window.webContents.setWindowOpenHandler(({ url }) => {
 		if (url.includes('febbox.com')) {
 			return {
@@ -1281,7 +1316,8 @@ function createWindow() {
 					width: 500,
 					height: 700,
 					autoHideMenuBar: true,
-					icon: path.join(__dirname, '..', 'build', 'client', 'icon.ico')
+					icon: path.join(__dirname, '..', 'build', 'client', 'icon.ico'),
+					...(url.includes('#catalog-more') ? { webPreferences: { partition: 'febbox-signin' } } : {})
 				}
 			};
 		}
@@ -1291,19 +1327,23 @@ function createWindow() {
 
 	window.webContents.on('did-create-window', async (childWindow) => {
 		addTextMenu(childWindow.webContents);
+		const loginSession = childWindow.webContents.session;
+		const another = loginSession !== session.defaultSession;
 		// Use a regular Chrome User-Agent — Electron's default UA contains
 		// "Electron/38" which some sites (including Google OAuth) reject.
 		const chromeUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36';
 		childWindow.webContents.setUserAgent(chromeUA);
 
-		// Clear stale febbox cookies so the OAuth flow starts clean.
+		// Clear stale febbox cookies so the OAuth flow starts clean (another account's window:
+		// everything from the last time, Google's sign-in too, so it can be someone else).
+		if (another) await loginSession.clearStorageData().catch(() => {});
 		try {
-			const stale = await session.defaultSession.cookies.get({});
+			const stale = await loginSession.cookies.get({});
 			for (const c of stale) {
 				if (c.domain && c.domain.includes('febbox')) {
 					const scheme = c.secure ? 'https' : 'http';
 					const dom = c.domain.startsWith('.') ? c.domain.slice(1) : c.domain;
-					await session.defaultSession.cookies.remove(`${scheme}://${dom}${c.path}`, c.name).catch(() => {});
+					await loginSession.cookies.remove(`${scheme}://${dom}${c.path}`, c.name).catch(() => {});
 				}
 			}
 			console.log('[login] cleared stale febbox cookies');
@@ -1331,18 +1371,18 @@ function createWindow() {
 				console.log(`[login] cookie ${removed ? 'DEL' : 'SET'}: ${cookie.name} @ ${cookie.domain} (${cause})`);
 			}
 		};
-		session.defaultSession.cookies.on('changed', cookieListener);
+		loginSession.cookies.on('changed', cookieListener);
 
 		async function captureCookies() {
 			try {
-				const allCookies = await session.defaultSession.cookies.get({});
+				const allCookies = await loginSession.cookies.get({});
 				const cookies = allCookies.filter(
 					(c) => c.domain && c.domain.includes('febbox')
 				);
 				if (!cookies.length) return;
 
 				const cookieStr = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
-				const body = JSON.stringify({ token: cookieStr });
+				const body = JSON.stringify({ token: cookieStr, more: another });
 
 				const req = http.request(`${ORIGIN}/api/watch/save-token`, {
 					method: 'POST',
@@ -1398,12 +1438,12 @@ function createWindow() {
 
 		setTimeout(() => {
 			clearInterval(loginPoll);
-			session.defaultSession.cookies.removeListener('changed', cookieListener);
+			loginSession.cookies.removeListener('changed', cookieListener);
 		}, 300000);
 
 		childWindow.on('closed', () => {
 			clearInterval(loginPoll);
-			session.defaultSession.cookies.removeListener('changed', cookieListener);
+			loginSession.cookies.removeListener('changed', cookieListener);
 			if (!captured) captureCookies();
 		});
 	});

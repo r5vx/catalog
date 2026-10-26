@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The first screen: finds Catalog on a computer in the house (or its address is typed), and
+     asks for the PIN if Catalog has one. Skipped straight through when the last one still works. -->
+<component name="ConnectScreen" extends="Group">
+    <interface>
+        <field id="params" type="assocarray" onChange="start" />
+        <field id="action" type="assocarray" />
+        <field id="closing" type="boolean" />
+        <field id="resumed" type="boolean" alwaysNotify="true" />
+    </interface>
+    <script type="text/brightscript" uri="pkg:/components/ConnectScreen.brs" />
+    <script type="text/brightscript" uri="pkg:/components/common.brs" />
+    <children>
+        <Label text="Catalog" translation="[160, 140]" font="font:LargeBoldSystemFont" color="0xE7EDE9FF" />
+        <Label id="status" text="Looking for Catalog on your computers…" translation="[160, 230]" width="1400" wrap="true" font="font:MediumSystemFont" color="0xA3B0A8FF" />
+        <LabelList id="choices" translation="[160, 340]" itemSize="[900, 72]" itemSpacing="[0, 10]" textHorizAlign="left" color="0xE7EDE9FF" focusedColor="0x111614FF" font="font:MediumSystemFont" focusedFont="font:MediumBoldSystemFont" />
+        <Label id="hint" translation="[160, 900]" width="1500" wrap="true" font="font:SmallSystemFont" color="0x75837BFF" text="Catalog has to be open on the computer. The first time, Windows asks whether Catalog may use the network: say yes for private networks." />
+    </children>
+</component>

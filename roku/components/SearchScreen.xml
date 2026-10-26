@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Search: the keyboard on the left, what's found on the right as you type (/api/search). -->
+<component name="SearchScreen" extends="Group">
+    <interface>
+        <field id="params" type="assocarray" />
+        <field id="action" type="assocarray" />
+        <field id="closing" type="boolean" />
+        <field id="resumed" type="boolean" alwaysNotify="true" />
+    </interface>
+    <script type="text/brightscript" uri="pkg:/components/SearchScreen.brs" />
+    <script type="text/brightscript" uri="pkg:/components/common.brs" />
+    <children>
+        <Label text="Search" translation="[20, 64]" font="font:LargeBoldSystemFont" color="0xE7EDE9FF" />
+        <MiniKeyboard id="keyboard" translation="[20, 170]" />
+        <Label id="status" translation="[660, 180]" width="1060" font="font:SmallSystemFont" color="0xA3B0A8FF" text="Type a film, show or anime." />
+        <MarkupGrid id="results" translation="[660, 170]" itemComponentName="TileItem" numColumns="5" numRows="2" itemSize="[190, 285]" itemSpacing="[26, 40]" drawFocusFeedback="false" visible="false" />
+        <Timer id="pause" duration="0.7" />
+    </children>
+</component>

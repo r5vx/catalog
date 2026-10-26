@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- My Library, as on the Fire TV: All, Watching, Want to watch, Watched along the top, then
+     the posters seven across (/api/roku/rows?screen=library). -->
+<component name="LibraryScreen" extends="Group">
+    <interface>
+        <field id="params" type="assocarray" onChange="start" />
+        <field id="action" type="assocarray" />
+        <field id="closing" type="boolean" />
+        <field id="resumed" type="boolean" alwaysNotify="true" onChange="load" />
+    </interface>
+    <script type="text/brightscript" uri="pkg:/components/LibraryScreen.brs" />
+    <script type="text/brightscript" uri="pkg:/components/common.brs" />
+    <children>
+        <MarkupGrid id="chips" translation="[20, 64]" itemComponentName="TileItem" numColumns="4" numRows="1" itemSize="[260, 64]" itemSpacing="[18, 0]" drawFocusFeedback="false" />
+        <Label id="status" translation="[20, 400]" width="1700" font="font:MediumSystemFont" color="0x75837BFF" text="Loading…" />
+        <MarkupGrid id="grid" translation="[20, 180]" itemComponentName="TileItem" numColumns="7" numRows="3" itemSize="[200, 300]" itemSpacing="[42, 44]" drawFocusFeedback="false" vertFocusAnimationStyle="fixedFocusWrap" visible="false" />
+    </children>
+</component>

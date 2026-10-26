@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Everything picked from a row or a grid, drawn the way the Fire TV draws it (its `kind`):
+     a poster (with "S2E6" and how far through), a chip, a button, an episode with its picture,
+     a live game or channel card, or a profile. Highlighted: a white ring, a little bigger. -->
+<component name="TileItem" extends="Group">
+    <interface>
+        <field id="itemContent" type="node" onChange="show" />
+        <field id="width" type="float" onChange="layout" />
+        <field id="height" type="float" onChange="layout" />
+        <field id="focusPercent" type="float" onChange="showFocus" />
+        <field id="rowFocusPercent" type="float" onChange="showFocus" />
+        <field id="rowListHasFocus" type="boolean" onChange="showFocus" />
+        <field id="gridHasFocus" type="boolean" onChange="showFocus" />
+    </interface>
+    <script type="text/brightscript" uri="pkg:/components/TileItem.brs" />
+    <script type="text/brightscript" uri="pkg:/components/common.brs" />
+    <children>
+        <Group id="body">
+            <Poster id="back" uri="pkg:/images/card.9.png" blendColor="0x1F2724FF" />
+            <Poster id="picture" loadDisplayMode="scaleToZoom" />
+            <!-- A live game's picture across the top (as the Fire TV's GameArt): each team's color
+                 behind its logo, or the sport's color and name. -->
+            <Rectangle id="artBack" color="0x0E1013FF" visible="false" />
+            <Rectangle id="glowA" visible="false" />
+            <Rectangle id="glowB" visible="false" />
+            <Poster id="logoA" loadDisplayMode="scaleToFit" visible="false" />
+            <Poster id="logoB" loadDisplayMode="scaleToFit" visible="false" />
+            <Label id="artLabel" color="0xFFFFFFFF" font="font:LargeBoldSystemFont" horizAlign="center" vertAlign="center" visible="false" />
+            <Label id="name" color="0xE7EDE9FF" wrap="true" maxLines="3" font="font:SmallBoldSystemFont" />
+            <Label id="sub" color="0xA3B0A8FF" wrap="true" maxLines="2" font="font:SmallestSystemFont" />
+            <Rectangle id="dot" color="0xD97A83FF" width="14" height="14" visible="false" />
+            <Poster id="noteBack" uri="pkg:/images/card.9.png" blendColor="0x000000CC" visible="false" />
+            <Label id="note" color="0xFFFFFFFF" font="font:SmallestBoldSystemFont" visible="false" />
+            <Rectangle id="barBack" color="0x00000099" visible="false" />
+            <Rectangle id="bar" color="0xD97A83FF" visible="false" />
+            <Poster id="ring" uri="pkg:/images/ring.9.png" visible="false" />
+        </Group>
+        <Label id="under" color="0xE7EDE9FF" wrap="true" maxLines="2" font="font:SmallestSystemFont" />
+    </children>
+</component>

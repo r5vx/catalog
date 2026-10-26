@@ -7,13 +7,16 @@
  */
 import { RATE } from './introFinder';
 import { HEAD, TAIL } from './skipFinder';
+import { aacTrackOf, adtsOf, type AacTrack } from './aacFrames';
 
 type Chunk = { at: number; length: number; samples: Float32Array };
 
 export class DownloadedSound {
 	private init: Uint8Array | null = null;
+	/** Its AAC sound track: pieces are kept as plain AAC, sound only (aacFrames.ts says why). */
+	private track: AacTrack | null = null;
 	private chunks: Chunk[] = [];
-	private queue: { at: number; length: number; data: Uint8Array }[] = [];
+	private queue: { at: number; length: number; data: Uint8Array; adts: boolean }[] = [];
 	private busy = false;
 	private listeners = new Set<() => void>();
 
@@ -24,13 +27,15 @@ export class DownloadedSound {
 	add(data: Uint8Array, at: number, length: number, isInit: boolean): void {
 		if (isInit) {
 			this.init = data.slice();
+			this.track = aacTrackOf(data);
 			return;
 		}
 		const duration = this.durationOf();
 		const nearEnd = Number.isFinite(duration) && duration > 0 && at + length > duration - TAIL - 2;
 		if (at >= HEAD && !nearEnd) return;
 		if (this.chunks.some((c) => Math.abs(c.at - at) < 0.05) || this.queue.some((q) => Math.abs(q.at - at) < 0.05)) return;
-		this.queue.push({ at, length, data: data.slice() });
+		const adts = this.track ? adtsOf(this.track, data) : null;
+		this.queue.push({ at, length, data: adts ?? data.slice(), adts: Boolean(adts) });
 		void this.decode();
 	}
 
@@ -41,9 +46,12 @@ export class DownloadedSound {
 		try {
 			while (this.queue.length && this.init) {
 				const piece = this.queue.shift()!;
-				const bytes = new Uint8Array(this.init.length + piece.data.length);
-				bytes.set(this.init);
-				bytes.set(piece.data, this.init.length);
+				// Plain AAC on its own; an MP4 piece after its format piece.
+				const bytes = piece.adts ? piece.data.slice() : new Uint8Array(this.init.length + piece.data.length);
+				if (!piece.adts) {
+					bytes.set(this.init);
+					bytes.set(piece.data, this.init.length);
+				}
 				try {
 					const sound = await new OfflineAudioContext(1, RATE, RATE).decodeAudioData(bytes.buffer);
 					const mono = new Float32Array(sound.length);

@@ -212,7 +212,7 @@ function move(app: HTMLElement, direction: Direction): boolean {
 }
 
 /** The screens the menu goes to. Back on them opens the menu rather than leaving. */
-export const MENU_SCREENS = /^\/tv(\/(search|library|settings|browse\/[^/]+))?\/?$/;
+export const MENU_SCREENS = /^\/tv(\/(search|library|live|settings|browse\/[^/]+))?\/?$/;
 
 /**
  * The remote's Back, as on Netflix. On a screen from the menu it opens the menu; with the menu

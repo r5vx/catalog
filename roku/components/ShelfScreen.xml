@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Home, Movies, TV Shows and Anime, as on the Fire TV (src/lib/tv/TvScreen.svelte): a big
+     banner about whatever's highlighted, rows of posters under it (/api/roku/rows). OK opens
+     it; * offers what the Fire TV's menu button does. -->
+<component name="ShelfScreen" extends="Group">
+    <interface>
+        <field id="params" type="assocarray" onChange="start" />
+        <field id="action" type="assocarray" />
+        <field id="closing" type="boolean" />
+        <field id="resumed" type="boolean" alwaysNotify="true" onChange="start" />
+    </interface>
+    <script type="text/brightscript" uri="pkg:/components/ShelfScreen.brs" />
+    <script type="text/brightscript" uri="pkg:/components/common.brs" />
+    <children>
+        <Poster id="art" translation="[794, 0]" width="972" height="480" loadDisplayMode="scaleToZoom" opacity="0.55" />
+        <Poster uri="pkg:/images/banner_shade.png" width="1766" height="480" />
+        <Label id="name" translation="[20, 70]" width="900" wrap="true" maxLines="2" font="font:LargeBoldSystemFont" color="0xE7EDE9FF" />
+        <Label id="meta" translation="[20, 0]" width="900" font="font:SmallSystemFont" color="0xA3B0A8FF" />
+        <Label id="about" translation="[20, 0]" width="880" wrap="true" maxLines="3" lineSpacing="4" font="font:SmallSystemFont" color="0xE7EDE9FF" />
+        <Label id="status" translation="[20, 620]" width="1700" font="font:MediumSystemFont" color="0x75837BFF" text="Loading…" />
+        <RowList
+            id="rows"
+            translation="[20, 470]"
+            itemComponentName="TileItem"
+            numRows="2"
+            itemSize="[1740, 400]"
+            rowItemSize="[[200, 300]]"
+            rowItemSpacing="[[26, 0]]"
+            showRowLabel="[true]"
+            rowLabelOffset="[[0, 12]]"
+            rowLabelColor="0xA3B0A8FF"
+            rowLabelFont="font:SmallBoldSystemFont"
+            drawFocusFeedback="false"
+            rowFocusAnimationStyle="floatingFocus"
+            vertFocusAnimationStyle="fixedFocus"
+            visible="false" />
+        <Timer id="warm" duration="1.2" />
+    </children>
+</component>

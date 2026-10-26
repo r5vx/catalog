@@ -12,7 +12,7 @@ export const load: PageServerLoad = async () => {
 	const library = tvLibrary();
 	// Each opens its own page (Resume, and its episodes), not straight into the player.
 	const continuing = await continueWatchingWithPosters();
-	const links = await Promise.all(continuing.map((item) => tvTitleLink(item.title, item.type).catch(() => null)));
+	const links = await Promise.all(continuing.map((item) => (item.type === 'replay' ? null : tvTitleLink(item.title, item.type).catch(() => null))));
 	return {
 		continueWatching: continuing.map((item, i) => ({ ...item, link: links[i] })),
 		library,

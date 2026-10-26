@@ -520,6 +520,37 @@ once('continue-not-by-status', () => {
 });
 
 /**
+ * Live TV's saved channels and games, and the channels watched lately, for each profile
+ * (src/routes/api/live). `kind`: 'channel', 'game' or 'recent'; `key`: the channel's number or
+ * the game's id. A saved game keeps its details in `data` (as JSON), so it still shows once it's
+ * gone from the schedule; it's dropped a few hours after it ends.
+ */
+db.exec(`
+	CREATE TABLE IF NOT EXISTS live_saved (
+		profile INTEGER NOT NULL,
+		kind TEXT NOT NULL,
+		key TEXT NOT NULL,
+		name TEXT NOT NULL,
+		data TEXT,
+		saved_at TEXT NOT NULL DEFAULT (datetime('now')),
+		PRIMARY KEY (profile, kind, key)
+	)
+`);
+
+// TV shows (Jeopardy!, SNL…) became their own kind on Live TV, after some profiles had picked
+// their sports: added to those picks once, so the shows aren't hidden from them unasked.
+once('live-sports-tv-shows', () => {
+	const rows = db.prepare("SELECT profile, data FROM live_saved WHERE kind = 'sports' AND key = 'picked'").all() as { profile: number; data: string | null }[];
+	const update = db.prepare("UPDATE live_saved SET data = ? WHERE profile = ? AND kind = 'sports' AND key = 'picked'");
+	for (const row of rows) {
+		try {
+			const picked = JSON.parse(row.data ?? '[]');
+			if (Array.isArray(picked) && picked.length && !picked.includes('tv')) update.run(JSON.stringify([...picked, 'tv']), row.profile);
+		} catch {}
+	}
+});
+
+/**
  * node:sqlite hands back null-prototype objects. SvelteKit needs plain ones to
  * send them to the browser, so every query result goes through here.
  */

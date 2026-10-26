@@ -81,6 +81,10 @@ try {
 					});
 					pending.delete(m.id);
 				}
+				if (m.type === 'live-capture-result') {
+					pending.get(m.id)!({ url: (m.url as string) ?? '', headers: (m.headers as Record<string, string>) ?? {}, error: m.error as string | undefined });
+					pending.delete(m.id);
+				}
 				if (m.type === 'movy-find-result') {
 					pending.get(m.id)!({ url: (m.url as string) ?? '', error: m.error as string | undefined });
 					pending.delete(m.id);
@@ -106,6 +110,25 @@ try {
 } catch {}
 
 let counter = 0;
+
+/**
+ * A live channel's stream address and the headers it's asked with, read from its page by the
+ * desktop app (electron/liveCapture.cjs). Null outside the app.
+ */
+export function electronLiveCapture(page: string, referrer: string): Promise<{ url: string; headers: Record<string, string>; error?: string } | null> {
+	if (typeof process.send !== 'function') return Promise.resolve(null);
+	const id = String(++counter);
+	return new Promise((resolve) => {
+		pending.set(id, resolve as (r: unknown) => void);
+		process.send!({ type: 'live-capture', id, page, referrer });
+		setTimeout(() => {
+			if (pending.has(id)) {
+				pending.delete(id);
+				resolve({ url: '', headers: {}, error: 'timeout' });
+			}
+		}, 35_000);
+	});
+}
 
 export function electronFetch(
 	url: string,
@@ -149,9 +172,11 @@ export function electronFebboxList(url: string): Promise<(FetchResult & { challe
 	});
 }
 
+/** `account`: another Febbox account's sign-in and the desktop app's cookie store for it (febboxAccounts.ts). */
 export function electronGetVideoUrl(
 	shareKey: string,
-	fid: number
+	fid: number,
+	account?: { partition: string; token: string }
 ): Promise<VideoUrlResult> {
 	if (typeof process.send !== 'function') {
 		return Promise.resolve({ playerHtml: '', dlText: '', error: 'not in Electron' });
@@ -161,7 +186,7 @@ export function electronGetVideoUrl(
 
 	return new Promise<VideoUrlResult>((resolve) => {
 		pending.set(id, resolve as (r: FetchResult | VideoUrlResult) => void);
-		process.send!({ type: 'get-video-url', id, shareKey, fid });
+		process.send!({ type: 'get-video-url', id, shareKey, fid, partition: account?.partition, token: account?.token });
 
 		setTimeout(() => {
 			if (pending.has(id)) {

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Plays an episode, a film or a live channel, full screen, with the Roku's own controls, and
+     the Fire TV player's habits on a TV: captions on, intros and credits skipped by themselves
+     (or a Skip button), the next episode following on, and a fresh link when it stops working.
+     Where it's got to is saved as it plays. -->
+<component name="PlayerScreen" extends="Group">
+    <interface>
+        <field id="params" type="assocarray" onChange="start" />
+        <field id="action" type="assocarray" />
+        <field id="closing" type="boolean" onChange="onClosing" />
+        <field id="resumed" type="boolean" alwaysNotify="true" />
+    </interface>
+    <script type="text/brightscript" uri="pkg:/components/PlayerScreen.brs" />
+    <script type="text/brightscript" uri="pkg:/components/common.brs" />
+    <children>
+        <Rectangle width="1920" height="1080" color="0x000000FF" />
+        <Video id="video" width="1920" height="1080" enableUI="true" notificationInterval="1" />
+        <Group id="skip" translation="[1490, 880]" visible="false">
+            <Poster uri="pkg:/images/pill.9.png" width="330" height="84" blendColor="0xE7EDE9FF" />
+            <Label id="skipLabel" width="330" height="84" horizAlign="center" vertAlign="center" font="font:MediumBoldSystemFont" color="0x111614FF" />
+        </Group>
+        <Group id="waiting">
+            <BusySpinner id="spinner" translation="[912, 452]" />
+            <Label id="message" translation="[160, 620]" width="1600" horizAlign="center" wrap="true" font="font:MediumSystemFont" color="0xE7EDE9FF" />
+        </Group>
+        <Timer id="saver" repeat="true" duration="10" />
+    </children>
+</component>

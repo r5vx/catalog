@@ -84,6 +84,10 @@
 	);
 
 	let dismissed = $state<Set<string>>(new Set());
+
+	/** Where a Continue Watching card opens: the player at its place, or a sports replay itself. */
+	const resumeHref = (item: { title: string; type: string; season: number; episode: number; href?: string }) =>
+		item.href ?? `/watch?title=${encodeURIComponent(item.title)}&type=${item.type}&auto=1${item.type === 'tv' ? `&resume_s=${item.season}&resume_e=${item.episode}` : ''}`;
 	const continueItems = $derived(
 		(data.continueWatching ?? [])
 			.filter((w) => w.title && !dismissed.has(`${w.title}:${w.type}`))
@@ -253,7 +257,7 @@
 				<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 				<li class="watching-item" oncontextmenu={(e) => onWatchingContext(e, item)}>
 					<a
-						href="/watch?title={encodeURIComponent(item.title)}&type={item.type}&auto=1{item.type === 'tv' ? `&resume_s=${item.season}&resume_e=${item.episode}` : ''}"
+						href={resumeHref(item)}
 						class="card"
 						onpointerenter={() => scheduleWarm(item)}
 						onpointerleave={cancelWarm}
@@ -283,7 +287,9 @@
 						</div>
 					{/if}
 					<div class="watching-actions">
-						{#if item.entryId && item.entryStatus === 'completed'}
+						{#if item.type === 'replay'}
+							<!-- A sports replay: nothing to mark in the library. -->
+						{:else if item.entryId && item.entryStatus === 'completed'}
 							<button
 								type="button"
 								class="watching-action"
@@ -453,11 +459,13 @@
 {#if cwCtx}
 	<div class="ctx-backdrop" onclick={closeCwCtx} oncontextmenu={(e) => { e.preventDefault(); closeCwCtx(); }}></div>
 	<div class="ctx-menu" style="left: {cwCtx.x}px; top: {cwCtx.y}px;">
-		<button type="button" onclick={() => { const i = cwCtx!.item; goto(`/watch?title=${encodeURIComponent(i.title)}&type=${i.type}&auto=1${i.type === 'tv' ? `&resume_s=${i.season}&resume_e=${i.episode}` : ''}`); closeCwCtx(); }}>
+		<button type="button" onclick={() => { goto(resumeHref(cwCtx!.item)); closeCwCtx(); }}>
 			▶ {pm ? p('Resume') : 'Resume'}
 		</button>
 		<hr />
-		{#if cwCtx.item.entryId && cwCtx.item.entryStatus === 'completed'}
+		{#if cwCtx.item.type === 'replay'}
+			<!-- A sports replay: nothing to mark in the library. -->
+		{:else if cwCtx.item.entryId && cwCtx.item.entryStatus === 'completed'}
 			<button type="button" onclick={() => { markRewatched(cwCtx!.item.entryId!, cwCtx!.item.title, cwCtx!.item.type); closeCwCtx(); }}>
 				↻ {pm ? p('Rewatched +1') : 'Rewatched +1'}
 			</button>

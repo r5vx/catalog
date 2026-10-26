@@ -17,6 +17,7 @@
 
 import { noteRelayPiece } from './playbackLog';
 import { trustedVideoHost } from './relayHosts';
+import { keepPiece, pieceKeyOf, storedPiece, watching } from './episodeDownloads';
 
 /** Pieces longer than this are split. */
 const LONG = 12;
@@ -278,8 +279,11 @@ function forgetOld() {
 	while (pieces.size > KEEP_PIECES && finished.length) pieces.delete(finished.shift()![0]);
 }
 
-/** Downloads a piece, cutting it into chunks as they arrive. */
-function download(url: string, headers: Record<string, string>, clock: { track: number; timescale: number }): Piece {
+/**
+ * Downloads a piece, cutting it into chunks as they arrive. A piece already downloaded ahead
+ * (episodeDownloads.ts) is cut from `stored` instead, and one downloaded here is kept there.
+ */
+function download(url: string, headers: Record<string, string>, clock: { track: number; timescale: number }, stored: Buffer | null = null): Piece {
 	let tell = () => {};
 	const piece: Piece = {
 		chunks: [], reached: -1, raw: [], unreadable: false, done: false, failed: false, usedAt: Date.now(),
@@ -314,8 +318,18 @@ function download(url: string, headers: Record<string, string>, clock: { track: 
 
 		const started = Date.now();
 		let got = 0;
-		const answer = await fetchSteadily(url, headers);
-		if (!answer.response.ok) throw new Error(`video server said ${answer.response.status}`);
+		const all: Buffer[] = [];
+		const fetched = stored ? null : await fetchSteadily(url, headers);
+		if (fetched && !fetched.response.ok) throw new Error(`video server said ${fetched.response.status}`);
+		// (Already here: handed over in one go.)
+		let given = false;
+		const answer = fetched ?? {
+			read: async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
+				if (given || !stored) return { done: true, value: undefined };
+				given = true;
+				return { done: false, value: new Uint8Array(stored.buffer, stored.byteOffset, stored.byteLength) };
+			}
+		};
 		// Not cut-up-able after all: everything so far, in order, then the rest as it comes.
 		const giveUp = () => {
 			piece.unreadable = true;
@@ -325,6 +339,7 @@ function download(url: string, headers: Record<string, string>, clock: { track: 
 		for (let r = await answer.read(); !r.done; r = await answer.read()) {
 			const bytes = Buffer.from(r.value.buffer, r.value.byteOffset, r.value.byteLength);
 			got += bytes.length;
+			if (!stored) all.push(bytes);
 			if (piece.unreadable) {
 				piece.raw.push(bytes);
 				continue;
@@ -364,7 +379,11 @@ function download(url: string, headers: Record<string, string>, clock: { track: 
 		const last = piece.chunks.at(-1);
 		if (last && lead.length) last.bytes = Buffer.concat([last.bytes, ...lead]);
 		if (!piece.unreadable && (!piece.chunks.length || current)) giveUp();
-		noteRelayPiece(url, got, Date.now() - started);
+		if (!stored) {
+			noteRelayPiece(url, got, Date.now() - started);
+			const key = pieceKeyOf(url);
+			if (key) keepPiece(key.copy, key.n, Buffer.concat(all));
+		}
 		piece.done = true;
 		piece.tell();
 	})().catch(() => {
@@ -389,8 +408,10 @@ export async function piecePart(
 	forgetOld();
 	let piece = pieces.get(url);
 	const clock = { track: where.track, timescale: where.timescale };
+	const key = pieceKeyOf(url);
+	if (key) watching(key.copy, key.n);
 	if (!piece || piece.failed) {
-		piece = download(url, headers, clock);
+		piece = download(url, headers, clock, key ? storedPiece(key.copy, key.n) : null);
 		pieces.set(url, piece);
 	}
 	piece.usedAt = Date.now();
