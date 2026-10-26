@@ -132,6 +132,8 @@ type Continuing = {
 	link?: { source: string; id: string } | null;
 	/** A new episode is out (season/episode are its), not yet dismissed. */
 	newEpisode?: boolean;
+	/** Where it opens, when not the usual player address (a sports replay). */
+	href?: string;
 };
 
 export function fromContinue(item: Continuing, overview: string | null = null): Tile {
@@ -140,7 +142,7 @@ export function fromContinue(item: Continuing, overview: string | null = null): 
 	const fresh = Boolean(item.newEpisode && episode);
 	return {
 		key: `cw-${item.type}-${item.title}`,
-		href: item.link ? titleHref(item.link.source, item.link.id) : playHref(item.title, item.type, null, item.season, item.episode),
+		href: item.href ?? (item.link ? titleHref(item.link.source, item.link.id) : playHref(item.title, item.type, null, item.season, item.episode)),
 		title: item.title,
 		poster: item.posterUrl,
 		meta: fresh

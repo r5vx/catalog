@@ -4,6 +4,7 @@
 	import TvUpdated from '$lib/tv/TvUpdated.svelte';
 	import SigninBanner from '$lib/SigninBanner.svelte';
 	import ConfirmDialog from '$lib/ConfirmDialog.svelte';
+	import RatePrompt from '$lib/RatePrompt.svelte';
 	import SideNav from '$lib/SideNav.svelte';
 	import { navigating, page } from '$app/state';
 	import { beforeNavigate } from '$app/navigation';
@@ -98,6 +99,8 @@
 	<SigninBanner signin={data?.showboxSignin} />
 	{@render children()}
 	<ConfirmDialog />
+	<!-- "Rate it" after leaving the player (not over it, nor on a TV's screens). -->
+	{#if !/^\/(watch|tv)(\/|$)/.test(page.url.pathname)}<RatePrompt />{/if}
 </div>
 
 <style>

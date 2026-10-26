@@ -24,6 +24,7 @@
 		{ href: '/tv/browse/tv', label: 'TV Shows', icon: 'tv' },
 		{ href: '/tv/browse/anime', label: 'Anime', icon: 'anime' },
 		{ href: '/tv/library', label: 'My Library', icon: 'library' },
+		{ href: '/tv/live', label: 'Live TV', icon: 'live' },
 		{ href: '/tv/settings', label: 'Settings', icon: 'settings' }
 	] as const;
 
@@ -90,6 +91,9 @@
 						<path d="M12 3.5 14.4 9l5.6.5-4.3 3.7 1.4 5.6L12 15.8 6.9 18.8l1.4-5.6L4 9.5 9.6 9Z" />
 					{:else if item.icon === 'library'}
 						<path d="M5 4v16M10 4v16M15 4.5l4.5 15" />
+					{:else if item.icon === 'live'}
+						<!-- An aerial on a screen. -->
+						<rect x="3" y="8" width="18" height="12" rx="2" /><path d="M8 3l4 5 4-5" />
 					{:else}
 						<!-- A gear. -->
 						<circle cx="12" cy="12" r="3" />

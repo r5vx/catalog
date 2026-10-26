@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The menu down the left, as on the Fire TV (src/routes/tv/+layout.svelte): who's watching,
+     Search, Home, Movies, TV Shows, Anime, My Library, Live TV, Settings. Narrow with just its
+     icons; highlighted, it opens wider with their names over a darkened screen. -->
+<component name="NavMenu" extends="Group">
+    <interface>
+        <field id="current" type="string" onChange="paint" />
+        <field id="open" type="boolean" onChange="paint" />
+        <field id="who" type="string" onChange="build" />
+        <field id="whoColor" type="string" onChange="build" />
+        <field id="chosen" type="string" alwaysNotify="true" />
+    </interface>
+    <script type="text/brightscript" uri="pkg:/components/NavMenu.brs" />
+    <children>
+        <Rectangle id="dim" translation="[560, 0]" width="1360" height="1080" color="0x00000073" visible="false" />
+        <Poster id="backing" width="160" height="1080" uri="pkg:/images/nav_closed.png" />
+        <Group id="items" translation="[30, 76]" />
+    </children>
+</component>

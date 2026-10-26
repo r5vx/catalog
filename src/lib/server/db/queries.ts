@@ -983,6 +983,8 @@ export type ContinueItem = WatchProgress & {
 	entryStatus: string | null;
 	/** A new episode came out after the show was caught up: season/episode are that one's. */
 	newEpisode: boolean;
+	/** Where it opens, when not the usual player address (a sports replay). */
+	href?: string;
 };
 
 /**
@@ -1031,7 +1033,7 @@ export function continueWatchingList(): ContinueItem[] {
 				)
 				AND (
 					w.type = 'tv'
-					OR (w.type = 'movie' AND w.duration > 0 AND w."current_time" > 30 AND (CAST(w."current_time" AS REAL) / w.duration) < 0.95)
+					OR (w.type IN ('movie', 'replay') AND w.duration > 0 AND w."current_time" > 30 AND (CAST(w."current_time" AS REAL) / w.duration) < 0.95)
 				)
 				-- Hidden until it's watched again after being removed, or a new episode comes out.
 				AND NOT EXISTS (
@@ -1045,11 +1047,20 @@ export function continueWatchingList(): ContinueItem[] {
 				LIMIT 20
 			`)
 			.all({ profile }) as unknown as (ContinueItem & { newSeason: number | null; newEpisodeNumber: number | null; dismissed: number | null })[];
-		return rows.map(({ newSeason, newEpisodeNumber, dismissed, ...item }) =>
-			newSeason !== null && newEpisodeNumber !== null
-				? { ...item, season: newSeason, episode: newEpisodeNumber, currentTime: 0, duration: 0, newEpisode: !dismissed }
-				: { ...item, newEpisode: false }
-		);
+		// A replay opens itself again (Live TV's, by its id), with the picture it was watched with.
+		const replays = new Map(recentReplays().map((r) => [r.title, r]));
+		return rows.flatMap(({ newSeason, newEpisodeNumber, dismissed, ...item }) => {
+			if (item.type === 'replay') {
+				const replay = replays.get(item.title);
+				if (!replay) return [];
+				return [{ ...item, posterUrl: replay.poster, newEpisode: false, href: `/watch?${new URLSearchParams({ replay: replay.id, name: item.title })}` }];
+			}
+			return [
+				newSeason !== null && newEpisodeNumber !== null
+					? { ...item, season: newSeason, episode: newEpisodeNumber, currentTime: 0, duration: 0, newEpisode: !dismissed }
+					: { ...item, newEpisode: false }
+			];
+		});
 	} catch (e) {
 		console.error('[continueWatchingList]', e);
 		return [];
@@ -1285,6 +1296,7 @@ export function deleteProfile(id: number): void {
 		db.prepare('DELETE FROM watch_progress WHERE profile = ?').run(id);
 		db.prepare('DELETE FROM continue_hidden WHERE profile = ?').run(id);
 		db.prepare('DELETE FROM profile_titles WHERE profile = ?').run(id);
+		db.prepare('DELETE FROM live_saved WHERE profile = ?').run(id);
 		db.prepare('DELETE FROM profiles WHERE id = ?').run(id);
 		db.exec('COMMIT');
 	} catch (error) {
@@ -1371,4 +1383,96 @@ export function watchedLately(minutes: number): boolean {
 /** Takes a title off the current profile's own list. */
 export function deleteProfileTitle(id: number): void {
 	db.prepare('DELETE FROM profile_titles WHERE id = ? AND profile = ?').run(id, currentProfile());
+}
+
+/* ------------------------------------------------------------------ live TV */
+
+export type LiveSavedKind = 'channel' | 'game' | 'recent' | 'sports' | 'team' | 'replay';
+export type LiveSaved = { kind: LiveSavedKind; key: string; name: string; data: string | null; savedAt: string };
+
+/** The current profile's saved channels and games, and channels watched lately, newest first. */
+export function liveSavedList(): LiveSaved[] {
+	return plainAll<LiveSaved>(
+		db
+			.prepare('SELECT kind, key, name, data, saved_at AS savedAt FROM live_saved WHERE profile = ? ORDER BY saved_at DESC, rowid DESC')
+			.all(currentProfile())
+	);
+}
+
+export function saveLive(kind: LiveSavedKind, key: string, name: string, data: string | null = null): void {
+	db.prepare(`
+		INSERT INTO live_saved (profile, kind, key, name, data, saved_at) VALUES (?, ?, ?, ?, ?, datetime('now'))
+		ON CONFLICT (profile, kind, key) DO UPDATE SET name = excluded.name, data = excluded.data, saved_at = excluded.saved_at
+	`).run(currentProfile(), kind, key, name, data);
+}
+
+export function unsaveLive(kind: LiveSavedKind, key: string): void {
+	db.prepare('DELETE FROM live_saved WHERE profile = ? AND kind = ? AND key = ?').run(currentProfile(), kind, key);
+}
+
+/**
+ * The sports this profile picked to see on Live TV (asked the first time it opens), or null when
+ * it hasn't been asked yet. Kept as one row (kind 'sports').
+ */
+export function liveSports(): string[] | null {
+	const row = db.prepare("SELECT data FROM live_saved WHERE profile = ? AND kind = 'sports' AND key = 'picked'").get(currentProfile()) as { data: string | null } | undefined;
+	if (!row) return null;
+	try {
+		const list = JSON.parse(row.data ?? '[]');
+		return Array.isArray(list) ? list.filter((s) => typeof s === 'string') : null;
+	} catch {
+		return null;
+	}
+}
+
+export function setLiveSports(sports: string[]): void {
+	saveLive('sports', 'picked', 'Sports', JSON.stringify(sports));
+}
+
+/**
+ * A replay was played: first among those watched lately (the last 12 kept), with what Continue
+ * Watching and Live TV's Recently watched need to show it and open it again (its place is kept
+ * in watch_progress, as type "replay", under its title).
+ */
+export function noteReplayWatched(id: string, title: string, details: { poster: string | null; sport: string }): void {
+	saveLive('replay', id, title, JSON.stringify(details));
+	db.prepare(`
+		DELETE FROM live_saved WHERE profile = ? AND kind = 'replay' AND key NOT IN (
+			SELECT key FROM live_saved WHERE profile = ? AND kind = 'replay' ORDER BY saved_at DESC, rowid DESC LIMIT 12
+		)
+	`).run(currentProfile(), currentProfile());
+}
+
+export type RecentReplay = { id: string; title: string; poster: string | null; sport: string; currentTime: number; duration: number; watchedAt: string };
+
+/** Replays watched lately by this profile, newest first, with how far each got. */
+export function recentReplays(): RecentReplay[] {
+	const rows = plainAll<{ key: string; name: string; data: string | null; savedAt: string; currentTime: number | null; duration: number | null }>(
+		db
+			.prepare(`
+				SELECT r.key, r.name, r.data, r.saved_at AS savedAt, w."current_time" AS currentTime, w.duration
+				FROM live_saved r
+				LEFT JOIN watch_progress w ON w.profile = r.profile AND w.type = 'replay' AND w.title = r.name AND w.season = 0 AND w.episode = 0
+				WHERE r.profile = ? AND r.kind = 'replay'
+				ORDER BY COALESCE(w.updated_at, r.saved_at) DESC
+			`)
+			.all(currentProfile())
+	);
+	return rows.map((r) => {
+		let details: { poster?: string | null; sport?: string } = {};
+		try {
+			details = JSON.parse(r.data ?? '{}');
+		} catch {}
+		return { id: r.key, title: r.name, poster: details.poster ?? null, sport: details.sport ?? 'other', currentTime: r.currentTime ?? 0, duration: r.duration ?? 0, watchedAt: r.savedAt };
+	});
+}
+
+/** A channel was played: first among the ones watched lately (the last 12 are kept). */
+export function noteLiveWatched(channel: number, name: string): void {
+	saveLive('recent', String(channel), name);
+	db.prepare(`
+		DELETE FROM live_saved WHERE profile = ? AND kind = 'recent' AND key NOT IN (
+			SELECT key FROM live_saved WHERE profile = ? AND kind = 'recent' ORDER BY saved_at DESC, rowid DESC LIMIT 12
+		)
+	`).run(currentProfile(), currentProfile());
 }

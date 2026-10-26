@@ -37,6 +37,9 @@ dist-staged/
 # Fire TV app build output
 build-tv/
 dist-tv/
+dist-roku/
+# BrighterScript's staging folder (checking the Roku app)
+out/
 source-probe-*.txt
 
 # The Fire TV app's signing key: kept on this PC only (anyone with it could sign a fake update).

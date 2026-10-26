@@ -52,12 +52,16 @@ export type Settings = {
 	theme?: string;
 	/** Serialised febbox cookies — stored after login, or pasted by a friend. */
 	febboxToken?: string;
+	/** More Febbox accounts' sign-ins (src/lib/server/febboxAccounts.ts), as a JSON list. */
+	febboxMore?: string;
 	/** '0' centres the layout; otherwise (the default) it stretches edge-to-edge. */
 	wideLayout?: string;
 	/** '0' turns off the sidebar with the library's sections, Browse and Settings (on by default). */
 	sideNav?: string;
 	/** Settings → Storage: how many MB Catalog may keep to load things faster (src/lib/server/storage.ts). */
 	storageLimitMb?: string;
+	/** Settings → Storage: how many GB the episodes downloaded ahead may take (episodeDownloads.ts). */
+	downloadsAheadGb?: string;
 	/** When '1', UI text gets replaced with Poison's vocabulary. */
 	poisonMode?: string;
 	/** A picture behind the pages (Settings → Personalization): its "/media/…" address. */
@@ -89,7 +93,8 @@ export function readSettings(): Settings {
 }
 
 export function updateSettings(patch: Partial<Settings>): Settings {
-	const accountBefore = 'febboxToken' in patch ? febboxAccountOf(readSettings().febboxToken) : null;
+	const before = 'febboxToken' in patch || 'febboxMore' in patch ? readSettings() : null;
+	const accountBefore = before ? `${febboxAccountOf(before.febboxToken)}|${before.febboxMore ?? ''}` : null;
 	const set = db.prepare(
 		'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
 	);
@@ -101,7 +106,7 @@ export function updateSettings(patch: Partial<Settings>): Settings {
 	}
 
 	const settings = readSettings();
-	if (accountBefore !== null && febboxAccountOf(settings.febboxToken) !== accountBefore) {
+	if (accountBefore !== null && `${febboxAccountOf(settings.febboxToken)}|${settings.febboxMore ?? ''}` !== accountBefore) {
 		for (const forget of febboxAccountChanged) forget();
 	}
 	return settings;

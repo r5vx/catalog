@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Finds Catalog on the computers in the house (as the Fire TV app does). -->
+<component name="DiscoverTask" extends="Task">
+    <interface>
+        <field id="found" type="array" />
+    </interface>
+    <script type="text/brightscript" uri="pkg:/components/DiscoverTask.brs" />
+</component>

@@ -12,6 +12,66 @@ without both.
 
 ## Unreleased
 
+## 3.6.0 — 2026-10-26 — Live TV and replays, more Showbox accounts, and Roku
+
+### New
+- **Live TV**: today's and tomorrow's games by sport (football, basketball, soccer, hockey and more), with the channels showing each; about 900 channels; plays on the computer, phone and TVs while Catalog runs on the computer
+- **Live TV**: search games, teams, leagues and channels; save a game or channel to watch later; Watched lately
+- **Live TV**: plays in Catalog's own player, like everything else; switch to another channel showing the same game from it
+- **Live TV**: turn on the captions a channel carries (most American channels have them)
+- **Live TV**: Replays of past games: NFL, college football, NBA, WNBA and soccer, in Catalog's player with no ads, and a choice of versions
+- **Live TV**: right-click a game or channel to watch, save, or see more of that sport
+- **Showbox**: add more Febbox accounts in Settings → Services; each video uses the one with the most HD left today, so several TVs can watch without dropping to 360p
+- **Live TV**: games show both teams' logos on their colors (or the sport's picture), on the computer, TVs and Roku
+- **Live TV**: pick the sports Live TV shows the first time; only those show, and + changes them
+- **Live TV**: live scores on games, refreshed every minute; a finished game leaves On now
+- **Live TV**: favorite teams (right-click a game, or the menu button on a TV); their games come first, under Your teams
+- **Live TV**: one click plays a game on its best channel, learned from what played well; the TV's menu button lists the others
+- **Live TV**: TV shows (Jeopardy!, Family Feud, SNL, late-night shows) have their own section, each with the show's own picture
+- **Roku**: a Catalog app for Roku TVs, laid out like the Fire TV one (menu, Home, Movies, TV Shows, Anime, My Library, Live TV and replays, Search, Settings), installed in developer mode
+
+### Improved
+- **Player**: keeps up better on a busy connection (a big download running): more of a Showbox video is fetched at once while it's coming in slowly
+- **TV**: auto-timing works on 7Movies and Movy, and the TV runs lighter with subtitles on
+- **TV**: only one menu is open at a time (sources, settings, subtitles), and Back closes it instead of leaving the episode
+- **Player**: 7Movies and Movy episodes download onto the computer as they play, far ahead of where you are, so their slow moments don't stop the video (on TVs too)
+- **Player**: the next 7Movies or Movy episode downloads while you watch, so it starts straight away
+- **Player**: the progress bar shows, in a lighter shade, how much of a 7Movies or Movy episode the computer has downloaded
+- **Live TV**: a channel that won't play on one of the site's servers tries the next
+- **Settings → Storage**: shows the episodes downloaded ahead, with its own limit (20 GB unless changed); a watched episode's download goes a few minutes after it ends
+- **Player**: playback stats show how much of the episode the computer has downloaded
+- **TV**: on Live TV the sport picked is highlighted
+- **Player**: "Keeps stopping to load" offers to play the same spot from another source
+- **Live TV**: Channels starts on your country from Where to watch (Settings → Services); search still finds every country
+- **Live TV**: only games shown in your country (Where to watch), with Other countries to see the rest
+- **Live TV** and **Replays**: open straight away, kept ready in the background
+- **Replays**: a condensed game is only played when the full one isn't ready yet, and says so (on its card too)
+- **Replays**: only the versions that play are listed, named for what they are (Full game or Condensed, and the site)
+- **Replays**: a game that can't be played yet isn't listed until it can
+- **Replays**: pick up where you left off, from Continue Watching too
+- **Live TV**: Recently watched: the replays (how far you got) and channels you watched lately
+- **Player**: auto-timing fits films with quiet talking under loud sound (Hurt Locker), and never undoes a timing that's been fitting
+- **Player**: "Rate it" asks after you leave the player, not over the end of the film
+- **Live TV**: the caption delay you set is kept for the next game
+- **TV**: Replays show each game's picture
+- **Player**: 7Movies' HEVC copy downloads onto the computer ahead too
+- **Mini player**: every control the big player has: volume, subtitles and their timing, settings, the copy playing
+- **Settings → Playback**: a video going back by itself is noted, with what happened just before
+- **Settings → Playback**: each stop says how long it lasted, what the player was waiting for, whether the picture kept up, and what happened just before
+- **Settings → Playback**: switching source, episode or quality no longer counts as a stop
+
+### Fixed
+- **Player**: an anime's dual-language copy is picked again, so the dub you were watching comes back
+- **Player**: Skip Credits covers the whole ending song when the databases know it, not just the part two episodes share
+- **Live TV**: Back from a game or replay goes back to Live TV, not the search
+- **Replays**: open on a loading screen, not the search page first
+- **Replays**: Dailymotion copies play again
+- **7Movies**: the HEVC copy no longer freezes the picture for a few seconds while the sound goes on (its faulty frame times are mended)
+- **Player**: a gap in a copy's picture is skipped instead of a still picture over the sound
+- **7Movies**: the HEVC copy plays smoothly, with no stutter every few seconds (its frames were shown out of order)
+- **7Movies**: no skip where the part loaded after a jump meets the part loaded before it
+- **Player**: auto-timing no longer flips the subtitles back and forth between two delays
+
 ## 3.5.0 — 2026-10-24 — Rate it, mini player, and fewer stops
 
 ### New

@@ -23,7 +23,7 @@
 	// The menu button (src/lib/tv.ts, or ☰/M when trying it on a computer) and Back (tvBack).
 	$effect(() => {
 		const opened = () => openFor();
-		const closed = () => close();
+		const closed = () => menu && close();
 		window.addEventListener('catalog:tv-menu', opened);
 		window.addEventListener('catalog:tv-menu-close', closed);
 		return () => {

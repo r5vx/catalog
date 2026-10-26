@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Who's watching, as on the Fire TV: each person's initial on their color. Each has their own
+     Continue Watching and list. -->
+<component name="ProfileScreen" extends="Group">
+    <interface>
+        <field id="params" type="assocarray" onChange="start" />
+        <field id="action" type="assocarray" />
+        <field id="closing" type="boolean" />
+        <field id="resumed" type="boolean" alwaysNotify="true" />
+    </interface>
+    <script type="text/brightscript" uri="pkg:/components/ProfileScreen.brs" />
+    <script type="text/brightscript" uri="pkg:/components/common.brs" />
+    <children>
+        <Label text="Who's watching?" translation="[0, 250]" width="1920" horizAlign="center" font="font:LargeBoldSystemFont" color="0xE7EDE9FF" />
+        <MarkupGrid id="people" translation="[0, 420]" itemComponentName="TileItem" numColumns="6" numRows="1" itemSize="[220, 300]" itemSpacing="[50, 0]" drawFocusFeedback="false" />
+    </children>
+</component>

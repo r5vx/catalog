@@ -4,7 +4,7 @@
  * looked like every Showbox file being 360p-only (2026-10-22: "11.5 GB / 10 GB, Flow Reset 4
  * Hours"). Read from the account's own page, febbox.com/console, which shows both figures.
  */
-import { onFebboxAccountChange, readSettings } from './settings';
+import { febboxAccountOf, onFebboxAccountChange, readSettings } from './settings';
 
 export type Flow = {
 	/** Gigabytes used today, and the day's allowance. */
@@ -16,23 +16,33 @@ export type Flow = {
 	resetsAt: number | null;
 };
 
-/** Kept for a few minutes: the page is 300 KB, and the answer doesn't change by the second. */
-let kept: { flow: Flow | null; at: number } | null = null;
+/**
+ * Kept for a few minutes, for each account (by its short name): the page is 300 KB, and the
+ * answer doesn't change by the second.
+ */
+const kept = new Map<string, { flow: Flow | null; at: number }>();
 const KEEP = 5 * 60 * 1000;
-onFebboxAccountChange(() => (kept = null));
+onFebboxAccountChange(() => kept.clear());
+
+/** Asked afresh next time (its links just came back held to 360p). */
+export function forgetFlow(token: string) {
+	kept.delete(febboxAccountOf(token));
+}
 
 const GB: Record<string, number> = { B: 1 / 1024 ** 3, KB: 1 / 1024 ** 2, MB: 1 / 1024, GB: 1, TB: 1024 };
 const gigabytes = (amount: string, unit: string) => parseFloat(amount) * (GB[unit.toUpperCase()] ?? NaN);
 
-export async function febboxFlow(): Promise<Flow | null> {
-	if (kept && Date.now() - kept.at < KEEP) return kept.flow;
-	const { febboxToken } = readSettings();
-	if (!febboxToken) return null;
+/** The allowance of the account signed in with `token` (the main one when not given). */
+export async function febboxFlow(token = readSettings().febboxToken): Promise<Flow | null> {
+	if (!token) return null;
+	const account = febboxAccountOf(token);
+	const known = kept.get(account);
+	if (known && Date.now() - known.at < KEEP) return known.flow;
 	let flow: Flow | null = null;
 	try {
 		const resp = await fetch('https://www.febbox.com/console', {
 			headers: {
-				Cookie: febboxToken,
+				Cookie: token,
 				'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 			},
 			signal: AbortSignal.timeout(10000)
@@ -41,7 +51,7 @@ export async function febboxFlow(): Promise<Flow | null> {
 	} catch {
 		// Not known: the player says what it always has.
 	}
-	kept = { flow, at: Date.now() };
+	kept.set(account, { flow, at: Date.now() });
 	return flow;
 }
 
@@ -66,7 +76,7 @@ export async function isSignedIn(cookies: string): Promise<boolean | null> {
 		const page = await resp.text();
 		if (page.includes('Sign Out')) {
 			const flow = readFlow(page);
-			if (flow) kept = { flow, at: Date.now() };
+			if (flow) kept.set(febboxAccountOf(cookies), { flow, at: Date.now() });
 			return true;
 		}
 		return false;

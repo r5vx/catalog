@@ -1,7 +1,7 @@
 <script lang="ts">
 	import MoreButton from '$lib/MoreButton.svelte';
 	import { page } from '$app/state';
-	import { beforeNavigate } from '$app/navigation';
+	import { afterNavigate, beforeNavigate, goto, replaceState } from '$app/navigation';
 	import { onMount, onDestroy, tick, untrack } from 'svelte';
 	import Hls from 'hls.js';
 	import { fetchAheadLoader, recentPieces } from '$lib/fetchAhead';
@@ -13,7 +13,10 @@
 	import { SubtitleSync } from '$lib/subtitleSync';
 	import { findAndKeepSkips, skipKeyOf, type Found } from '$lib/skipFinder';
 	import { DownloadedSound } from '$lib/downloadedSound';
-	import StarRating from '$lib/StarRating.svelte';
+	import { withFound } from '$lib/skipMerge';
+	import { ratePrompt } from '$lib/rateLater.svelte';
+	import LiveStar from '$lib/LiveStar.svelte';
+	import { sendSaved, type LiveGame } from '$lib/live';
 
 	const pm = $derived(page.data.poisonMode);
 
@@ -23,6 +26,57 @@
 	 * saving nothing (`inMini`), and carries on where the mini player got to (`backFromMini`).
 	 */
 	const miniMode = page.url.searchParams.get('mini') === '1';
+
+	/**
+	 * Live TV (/watch?live=<channel>&name=…&game=…, src/lib/live.ts): a channel plays in this same
+	 * player, so it looks and works like everything else. Nothing is saved or looked up for it
+	 * (its place, subtitles, skips, cast, auto-timing). The bar shows LIVE, or how far behind and
+	 * "Go live"; the sources menu lists the game's other channels; captions the channel carries
+	 * (CEA-608, which most American channels have) can be turned on in the subtitles menu.
+	 */
+	const liveMode = Number(page.url.searchParams.get('live')) > 0;
+	/**
+	 * A replay of a past game (/watch?replay=<id>&name=…, sources/replays.ts): played here too,
+	 * with seeking, like a film; like Live, nothing is saved or looked up for it. The sources menu
+	 * lists its versions (its site's servers).
+	 */
+	const replayMode = Boolean(page.url.searchParams.get('replay'));
+	/** Live or a replay: Catalog's player for sports, without the library's parts. */
+	const sportsMode = liveMode || replayMode;
+	let replayVersions = $state<string[]>([]);
+	let replayVersion = $state(0);
+	/** The replay's picture (the site's), kept with its place for Continue Watching. */
+	let replayPoster = '';
+	let liveNow = $state({ id: Number(page.url.searchParams.get('live')) || 0, name: page.url.searchParams.get('name') ?? '' });
+	let liveGame = $state<LiveGame | null>(null);
+	let liveSaved = $state(false);
+	/** The channel carries captions (found as it plays), and the ones heard so far. */
+	let liveCaptions = $state(false);
+	let liveCues: { start: number; end: number; text: string; top: boolean }[] = [];
+	/**
+	 * Live captions are typed by a person as the commentators talk, so they come a few seconds
+	 * late, by however long that takes (measured on a CBS game: anywhere from on time to 8 s, about
+	 * 2 s typically). Auto-timing can't follow that (tried, 2026-10-25: non-stop commentary and
+	 * captions that stay up as they roll leave nothing to line up), so the delay set by hand for
+	 * them is kept on this device for the next game.
+	 */
+	const LIVE_CAPTION_DELAY = 'catalog:liveCaptionDelay';
+	$effect(() => {
+		const delay = subtitleDelay;
+		if (!sportsMode || !liveCaptions) return;
+		try {
+			localStorage.setItem(LIVE_CAPTION_DELAY, String(delay));
+		} catch {}
+	});
+	/** Seconds behind live. */
+	let liveBehind = $state(0);
+	let liveNoted = false;
+	let liveRestarts = 0;
+	/** Opened from another of Catalog's pages (so Back can return there), not straight from a link. */
+	let cameFromApp = false;
+	afterNavigate(({ from }) => {
+		if (from) cameFromApp = true;
+	});
 	let startFid: number | null = Number(page.url.searchParams.get('fid')) || null;
 	let inMini = $state(false);
 	/** In Catalog's own window on the computer (not a phone's or a TV's browser). */
@@ -59,7 +113,7 @@
 	 * A streaming playlist rather than a whole file. Everything through Catalog's relay is one —
 	 * 7Movies' H.264 copy has no ".m3u8" in its address.
 	 */
-	const isPlaylist = (url: string) => url.includes('.m3u8') || url.startsWith('/api/watch/relay');
+	const isPlaylist = (url: string) => url.includes('.m3u8') || url.startsWith('/api/watch/relay') || url.startsWith('/api/live/playlist');
 
 	/** Where a file plays from: its own source, or the episode's Showbox share. */
 	const shareOf = (f: FileOption | null | undefined) => f?.shareKey || shareKey;
@@ -572,6 +626,15 @@
 	let volume = $state(1);
 	let muted = $state(false);
 	let bufferedEnd = $state(0);
+	/**
+	 * What the computer has downloaded of this episode (7Movies and Movy: episodeDownloads.ts), as
+	 * time ranges, drawn as a lighter shade on the bar. A TV holds only a minute or two of video
+	 * (its memory), so its own buffered part stops short; the computer can hold the whole episode,
+	 * and this shows how far it can play without waiting on the source.
+	 */
+	let heldRanges = $state<{ start: number; end: number }[]>([]);
+	/** For the stats: how much of it the computer has, and how many pieces it's downloading now. */
+	let heldCount = $state({ held: 0, total: 0, going: 0 });
 	let gainNode: GainNode | undefined = $state();
 	let audioCtx: AudioContext | undefined;
 	let audioSource: MediaElementAudioSourceNode | undefined;
@@ -589,6 +652,10 @@
 	let showDelay = $state(false);
 	let showAudioPicker = $state(false);
 	let showFilePicker = $state(false);
+	// The menus at the bottom close the sources menu at the top, as it closes them.
+	$effect(() => {
+		if (showSettings || showCaptions || showDelay || showAudioPicker) untrack(() => (showFilePicker = false));
+	});
 	let inPiP = $state(false);
 	let seeking = $state(false);
 	let seekPreview = $state(-1);
@@ -621,7 +688,7 @@
 	let playableLevels: number[] = [];
 	let slowStops: number[] = [];
 	/** What the "keeps stopping" box offers: a lower level (−1 when there's none). */
-	let slowOffer = $state<{ lower: number; height: number; freshLink: boolean } | null>(null);
+	let slowOffer = $state<{ lower: number; height: number; freshLink: boolean; other: FileOption | null } | null>(null);
 	/** "Keep loading" was picked for this video: not asked again. */
 	let slowOfferDeclined = false;
 
@@ -834,7 +901,7 @@
 		// on (or their download, which can take seconds) isn't waited on. (Not on a TV: the
 		// computer does its hearing, once subtitles are on.)
 		const ownTrack = playlist && Boolean(track) && track !== failed && !isTv();
-		const wanted = subAutoSync && (showing || fromDownloads || ownTrack);
+		const wanted = !sportsMode && subAutoSync && (showing || fromDownloads || ownTrack);
 		untrack(() => {
 			if (!wanted || !videoEl) return;
 			if (!subSync) {
@@ -851,12 +918,11 @@
 				};
 				subSync.onMismatch = () => switchToFittingSubs();
 				// For trying it out in a browser: what it found, and why.
-				if (import.meta.env.DEV) (window as unknown as { subSync: SubtitleSync }).subSync = subSync;
-			}
+				if (import.meta.env.DEV) (window as unknown as { subSync: SubtitleSync }).subSync = subSync;			}
 			if (fromDownloads) {
-				subSync.useAppended();
-				// What the player had already downloaded before this started.
-				for (const piece of appendedSound) subSync.hearAppended(piece.data, piece.at, piece.length, piece.isInit);
+				// What the player had already downloaded before this started (once: handed over again
+				// each time the subtitles changed, it was heard twice over).
+				if (subSync.useAppended()) for (const piece of appendedSound) subSync.hearAppended(piece.data, piece.at, piece.length, piece.isInit);
 			} else if (showing || ownTrack) {
 				subSync.wholeTrack = showing;
 				timeSoundTrack(track);
@@ -873,6 +939,7 @@
 	let appendedSound: AppendedSound[] = [];
 
 	function noteAppendedSound(type: string, data: Uint8Array, frag: { start: number; duration: number } | null) {
+		if (sportsMode) return;
 		if ((type !== 'audio' && type !== 'audiovideo') || !frag || !data || data.length < 8) return;
 		const box = String.fromCharCode(data[4], data[5], data[6], data[7]);
 		const piece = { data, at: frag.start, length: frag.duration, isInit: box === 'ftyp' || box === 'moov' };
@@ -985,6 +1052,12 @@
 	});
 
 	onDestroy(() => subSync?.destroy());
+	onDestroy(() => stopEnded('left'));
+	$effect(() => {
+		const seen = () => notePlayerEvent(document.hidden ? 'window hidden' : 'window shown');
+		document.addEventListener('visibilitychange', seen);
+		return () => document.removeEventListener('visibilitychange', seen);
+	});
 
 	function ensureGain() {
 		if (gainNode || !videoEl) return;
@@ -1058,8 +1131,9 @@
 		slowStops = [];
 		const lower = hlsInstance ? levelBelow(hlsInstance.loadLevel) : -1;
 		const freshLink = Boolean(activeFile?.fid && shareOf(activeFile));
-		if (lower < 0 && !freshLink) return;
-		slowOffer = { lower, height: lower >= 0 ? (hlsInstance?.levels[lower]?.height ?? 0) : 0, freshLink };
+		const other = otherSource();
+		if (lower < 0 && !freshLink && !other) return;
+		slowOffer = { lower, height: lower >= 0 ? (hlsInstance?.levels[lower]?.height ?? 0) : 0, freshLink, other };
 	}
 
 	/*
@@ -1075,7 +1149,7 @@
 		const level = hlsInstance && hlsInstance.currentLevel >= 0 ? hlsInstance.levels[hlsInstance.currentLevel] : null;
 		return {
 			title: videoTitle,
-			source: activeFile?.source ?? 'Showbox',
+			source: liveMode ? `Live TV · ${liveNow.name}` : replayMode ? 'Replay' : (activeFile?.source ?? 'Showbox'),
 			quality: activeQuality,
 			height: videoEl?.videoHeight ?? 0,
 			tv: tvMode,
@@ -1085,14 +1159,19 @@
 			piecesMbps: video.map((p) => mbps(p.bytes, p.ms)),
 			fromMemory: video.filter((p) => p.ahead).length,
 			servers: [...new Set(video.map((p) => p.host))],
-			relayed: streamUrl.startsWith('/api/watch/relay?'),
+			// Pieces through this computer (a relayed playlist's pieces can come straight from their server).
+			relayed: video.length ? video.some((p) => p.host === location.host) : streamUrl.startsWith('/api/watch/relay?'),
 			previewsDownloading: strip?.busy ?? 0,
 			hearingSound: subSync?.fetchingSound ?? false,
 			// A separate sound track can run out on its own: both are kept, and how long each of
 			// its last pieces took (they're small, so speeds say little).
 			pictureAhead: trackRanges.video ? Math.round(aheadIn(trackRanges.video)) : null,
 			soundAhead: trackRanges.audio ? Math.round(aheadIn(trackRanges.audio)) : null,
-			soundPiecesSeconds: sound.map((p) => Math.round(p.ms / 100) / 10)
+			soundPiecesSeconds: sound.map((p) => Math.round(p.ms / 100) / 10),
+			// Downloaded onto the computer ahead (7Movies, Movy): how much, and how far past here.
+			heldPercent: heldCount.total ? Math.round((heldCount.held / heldCount.total) * 100) : null,
+			heldAhead: Math.round(Math.max(0, (heldRanges.find((r) => r.start <= currentTime + 1 && r.end > currentTime)?.end ?? currentTime) - currentTime)),
+			heldGoing: heldCount.going
 		};
 	}
 
@@ -1100,16 +1179,158 @@
 	let trackRanges: Partial<Record<string, TimeRanges>> = {};
 
 	let lastStopLogged = 0;
-	/** A stop to load, kept with what was going on (once every 20 seconds at most). */
-	function logStop() {
-		if (!videoEl || isVideoSeeking || videoEl.currentTime < 5 || performance.now() - lastStopLogged < 20_000) return;
-		lastStopLogged = performance.now();
+	/** A stop to load under way: when it began and what was going on then. */
+	let stopOpen: { since: number; seen: Record<string, unknown>; waiting: PieceWait | null } | null = null;
+	let stopTimer: ReturnType<typeof setTimeout> | undefined;
+
+	/*
+	 * A stop to load, kept with what was going on (once every 20 seconds at most), once it's over:
+	 * how long it lasted, and what the player was waiting for. Every stop used to say "No clear
+	 * cause in the numbers": most kept were switches (another source, episode or a fresh link,
+	 * logged as the old video was cleared, so all zeros), and the rest only had the pieces that
+	 * had arrived, not the one that hadn't, nor the picture's own decoding.
+	 */
+	function stopStarted() {
+		const v = videoEl;
+		if (!v || stopOpen || isVideoSeeking || v.currentTime < 5 || performance.now() - lastStopLogged < 20_000) return;
+		// A switch, not a stop.
+		if (loadingEpisode || changingQuality || refreshingStream || switchingEpisode || !v.videoHeight) return;
+		// The load after a jump to a spot not loaded yet is expected.
+		if (performance.now() - lastSeekAt < 3000 && bufferedAhead() < 1) return;
+		const waiting = waitedPiece();
+		stopOpen = { since: performance.now(), seen: { ...playbackNow(), ...stopDetails() }, waiting };
+		clearTimeout(stopTimer);
+		stopTimer = setTimeout(() => stopEnded('still'), 30_000);
+	}
+
+	/** `how`: it played again, it was still stopped after 30 s, or the video was left or changed. */
+	function stopEnded(how: 'played' | 'still' | 'left') {
+		const open = stopOpen;
+		if (!open) return;
+		stopOpen = null;
+		clearTimeout(stopTimer);
+		const now = performance.now();
+		lastStopLogged = now;
+		// The piece it was waiting for, if it has come since.
+		const came = open.waiting ? pieceDone.get(open.waiting.key) : undefined;
+		const report = {
+			...open.seen,
+			stoppedSeconds: Math.round((now - open.since) / 100) / 10,
+			ended: how,
+			pieceCameAfter: came && open.waiting ? Math.round((came - open.waiting.since) / 100) / 10 : null
+		};
 		fetch('/api/watch/playback-log', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(playbackNow()),
+			body: JSON.stringify(report),
 			keepalive: true
 		}).catch(() => {});
+	}
+
+	/** hls.js's warnings, in words (the stop log shows them). */
+	const PLAYER_WARNINGS: Record<string, string> = {
+		bufferAppendNoProgress: "a piece wouldn't go in (damaged or starts late in this copy)",
+		bufferAppendError: "a piece wouldn't go in",
+		bufferStalledError: 'the picture stalled',
+		bufferNudgeOnStall: 'nudged past a stall',
+		bufferSeekOverHole: 'skipped a hole in the video',
+		bufferFullError: 'memory for the video was full',
+		fragLoadTimeOut: 'a piece took too long to come',
+		fragLoadError: "a piece didn't download",
+		fragParsingError: "a piece couldn't be read",
+		fragDecryptError: "a piece couldn't be unlocked",
+		levelLoadTimeOut: 'the playlist took too long',
+		levelLoadError: "the playlist didn't load",
+		audioTrackLoadError: "the sound track's playlist didn't load",
+		internalException: 'the player hit an error'
+	};
+
+	/** What happened in the 30 s before (see notePlayerEvent), newest last. */
+	let playerEvents: { at: number; what: string }[] = [];
+	let lastSeekAt = 0;
+	function notePlayerEvent(what: string) {
+		const now = performance.now();
+		playerEvents = playerEvents.filter((e) => now - e.at < 30_000);
+		// (The same warning several times in a row is one.)
+		const last = playerEvents[playerEvents.length - 1];
+		if (last?.what === what && now - last.at < 2000) last.at = now;
+		else playerEvents.push({ at: now, what });
+	}
+
+	/** Pieces asked for and not here yet (by track), and when recent ones arrived. */
+	type PieceWait = { key: string; kind: string; n: number; since: number };
+	const piecesAsked = new Map<string, PieceWait>();
+	const pieceDone = new Map<string, number>();
+	let lastPieceAt = 0;
+	function pieceAsked(frag: { type: string; sn: number | string }) {
+		if (typeof frag.sn !== 'number' || frag.type === 'subtitle') return;
+		const kind = frag.type === 'audio' ? 'sound' : 'picture';
+		piecesAsked.set(kind, { key: `${kind}:${frag.sn}`, kind, n: frag.sn, since: performance.now() });
+	}
+	function pieceArrived(frag: { type: string; sn: number | string }) {
+		if (typeof frag.sn !== 'number' || frag.type === 'subtitle') return;
+		const kind = frag.type === 'audio' ? 'sound' : 'picture';
+		const key = `${kind}:${frag.sn}`;
+		if (piecesAsked.get(kind)?.key === key) piecesAsked.delete(kind);
+		lastPieceAt = performance.now();
+		pieceDone.set(key, lastPieceAt);
+		if (pieceDone.size > 40) pieceDone.delete(pieceDone.keys().next().value!);
+	}
+	/** The piece asked for longest ago and still not here. */
+	function waitedPiece(): PieceWait | null {
+		let oldest: PieceWait | null = null;
+		for (const wait of piecesAsked.values()) if (!oldest || wait.since < oldest.since) oldest = wait;
+		return oldest;
+	}
+
+	/** Frames drawn and dropped, every 2 s while playing (for whether the picture kept up). */
+	let frameMarks: { at: number; total: number; dropped: number }[] = [];
+	function markFrames() {
+		const quality = videoEl?.getVideoPlaybackQuality?.();
+		if (!quality) return;
+		frameMarks.push({ at: performance.now(), total: quality.totalVideoFrames, dropped: quality.droppedVideoFrames });
+		if (frameMarks.length > 10) frameMarks.shift();
+	}
+
+	/** What the stop log needs beyond the stats: the picture, the loaded parts, the moments before. */
+	function stopDetails() {
+		const v = videoEl!;
+		const now = performance.now();
+		const t = v.currentTime;
+		// A hole in what's loaded where it stopped, just ahead or just behind (the browser won't
+		// play over one; SVU's HEVC copy has pieces whose picture starts 2 s late).
+		let gap: number | null = null;
+		for (let i = 0; i < v.buffered.length; i++) {
+			const start = v.buffered.start(i);
+			const end = v.buffered.end(i);
+			const before = i > 0 ? v.buffered.end(i - 1) : null;
+			if (before !== null && start > t - 3 && start <= t + 2 && start - before > 0.1) {
+				gap = Math.round((start - before) * 100) / 100;
+				break;
+			}
+			if (start <= t && end > t + 0.3) continue;
+			if (start > t - 0.1 && start - t < 2) {
+				gap = Math.round((start - t) * 100) / 100;
+				break;
+			}
+		}
+		const tenAgo = frameMarks.find((m) => now - m.at <= 11_000);
+		const quality = v.getVideoPlaybackQuality?.();
+		const drawn = tenAgo && quality ? quality.totalVideoFrames - tenAgo.total : null;
+		const dropped = tenAgo && quality ? quality.droppedVideoFrames - tenAgo.dropped : null;
+		const level = hlsInstance?.levels[hlsInstance.currentLevel >= 0 ? hlsInstance.currentLevel : hlsInstance.loadLevel];
+		const waiting = waitedPiece();
+		return {
+			hevc: Boolean(activeFile?.hevc) || /^(hvc1|hev1)/.test(level?.videoCodec ?? ''),
+			framesDrawn: drawn,
+			framesDropped: dropped,
+			gap,
+			readyState: v.readyState,
+			hidden: document.hidden,
+			waitingFor: waiting ? { kind: waiting.kind, n: waiting.n, seconds: Math.round((now - waiting.since) / 100) / 10 } : null,
+			lastPieceSecondsAgo: lastPieceAt ? Math.round((now - lastPieceAt) / 100) / 10 : null,
+			before: playerEvents.filter((e) => now - e.at < 30_000).map((e) => ({ secondsBefore: Math.round((now - e.at) / 100) / 10, what: e.what }))
+		};
 	}
 
 	/*
@@ -1125,6 +1346,7 @@
 	let frozenRecoveries: number[] = [];
 
 	function checkFrozenPicture() {
+		markFrames();
 		const v = videoEl;
 		const quality = v?.getVideoPlaybackQuality?.();
 		// Only while it should be drawing: playing, loaded, on screen, nothing else under way.
@@ -1151,13 +1373,14 @@
 		fetch('/api/watch/playback-log', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ ...playbackNow(), what: 'Picture froze while the sound played', recovery: frozenRecoveries.length }),
+			body: JSON.stringify({ ...playbackNow(), ...stopDetails(), what: 'Picture froze while the sound played', recovery: frozenRecoveries.length }),
 			keepalive: true
 		}).catch(() => {});
 		const at = videoEl.currentTime;
 		if (frozenRecoveries.length === 1) {
 			// The decoder rebuilt where it is; the seek lines the sound up with the picture again.
 			mediaRecoveredAt = now;
+			notePlayerEvent('decoder rebuilt (frozen picture)');
 			hlsInstance.recoverMediaError();
 			seekAfterLoad = at;
 			videoEl.currentTime = at;
@@ -1199,13 +1422,32 @@
 		} catch {}
 	}
 
-	function slowChoice(choice: 'fresh' | 'lower' | 'keep') {
+	function slowChoice(choice: 'fresh' | 'lower' | 'other' | 'keep') {
 		const offer = slowOffer;
 		slowOffer = null;
 		if (!offer) return;
 		if (choice === 'fresh') refreshStream();
 		else if (choice === 'lower' && offer.lower >= 0) setHlsLevel(offer.lower);
+		else if (choice === 'other' && offer.other) changeToFile(offer.other);
 		else slowOfferDeclined = true;
+	}
+
+	/*
+	 * Another source's copy of this episode, for "Keeps stopping to load". When Movy's or 7Movies'
+	 * server is slow over pieces it hasn't got yet (20 s to 4 minutes each, 2026-10-24: AHS S13E9 on
+	 * mom's TV), a fresh link is the same server; another source carries on at once, from the same
+	 * spot. Same language, and no subtitles in the picture unless that's what's playing; Showbox's
+	 * first unless its daily allowance is used up.
+	 */
+	function otherSource(): FileOption | null {
+		const playing = activeFile;
+		if (!playing) return null;
+		const same = (f: FileOption) => (f.source ?? 'Showbox') === (playing.source ?? 'Showbox');
+		const candidates = currentFiles.filter(
+			(f) => !same(f) && playableHere(f) && isDub(f) === hearingDub() && !(f.burnedIn && !playing.burnedIn)
+		);
+		const showbox = febboxOut() ? null : pickFile(candidates.filter((f) => !f.source), preferredQuality);
+		return showbox ?? candidates.find((f) => f.source) ?? null;
 	}
 
 	// On a TV, the choice takes the highlight so the remote can answer it.
@@ -1768,12 +2010,14 @@
 		tvPlayer.seek = (seconds) => scan(seconds > 0 ? 1 : -1);
 		tvPlayer.scan = scan;
 		tvPlayer.stopScan = stopScan;
+		tvPlayer.closeMenu = closeOpenMenu;
 	});
 	onDestroy(() => {
 		tvPlayer.playPause = undefined;
 		tvPlayer.seek = undefined;
 		tvPlayer.scan = undefined;
 		tvPlayer.stopScan = undefined;
+		tvPlayer.closeMenu = undefined;
 		clearInterval(scanTimer);
 	});
 
@@ -2264,10 +2508,12 @@
 	function buildProgressBody(): string | null {
 		// Between episodes the video is still the one before: its place isn't this episode's. (And
 		// while the mini player plays, it's the one saving.)
-		if (!videoTitle || !videoEl || switchingEpisode || loadingEpisode || inMini) return null;
+		if (liveMode || !videoTitle || !videoEl || switchingEpisode || loadingEpisode || inMini) return null;
 		const ct = videoEl.currentTime;
 		const dur = videoEl.duration;
 		if (!dur || !isFinite(dur) || dur < 10 || ct < 3) return null;
+		// A replay keeps its place too (Continue Watching, Live TV's Recently watched), by its title.
+		if (replayMode) return JSON.stringify({ title: videoTitle, type: 'replay', season: 0, episode: 0, currentTime: ct, duration: dur, posterUrl: replayPoster });
 		const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
 		const s = showType === 'tv' && activeEpisode ? activeEpisode.season : 0;
 		const e = showType === 'tv' && activeEpisode ? activeEpisode.episode : 0;
@@ -2323,29 +2569,26 @@
 	 * Nobody opened a title's page, scrolled to Edit and saved just to rate it (2026-10-23: none of
 	 * 438 titles had a rating). Once per visit, only for what's in the library and not yet rated,
 	 * on the computer (not a TV, whose profiles' lists have no ratings, nor the mini player).
+	 * Asked once the player is left (RatePrompt.svelte), not over the film's last scenes (Hurt
+	 * Locker's came up before it ended, 2026-10-25): here it's only noted that 90% was watched.
 	 */
 	let ratingAsked = false;
-	let rateOffer = $state<{ title: string; rated: number | null } | null>(null);
+	let rateWanted = false;
 
 	function askForRating() {
 		if (ratingAsked || tvMode || miniMode || !libraryEntryId || libraryEntryRating !== null || !videoEl) return;
 		const length = videoEl.duration;
-		if (!length || !isFinite(length) || videoEl.currentTime / length < 0.95) return;
+		if (!length || !isFinite(length) || videoEl.currentTime / length < 0.9) return;
 		if (showType === 'tv' && nextEpisode()) return;
-		ratingAsked = true;
-		rateOffer = { title: videoTitle.replace(/ S\d+E\d+$/, ''), rated: null };
+		rateWanted = true;
 	}
 
-	async function rateIt(value: number | null) {
-		if (!rateOffer || !libraryEntryId || value === null) return;
-		rateOffer = { ...rateOffer, rated: value };
-		const resp = await fetch('/api/entries', {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ id: libraryEntryId, action: 'set', fields: { rating: value } })
-		}).catch(() => null);
-		if (resp?.ok) libraryEntryRating = value;
-		setTimeout(() => (rateOffer = null), 1200);
+	/** Leaving the player: "Rate it" on the page that comes next, if it was watched. */
+	function offerRatingOnLeaving() {
+		askForRating();
+		if (!rateWanted || ratingAsked || !libraryEntryId || libraryEntryRating !== null) return;
+		ratingAsked = true;
+		ratePrompt.offer = { entryId: libraryEntryId, title: videoTitle.replace(/ S\d+E\d+$/, '') };
 	}
 
 	function saveProgressBeacon() {
@@ -2479,6 +2722,19 @@
 
 	/** Gets a brand-new link for the current file and picks up where it left off. Capped so it can't loop forever. */
 	async function refreshStream() {
+		notePlayerEvent('fresh link');
+		// Live: the channel loaded again (its playlist asks for a fresh stream), a few times at most.
+		if (sportsMode) {
+			if (liveRestarts++ >= 4) {
+				tellChannel(false);
+				problem = liveMode ? "This channel can't be played right now." : "This replay can't be played right now. Try another version.";
+				stalledOut = true;
+				return;
+			}
+			if (replayMode && videoEl) seekAfterLoad = videoEl.currentTime;
+			streamNonce++;
+			return;
+		}
 		if (refreshingStream) return;
 		const fid = activeFile?.fid;
 		const share = shareOf(activeFile);
@@ -2518,6 +2774,13 @@
 	}
 
 	function retryStream() {
+		if (sportsMode) {
+			liveRestarts = 0;
+			stalledOut = false;
+			problem = '';
+			streamNonce++;
+			return;
+		}
 		stalledOut = false;
 		problem = '';
 		streamRefreshes = 0;
@@ -2594,7 +2857,18 @@
 	 * The end of the video: its last frame played, or it stuck for good in its last few seconds
 	 * (which used to fetch a fresh link and play the end again instead of moving on).
 	 */
+	/** Watched to the end: what the computer downloaded of it ahead can go (7Movies, Movy). */
+	let finishedCopy = '';
+	function finishedDownload(file: FileOption | null | undefined = activeFile) {
+		const copy = file?.source ? shareOf(file) : '';
+		if (!copy || copy === finishedCopy || !(file?.source === 'Movy' || file?.source === '7Movies')) return;
+		finishedCopy = copy;
+		fetch(`/api/watch/download-ahead?copy=${encodeURIComponent(copy)}`, { method: 'DELETE' }).catch(() => {});
+	}
+
 	function episodeEnded() {
+		if (sportsMode) return;
+		finishedDownload();
 		playing = false;
 		showControls = true;
 		saveProgress();
@@ -2618,6 +2892,43 @@
 	}
 
 	/** Server-side link for the next episode, fetched ahead so it starts at once. */
+	/** The pieces of the playing quality that are on the computer, as time ranges (see heldRanges). */
+	async function readHeld() {
+		const hls = hlsInstance;
+		const level = hls ? hls.levels[hls.currentLevel >= 0 ? hls.currentLevel : Math.max(0, hls.loadLevel)] : null;
+		const pieces = level?.details?.fragments ?? [];
+		const copy = pieces.length ? new URL(pieces[0].url, location.href).searchParams.get('copy') : null;
+		if (!copy) {
+			heldRanges = [];
+			return;
+		}
+		const answer = await fetch(`/api/watch/download-ahead?copy=${encodeURIComponent(copy)}`)
+			.then((r) => (r.ok ? (r.json() as Promise<{ held: number[]; total: number; going: number }>) : null))
+			.catch(() => null);
+		if (!answer || hls !== hlsInstance) return;
+		const held = new Set(answer.held);
+		heldCount = { held: answer.held.length, total: answer.total, going: answer.going };
+		const ranges: { start: number; end: number }[] = [];
+		for (const piece of pieces) {
+			if (!held.has(Number(new URL(piece.url, location.href).searchParams.get('n')))) continue;
+			const last = ranges[ranges.length - 1];
+			if (last && piece.start - last.end < 0.5) last.end = piece.start + piece.duration;
+			else ranges.push({ start: piece.start, end: piece.start + piece.duration });
+		}
+		heldRanges = ranges;
+	}
+
+	// Asked every few seconds while a copy that's downloaded ahead plays.
+	$effect(() => {
+		const file = activeFile;
+		heldRanges = [];
+		heldCount = { held: 0, total: 0, going: 0 };
+		if (!file || !(file.source === 'Movy' || file.source === '7Movies')) return;
+		const timer = setInterval(() => untrack(readHeld), 5000);
+		return () => clearInterval(timer);
+	});
+
+	let downloadAheadKey = '';
 	function prefetchNextEpisode() {
 		// (Not only with a Showbox share: with Showbox down, 7Movies' and Movy's next links were
 		// never fetched ahead, and Next Episode waited ~30 s on their lookups.)
@@ -2626,6 +2937,19 @@
 		const file = next ? pickFor(next.files) : null;
 		if (!next || !file) return;
 		const remaining = duration - currentTime;
+		// 7Movies' and Movy's next episode is downloaded onto the computer while this one plays
+		// (episodeDownloads.ts), from a minute in: it then starts with nothing to wait for, on a TV too.
+		if (file.source && currentTime >= 60 && (file.source === 'Movy' || file.source === '7Movies')) {
+			const ahead = `${shareOf(file)}:${file.fid}`;
+			if (ahead !== downloadAheadKey) {
+				downloadAheadKey = ahead;
+				fetch('/api/watch/download-ahead', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ share_key: shareOf(file), fid: file.fid })
+				}).catch(() => {});
+			}
+		}
 		// Another source's link is a few quick lookups, so it's fetched early and kept fresh
 		// (asked again every four minutes; the server only re-fetches one that's getting old).
 		// Showbox's waits until this episode is fully loaded.
@@ -2682,9 +3006,104 @@
 		playedFrom = t;
 	}
 
+	/*
+	 * A hole of up to 3 s in the picture while the sound goes on. 7Movies' HEVC copy of SVU S28E3
+	 * has pieces whose third frame repeats the keyframe's time, so the browser drops the keyframe
+	 * and the 2 s of picture after it. The sound then played over a still picture with no sign of
+	 * loading (2026-10-25). It's stepped over instead, but only once it has stayed a hole for 5 s
+	 * (a piece still on its way fills in by then).
+	 */
+	/*
+	 * The video going back by itself: a friend's films "every once in a while stop and go back a
+	 * few seconds" (2026-10-25, on 3.5.0), and nothing in the player is meant to. A jump back of
+	 * over a second with no click, key or touch just before is kept in the stop log, with what
+	 * happened in the 30 s before it, to find which part did it.
+	 */
+	let lastPosition = 0;
+	let lastInputAt = 0;
+	$effect(() => {
+		const touched = () => (lastInputAt = performance.now());
+		for (const kind of ['pointerdown', 'keydown', 'wheel']) window.addEventListener(kind, touched, { capture: true });
+		return () => {
+			for (const kind of ['pointerdown', 'keydown', 'wheel']) window.removeEventListener(kind, touched, { capture: true });
+		};
+	});
+	function noteJumpBack() {
+		const v = videoEl;
+		if (!v || loadingEpisode || switchingEpisode || inMini || performance.now() - lastInputAt < 2000) return;
+		const back = lastPosition - v.currentTime;
+		if (back < 1 || v.currentTime < 1) return;
+		fetch('/api/watch/playback-log', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ ...playbackNow(), ...stopDetails(), what: `Went back ${Math.round(back * 10) / 10} s by itself (from ${fmt(lastPosition)})` }),
+			keepalive: true
+		}).catch(() => {});
+	}
+
+	/*
+	 * A seam where two loaded parts of the picture meet (7Movies' HEVC, 2026-10-25). Each of its
+	 * pieces starts with a few frames shown before its keyframe ("leading" ones, see
+	 * pieceRepair.ts). When a piece is the first one loaded after a jump, the browser throws
+	 * those frames away, so once the part before it is loaded too, a hole of a few frames is left
+	 * there and the player skipped half a second over it. The picture from the hole on is loaded
+	 * again (from this computer's copy), straight after the piece before it, so they stay. (Only
+	 * from the hole to the end: taking out one piece takes the next one's leading frames with it.)
+	 */
+	const seamsMended = new Set<string>();
+	function mendPictureSeam(hls: Hls, ranges: TimeRanges | undefined, appendedEnd: number) {
+		if (!ranges) return;
+		for (let i = 0; i + 1 < ranges.length; i++) {
+			const end = ranges.end(i);
+			const hole = ranges.start(i + 1) - end;
+			if (hole <= 0.01 || hole > 0.3 || Math.abs(end - appendedEnd) > 0.5) continue;
+			const key = end.toFixed(1);
+			if (seamsMended.has(key)) return;
+			seamsMended.add(key);
+			notePlayerEvent(`loaded the picture after a ${hole.toFixed(2)} s seam again`);
+			hls.trigger(Hls.Events.BUFFER_FLUSHING, { startOffset: end, endOffset: Infinity, type: 'video' });
+			return;
+		}
+	}
+
+	const holesSeen = new Map<string, number>();
+	function stepOverPictureHole() {
+		const v = videoEl;
+		const ranges = trackRanges.video ?? v?.buffered;
+		if (!v || !ranges || v.paused || v.seeking) return;
+		const t = v.currentTime;
+		const now = performance.now();
+		for (let i = 0; i + 1 < ranges.length; i++) {
+			const end = ranges.end(i);
+			const next = ranges.start(i + 1);
+			if (next - end <= 0.1 || next - end > 3 || next < t) continue;
+			const key = end.toFixed(1);
+			if (!holesSeen.has(key)) holesSeen.set(key, now);
+			if (t > end - 0.4 && now - holesSeen.get(key)! >= 5000) {
+				notePlayerEvent(`stepped over a ${(next - end).toFixed(1)} s hole in the picture`);
+				v.currentTime = next + 0.05;
+				return;
+			}
+		}
+	}
+
 	function onTimeUpdate() {
 		countPlayed();
+		stepOverPictureHole();
+		if (videoEl && !videoEl.seeking) lastPosition = videoEl.currentTime;
 		if (videoEl && !seeking && !isVideoSeeking && !switchingEpisode) currentTime = videoEl.currentTime;
+		if (replayMode) return;
+		if (liveMode) {
+			const edge = hlsInstance?.liveSyncPosition;
+			liveBehind = edge ? Math.max(0, edge - currentTime) : 0;
+			if (!liveNoted && currentTime > 1) {
+				liveNoted = true;
+				fetch('/api/live/watched', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: liveNow.id, name: liveNow.name }) }).catch(() => {});
+				liveVerdict = { channel: liveNow.id, from: currentTime, told: false };
+			}
+			if (liveVerdict && !liveVerdict.told && currentTime - liveVerdict.from >= 60) tellChannel(true);
+			return;
+		}
 		if (currentTime >= 60) autosyncEpisode();
 		if (duration > 0 && currentTime >= duration - Math.min(120, duration * 0.1)) {
 			autosyncFinished();
@@ -2766,14 +3185,6 @@
 			.then((r) => (r.ok ? r.json() : { segments: null }))
 			.then((r) => r.segments as SkipSegment[] | null)
 			.catch(() => null);
-	}
-
-	function withFound(fromAniSkip: SkipSegment[], found: SkipSegment[]): SkipSegment[] {
-		// This copy's own times, but a database's word that the story goes on over the song holds.
-		const mixed = (f: SkipSegment) =>
-			fromAniSkip.some((s) => s.mixed && s.type === f.type && s.start - 30 < f.end && f.start < s.end + 30);
-		const own = found.map((f) => (mixed(f) ? { ...f, mixed: true } : f));
-		return [...own, ...fromAniSkip.filter((s) => !found.some((f) => f.type === s.type))].sort((a, b) => a.start - b.start);
 	}
 
 	async function findSkipsFor(ep: Episode, file: FileOption, key: string, copy: string, fromAniSkip: SkipSegment[], onTv = false, known: SkipSegment[] | null = null) {
@@ -2862,6 +3273,7 @@
 
 	beforeNavigate(() => {
 		saveProgressSync();
+		offerRatingOnLeaving();
 	});
 
 	/* --------------------------------------------------------------- watched episodes */
@@ -2893,6 +3305,21 @@
 	/* --------------------------------------------------------------- episode list menu */
 
 	let epMenu = $state<{ x: number; y: number; ep: Episode } | null>(null);
+
+	/** The remote's Back with a menu open: that menu closes, and the episode stays (true). */
+	function closeOpenMenu(): boolean {
+		if (epMenu) epMenu = null;
+		else if (showSettings || showCaptions || showDelay || showAudioPicker || showFilePicker) {
+			showSettings = showCaptions = showDelay = showAudioPicker = showFilePicker = false;
+		} else if (castOpen) castOpen = false;
+		else return false;
+		// The highlight was on something in the menu: back onto the player's buttons.
+		tick().then(() => {
+			const lost = !document.activeElement || document.activeElement === document.body;
+			if (lost) document.querySelector<HTMLElement>('.ctrl-row .ctrl-btn')?.focus({ preventScroll: true });
+		});
+		return true;
+	}
 
 	function openEpMenu(e: MouseEvent, ep: Episode) {
 		e.preventDefault();
@@ -3178,6 +3605,7 @@
 	 */
 	let filmMarked = '';
 	async function filmFinished() {
+		if (showType === 'movie' && duration > 600 && currentTime >= duration * 0.95) finishedDownload();
 		if (!autosync || showType !== 'movie' || duration < 600 || filmMarked === videoTitle) return;
 		if (playedSeconds < duration * 0.7) return;
 		filmMarked = videoTitle;
@@ -3279,6 +3707,7 @@
 	}
 
 	async function fetchSubtitles(autoMatch?: { fileName: string; language: string; delay: number }) {
+		if (sportsMode) return;
 		if (!videoTitle) return;
 		const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
 		const ep = showType === 'tv' ? activeEpisode : null;
@@ -3503,6 +3932,7 @@
 	let lastCastKey = '';
 
 	async function loadCast(title: string, type: 'movie' | 'tv', season = 0, episode = 0) {
+		if (sportsMode) return;
 		const key = `${title}:${season}:${episode}`;
 		// Once per episode, even when the answer is empty — re-asking on empty looped forever.
 		if (key === lastCastKey) return;
@@ -3542,9 +3972,155 @@
 		}
 	}
 
+	/*
+	 * One click to watch a game (liveChannelPicks.ts): whether this channel played a minute, or
+	 * wouldn't play, or was left for another within the minute. Leaving Live TV doesn't count.
+	 */
+	let liveVerdict: { channel: number; from: number; told: boolean } | null = null;
+	function tellChannel(ok: boolean) {
+		const verdict = liveVerdict;
+		if (!liveMode || !verdict || verdict.told) return;
+		verdict.told = true;
+		fetch('/api/live/watched', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ id: verdict.channel, ok, league: liveGame?.league ?? '', sport: liveGame?.sport ?? '' }),
+			keepalive: true
+		}).catch(() => {});
+	}
+
+	/** Live: the channel's playlist, at one address while the token behind it changes. */
+	function startLive() {
+		// Another channel picked within the minute: this one counts against.
+		tellChannel(false);
+		liveVerdict = { channel: liveNow.id, from: Infinity, told: false };
+		loading = false;
+		liveCaptions = false;
+		liveCues = [];
+		subtitleCues = [];
+		subtitlesOn = false;
+		activeSubFileName = '';
+		videoTitle = liveGame?.title ?? (liveNow.name || `Channel ${liveNow.id}`);
+		streamUrl = `/api/live/playlist?ch=${liveNow.id}`;
+	}
+
+	/** The game it was opened for (its other channels), and whether that or the channel is saved. */
+	async function loadLiveGame() {
+		const id = page.url.searchParams.get('game');
+		const [found, kept] = await Promise.all([
+			id ? fetch(`/api/live/game?id=${encodeURIComponent(id)}`).then((r) => r.json()).catch(() => null) : null,
+			fetch('/api/live/saved').then((r) => r.json()).catch(() => null)
+		]);
+		liveGame = found?.game ?? null;
+		if (liveGame) videoTitle = liveGame.title;
+		liveSaved = liveGame ? Boolean(kept?.games?.includes(liveGame.id)) : Boolean(kept?.channels?.includes(liveNow.id));
+	}
+
+	/**
+	 * A replay: its versions, and the address of one (`version`; null: the first that plays —
+	 * a game only hours old may not have its first one ready).
+	 */
+	async function startReplay(version: number | null) {
+		showFilePicker = false;
+		problem = '';
+		videoTitle = videoTitle || page.url.searchParams.get('name') || 'Replay';
+		const params = new URLSearchParams({ id: page.url.searchParams.get('replay') ?? '' });
+		if (version !== null) params.set('v', String(version));
+		// Loading until its address is known (the search page showed meanwhile).
+		if (!streamUrl) loading = true;
+		const answer = await fetch(`/api/live/replay?${params}`)
+			.then((r) => (r.ok ? r.json() : null))
+			.catch(() => null);
+		loading = false;
+		if (!answer) {
+			problem = "This replay can't be found right now.";
+			return;
+		}
+		if (answer.replay?.title) videoTitle = answer.replay.title;
+		replayPoster = answer.replay?.poster ?? '';
+		replayVersions = answer.versions ?? [];
+		if (answer.error || !answer.url) {
+			problem = answer.error ?? "This replay can't be played right now.";
+			return;
+		}
+		replayVersion = answer.v ?? 0;
+		// Only a condensed game so far (the whole one isn't ready): said, not passed off as the game.
+		if (answer.condensed) showQualityToast(`The full game isn't ready yet: this is a ${answer.condensed}-minute condensed version.`);
+		liveRestarts = 0;
+		streamUrl = answer.url;
+		// Watched lately (Live TV, Continue Watching), with what's needed to show and open it again.
+		fetch('/api/live/watched', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ replay: page.url.searchParams.get('replay'), title: videoTitle, poster: replayPoster || null, sport: answer.replay?.sport ?? 'other' })
+		}).catch(() => {});
+	}
+
+	/** Where a replay was left (its place kept as type "replay"), unless it was watched to the end. */
+	async function replayPlace(): Promise<SavedPlace | null> {
+		const kept = await fetch(`/api/watch/progress?title=${encodeURIComponent(videoTitle)}&type=replay&season=0&episode=0`)
+			.then((r) => (r.ok ? r.json() : null))
+			.catch(() => null);
+		if (!kept || !(kept.duration > 0) || kept.currentTime < 5 || kept.currentTime / kept.duration >= 0.95) return null;
+		return { at: kept.currentTime };
+	}
+
+	/** Another channel showing the game: played here, the address following along. */
+	function switchLiveChannel(channel: { id: number; name: string }) {
+		showFilePicker = false;
+		if (channel.id === liveNow.id) return;
+		liveNow = { id: channel.id, name: channel.name };
+		const params = new URLSearchParams(page.url.search);
+		params.set('live', String(channel.id));
+		params.set('name', channel.name);
+		replaceState(`/watch?${params}`, {});
+		liveNoted = false;
+		liveRestarts = 0;
+		problem = '';
+		startLive();
+	}
+
+	function toggleLiveSaved() {
+		liveSaved = !liveSaved;
+		if (liveGame) sendSaved({ kind: 'game', game: liveGame }, liveSaved);
+		else sendSaved({ kind: 'channel', id: liveNow.id, name: liveNow.name }, liveSaved);
+	}
+
+	/** Back to the live edge, after a pause or a jump back. */
+	function goLive() {
+		const at = hlsInstance?.liveSyncPosition;
+		if (videoEl && at) videoEl.currentTime = at;
+		userPaused = false;
+		videoEl?.play().catch(() => {});
+	}
+
+	/** Captions the channel carries, as hls.js reads them out of the video: kept for the last few minutes. */
+	function addLiveCues(cues: { startTime: number; endTime: number; text: string }[]) {
+		for (const cue of cues) {
+			const text = cue.text.trim();
+			if (text) liveCues.push({ start: cue.startTime, end: cue.endTime, text, top: false });
+		}
+		const now = videoEl?.currentTime ?? 0;
+		liveCues = liveCues.filter((c) => c.end > now - 300);
+		subtitleCues = liveCues.slice();
+		if (!liveCaptions && liveCues.length) {
+			try {
+				subtitleDelay = Number(localStorage.getItem(LIVE_CAPTION_DELAY)) || 0;
+			} catch {}
+			liveCaptions = true;
+			activeSubFileName = 'Captions from the channel';
+			// On a TV captions start on, as everything does there.
+			if (tvMode && !captionsOffForShow()) subtitlesOn = true;
+		}
+	}
+
 	function goBack() {
 		if (isAuto) {
 			history.back();
+		} else if (sportsMode) {
+			// Live and replays came from Live TV, not from the search (which Back used to open).
+			if (cameFromApp) history.back();
+			else goto('/live');
 		} else {
 			backToSearch();
 		}
@@ -3674,15 +4250,28 @@
 			const reloadAt = seekAfterLoad;
 			seekAfterLoad = 0;
 			// (untrack: what it reads mustn't make this effect run again and reload the video.)
-			const placeSoon: Promise<SavedPlace | null> = reloadAt > 0 ? Promise.resolve({ at: reloadAt }) : untrack(() => savedPlace());
+			const placeSoon: Promise<SavedPlace | null> = liveMode
+				? Promise.resolve(null)
+				: reloadAt > 0
+					? Promise.resolve({ at: reloadAt })
+					: replayMode
+						? untrack(() => replayPlace())
+						: untrack(() => savedPlace());
 			// (Its pieces come a couple ahead: src/lib/fetchAhead.ts says why.)
 			let player: Hls | null = null;
 			const hls = new Hls({
-				fLoader: fetchAheadLoader(() => player),
+				// (Live: its pieces are fetched as they appear, not ahead.)
+				...(liveMode ? {} : { fLoader: fetchAheadLoader(() => player) }),
 				autoStartLoad: false,
 				// Catalog draws its own subtitles: none of the browser's, from captions some videos
-				// carry inside them or a subtitle track their playlist lists.
-				enableCEA708Captions: false,
+				// carry inside them or a subtitle track their playlist lists. Live: the captions a
+				// channel carries are read, and drawn by Catalog like any subtitles (addLiveCues).
+				enableCEA708Captions: sportsMode,
+				renderTextTracksNatively: false,
+				// Live: finding a channel's stream can take the computer half a minute.
+				...(liveMode
+					? { manifestLoadPolicy: { default: { maxTimeToFirstByteMs: 40_000, maxLoadTimeMs: 60_000, timeoutRetry: { maxNumRetry: 2, retryDelayMs: 0, maxRetryDelayMs: 0 }, errorRetry: { maxNumRetry: 2, retryDelayMs: 2000, maxRetryDelayMs: 4000 } } } }
+					: {}),
 				enableWebVTT: false,
 				enableIMSC1: false,
 				maxBufferLength: 300,
@@ -3713,10 +4302,23 @@
 			hls.subtitleDisplay = false;
 			appendedSound = [];
 			trackRanges = {};
-			hls.on(Hls.Events.BUFFER_APPENDED, (_e, data) => (trackRanges = { ...trackRanges, ...data.timeRanges }));
+			holesSeen.clear();
+			seamsMended.clear();
+			// A stop under way ends with the video it was in.
+			stopEnded('left');
+			piecesAsked.clear();
+			frameMarks = [];
+			hls.on(Hls.Events.FRAG_LOADING, (_e, data) => pieceAsked(data.frag));
+			hls.on(Hls.Events.FRAG_LOADED, (_e, data) => pieceArrived(data.frag));
+			hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, () => notePlayerEvent('sound track changed'));
+			hls.on(Hls.Events.BUFFER_APPENDED, (_e, data) => {
+				trackRanges = { ...trackRanges, ...data.timeRanges };
+				if (data.type === 'video') mendPictureSeam(hls, data.timeRanges.video, data.frag.end);
+			});
 			// (untrack: reading the copy here made this effect run again the moment another episode
 			// was picked, replaying the one before from its start under "Loading episode…".)
-			untrack(() => hearDownloadsOf(activeFile));
+			if (!sportsMode) untrack(() => hearDownloadsOf(activeFile));
+			else hls.on(Hls.Events.CUES_PARSED, (_e, data) => addLiveCues(data.cues as { startTime: number; endTime: number; text: string }[]));
 			hls.on(Hls.Events.BUFFER_APPENDING, (_e, data) => noteAppendedSound(data.type, data.data, data.frag ?? null));
 			hls.loadSource(withPieces(streamUrl));
 			hls.attachMedia(videoEl);
@@ -3778,6 +4380,8 @@
 			});
 			hls.on(Hls.Events.LEVEL_SWITCHED, (_e, data) => {
 				hlsActiveLevel = data.level;
+				const height = hls.levels[data.level]?.height;
+				notePlayerEvent(height ? `quality changed to ${height}p` : 'quality changed');
 			});
 			hls.on(Hls.Events.ERROR, (_e, data) => {
 				const errDetail = `${data.type}/${data.details}` +
@@ -3785,6 +4389,7 @@
 					((data as any).reason ? ` reason=${(data as any).reason}` : '') +
 					(data.url ? ` url=${data.url.substring(0, 120)}` : '');
 				if (!data.fatal) {
+					notePlayerEvent(`player: ${PLAYER_WARNINGS[data.details] ?? data.details}`);
 					if (data.details === 'bufferStalledError') {
 						hls.startLoad(-1);
 					}
@@ -3810,12 +4415,17 @@
 				// A decode hiccup isn't fixed by a new link; hls.js can rebuild the decoder in place.
 				if (data.type === Hls.ErrorTypes.MEDIA_ERROR && performance.now() - mediaRecoveredAt > 10_000) {
 					mediaRecoveredAt = performance.now();
+					notePlayerEvent('decoder rebuilt after an error');
 					hls.recoverMediaError();
 					return;
 				}
 				// Another source's copy has its own share key: a fresh link works for it too. (Checking
 				// the show's Showbox key here left 7Movies with "fragLoadTimeOut" for good while
 				// Showbox was down, though the video went on playing.)
+				if (sportsMode) {
+					refreshStream();
+					return;
+				}
 				if (!activeFile?.fid || !shareOf(activeFile)) {
 					problem = `Video failed to load (${data.details}).`;
 					loadProblemAt = videoEl?.currentTime ?? 0;
@@ -3823,8 +4433,7 @@
 				}
 				refreshStream();
 			});
-			hlsInstance = hls;
-			player = hls;
+			hlsInstance = hls;			player = hls;
 		} else {
 			// Another site's file is asked for with CORS, so its sound can go through the page's audio
 			// (auto-timing listens there, and volume past 100% is made there). Without it the browser
@@ -4041,7 +4650,12 @@
 		resumeSeason = Number(page.url.searchParams.get('resume_s') ?? 0);
 		resumeEpisode = Number(page.url.searchParams.get('resume_e') ?? 0);
 
-		if (title && isAuto) {
+		if (liveMode) {
+			startLive();
+			loadLiveGame();
+		} else if (replayMode) {
+			startReplay(null);
+		} else if (title && isAuto) {
 			videoTitle = title;
 			await resolve(title, type, year);
 		} else if (title) {
@@ -4480,6 +5094,8 @@
 
 	async function playEpisode(ep: Episode, passingFinished = false) {
 		if (ep === activeEpisode || !playable(ep)) return;
+		// Left nearly done (the credits skipped to here): its download can go.
+		if (duration > 0 && currentTime >= duration * 0.9) finishedDownload();
 		const mine = ++episodeSwitch;
 		mayMoveOn = false;
 		if (!passingFinished && !loadingEpisode) saveProgress();
@@ -4691,6 +5307,44 @@
 <svelte:head><title>{videoTitle ? `${videoTitle} · ` : ''}Watch · Catalog</title></svelte:head>
 <svelte:window onkeydown={handleKeyDown} />
 
+<!-- Where the video comes from, and the other copies (the top bar's, and the mini player's). -->
+{#snippet filePicker()}
+	<div class="file-pick-wrap">
+		<button
+			type="button"
+			class="bar-btn file-pick-btn"
+			disabled={changingQuality}
+			onclick={() => {
+				showFilePicker = !showFilePicker;
+				// One menu open at a time (on a TV two at once were in each other's way).
+				if (showFilePicker) showSettings = showCaptions = showDelay = showAudioPicker = false;
+			}}
+		>
+			{activeFile ? fileLabel(activeFile) : ''} · {activeFile?.source ?? 'Showbox'}
+			<svg class="file-arrow" class:open={showFilePicker} viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
+		</button>
+		{#if showFilePicker}
+			<div class="popup popup-files">
+				<p class="popup-label">Files</p>
+				{#each currentFiles as f (f.fid)}
+					<button
+						class="popup-item"
+						class:active={activeFileFid === f.fid}
+						onclick={() => { changeToFile(f); showFilePicker = false; }}
+					>
+						{#if activeFileFid === f.fid}<span class="popup-check">&#10003;</span>{/if}
+						<span class="sub-name-row">
+							<span class="sub-name-text">{fileLabel(f)}</span>
+							<span class="sub-source-badge">{f.source ?? 'Showbox'}</span>
+						</span>
+					</button>
+				{/each}
+			</div>
+		{/if}
+	</div>
+{/snippet}
+
+
 {#if streamUrl || useIframe || needsLogin}
 	<!-- ============================================================= PLAYER VIEW -->
 	<div
@@ -4711,45 +5365,85 @@
 			<button type="button" class="bar-btn" onclick={goBack}>&larr; Back</button>
 			<h1 class="player-title">{videoTitle}</h1>
 
-			<!-- Shown even with one file, so it always says where the video comes from. -->
-			{#if currentFiles.length > 0}
+			{#if liveMode}
+				<span class="live-badge">LIVE</span>
+				<!-- The game's channels, where the files would be. -->
 				<div class="file-pick-wrap">
 					<button
 						type="button"
 						class="bar-btn file-pick-btn"
-						disabled={changingQuality}
-						onclick={() => { showFilePicker = !showFilePicker; }}
+						disabled={!liveGame || liveGame.channels.length < 2}
+						onclick={() => {
+							showFilePicker = !showFilePicker;
+							if (showFilePicker) showSettings = showCaptions = showDelay = showAudioPicker = false;
+						}}
 					>
-						{activeFile ? fileLabel(activeFile) : ''} · {activeFile?.source ?? 'Showbox'}
-						<svg class="file-arrow" class:open={showFilePicker} viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
+						{liveNow.name || `Channel ${liveNow.id}`}
+						{#if liveGame && liveGame.channels.length > 1}
+							<svg class="file-arrow" class:open={showFilePicker} viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
+						{/if}
+					</button>
+					{#if showFilePicker && liveGame}
+						<div class="popup popup-files">
+							<p class="popup-label">Channels showing it</p>
+							{#each liveGame.channels as channel (channel.id)}
+								<button class="popup-item" class:active={liveNow.id === channel.id} onclick={() => switchLiveChannel(channel)}>
+									{#if liveNow.id === channel.id}<span class="popup-check">&#10003;</span>{/if}
+									<span class="sub-name-text">{channel.name}</span>
+								</button>
+							{/each}
+						</div>
+					{/if}
+				</div>
+				<span class="live-star"><LiveStar saved={liveSaved} label={videoTitle} onclick={toggleLiveSaved} /></span>
+			{/if}
+
+			{#if replayMode && replayVersions.length}
+				<span class="live-badge replay-badge">REPLAY</span>
+				<div class="file-pick-wrap">
+					<button
+						type="button"
+						class="bar-btn file-pick-btn"
+						disabled={replayVersions.filter(Boolean).length < 2}
+						onclick={() => {
+							showFilePicker = !showFilePicker;
+							if (showFilePicker) showSettings = showCaptions = showDelay = showAudioPicker = false;
+						}}
+					>
+						{replayVersions[replayVersion] ?? 'Replay'}
+						{#if replayVersions.filter(Boolean).length > 1}
+							<svg class="file-arrow" class:open={showFilePicker} viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
+						{/if}
 					</button>
 					{#if showFilePicker}
 						<div class="popup popup-files">
-							<p class="popup-label">Files</p>
-							{#each currentFiles as f (f.fid)}
-								<button
-									class="popup-item"
-									class:active={activeFileFid === f.fid}
-									onclick={() => { changeToFile(f); showFilePicker = false; }}
-								>
-									{#if activeFileFid === f.fid}<span class="popup-check">&#10003;</span>{/if}
-									<span class="sub-name-row">
-										<span class="sub-name-text">{fileLabel(f)}</span>
-										<span class="sub-source-badge">{f.source ?? 'Showbox'}</span>
-									</span>
-								</button>
+							<p class="popup-label">Versions</p>
+							{#each replayVersions as label, at (at)}
+								{#if label}
+									<button class="popup-item" class:active={replayVersion === at} onclick={() => startReplay(at)}>
+										{#if replayVersion === at}<span class="popup-check">&#10003;</span>{/if}
+										<span class="sub-name-text">{label}</span>
+									</button>
+								{/if}
 							{/each}
 						</div>
 					{/if}
 				</div>
 			{/if}
 
-			<button
-				type="button"
-				class="bar-btn cast-btn"
-				class:active={castOpen}
-				onclick={() => { castOpen = !castOpen; }}
-			>{pm ? p('Cast') : 'Cast'}</button>
+			<!-- Shown even with one file, so it always says where the video comes from. -->
+			{#if currentFiles.length > 0}
+				{@render filePicker()}
+			{/if}
+
+			{#if !sportsMode}
+				<button
+					type="button"
+					class="bar-btn cast-btn"
+					class:active={castOpen}
+					onclick={() => { castOpen = !castOpen; }}
+				>{pm ? p('Cast') : 'Cast'}</button>
+			{/if}
 
 			{#if showType === 'tv' && seasons.length > 0}
 				<button
@@ -4779,11 +5473,15 @@
 				>{autoSkip ? '⏩ Auto-skip: On' : '⏩ Auto-skip: Off'}</button>
 			{/if}
 
-			{#if !loggedIn}
+			{#if sportsMode}
+				<!-- (Nothing of the library's for a live channel or a replay.) -->
+			{:else if !loggedIn}
 				<button type="button" class="bar-btn login-btn" onclick={loginToFebbox}>Log in</button>
 			{/if}
 
-			{#if libraryEntryId}
+			{#if sportsMode}
+				<!-- -->
+			{:else if libraryEntryId}
 				<a href="/entry/{libraryEntryId}" class="bar-btn in-library-btn">{pm ? 'Giblet claimed' : 'In library'}</a>
 				{#if libraryEntryStatus && libraryEntryStatus !== 'completed'}
 					<button type="button" class="bar-btn mark-watched-btn" onclick={markEntryWatched}>✓ Mark as completed</button>
@@ -4953,17 +5651,24 @@
 						onwaiting={() => {
 							buffering = true;
 							noteSlowStop();
-							logStop();
+							stopStarted();
 							if (!stalledOut) watchForStall();
 						}}
 						oncanplay={() => { buffering = false; }}
 						onplaying={() => {
 							buffering = false;
 							clearStallWatch();
+							stopEnded('played');
 							// A file switched to has started: it works, so a later hiccup isn't a reason to switch back.
 							if (prevStreamUrl && !changingQuality) prevStreamUrl = '';
 						}}
-						onseeking={() => { buffering = true; isVideoSeeking = true; }}
+						onseeking={() => {
+							buffering = true;
+							isVideoSeeking = true;
+							lastSeekAt = performance.now();
+							if (videoEl) notePlayerEvent(`jumped to ${fmt(videoEl.currentTime)}`);
+							noteJumpBack();
+						}}
 						onseeked={() => {
 							buffering = false;
 							isVideoSeeking = false;
@@ -5011,6 +5716,8 @@
 					{#if slowOffer}
 						<div class="slow-offer" bind:this={slowOfferEl}>
 							<span>Keeps stopping to load.</span>
+							<!-- First, so the TV's highlight starts on it: another server is what gets it going again. -->
+							{#if slowOffer.other}<button type="button" onclick={() => slowChoice('other')}>Play on {slowOffer.other.source ?? 'Showbox'}</button>{/if}
 							{#if slowOffer.freshLink}<button type="button" onclick={() => slowChoice('fresh')}>Try a fresh link</button>{/if}
 							{#if slowOffer.lower >= 0}<button type="button" onclick={() => slowChoice('lower')}>Lower quality ({slowOffer.height}p)</button>{/if}
 							<button type="button" onclick={() => slowChoice('keep')}>Keep loading</button>
@@ -5023,6 +5730,7 @@
 						<div class="playback-stats" aria-live="off">
 							<div><span>Source</span>{stats.source} · {stats.height ? `${stats.height}p` : stats.quality}{stats.relayed ? ' · through this computer' : ''}</div>
 							<div><span>Loaded ahead</span>{stats.aheadSeconds} s</div>
+							<div><span>On the computer</span>{stats.heldPercent === null ? 'not downloaded ahead (only 7Movies and Movy are)' : `${stats.heldPercent}% of it · ${fmt(stats.heldAhead)} past here · ${stats.heldGoing} downloading`}</div>
 							<div><span>Each piece</span>{stats.piecesMbps.length ? stats.piecesMbps.map((m) => `${m}`).join(' · ') + ' Mbps' : '—'}{stats.needsMbps ? ` (needs ${stats.needsMbps})` : ''}</div>
 							<div><span>From memory</span>{stats.fromMemory} of the last {stats.piecesMbps.length}</div>
 							<div><span>Server</span>{stats.servers.join(', ') || '—'}</div>
@@ -5042,16 +5750,6 @@
 					{/if}
 
 					<!-- "Rate it", once it's finished -->
-					{#if rateOffer}
-						<div class="rate-offer">
-							<span class="rate-title">{rateOffer.rated === null ? `Rate ${rateOffer.title}` : 'Rated'}</span>
-							<StarRating large value={rateOffer.rated} label="Rate {rateOffer.title}" onchange={rateIt} />
-							<button type="button" class="rate-close" onclick={() => (rateOffer = null)} aria-label="Not now">
-								<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-							</button>
-						</div>
-					{/if}
-
 					<!-- skip intro / next episode -->
 					{#if activeSkip || nextEp}
 						<div class="next-ep-overlay">
@@ -5082,6 +5780,7 @@
 					{#if miniMode}
 						<div class="mini-top" class:visible={showControls}>
 							<span class="mini-title">{videoTitle}</span>
+							{#if currentFiles.length > 0}{@render filePicker()}{/if}
 							<button type="button" class="mini-btn" onclick={() => leaveMini(true)} title="Back to Catalog">
 								<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M19 19H5V5h7V3H5a2 2 0 00-2 2v14a2 2 0 002 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
 							</button>
@@ -5100,8 +5799,8 @@
 							class="progress-wrap"
 							tabindex={tvMode ? 0 : undefined}
 							data-tv-up=".player-bar button, .player-bar a"
-							onmousedown={onProgressDown}
-							onmousemove={onProgressHover}
+							onmousedown={(e) => { if (!liveMode) onProgressDown(e); }}
+							onmousemove={(e) => { if (!liveMode) onProgressHover(e); }}
 							onmouseleave={() => (hoverPct = -1)}
 						>
 							{#if previewPct >= 0 && duration > 0}
@@ -5111,6 +5810,12 @@
 								</div>
 							{/if}
 							<div class="progress-bar" bind:this={progressBarEl}>
+								<!-- Downloaded onto the computer (lighter), under what the player holds itself. -->
+								{#if duration > 0}
+									{#each heldRanges as range (range.start)}
+										<div class="prog-held" style:left="{(range.start / duration) * 100}%" style:width="{((Math.min(range.end, duration) - range.start) / duration) * 100}%"></div>
+									{/each}
+								{/if}
 								<div class="prog-buffered" style:width="{bufferedPct}%"></div>
 								<!-- Intros and credits sit under the played part, so it shows how far into them you are. -->
 								{#if duration > 0}
@@ -5122,8 +5827,8 @@
 										></div>
 									{/each}
 								{/if}
-								<div class="prog-played" style:width="{displayPct}%"></div>
-								<div class="prog-handle" style:left="{displayPct}%" class:dragging={seeking}></div>
+								<div class="prog-played" style:width="{liveMode ? 100 : displayPct}%"></div>
+								{#if !liveMode}<div class="prog-handle" style:left="{displayPct}%" class:dragging={seeking}></div>{/if}
 								<!-- Dragging or fast-forwarding: where you were, so it's easy to find again. -->
 								{#if seekPreview >= 0 && duration > 0}
 									<div class="prog-was" style:left="{progressPct}%">
@@ -5195,7 +5900,15 @@
 								</div>
 							</div>
 
-							<span class="time-display">{fmt(seekPreview >= 0 ? seekPreview / 100 * duration : seekTarget >= 0 ? seekTarget / 100 * duration : currentTime)} / {fmt(duration)}</span>
+							{#if liveMode}
+								{#if liveBehind > 15}
+									<button type="button" class="go-live" onclick={goLive} title="Back to live">{fmt(liveBehind)} behind · Go live</button>
+								{:else}
+									<span class="time-display live-now"><span class="live-dot"></span>Live</span>
+								{/if}
+							{:else}
+								<span class="time-display">{fmt(seekPreview >= 0 ? seekPreview / 100 * duration : seekTarget >= 0 ? seekTarget / 100 * duration : currentTime)} / {fmt(duration)}</span>
+							{/if}
 
 							<div class="ctrl-spacer"></div>
 
@@ -5389,6 +6102,9 @@
 									{activeSubFileName || 'Loaded subtitle'}
 								</button>
 							{/if}
+							{#if sportsMode && !liveCaptions}
+								<span class="popup-item" style="opacity:0.6;cursor:default">{liveMode ? 'No captions from this channel yet' : 'This replay has no captions'}</span>
+							{/if}
 							{#if febboxSubs.length > 0 || loadingSubs}
 								<hr class="popup-divider" />
 								{#if loadingSubs}
@@ -5438,11 +6154,13 @@
 							{/if}
 							<hr class="popup-divider" />
 							<p class="popup-label">Look</p>
-							<div class="sub-look">
-								<button class="sub-delay-jump" class:on={subAutoSync} onclick={toggleAutoSync}>
-									{subAutoSync ? 'Auto-timing: On' : 'Auto-timing: Off'}
-								</button>
-							</div>
+							{#if !sportsMode}
+								<div class="sub-look">
+									<button class="sub-delay-jump" class:on={subAutoSync} onclick={toggleAutoSync}>
+										{subAutoSync ? 'Auto-timing: On' : 'Auto-timing: Off'}
+									</button>
+								</div>
+							{/if}
 							<div class="sub-look">
 								<button class="sub-delay-jump" class:on={subLook.box} onclick={() => setSubLook({ box: !subLook.box })}>
 									{subLook.box ? 'Dark box: On' : 'Dark box: Off'}
@@ -5455,7 +6173,7 @@
 								{/each}
 							</div>
 							<!-- Not on the TV: there's no picking a file there. -->
-							{#if !tvMode}
+							{#if !tvMode && !sportsMode}
 								<hr class="popup-divider" />
 								<button class="popup-item" onclick={uploadSubtitle}>
 									<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16" style="flex:none;opacity:0.6"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zM6 20V4h7v5h5v11H6z"/></svg>
@@ -5625,14 +6343,31 @@
 	.player-page { position: fixed; inset: 0; display: flex; flex-direction: column; z-index: 100; background: #000; }
 
 	/* ---------------------------------------------------------------- the mini player */
-	/* Only the video, its play buttons and the bar: no top bar, lists or settings. */
+	/*
+	 * Its own player, with every control the big one has (a friend found only mute, not the
+	 * volume, and no subtitles: 2026-10-25), sized for a small window. The top bar is its own
+	 * strip (title, the copy playing, back to Catalog, close); fullscreen and picture in picture
+	 * are what the mini player already is.
+	 */
 	.player-page.mini .player-bar,
 	.player-page.mini .player-error,
-	.player-page.mini .vol-slider,
-	.player-page.mini .delay-wrap,
-	.player-page.mini .ctrl-spacer ~ .ctrl-btn { display: none; }
-	.player-page.mini .controls { padding: 18px 10px 6px; background: linear-gradient(transparent, rgba(0, 0, 0, 0.6)); }
-	.player-page.mini .ctrl-row { gap: 2px; }
+	.player-page.mini .pip-btn,
+	.player-page.mini .fs-btn { display: none; }
+	.player-page.mini .controls { padding: 18px 8px 4px; background: linear-gradient(transparent, rgba(0, 0, 0, 0.6)); }
+	.player-page.mini .ctrl-row { gap: 0; }
+	.player-page.mini .ctrl-btn { padding: 4px; }
+	.player-page.mini .vol-group:hover .vol-slider { width: 76px; padding-right: 4px; }
+	.player-page.mini .vol-slider input[type='range'] { width: 70px; }
+	/* Menus fit the window, and scroll when they're longer. */
+	.player-page.mini .popup { bottom: 44px; right: 6px; max-height: calc(100vh - 84px); max-width: calc(100vw - 12px); min-width: 0; }
+	.player-page.mini .popup-files.popup-files { top: calc(100% + 2px); bottom: auto; left: auto; right: 0; max-height: calc(100vh - 50px); }
+	.player-page.mini .delay-popup { right: -40px; padding: 6px 8px; gap: 4px; }
+	.player-page.mini .delay-popup .delay-label { display: none; }
+	.player-page.mini .mini-top .file-pick-wrap { -webkit-app-region: no-drag; }
+	.player-page.mini .mini-top .file-pick-btn { padding: 3px 8px; font-size: 0.74rem; }
+	@media (max-width: 430px) {
+		.player-page.mini .time-display { display: none; }
+	}
 	.player-page.mini .time-display { font-size: 0.78rem; }
 	.player-page.mini .subtitle-display { font-size: 0.95rem !important; }
 	.player-page.mini .next-ep-overlay { transform: scale(0.75); transform-origin: bottom right; }
@@ -5823,6 +6558,7 @@
 	.scrub-time { padding: 2px 7px; border-radius: 4px; background: rgba(0, 0, 0, 0.8); color: #fff; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
 	.progress-bar { position: relative; height: 3px; background: rgba(255, 255, 255, 0.2); border-radius: 2px; transition: height 0.1s; }
 	.progress-wrap:hover .progress-bar { height: 5px; }
+	.prog-held { position: absolute; top: 0; bottom: 0; background: rgba(255, 255, 255, 0.13); pointer-events: none; }
 	.prog-buffered { position: absolute; top: 0; left: 0; bottom: 0; background: rgba(255, 255, 255, 0.25); border-radius: inherit; pointer-events: none; }
 	.prog-played { position: absolute; top: 0; left: 0; bottom: 0; background: var(--accent, #d97a83); border-radius: inherit; pointer-events: none; }
 	.prog-segment { position: absolute; top: 0; bottom: 0; background: rgba(255, 210, 90, 0.8); pointer-events: none; }
@@ -5895,18 +6631,6 @@
 
 	.scan-badge { position: absolute; top: 50%; left: 50%; z-index: 9; transform: translate(-50%, -50%); padding: 14px 26px; border-radius: 10px; background: rgba(0, 0, 0, 0.7); color: #fff; font-size: 2rem; font-weight: 700; pointer-events: none; }
 	:global(html.tv) .next-ep-btn:focus { border-color: #fff; background: #fff; color: #000; outline: none; }
-	/* "Rate it": bottom left, out of the way of Next Episode on the right. Stars: --star in app.css. */
-	.rate-offer {
-		position: absolute; bottom: 100px; left: 24px; z-index: 8;
-		display: flex; align-items: center; gap: 12px;
-		padding: 10px 10px 10px 16px; border-radius: 10px;
-		background: rgba(20, 20, 20, 0.85); color: #fff;
-		--ink-faint: #9aa5a0;
-		animation: fadeSlideIn 0.4s ease;
-	}
-	.rate-title { font-size: 0.92rem; font-weight: 600; max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-	.rate-close { display: flex; padding: 6px; border: none; border-radius: 6px; background: transparent; color: #ccc; cursor: pointer; }
-	.rate-close:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
 	.next-ep-overlay { position: absolute; bottom: 100px; right: 24px; z-index: 8; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; animation: fadeSlideIn 0.4s ease; }
 	.skip-btn { padding: 11px 22px; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 6px; background: rgba(0, 0, 0, 0.75); color: #fff; font-size: 0.95rem; font-weight: 600; cursor: pointer; transition: background 0.2s, border-color 0.2s; }
 	.skip-btn:hover { background: rgba(30, 30, 30, 0.95); border-color: var(--accent); }
@@ -5930,4 +6654,33 @@
 		.player-body { flex-direction: column; }
 		.sidebar { width: 100%; max-height: 200px; border-right: none; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
 	}
+
+	/* Live TV in the player. */
+	.live-badge {
+		flex: none;
+		padding: 2px 8px;
+		border-radius: 4px;
+		background: #d92d3a;
+		color: #fff;
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+	}
+	.live-star :global(.star) { color: rgba(255, 255, 255, 0.85); }
+	.live-star :global(.star.saved) { color: var(--star); }
+	.live-star :global(.star:hover) { background: rgba(255, 255, 255, 0.15); }
+	.replay-badge { background: #4a5a52; }
+	.live-now { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
+	.live-dot { width: 8px; height: 8px; border-radius: 50%; background: #d92d3a; }
+	.go-live {
+		padding: 4px 10px;
+		border: 1px solid rgba(255, 255, 255, 0.4);
+		border-radius: 4px;
+		background: transparent;
+		color: #fff;
+		font: inherit;
+		font-size: 0.82rem;
+		cursor: pointer;
+	}
+	.go-live:hover, .go-live:focus-visible { background: rgba(255, 255, 255, 0.15); }
 </style>

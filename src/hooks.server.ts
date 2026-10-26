@@ -14,6 +14,10 @@ import { clearOldStrips } from '$lib/server/previewStrips';
 import { keepWithinLimit, tellAppItsShare } from '$lib/server/storage';
 import { moveOffAniList } from '$lib/server/offAniList';
 import { noteOwnAddress, scheduleNewEpisodeChecks } from '$lib/server/newEpisodes';
+import { liveSchedule } from '$lib/server/sources/daddylive';
+import { checkNewReplays } from '$lib/server/replayAnswer';
+import { withArt } from '$lib/server/teamArt';
+import { withScores } from '$lib/server/liveScores';
 
 // Before anything asks another site for something: a time limit for every outside request,
 // and a note of the slow ones (on /api/diagnostics).
@@ -48,6 +52,19 @@ setInterval(forgetFinishedSubtitles, 60 * 60 * 1000).unref?.();
 // Shows watched to their last episode come back to Continue Watching when a new one is out.
 scheduleNewEpisodeChecks();
 
+// Live TV and Replays ready before they're opened (they took 2–5 s to open each time), and kept
+// fresh every 10 minutes: the schedule, its pictures and scores, and the replays.
+const warmLive = () => {
+	liveSchedule()
+		.then((games) => withArt(games, 30_000))
+		.then((games) => withScores(games, 30_000))
+		.catch(() => {});
+	// The newest replays tried ahead, so the ones that don't play yet aren't listed.
+	checkNewReplays().catch(() => {});
+};
+setTimeout(warmLive, 5_000).unref?.();
+setInterval(warmLive, 10 * 60 * 1000).unref?.();
+
 // A renewed Showbox sign-in in the app's window is saved, shortly after opening and twice a day.
 setTimeout(keepShowboxSigninFresh, 30 * 1000).unref?.();
 setInterval(keepShowboxSigninFresh, 12 * 60 * 60 * 1000).unref?.();
@@ -60,7 +77,8 @@ if (typeof process.send === 'function') process.on('disconnect', () => process.e
 
 /** Icons and the web manifest stay reachable so "Add to Home Screen" works. */
 // catalog-tv.apk: the TV's Downloader app fetches it before the TV could ever enter a PIN.
-const PUBLIC_PATHS = ['/manifest.webmanifest', '/favicon.ico', '/api/diagnostics', '/api/watch/save-token', '/api/watch/debug', '/catalog-tv.apk'];
+// /api/roku/hello and /api/roku/login: the Roku app asks whether there's a PIN, then sends it.
+const PUBLIC_PATHS = ['/manifest.webmanifest', '/favicon.ico', '/api/diagnostics', '/api/watch/save-token', '/api/watch/debug', '/catalog-tv.apk', '/api/roku/hello', '/api/roku/login'];
 const isPublic = (path: string) => PUBLIC_PATHS.includes(path) || path.startsWith('/icon');
 
 const FORM_TYPES = ['application/x-www-form-urlencoded', 'multipart/form-data', 'text/plain'];

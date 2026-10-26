@@ -10,7 +10,8 @@ import {
 	bestMatch,
 	resolveSlugId
 } from '$lib/server/showbox';
-import { readSettings, febboxAccountOf } from '$lib/server/settings';
+import { readSettings } from '$lib/server/settings';
+import { febboxAccountsName } from '$lib/server/febboxAccounts';
 import {
 	findEntryByTitle,
 	getSavedShowboxMatch,
@@ -435,7 +436,7 @@ async function lookUp(url: URL): Promise<Response> {
 			streamUrl,
 			fid: firstFile?.fid ?? 0,
 			hasToken: Boolean(febboxToken),
-			febboxAccount: febboxAccountOf(febboxToken),
+			febboxAccount: febboxAccountsName(),
 			episodes: epData,
 			debug: streamDebug,
 			posterUrl,
@@ -472,7 +473,7 @@ async function lookUp(url: URL): Promise<Response> {
 		streamUrl,
 		fid: defaultFile.fid,
 		hasToken: Boolean(febboxToken),
-		febboxAccount: febboxAccountOf(febboxToken),
+		febboxAccount: febboxAccountsName(),
 		files,
 		debug: streamDebug,
 		posterUrl,

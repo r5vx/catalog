@@ -12,9 +12,19 @@ import type { FragmentLoaderConstructor, FragmentLoaderContext, Loader, LoaderCa
  * from memory when it asks for them. The pieces of Catalog's relay are fetched ahead on the
  * computer instead (relayReadAhead.ts), so those are left alone here.
  *
+ * When the connection is shared with something greedy (a Steam download, 2026-10-25: Showbox
+ * pieces came at 0.4–1.3 Mbps, the video needs 1.9), each download only gets its share, and more
+ * at once get more of it. Measured with ten big downloads running: one piece at a time 6–15
+ * Mbps, three 20–57, six 42–57 (195 / 350 Mbps with the line free). So while single pieces come
+ * in less than three times as fast as they play, five are fetched ahead instead of two. (Lower
+ * quality isn't picked by itself: the owner turned that down.)
+ *
  * Every piece's download is also noted (`recentPieces`), for the stats and the stop log.
  */
 const AHEAD = 2;
+const AHEAD_WHEN_SLOW = 5;
+/** Single downloads this many times as fast as the video plays, or slower, count as slow. */
+const SLOW_SPEED = 3;
 const KEEP_MS = 2 * 60 * 1000;
 /**
  * A busy server now and then leaves one download hanging while the rest come fast (an SVU
@@ -35,6 +45,8 @@ export type PieceNote = {
 	/** Fetched ahead, so the player had it from memory. */
 	ahead: boolean;
 	kind: 'video' | 'audio';
+	/** Seconds of video in it (0: not known). */
+	seconds: number;
 };
 
 /** The last pieces downloaded, newest last. */
@@ -59,10 +71,18 @@ const fetched = new Map<string, Fetched>();
 function forgetOld() {
 	const now = Date.now();
 	for (const [url, entry] of fetched) if (now - entry.at > KEEP_MS) fetched.delete(url);
-	while (fetched.size > 8) fetched.delete(fetched.keys().next().value!);
+	while (fetched.size > 2 * (AHEAD_WHEN_SLOW + 1)) fetched.delete(fetched.keys().next().value!);
 }
 
-async function fetchPiece(url: string, kind: PieceNote['kind']): Promise<ArrayBuffer | null> {
+/** How many to fetch ahead: more while the last few pieces of this kind each came in slowly. */
+function aheadNow(kind: PieceNote['kind']): number {
+	const recent = recentPieces.filter((p) => p.kind === kind && p.seconds > 0).slice(-4);
+	if (recent.length < 2) return AHEAD;
+	const speeds = recent.map((p) => (p.seconds * 1000) / Math.max(1, p.ms)).sort((a, b) => a - b);
+	return speeds[Math.floor(speeds.length / 2)] < SLOW_SPEED ? AHEAD_WHEN_SLOW : AHEAD;
+}
+
+async function fetchPiece(url: string, kind: PieceNote['kind'], seconds: number): Promise<ArrayBuffer | null> {
 	const start = performance.now();
 	const tries: AbortController[] = [];
 	const ask = () => {
@@ -105,7 +125,7 @@ async function fetchPiece(url: string, kind: PieceNote['kind']): Promise<ArrayBu
 			data.set(part, at);
 			at += part.byteLength;
 		}
-		note({ at: performance.now(), host: hostOf(url), bytes: size, ms: performance.now() - start, ahead: true, kind });
+		note({ at: performance.now(), host: hostOf(url), bytes: size, ms: performance.now() - start, ahead: true, kind, seconds });
 		return data.buffer;
 	} catch {
 		return null;
@@ -193,7 +213,7 @@ export function fetchAheadLoader(hls: () => Hls | null): FragmentLoaderConstruct
 				...callbacks,
 				onSuccess: (response, stats, ctx, details) => {
 					const bytes = response.data instanceof ArrayBuffer ? response.data.byteLength : 0;
-					if (bytes) note({ at: performance.now(), host: hostOf(context.url), bytes, ms: performance.now() - start, ahead: false, kind });
+					if (bytes) note({ at: performance.now(), host: hostOf(context.url), bytes, ms: performance.now() - start, ahead: false, kind, seconds: (context as FragmentLoaderContext).frag?.duration ?? 0 });
 					callbacks.onSuccess(response, stats, ctx, details);
 				}
 			});
@@ -206,9 +226,9 @@ export function fetchAheadLoader(hls: () => Hls | null): FragmentLoaderConstruct
 			const details = kind === 'audio' ? player.audioTracks[frag.level]?.details : player.levels[frag.level]?.details;
 			if (!details) return;
 			const at = frag.sn - details.startSN;
-			for (const next of details.fragments.slice(at + 1, at + 1 + AHEAD)) {
+			for (const next of details.fragments.slice(at + 1, at + 1 + aheadNow(kind))) {
 				if (!next.url || next.byteRange.length || fetched.has(next.url)) continue;
-				fetched.set(next.url, { at: Date.now(), bytes: fetchPiece(next.url, kind) });
+				fetched.set(next.url, { at: Date.now(), bytes: fetchPiece(next.url, kind, next.duration) });
 			}
 		}
 	}

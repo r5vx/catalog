@@ -33,6 +33,8 @@ export const tvPlayer: {
 	scan?: (direction: number) => void;
 	/** Stops a scan where it got to. False if there wasn't one. */
 	stopScan?: () => boolean;
+	/** Closes a menu open in the player (settings, subtitles, sources…). False if none was. */
+	closeMenu?: () => boolean;
 } = {};
 
 const FOCUSABLE =
@@ -202,6 +204,7 @@ export function startTv(): void {
 		menu: openMenu,
 		// The remote's Back (TV app 1.2 and later asks first): "handled", "exit", or "default"
 		// for going back a page as usual.
-		back: (): string => (tvPlayer.stopScan?.() ? 'handled' : tvBack())
+		// (In the player, an open menu closes first: Back used to leave the episode.)
+		back: (): string => (tvPlayer.stopScan?.() || tvPlayer.closeMenu?.() ? 'handled' : tvBack())
 	};
 }

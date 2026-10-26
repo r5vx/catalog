@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The whole app, laid out as the Fire TV's: the menu down the left over one of its screens
+     (Home, Movies…), with a title's page and the player opening over them (MainScene.brs). -->
+<component name="MainScene" extends="Scene">
+    <script type="text/brightscript" uri="pkg:/components/MainScene.brs" />
+    <script type="text/brightscript" uri="pkg:/components/common.brs" />
+    <children>
+        <Rectangle id="background" width="1920" height="1080" color="0x111614FF" />
+        <Group id="menuScreen" translation="[154, 0]" />
+        <NavMenu id="nav" visible="false" />
+        <Group id="screens" />
+    </children>
+</component>

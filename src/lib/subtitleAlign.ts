@@ -219,24 +219,30 @@ function fitAtRate(speech: Float32Array, cues: TimedCue[], rate: number): DelayP
 		if (points.length / tried >= 0.5) break;
 	}
 	// "Doesn't fit" only once a good part of the video has been heard (a dozen stretches).
-	if (tried >= 12 && points.length / tried < 0.2) return { steps: [], fits: false };
+	if (tried >= 12 && points.length / tried < 0.2) return agreement(speech, cues, first, last, rate) ?? { steps: [], fits: false };
 	// Too little to go by yet. One clear stretch once moved Venom 2's subtitles 22 s (they were
 	// right as they were): an answer needs three stretches that agree.
-	if (points.length < 3) return null;
+	if (points.length < 3) return agreement(speech, cues, first, last, rate);
 	// Most stretches unclear: only believed if the whole of what's been heard says the same.
 	// Venom 2's HI subtitles "fitted" at −19.4 s on a fifth of the stretches, while the film as a
 	// whole had no clear delay at all.
 	if (points.length / tried < 0.4) {
 		const whole = quickShift(speech, cues, first, last, -FAR, FAR);
 		const middle = [...points].sort((a, b) => a.delay - b.delay)[Math.floor(points.length / 2)].delay;
-		if (!confident(whole) || Math.abs(whole.shift - middle) > 2) return tried >= 12 ? { steps: [], fits: false } : null;
+		if (!confident(whole) || Math.abs(whole.shift - middle) > 2) return agreement(speech, cues, first, last, rate) ?? (tried >= 12 ? { steps: [], fits: false } : null);
 	}
 
-	// An answer that disagrees with both of its neighbours, which agree with each other, is noise.
+	// An answer that disagrees with both of its neighbours, which agree with each other, is noise:
+	// stretches overlap by 2½ minutes, so a real change shows in several in a row. Neighbours
+	// that agree closely make half a second enough to be noise (SVU S28E3: one stretch at 35:00
+	// said +8.5 between two +9.0s, and the subtitles went 9 → 8.5 → 9 within a minute).
 	const kept = points.filter((p, i) => {
 		const before = points[i - 1];
 		const after = points[i + 1];
-		if (!before || !after || Math.abs(before.delay - after.delay) > 1) return true;
+		if (!before || !after) return true;
+		const apart = Math.abs(before.delay - after.delay);
+		if (apart < 0.4) return Math.abs(p.delay - before.delay) < 0.4 || Math.abs(p.delay - after.delay) < 0.4;
+		if (apart > 1) return true;
 		return Math.abs(p.delay - before.delay) <= 1 || Math.abs(p.delay - after.delay) <= 1;
 	});
 
@@ -253,6 +259,33 @@ function fitAtRate(speech: Float32Array, cues: TimedCue[], rate: number): DelayP
 		steps.push({ from, delay });
 	}
 	return { steps, fits: true, clear: points.length / tried, rate };
+}
+
+/**
+ * When hardly any stretch gives a clear answer on its own, but most of them point the same way:
+ * that delay, for the whole video. A film whose talking is quiet under constant noise (Hurt
+ * Locker: talking picked up during only 40–50% of the lines, 2026-10-25) never has one
+ * stretch clearly ahead of the next best, yet 36–48% of its stretches put their best within 2 s
+ * of the whole film's, against 0–4% for subtitles that don't belong (another cut, the lines
+ * backwards or scrambled). Needs ten stretches (one every 90 s) and a quarter of them agreeing.
+ * About a second over a whole film, only when the stretches alone gave no answer.
+ */
+function agreement(speech: Float32Array, cues: TimedCue[], first: number, last: number, rate: number): DelayPlan | null {
+	const whole = quickShift(speech, cues, first, last, -FAR, FAR);
+	const span = Math.round(WINDOW / FRAME);
+	const enough = Math.round(60 / FRAME);
+	let tried = 0;
+	let agree = 0;
+	for (let a = first; a < last; a += Math.round(90 / FRAME)) {
+		const b = Math.min(last, a + span);
+		let heard = 0;
+		for (let i = a; i < b; i++) if (!Number.isNaN(speech[i])) heard++;
+		if (heard < enough) continue;
+		tried++;
+		if (Math.abs(quickShift(speech, cues, a, b, -FAR, FAR).shift - whole.shift) <= 2) agree++;
+	}
+	if (tried < 10 || agree / tried < 0.25) return null;
+	return { steps: [{ from: 0, delay: round(whole.shift) }], fits: true, clear: agree / tried, rate };
 }
 
 /** Each 3-minute stretch with a minute or more heard, looked at within 20 s of `overall`. */

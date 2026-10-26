@@ -48,6 +48,9 @@
 		<!-- compass -->
 		<circle cx="12" cy="12" r="9" />
 		<path d="M15.5 8.5l-2 5-5 2 2-5z" />
+	{:else if name === 'live'}
+		<!-- An aerial on a screen. -->
+		<rect x="3" y="8" width="18" height="12" rx="2" /><path d="M8 3l4 5 4-5" />
 	{:else if name === 'settings'}
 		<!-- sliders -->
 		<path d="M4 7h10M18 7h2M4 17h4M12 17h8" />

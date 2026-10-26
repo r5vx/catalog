@@ -3,6 +3,7 @@ export { FebboxRefused };
 import { electronFetch, electronGetVideoUrl, electronGetSubtitles } from './electron-fetch';
 import { withoutQualifier } from './metadata/types';
 import { onFebboxAccountChange } from './settings';
+import { accountsToUse, noteHeldBack, type FebboxAccount } from './febboxAccounts';
 
 const BASE = 'https://showbox.media';
 
@@ -541,12 +542,43 @@ export async function getStreamUrl(
 	}
 }
 
+/** A link Febbox held to 360p (its "quality=" is left on when there's nothing better): that account's allowance is used up. */
+const heldTo360p = (url: string) => /[?&]quality=/.test(url);
+
+/**
+ * With more than one Febbox account (febboxAccounts.ts), the link is asked for with the one with
+ * the most fast video left; one that comes back held to 360p sends it to the next.
+ */
 async function doGetStreamUrl(
 	shareKey: string,
 	fid: number,
 	token: string
 ): Promise<{ url: string | null; debug?: string }> {
+	const accounts = await accountsToUse().catch(() => [] as FebboxAccount[]);
+	if (accounts.length < 2) return linkWith(shareKey, fid, accounts[0] ?? { key: '', token, partition: null, main: true });
+	let last: { url: string | null; debug?: string } = { url: null };
+	for (const [at, account] of accounts.entries()) {
+		const found = await linkWith(shareKey, fid, account);
+		found.debug = `account ${at + 1}${account.main ? ' (main)' : ''} | ${found.debug ?? ''}`;
+		if (found.url && heldTo360p(found.url) && at < accounts.length - 1) {
+			noteHeldBack(account);
+			streamCache.delete(fid);
+			last = found;
+			continue;
+		}
+		if (found.url) return found;
+		last = found;
+	}
+	return last;
+}
+
+async function linkWith(
+	shareKey: string,
+	fid: number,
+	account: FebboxAccount
+): Promise<{ url: string | null; debug?: string }> {
 	const debug: string[] = [];
+	const token = account.token;
 
 	function cacheAndReturn(url: string, dbg: string) {
 		streamCache.set(fid, { url, debug: dbg, ts: Date.now() });
@@ -554,7 +586,7 @@ async function doGetStreamUrl(
 	}
 
 	// Electron's net.fetch sends real browser cookies — try it first
-	const electronUrl = await tryElectronStream(shareKey, fid, debug);
+	const electronUrl = await tryElectronStream(shareKey, fid, debug, account);
 	if (electronUrl) {
 		const upgraded = await probeAndUpgrade(electronUrl, debug);
 		return cacheAndReturn(upgraded, debug.join(' | '));
@@ -613,11 +645,13 @@ async function doGetStreamUrl(
 async function tryElectronStream(
 	shareKey: string,
 	fid: number,
-	debug: string[]
+	debug: string[],
+	account: FebboxAccount
 ): Promise<string | null> {
 	// Hidden BrowserWindow: load the player page, wait for JW Player,
-	// and read its source URL (the real HD m3u8).
-	const bw = await electronGetVideoUrl(shareKey, fid);
+	// and read its source URL (the real HD m3u8). Another account than the main one: in its
+	// own cookie store.
+	const bw = await electronGetVideoUrl(shareKey, fid, account.partition ? { partition: account.partition, token: account.token } : undefined);
 	if (bw.error) {
 		debug.push(`bw: ${bw.error}`);
 	} else {
@@ -634,7 +668,8 @@ async function tryElectronStream(
 		}
 	}
 
-	// Fallback: net.fetch player page with credentials
+	// Fallback: net.fetch player page with credentials (the main account's: not for another).
+	if (!account.main) return null;
 	const r1 = await electronFetch('https://www.febbox.com/file/player', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

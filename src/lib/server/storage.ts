@@ -15,13 +15,16 @@ import { existsSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'no
 import { join } from 'node:path';
 import { db, dataDir, dbPath } from './db';
 import { readSettings } from './settings';
+import { downloadsAheadBytes } from './episodeDownloads';
 
 export const LIMITS = [
 	{ mb: 100, label: '100 MB' },
 	{ mb: 250, label: '250 MB' },
 	{ mb: 500, label: '500 MB' },
 	{ mb: 1000, label: '1 GB' },
-	{ mb: 2000, label: '2 GB' }
+	{ mb: 2000, label: '2 GB' },
+	{ mb: 5000, label: '5 GB' },
+	{ mb: 10000, label: '10 GB' }
 ] as const;
 const DEFAULT_MB = 500;
 const MB = 1024 * 1024;
@@ -72,6 +75,8 @@ export type StorageReport = {
 	subtitles: number;
 	lookups: number;
 	appCache: number;
+	/** 7Movies' and Movy's episodes downloaded ahead (episodeDownloads.ts): their own rules, not this limit. */
+	downloadsAhead: number;
 	limitMb: number;
 };
 
@@ -87,6 +92,7 @@ export function storageReport(): StorageReport {
 		subtitles,
 		lookups,
 		appCache: appCacheDirs().reduce((total, dir) => total + folderSize(dir), 0),
+		downloadsAhead: downloadsAheadBytes(),
 		limitMb: storageLimitMb()
 	};
 }

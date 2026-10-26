@@ -1938,3 +1938,551 @@ cut off; the stall watch then got a fresh link (same piece, same trickle). Not c
 Ideas: play the same spot from the title's other copy once a piece stays stuck, or step past it.
 Testing tools: `playtest.mjs`/`stuck.mjs`-style CDP scripts against the built app on
 `--remote-debugging-port`, and `scripts/dev/tvsim.mjs` (it wants a `localhost` base and address).
+
+### After 3.5.0: Re:Zero's copy, its ending, and the TV (2026-10-24)
+- **Re:Zero resumed on the Japanese-only copy.** 3.5.0's "largest of the wanted quality" took S2E20's
+  1.67 GB `….S02E20.1080p.mkv` (Japanese only) over the 458 MB `….s02e20.1080p.dual.mkv` (both,
+  the dub being watched). `pickFile` now ranks names saying dual/multi first (`bothLanguages`),
+  then size, and compares quality ignoring case ("1080P").
+- **S2E20's ending showed as 28:26–28:53.** The databases (Anime Skip/IntroDB by season number)
+  have 27:59–29:27. Catalog's own find (`skip-found`, by comparing the sound with a neighbouring
+  episode) only covers what the two share, and it replaced the database's. `withFound` now widens
+  a find with an overlapping database span of the same kind, if that span is at most 4 minutes
+  and covers at least half the find.
+- **TV auto-timing on 7Movies/Movy never moved anything.** Both have no separate sound track, so
+  the TV hears the pieces hls.js appends (`hearAppended`), decoding format piece + piece with
+  `decodeAudioData`. In TV mode on the computer that works (SVU S28E3 fitted at +1.1 s), so the
+  Fire TV's engine is the difference. It also kept copies of up to 10 whole 7Movies pieces (25 MB
+  each, picture included). `src/lib/aacFrames.ts` now reads the MP4 boxes (esds for the AAC
+  settings; moof/traf/trun/mdat for the samples) and keeps each piece as ADTS AAC, sound only,
+  in subtitleSync and DownloadedSound. Tested: hls.js-transmuxed TS (Movy-style) and muxed fMP4
+  (7Movies-style) decode identically both ways (correlation 1.000, same length). 7Movies' HEVC
+  copy fitted at +5.9 s from ADTS. **Not tested on a real Fire TV.** If it still fails there, the
+  next step is to report decode errors from the TV to the computer's log.
+- **AHS S13E9 kept buffering on the TV.** 7Movies' server (edge.reelvault.click) and Movy's
+  (rapidbrook.top; the owner's TV photos showed "slowest 222 s") are slow on pieces they haven't
+  cached: 20–60 s, sometimes 102–228 s, trickling the whole time; asked again *after* it finished,
+  often under a second. **A second ask while the first is going finishes at the same moment with
+  the same bytes** (tested on both, 12 pieces each): the server shares one slow fetch, so racing
+  was built, measured useless, and removed. What helps is asking earlier: the relay reads 6 ahead
+  for 7Movies (was 2). Movy stays at 3: it refuses a sixth download, and the progress-bar pictures
+  can take one. And "Keeps stopping to load" now offers "Play on <source>" first (`otherSource`:
+  another source's copy, same language, no burned-in subtitles unless playing those, Showbox
+  first unless its allowance is out), which `changeToFile`s at the same spot.
+- **TV menus:** the sources menu now closes settings/subtitles/delay/sound, and they close it.
+- **TV Back with a menu open left the episode.** `__catalogTv.back` only stopped a scan, then went
+  back a page. Now `tvPlayer.closeMenu` (`closeOpenMenu` in the player) closes an episode's menu,
+  the settings/subtitles/sound/delay/sources menus, or the cast panel first, and puts the highlight
+  back on the player's buttons.
+- **Buffering, measured for a better plan (AHS S13E9, cold stretches).** A pool of downloads that
+  keeps going past slow pieces beats asking a few ahead: 7Movies with 10 at once, 2.4–5.2x real
+  time (wait before play for zero stops: 3–64 s); Movy with 4–5 at once, 1.6–1.9x (31–51 s).
+  Single slow pieces (48–176 s) only hurt when nothing else moves while they come. Offered: keep
+  downloading the whole episode in the background to a disk cache, and the next episode too.
+
+### Episodes downloaded ahead (2026-10-24, owner's request)
+`src/lib/server/episodeDownloads.ts`. For 7Movies (H.264 copies; Orion HEVC plays direct) and Movy
+only; Showbox buffers least and has Febbox's daily limit.
+- **Naming.** `/api/watch/stream` adds `&copy=<share key>` to the relay link. The relay names each
+  quality's playlist `<copy>~v<n>` (sound tracks `~a<n>`), and each piece `&copy=…&n=<number>`.
+  Pieces are kept by copy and number because the sources' addresses change with every fresh link.
+  A media playlist served with a copy registers the episode (`noteEpisode`: the pieces' current
+  addresses).
+- **The pool.** At most 10 downloads at once for 7Movies and 4 for Movy (it refuses a sixth;
+  one is left for the progress-bar pictures). Everything being watched gets an equal share first,
+  then whoever can use the rest. Each episode downloads in order from where it's being watched
+  (`from`), to the end. A piece the player asks for that isn't here goes first; with every Movy
+  download busy, the one furthest ahead is stopped for it.
+- **Serving.** Whole pieces come from disk (`wantedPiece`; `whole=1` requests from the
+  progress-bar pictures only take what's there). The TV's long-piece parts (relayPieces
+  `piecePart`) are cut from a stored piece, and a piece they download themselves is kept too
+  (`keepPiece`).
+- **Next episode.** The player, a minute into a 7Movies/Movy episode, POSTs
+  `/api/watch/download-ahead` for the next one. It asks this server's own stream and relay, so the
+  pieces get the same names, and the episode downloads after what's being watched.
+- **Disk.** `%APPDATA%\Catalog\downloads-ahead\<hash of copy>\<n>`. An episode goes 6 h after last
+  use; at most 10 GB; at least 5 GB left free on the disk. Not part of the Storage limit (max 2 GB),
+  but shown on Settings → Storage.
+- **Tested.** AHS S13E9 on the computer: no stops in a minute from 23:00, up to 111 s ahead; the
+  rest of the episode on disk within minutes, and E10 downloading meanwhile. TV-style (tvsim)
+  through the relay: SVU S28E3 at 2.5x from a cold start, and Movy AHS S13E9 at 6.4x in the
+  desktop build. Three TV-paced viewers on 7Movies at once for 150 s each: one 8 s stop in total
+  (cold start).
+
+### Live TV (2026-10-24, owner's request)
+The owner wanted live sports from their list (FMHY's Live TV section). Checked: NTV, zlive and
+StreamSports99 are app shells built around matches. DaddyLive lists ~900 24/7 channels in plain
+markup. Famelack uses famelack-data (iptv-org's free channels). IPTV Web sits behind a Cloudflare
+check. SportsBite is a large page. TVCL and TitanTV only list channels and schedules. **DaddyLive
+was built** (`sources/daddylive.ts`):
+- **List:** `/24-7-channels.php` cards (`/watch.php?id=N`, `card__title`). The site moves
+  (dlive.sx → thedaddy.pk), so the first address is asked and the redirect remembered. Sports
+  are named by a word list. Kept 12 h.
+- **Stream:** `stream/stream-N.php` embeds `dembed.st/premiumtv/daddy.php?id=N`, 680 KB of
+  scrambled script that refuses to run outside the page ("only works when embedded"). The desktop
+  app (`electron/liveCapture.cjs`) opens the stream page out of sight (partition `live`), muted. It
+  refuses advert hosts, blocks navigations off the site (an advert sent it to a game's website),
+  and notes the first `*.m3u8` with its Referer/Origin (`https://dembed.st`), after
+  `/api/playlist-token`. The token (`?t=<seconds>.<sig>`) lasts about 2 min. `liveLink` uses
+  the kept one while good and asks for the next one 40 s before it runs out (about 5 s each).
+- **Pieces are PNGs on tiktokcdn-us.com.** Their pixels, once un-filtered, read "TIKTIKPX", a
+  4-byte length, then gzip of MPEG-TS (`pictureVideo.ts`; checked with ffprobe: 1280x720 H.264 +
+  AAC). The relay has a `live` kind (`trustLiveHost` with the player's headers) and unwraps them
+  to video/mp2t, so the computer, phones and TVs play them.
+- **Pages:** `/live` (search, sports then the rest), `/tv/live` (Sports / All channels, five
+  across, in the TV menu; `MENU_SCREENS` includes it), and `/live/[ch]` (its own small hls.js
+  live player; play/pause by remote; Back leaves). `/api/live/channels` and
+  `/api/live/playlist?ch=` (a fixed address; tokens change behind it).
+- **Tested** in the desktop build: the list (899, 443 sports), ABC USA 150 s across a token
+  renewal with no stops, ESPN USA and NFL Network 30 s each, and the TV screen.
+- **Only while the desktop app runs** (it does the reading). Not built: DaddyLive's schedule of
+  games, and the match-based sites.
+
+### Live TV rebuilt: games by sport, saved, search (2026-10-24, owner's request)
+The first Live TV ("500 boxes") was called "the worst UI". The owner wanted it organized by
+sport (all the football channels, all the basketball…), a way to save a game for later, search,
+and "a proper integration".
+- **The schedule** is DaddyLive's home page (`#schedule`): days ("Saturday 24th Oct 2026"), then
+  leagues (`schedule__catHeader` > `card__meta`, with sport emoji), then games (`data-time`
+  HH:MM, `schedule__eventTitle` "NBA : Lakers vs Suns", channel links `/watch.php?id=N`). The
+  `schedule-api.php?source=extra*` sources answered "No … schedule available". **Times are GMT**
+  (the page says "UK", but its own script adds the viewer's offset to them, and an ESPN noon game
+  is 16:00 in October). A day's list runs past midnight GMT: a game hours earlier than the
+  league's latest so far is the next day, and so is an American league's first game in the small
+  hours (MLB/AEW at 00:00 = 8 PM Eastern); a single "0:00" otherwise can't be told apart. Channel
+  "00" ("Channel Not Listed, ask in chat") is dropped. Event-only streams (ids 1200+, "Event SD
+  Stream") play like any channel. Flags (Windows shows them as letters, and England's are tag
+  characters) and sport emoji are taken out of names. Kept 20 min; games that ended, or start more
+  than 36 h ahead, aren't listed.
+- **Sports** come from `sportOf` in `src/lib/live.ts` (league name first, then the game's own
+  title for "PPV/Upcoming/All … Events"), with how long each sport's games last (for "On now").
+  "Football" means American football; soccer is "Soccer" (American spelling, the owner's).
+- **Channels** carry the sports their name says plus the sports the schedule has them showing,
+  and a country from the last word of the name (USA, UK, Canada first).
+- **Saved** (`live_saved`, per profile: `channel`, `game`, `recent` (last 12 played)). A saved
+  game keeps its details (JSON) so it shows after the schedule drops it; it goes 6 h after it
+  ends. `/api/live/guide` (everything), `/api/live/saved` (GET for the player's star; POST by
+  game, or by id from the Roku), `/api/live/watched`, `/api/live/game`.
+- **Pages:** `/live` tabs Games / Channels / Saved, sport chips with counts, search across all
+  (teams, leagues, channels). Every sport shows 5 games (on now first) with See all; one sport goes
+  On now / Later today / Tomorrow with a league picker. `/tv/live`: chips On now, Saved, each
+  sport, Channels, Search (TvKeyboard); a game opens a box (`data-tv-sheet`, Back closes it:
+  `TvMenu` now only closes itself when it's open, or it stole the focus back) with "Watch on …"
+  and Save. The player (`/live/[ch]?name=&game=`) shows the game, a Channels list (switches in
+  place), and the star; a channel that won't play offers the game's other channels.
+- **Player servers:** a channel's page exists on 7 servers (`stream`, `cast`, `player`, `watch`,
+  `plus`, `casting`, `hub`), whose playlists come from different hosts (cowedd…sbs, an :8443 host,
+  uzhi.ru). One that fails moves that channel to the next (`liveTrouble`). Tested with the others
+  first: `cast` refused ESPN, `player` played it (plain .ts pieces). The capture only takes an
+  address whose *path* ends `.m3u8` (JW Player's analytics pings mention one) and blocks
+  `jwpltx`.
+- **Tested** in the desktop build: GOLF Channel for a golf game started in 2.4 s, the Channels
+  list switched to Sky Sports Golf (1.5 s), an event stream (1204, the Osaka final) started in
+  11.6 s, all 30 s with no stops; the TV screen's remote path (down, OK, Save, Back).
+
+### More than one Febbox account (2026-10-24, owner's request)
+Mom's laptop serves 4+ TVs, and one free account's 10 GB a day runs out. `febboxAccounts.ts`:
+extra sign-ins in Settings (`febboxMore`, JSON list); each link is asked for with the account
+with the most HD left today (`febboxFlow(token)`, kept 5 min per account; the main one on a tie);
+a link that comes back held to 360p (its `quality=` left on) passes that account over for 10 min
+and asks the next. In the desktop app each extra account has its own cookie store
+(`persist:febbox-<key>`), filled from its sign-in (`holdFebboxSignin`); the `get-video-url`
+handler uses that session for its fetches and hidden windows. The fallback through the app's
+own window is the main account's only. Settings → Services: "More accounts", each with today's
+use, "Add another account" (a sign-in window in its own store, `#catalog-more`; the sign-in is
+kept only if Febbox says it's signed in) and "Paste its key". `/api/watch/febbox-flow` is out
+only when every account is; the player's account name is all of theirs. **Tested:** a link asked
+through a separate store (the main sign-in standing in) came back 1080p; the add window opens in
+its own store and, closed unsigned, adds nothing. Not tested with a real second account.
+
+### The buffer bar on TVs (2026-10-24)
+Mom's TV bar "barely loads". The player already asks for 5 minutes ahead (`maxBufferLength:
+300`), but a Fire TV's browser only holds a minute or two of 1080p in memory, so the TV's own
+bar stops there whatever it's told. What the computer has downloaded ahead (7Movies, Movy) now
+shows as a lighter shade (`heldRanges`, from `GET /api/watch/download-ahead?copy=`, mapped onto
+the playing quality's pieces by their `n`): that's how far the TV can play without waiting on
+the source. Tested on SVU over 7Movies: 12% held a minute in.
+
+### Roku (2026-10-24, owner's request)
+Roku apps can't show web pages, so `roku/` is a SceneGraph app that asks `/api/roku/*` (hello,
+login, profiles, home, title, play, subtitles, live) and plays with the Roku's own player.
+`roku/README.md` has how it works and how to install it (developer mode, upload the zip from
+`npm run roku`). `/api/roku/play` finds the copy as the player does (resolve, `pickFile`, no
+HEVC, Japanese for anime), its link, where it was left and the next episode. `/api/roku/subtitles`
+gives English as WebVTT (ASS turned into plain cues). Every request says `CatalogTV/` (so the
+profile cookie counts) and carries the PIN cookie. **Checked** with BrighterScript's compiler
+(no errors; it caught three planted ones) and every endpoint answered as a Roku asks. **Not run
+on a Roku**: layouts, focus, dialogs (StandardKeyboardDialog/StandardMessageDialog fields) and
+playback (relay fMP4 parts, subtitles with the PIN cookie) are unproven.
+
+### Live in the main player, replays, and the Roku like the Fire TV (2026-10-24/25, owner's round)
+- **One player.** Live channels play in `/watch?live=<ch>&name=&game=` (`liveMode`), replays in
+  `/watch?replay=<id>&name=` (`replayMode`); `sportsMode` turns off what's the library's: saving
+  the place, subtitles lookups, cast, skips, auto-timing, the hearing of appended sound. Live:
+  LIVE badge, star, the game's channels where the files would be (switching uses `replaceState`
+  and `startLive`), a full bar with "N behind · Go live" past 15 s, `liveSyncPosition`. hls.js gets
+  `enableCEA708Captions` + `renderTextTracksNatively: false`, and `CUES_PARSED` feeds the channel's
+  own captions (CEA-608) into Catalog's subtitles (ABC had them). `/live/[ch]` now redirects.
+- **TV Live chips**: the picked one in the accent color, and a click moves the highlight
+  (`tvFocus`), as on the TV library.
+- **Right-click on /live**: a game's channels, Save, "More <sport>"; a channel's Watch and Save.
+- **Downloads ahead**: own limit in Settings → Storage (`downloadsAheadGb`, 5–100 GB, default 20;
+  the general cache got 5 and 10 GB too). `finishedWith(copy)` (DELETE
+  `/api/watch/download-ahead?copy=`, from `episodeEnded`, a switch past 90%, a film at 95%, the Roku's
+  end): gone 3 min after its last piece was asked for (a minute's timer). Tested: gone in 4 min.
+  Playback stats: "On the computer: N% · M past here · K downloading".
+- **Replays** (`sources/replays.ts`, `/api/live/replays`, `/api/live/replay?id=&v=`): NFL-Video and
+  Basketball-Video (game page → "Server #n (OK|DM|FM)" buttons → an advert page holding the
+  `ok.ru/videoembed/<id>` → its `data-options` metadata `hlsManifestUrl`, bound to the computer's
+  address, so through the relay; Dailymotion by its metadata API), and SoccerFull (`?sid=`
+  versions → `/hls/<id>.m3u8`, pieces = a 1×1 PNG then MPEG-TS, unwrapped in `pictureVideo.ts`).
+  A game hours old often only has ok.ru's "mobile" copy (no playlist): the next server is tried,
+  else "not ready yet". Dead ends: WatchReplay (stopped mid-September), ReplayZone's ok.ru and
+  Dailymotion copies (taken down), Filemoon/Byse (need a click). Tested: an NFL game 1080p,
+  2½ h, started 4.6 s, jump to the middle 2.4 s; a soccer match 720p, started 0.3 s.
+- **Roku, rebuilt to match the Fire TV**: `NavMenu` (the Fire TV's icons, drawn from its SVGs),
+  `ShelfScreen` (banner + rows from `/api/roku/rows`, which builds them with the Fire TV's own
+  `src/lib/tv/tiles.ts`, plus each tile's `go`, `actions` (the TV menu's) and `warm`),
+  `LibraryScreen`, `LiveScreen` (chips + grid, Replays), `SettingsScreen` (captions, auto-skip,
+  autoplay: on by default as on the Fire TV), `ProfileScreen` (faces), `TitleScreen` (Fire TV's
+  buttons and words via `/api/roku/title`, seasons/episodes via `/api/roku/season`, which uses the
+  player's own numbering where it differs, as the Fire TV does), one `TileItem` for every tile,
+  `PlayerScreen` (skips from `/api/roku/skips` with `src/lib/skipMerge.ts`, shared with the web
+  player; a fresh link on an error; captions; autoplay). Back: closes the top screen, else opens
+  the menu, else goes Home, else leaves. Still never run on a Roku.
+
+### Owner's round, 2026-10-25: live captions, Back, channels by country, the stop log
+- **Live captions can't be auto-timed (tried and measured, then taken out).** They're CEA-608 roll-up
+  captions typed by a person as the commentators talk. On a CBS NFL game (about 8 minutes heard
+  from the player's own downloads, through `hearAppended`): talking 78% of the time, and each line
+  shown twice as it rolls up, so a caption is on screen almost all the time (735 s of captions in
+  450 s). Subtitle alignment ("talking" vs "a caption showing") found nothing clear and called them
+  "don't fit". Each line counted once, from when it first shows: best −2.6 s, not clear. Caption
+  text rate vs talking: peak at 4 s late, r = 0.21. First new line after a pause in the talking:
+  0.8 s early to 8 s late, about 1.8 s typically. The lag changes line by line. **Built instead:** the
+  delay set by hand on live captions is kept on the device (`catalog:liveCaptionDelay`) and used
+  for the next game. (Also found: the player handed auto-timing the sound it had already
+  downloaded again every time the subtitles changed; `useAppended` now says when it's newly
+  started, and only then are they handed over.)
+- **Back from live or a replay went to the search** (`goBack` only went back a page with
+  `auto=1`). Now `history.back()` when the player was opened from another Catalog page
+  (`afterNavigate` with a `from`), else `/live`.
+- **Channels by country:** `/api/live/guide` gives `homeCountry` (Where to watch's region as the
+  channels' country name, `countryForRegion` in daddylive.ts: "US" → "USA", "GB" → "UK"). `/live`'s
+  Channels starts filtered to it until a country is picked by hand that visit (kept in session
+  storage only then); a search covers every country. TVs and the Roku have no country picker:
+  `countryRank(country, home)` puts the home country's channels first there.
+- **SVU's "microbuffer with the whole bar loaded" (7Movies HEVC/Orion copy):** that copy has pieces
+  whose picture starts 2 s after the time the playlist gives (S28E3: piece 58 at 5:42.2 starts at
+  5:44.3, piece 87 at 8:36.4 starts at 8:38.4), so there's a 2 s hole in what's loaded. hls.js says
+  `bufferAppendNoProgress`, the video stops for about 0.1 s and steps over it, and about 3 s of the
+  episode are missed. The H.264 copy plays straight through that spot. The HEVC copy isn't
+  downloaded ahead on purpose: its pieces come straight from `*.hakunaymatata.com` at
+  150–800 Mbps (the stats now say "not needed" for it).
+- **The stop log said "No clear cause" every time.** Of the 34 kept, about 25 were switches (another
+  source, episode or fresh link), logged as the old video was cleared (position 0, height 0). The
+  real ones had fast pieces and 0 s loaded: a piece that hadn't come, which the log never saw (it
+  only had pieces that finished). Now (`stopStarted`/`stopEnded` in the player):
+  - switches and the load after a jump are left out;
+  - a stop is kept when it ends, with how long it lasted (or "still stopped after 30 s");
+  - it records the piece being waited for, how long it had been asked for, when it came, and when
+    the last piece arrived (`FRAG_LOADING`/`FRAG_LOADED`);
+  - it records frames drawn and dropped in the last 10 s, HEVC or not, and a hole in what's loaded
+    just ahead or behind;
+  - it records the last 30 s of events: jumps, quality and sound-track changes, fresh links,
+    decoder rebuilds, the window hidden, and hls.js warnings in plain words (`PLAYER_WARNINGS`);
+  - `relayed` now means pieces came through this computer (a relayed playlist's pieces can come
+    direct);
+  - live and replays are labelled as such (they said "Showbox").
+
+  Settings → Playback reads them, in this order: a hole; dropped frames; window hidden; a change
+  just before; a jump; a warning; "not the connection, N s was loaded"; and when it ran out: the
+  server stopped answering; a piece hung; a piece took N s; the site was slow sending to this
+  computer (by bitrate, or a piece taking 8 s+ when the playlist doesn't say). Old entries with
+  nothing in them are labelled as probable switches.
+
+### Owner's second round, 2026-10-25: HEVC downloaded too, picture holes, game pictures, your sports
+- **7Movies' HEVC (Orion) copy is downloaded ahead too.** It had been left out because its pieces
+  come straight from `*.hakunaymatata.com` at 150–800 Mbps. The owner's point: fast for them isn't
+  fast for mom's TVs, and there's little harm. `downloadKindOf` takes every `vidrift:` copy now.
+  The relay's `direct()` points a `playsDirect` server's pieces back through the relay when the
+  copy is downloaded ahead, so they're served off the disk. Tested: S28E3's picture was 353/411
+  pieces and its sound 492/493 about 40 s in (554 MB). A TV only gets the HEVC copy when its
+  browser says it can play HEVC (`canPlayHevc`), so mom's buffering was most likely on the H.264
+  copy and Movy.
+- **"The picture paused but the sound went on, no loading sign" (SVU HEVC, after a jump):** it's
+  the copy's 2 s holes. In piece 87 (8:36.43) the third frame has the keyframe's own time, so the
+  browser's MSE replaces the keyframe and drops the 2 s until the next one (`ffprobe` of the
+  stored piece). With a separate sound track, Chromium plays the sound on over the hole with the
+  picture still. Ordinary jumps (7:00, 18:20, 25:00, 31:40) were fine. `stepOverPictureHole`
+  (on timeupdate) jumps a hole of ≤3 s in the picture's loaded parts (`trackRanges.video`) once
+  it has stayed a hole for 5 s (a piece on its way fills in by then), and notes it in the stop
+  log's events. Tested at both holes: no still picture. Rewriting the piece's timestamps was
+  judged too risky.
+- **Game pictures** (`src/lib/server/teamArt.ts`, `src/lib/GameArt.svelte`):
+  - ESPN's public team lists (`site.api.espn.com/apis/site/v2/sports/<sport>/<league>/teams`, no
+    key) give each team's logo (the `dark` one) and color. DaddyLive's league name picks the list
+    (`LEAGUES`); college games of any sport use the basketball schools' list, then football's.
+  - The title's two sides are matched by name in order: exact (or the abbreviation, "PSG",
+    "AZ"); the nickname ("Clippers": "LA Clippers" lost to the Lakers' "Los Angeles"); then the
+    longest name inside.
+  - Club words like "Sporting", "Real" and "United" never count alone ("Sporting Braga" got
+    Sporting CP).
+  - Lists are kept a week in `watch_order_cache` (`espn-teams3:`; bump the number when the name
+    building changes). `/api/live/guide` waits at most 4 s for them.
+  - 76 of 134 games on a Sunday had logos; the rest show their sport's picture (a ball on the
+    sport's color, `SPORT_COLORS`).
+  - Computer: a thumbnail on each row. TV: across the top of each box, and Replays now show their
+    own picture.
+  - Roku: `/api/roku/live` items carry `logos`, `sport`, `sportColor` and `poster`. `TileItem`'s
+    `showGameArt` draws the logos on their colors, a replay's picture, or the sport's name on its
+    color (the Roku can't show emoji). Game cards are 540×380, two rows. Checked with
+    BrighterScript only.
+- **Your sports:** per profile (`live_saved` kind `sports`, key `picked`, the list as JSON;
+  `liveSports`/`setLiveSports`, `/api/live/sports`; null means it hasn't been asked).
+  - The first visit to Live TV asks (computer: a panel; TV: a box, Back closes it and it asks
+    again next time). Done, or "Every sport" (an empty list).
+  - After that the sport chips, All sports / On now, and Replays only show those, and "+" changes
+    them. A search still covers every sport.
+  - The Roku has no picker; it follows the profile's picks.
+
+### Owner's third round, 2026-10-25: mini player, a friend's reports, scores, favorites, one click
+- **The mini player** (`/watch?mini=1`, its own always-on-top window, 480×270 at first) is the
+  same player page, but its CSS hid the volume slider, subtitle timing and every button right of
+  the spacer (subtitles, sound, settings), and the top bar with the source picker. A friend found
+  "only mute". Now it shows them all, sized down: menus fit the window and scroll
+  (`max-height: calc(100vh - 84px)`), the volume slider opens to 76 px, the time hides under
+  430 px. The source picker is a snippet (`filePicker`) rendered in the top bar and in the mini
+  player's top strip. Fullscreen and picture in picture stay hidden there (it already is one).
+  Checked at 480×270 by CDP: subtitles menu, picking subtitles, the timing popup, the volume on
+  hover. **Gotcha:** the live channel picker also uses `class="file-pick-wrap"`; cutting the
+  file picker out by that class took the wrong block once.
+- **A friend's films "stop and go back a few seconds" (3.5.0):** not reproduced. Every place the
+  player moves the position by itself was checked: the fresh link (`refreshStream` keeps
+  `currentTime`), the decoder rebuild (hls.js `recoverMediaError` restarts at `media.currentTime`),
+  the stall nudge (forward), `startLoad(-1)` on `bufferStalledError` (hls.js only moves the
+  *download* to its `lastCurrentTime`, the last forward seek, not the picture). None goes back. So
+  `noteJumpBack` (on `seeking`) logs any jump back of over a second with no click, key or wheel in
+  the 2 s before, as "Went back N s by itself", with the last 30 s of events. Ask for Settings →
+  Playback after the friend updates. 3.5.0 already logs frozen-picture recoveries.
+- **Hurt Locker microbuffer (a friend on 3.5.0, Showbox):** not looked into (testing Showbox
+  plays on the owner's Febbox allowance). This build's stop log will say which kind it was.
+- **Live scores** (`src/lib/server/liveScores.ts`): ESPN's scoreboard for each league a game's
+  teams were found in (`art.league`; college lists with `groups=80/50` for the whole division),
+  matched by the two teams' ESPN names, kept 45 s. `GameScore` {a, b in the title's order, state
+  pre/in/post, detail "7:25 - 4th"}. `isOnNow` trusts the state (over is over, overtime is on).
+  `/api/live/scores` refreshes them every minute while Live TV is open. The score shows big on the
+  game picture (TV), in the row (computer), and in the Roku's card text. 20 NFL/NBA/NHL/soccer
+  games had scores on a Sunday afternoon.
+- **Favorite teams:** `live_saved` kind `team` (key: ESPN's name; data: name, logo, color),
+  `/api/live/teams`, the guide's `teams`. Their games come first in On now and each sport, under
+  "Your teams" (a section on the computer, a chip on the TV, a row on the Roku), with a ★. Set
+  from a game's right-click menu (computer) or its box (TV menu button). The Roku follows.
+- **One click** (`src/lib/server/liveChannelPicks.ts`, the guide's `best`, `bestChannel` /
+  `channelsBestFirst` in live.ts): a game plays on the channel that played best for its league
+  (+3 per minute-long play, −4 per failure or switch within a minute, half that for the sport),
+  else Where to watch's country (+2), else English (+1), else others (−1), in schedule order.
+  The player tells it (`tellChannel`): ok after 60 s played, not ok when it gives up or another
+  channel is picked within the minute. Kept per computer (`watch_order_cache`
+  `live-channel-picks`). TV: OK plays it; the menu button (`catalog:tv-menu`) opens the box
+  (channels best first, Save, the teams). Roku: OK plays it; * opens the box. Computer: the
+  picture, time and title play it, and its channel buttons list it first. Tested: Ravens–Bengals
+  → CBS USA, Texans–Giants → FOX USA.
+
+### 7Movies' HEVC freezes, found and mended (2026-10-25, a friend's Hurt Locker)
+The owner saw the picture stop for a few seconds while the sound and subtitles went on, several
+times, on a friend's Hurt Locker (7Movies HEVC, 3.5.0). Measured:
+- **The holes are real and fixed in place:** all 1,567 pieces downloaded, then stepped through
+  in the browser. 11 holes of ~2.4 s each (3:07, 18:21, 28:55 …). SVU S28E3 had 2.
+- **The cause:** an hls.js trace at 18:21 shows piece 221 appended straight after 220, cleanly
+  joined, and the browser dropping its first 2.4 s (up to the next keyframe). hls.js retried it
+  three times ("bufferAppendNoProgress"). In the piece's index (moof/traf/trun, per-frame
+  composition offsets), one of the first frames has the keyframe's display time, and a slot a few
+  frames later is empty. 1,148 of 1,567 pieces are like that. The browser only sometimes lets the
+  later frame replace the keyframe, which is why only 11 make holes. (Earlier notes said "the
+  third frame repeats the keyframe's time" was the hole; it's in nearly every piece, so it's the
+  cause but not a sure sign.)
+- **Also odd but not the cause:** the playlist says every piece is 5.00 s. They're 4.7–4.9 s, with
+  some 7.2 s, so the playlist's times drift up to 2 s from the real ones; hls.js corrects as it
+  goes.
+- **The mend** (`src/lib/server/pieceRepair.ts`, `repairFrameTimes`): in each trun, if exactly one
+  non-keyframe has the keyframe's time and exactly one slot on the even frame grid is empty, that
+  frame's composition offset is rewritten to the slot. **(Wrong: it was the keyframe that belonged in the slot; see the sixth round below.)** Same size; anything else is left alone.
+  The relay applies it to every 7Movies piece it hands over: from the disk, from its read-ahead,
+  or fetched (an MP4 piece is read whole for it). The H.264 copy's TS pieces are untouched.
+- **Tested:** offline, all 1,148 mended, every piece then clean, sizes the same, still decodes.
+  In the browser after clearing its cache: 0 holes in Hurt Locker and in SVU S28E3. Playing
+  through 18:15–18:27 had no still picture, and piece 221 went in first time.
+  `stepOverPictureHole` stays as the fallback for other copies.
+- Browsers keep relayed pieces for 6 h (`max-age=21600`), so someone who watched one just before
+  updating can still get an old, faulty piece from their cache for a few hours.
+
+### Owner's fourth round, 2026-10-25 evening
+- **Live TV and Replays were slow to open** (3–5 s, then 1.6 s for Replays): each opening could find
+  its caches out of date and fetch DaddyLive's schedule, ESPN's lists and scores, and the replay
+  sites. Now the schedule, channel list, replays and scoreboards answer from the last copy at
+  once and fetch the next one behind it. `hooks.server.ts` warms the schedule (with pictures and
+  scores) and the replays 5 s after start and every 10 minutes. The pages show the last guide in
+  this window at once (`liveKept` in live.ts) and ask for replays as Live TV opens. Measured:
+  0.66 s for the first open right after start, then about 0.01 s.
+- **Replays:**
+  - A replay opened on the search page until its address came: `startReplay` set `loading = false`
+    first. It now loads until then.
+  - Rockets–Hawks played only 15 minutes: Basketball-Video's extra "Game" link is a 480p condensed
+    game (15.6 min), taken because the full-game servers weren't ready a day after. `/api/live/replay`
+    measures each version's length (`lengthOf`). Under 40 minutes is condensed, only played when
+    nothing else is, with `condensed` (minutes) shown in a notice and in the versions list.
+  - Answers are kept 20 minutes, and a replay pointed at for 0.4 s is looked up ahead
+    (`warmReplay`).
+  - Replays have no captions (ok.ru copies), so there's nothing to auto-time.
+- **No emoji in Catalog** (owner's rule): the sport pictures are photos from Wikimedia Commons,
+  cropped 960×540 into `static/sports/<sport>.jpg` (`sportPicture`). They're used in the sports
+  picker, for games without team logos, and on the Roku (`sportPicture` in `/api/roku/live`).
+  The picker is "Pick the sports Live TV shows", with one line saying what it does.
+- **Other countries' games** (`src/lib/server/liveLocal.ts`, `local` on each game): local means a
+  channel from Where to watch's country, or one of that country's own leagues (`OWN_LEAGUES`:
+  USA, UK, Canada, Australia, Ireland). For the USA: 40 of 133 games kept, 93 hidden. "Other
+  countries" (a chip, per device, `catalog:liveAllCountries`) shows the rest; a search finds all.
+  Favorite teams always show. The Roku shows local games only.
+- **Hurt Locker's auto-timing gave up at 1:50** (a friend, 3.5.0, Showbox). Reproduced with all four
+  English files. The talking is quiet under constant noise: picked up during only 40–50% of
+  the lines, and at 110–115 min noise read as talking 66% of the time. No 3-minute stretch was
+  ever clearly ahead of the next-best delay, so it said "doesn't fit". Yet most stretches
+  pointed to about +20 s (this copy has a longer opening).
+  - `agreement` in subtitleAlign.ts: when the stretches give no clear answer, a stretch's best
+    within ±150 s is taken (every 90 s). If a quarter or more land within 2 s of the whole film's
+    best, that's the delay for the whole film. Right files: 36–48%. Wrong ones (another cut,
+    lines backwards or scrambled, another video's): 0–4%, and still don't fit.
+  - Result: YIFY +19.9 s, circle and DVDRip +21.2/21.4, and devise (a PAL-speed release, found
+    by the rate check) +20.9. About 1 s per film, only when the stretches failed.
+  - `SubtitleSync`: once a plan has fitted with 15 minutes heard (`fittedWith`), a later "doesn't
+    fit" keeps the fitted plan instead of undoing the delay and switching subtitles.
+  - Risk: Venom 2-style subtitles for another cut could now fit at one delay where they used to be
+    refused. Not tested (no data); the wrong-subtitle tests above passed.
+- **"Rate it"** no longer shows in the player at 95% (Hurt Locker's credits are about 6%). The
+  player notes 90% watched (`askForRating` → `rateWanted`), and on leaving (`beforeNavigate` →
+  `offerRatingOnLeaving`) sets `ratePrompt.offer` (`rateLater.svelte.ts`; not `ratePrompt.svelte.ts`,
+  which clashes with `RatePrompt.svelte` on Windows). `RatePrompt.svelte`, in the root layout (not
+  on /watch or /tv), shows it bottom right for 30 s. Tested: nothing during 127 Hours at 92%, and
+  the card on its page after Back.
+- **Roku setup PDF:** `Catalog Roku setup.pdf` (owner's Downloads), made like the Fire TV one
+  from an HTML page printed by Edge headless. It covers developer mode (Home×3, Up×2, R L R L R),
+  `http://localhost:4173/catalog-roku.zip` on the laptop, upload as `rokudev`, then the remote.
+  `npm run roku` refreshes `static/catalog-roku.zip`; it must be run when roku/ changes.
+
+### Owner's fifth round, 2026-10-25 night: replays that wouldn't play, condensed games, places kept
+- **Bengals–Ravens said "can't be played yet" with five odd versions** ("Server #1 OK", "Server #2
+  DM", "Server #3 FM", "Game", "OK"). Only #2 (Dailymotion) had a video. Its first playlist
+  (`cdndirector.dailymotion.com`) answers curl and browsers but gives **403 to Node's own fetch
+  whatever the headers**; its real playlists and pieces (`*.dmcdn.net`) are fine. The relay now
+  asks hosts matching `BROWSER_ONLY` through the desktop app's browser (`electronFetch`) and
+  rewrites that playlist as usual (`servePlaylist`, the relay's playlist code moved into a
+  function).
+- **`src/lib/server/replayAnswer.ts`** (the replay endpoint's logic):
+  - Every version is tried at once and measured, and the same video under two buttons is listed
+    once. Names say what it is: "Full game · Dailymotion", "Condensed, 44 min · ok.ru". Versions
+    that don't play are '' (the player's menu skips them).
+  - Condensed is by sport (`CONDENSED_MINUTES`: football 100, basketball 70, hockey 80, baseball 100,
+    soccer 75, else 40). The NFL's condensed games run ~45 min: Bengals–Ravens' 44-minute copy
+    was first called "full".
+  - A replay with nothing playable is left out of the lists for an hour (`replayNotReady`).
+  - `checkNewReplays` (in the 10-minute warm-up) tries the newest (36 h) twelve, three at a time,
+    so they're known before they're shown. `condensedOnly` puts "Condensed, N min" on their cards
+    (`replayLine`).
+- **"Replays start mid-sentence":** the player starts at 0:00 of the file. Bengals–Ravens' upload
+  itself opens inside CBS's NFL Today. That's the uploader's recording, not Catalog.
+- **Replays keep their place** in `watch_progress` as type `replay` (title, season 0, episode 0,
+  the site's picture), and `noteReplayWatched` keeps id → title in `live_saved` kind `replay`
+  (the last 12). Continue Watching includes part-way replays (`href` on the item: the computer's
+  cards, the TV's tiles via `fromContinue`, the Roku via `goOf` → place `replay`), with no
+  library actions on them. The player resumes via `replayPlace`; the Roku starts at the answer's
+  `resumeAt` and saves with `m.replayPlan`. Tested: left at 10:12, the card showed 23%, and
+  clicking it resumed at 10:12.
+- **Recently watched** on Live TV (the guide's `recentReplays` plus `recent` channels): a section
+  on the computer's Games (above Your teams), a chip on the TV, a row on the Roku.
+
+
+### Owner's sixth round, 2026-10-25 late night: SVU stutter, auto-timing flip-flop
+**"The video is clearly skipping frames, like rubberbanding" (SVU S28E3, 7Movies HEVC, ~34 min).**
+The mend of the round before was wrong, and made it worse.
+- **What the frames really are:** the keyframe at the start of each piece is a CRA, and the 1–4
+  frames after it in the file are RASL "leading" pictures, which are *shown before it*. Read
+  from the video itself: the picture number (POC) in each frame's slice header (`nal_type` 21 =
+  CRA, 8/9 = RASL; 8-bit POC LSB, one slice per picture). In 73 of 79 pieces on disk the
+  *keyframe* carries a wrong time (two frames early, on top of a leading frame), and the empty
+  slot is where the keyframe belongs.
+- **The old mend moved the other frame into the slot.** That stopped the 2.4 s holes but showed
+  the keyframe and two leading frames out of order once per piece (about every 6 s): a visible
+  step back and forward. The unmended copy stutters too (by one frame). Proven with ffprobe: on
+  init + mended pieces, frames come out of the decoder in POC order, and their times went back
+  twice per piece with the old mend, never with the new one.
+- **The mend now** (`pieceRepair.ts`) moves the keyframe into the empty slot. Checked against
+  the POC order: 73/73 right. Played in the test app: 0 dropped frames, 600 frames per 25 s, no
+  jumps in `requestVideoFrameCallback`'s media times, at 8:36, 18:15 and 33:50, and through
+  arrow-key skips back and forward.
+- **Cache:** relayed 7Movies piece addresses carry `&mend=2`, so pieces a browser kept (6 h)
+  from the old mend aren't used. Bump it if the mend changes again.
+- **New seam, mended in the player:** Chromium only keeps a piece's leading frames when that
+  piece is appended straight after the piece before it. A piece that starts a run of appends
+  (the first after a jump) loses them, so when a run from behind later reaches it, a hole of 2–4
+  frames (0.08–0.17 s) is left, and hls.js skipped ~0.46 s there (picture and sound). Tested with
+  a plain MSE page: appending 361–363, then 358–360, leaves 2168.083–2168.166; removing and
+  re-appending a piece only moves the hole to the next or previous piece (removal takes the next
+  piece's leading frames too, and every re-append starts a new run). What works:
+  `mendPictureSeam` (watch page, on BUFFER_APPENDED of video): a hole ≤0.3 s right next to the
+  piece just appended gets the video flushed from the hole to the end (`BUFFER_FLUSHING` …
+  Infinity). hls.js then appends the next piece straight after the one just appended, and the
+  rest in order, from the computer's copy. Tested: the two parts joined into one, and playing
+  across the join had no jump. Once per hole (`seamsMended`).
+- A hole *behind* a run's first piece (when nothing before it is loaded) is harmless: playback
+  starts at the keyframe after a jump anyway.
+- Bench (scratchpad): `poc.mjs` (POC per frame), `truth.mjs` (mend vs POC order), `mendcat.mjs` +
+  ffprobe `frame=pts` (decoder order times), `serve.mjs` + `mse*.js` (plain MSE tests).
+
+**"Auto-timing kept changing between +8.5 and +7.3, never felt right" (same episode).**
+- The whole episode heard (`subSync.heardSoFar()` dumped by CDP, replayed with
+  `subtitleAlign.ts` in Node): this copy runs ~1.5 s longer at each ad break than the WEB
+  subtitles, so the right delay steps up at each act: +1.1, 2.6 (5:20), 4.2 (10:55), 5.6
+  (21:53), 7.3 (27:01), 9.0 (34:13), 8.6 (37:46). Each step lands in the 10–30 s gap with no
+  lines at the break, so the step places were right. The owner was at the 7.3 → 9.0 break.
+- **The fault:** one 3-minute stretch at 35:00 said +8.5 between two +9.0s, and the noise filter
+  only dropped answers more than 1 s off, so the plan went 9 → 8.5 → 9 within a minute.
+  Stretches overlap by 2½ minutes, so a real change always shows in several in a row: an answer
+  ≥0.4 s off both neighbours that agree within 0.4 s is now dropped (`fitAtRate`). Plan after:
+  one step per break, no back-and-forth.
+- **Checked and ruled out:** the sound track's clock. Orion's audio playlist lists 5.013/5.014 s
+  per piece (the pieces are 5.0133 s), so `readSoundTrack`'s EXTINF times are within 0.2 s over
+  the episode. (If a copy's EXTINF ever lies, the fix is to take each group's start from its
+  first piece's `tfdt`.)
+
+**Live TV's TV shows (owner, same night): "SNL, Family Feud, Jeopardy show a sports picture and say games".**
+- DaddyLive's schedule has a "TV Shows 📺" category (about 33 a day: Jeopardy!, Family Feud, FBI,
+  The Voice, late-night shows, even "🏈 Monday Night Countdown"), and puts SNL under "Upcoming
+  Events" marked 📺. All were sport `other`. Now they're `tv` ("TV shows", 1 hour, color
+  `#283a5c`): the category, or 📺 in the title (`readSchedule`), with no league.
+- **Pictures** (`src/lib/server/showArt.ts`, called from `withArt`, so the computer, TV and Roku all
+  get them): TMDB `/search/tv` by the name without "S43, E31" / "• Live" / "(SNL USA)", an exact
+  name match only, its backdrop (w780) else poster, on `game.poster` (GameArt already shows a
+  poster first; the Roku's LiveScreen too). Kept a month per name in `watch_order_cache`
+  (`show-picture1:`), a miss for a day; four lookups at a time. 26 of 34 found. Without one:
+  `static/sports/tv.jpg`, a plain TV set drawn with ffmpeg `drawbox` (a JPG, so the Roku can show it).
+- **Wording:** the tab is "Schedule" (was "Games"), "All" (was "All sports"), a TV-shows section
+  counts "shows" (`itemWord`), "Nothing called that", "On now" on Channels, the picker is "Pick
+  what Live TV shows". Search says "games, shows, teams, channels".
+- **Picks made before:** a one-time fix (`live-sports-tv-shows`) adds `tv` to every profile's
+  non-empty sports picks, so shows aren't hidden from someone who never saw the choice. An empty
+  list (every sport) already includes them.
+
+**"On a slow connection it buffers a lot; a Steam download made Catalog buffer, YouTube didn't" (owner).**
+- His stops (installed 3.5.0, Re:Zero S2E21, Showbox 1080p): pieces at 0.4–1.3 Mbps each, three at
+  a time, needing 1.9 Mbps. Nothing else of Catalog's was downloading. YouTube copes mostly by
+  quietly lowering its quality, which the owner has turned down for Catalog.
+- **Measured:** ten big downloads (Hetzner and OVH test files) standing in for Steam, while 7Movies
+  pieces were fetched N at a time. Free line: 1 at a time 195 Mbps, 3 at a time 350. Busy line, two
+  runs: 1 at a time 5.6 / 15 Mbps, 3: 57 / 20, 6: 57 / 42. Each download only gets its share of a
+  busy line, so more at once get more of it (Steam opens many).
+- **Change** (`src/lib/fetchAhead.ts`): while the last few pieces each came in at less than 3× the
+  speed they play (`aheadNow`, from `PieceNote.seconds` and `ms`), five are fetched ahead instead
+  of two. On a free line nothing changes. Only Showbox goes through this loader: 7Movies and Movy
+  come through the relay, which already reads six (Movy three) ahead on the computer. **Not yet
+  tried on a busy line with Showbox playing** (that uses the owner's Febbox allowance).
