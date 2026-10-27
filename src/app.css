@@ -259,12 +259,14 @@ textarea {
 	white-space: nowrap;
 }
 
-.pill.watching {
+.pill.watching,
+.pill.rewatching {
 	background: var(--accent-bg);
 	color: var(--accent);
 	border-color: color-mix(in srgb, var(--accent) 35%, transparent);
 }
-.pill.completed {
+.pill.completed,
+.pill.caught_up {
 	background: var(--good-bg);
 	color: var(--good);
 	border-color: color-mix(in srgb, var(--good) 35%, transparent);

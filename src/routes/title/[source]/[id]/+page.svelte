@@ -54,8 +54,8 @@
 
 	// Every source asked at once; each one's progress shows under the button while it waits.
 	$effect(() => {
-		// (A film only in cinemas so far isn't looked for: cinemas.ts.)
-		if (details.unreleased || details.inCinemas) return;
+		// (A film only in cinemas is looked for too; its button warns of cinema recordings.)
+		if (details.unreleased) return;
 		const params = new URLSearchParams({ title: details.title ?? '', type: data.watchType });
 		if (details.year) params.set('year', String(details.year));
 		watchAvailable = null;
@@ -124,7 +124,7 @@
 			/>
 
 			<div class="title-actions">
-				{#if details.inCinemas}
+				{#if details.inCinemas && watchAvailable === false}
 					<span class="btn btn-watch unavailable">
 						In cinemas{details.homeFrom ? ` · to watch from ${new Date(`${details.homeFrom}T12:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}` : ''}
 					</span>
@@ -170,6 +170,7 @@
 				{/if}
 				{#if addError}<p class="add-error">{addError}</p>{/if}
 			</div>
+			{#if details.inCinemas && watchAvailable === true}<p class="cinema-note">In cinemas: copies online are likely recorded in a cinema</p>{/if}
 			{#if !details.unreleased}<SourceChecks sources={watchSources} />{/if}
 		</div>
 	</header>
@@ -209,6 +210,12 @@
 </article>
 
 <style>
+	/* A film still in cinemas: what plays is likely a recording made in one. */
+	.cinema-note {
+		margin: 8px 0 0;
+		font-size: 0.85rem;
+		color: var(--warn);
+	}
 	article {
 		display: flex;
 		flex-direction: column;

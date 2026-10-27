@@ -5,6 +5,7 @@
  * each title is looked up on TMDB for its date and poster. And TMDB "collections" (every
  * Harry Potter film, every John Wick…) which come complete from TMDB, films only.
  */
+import { isWatched } from '$lib/constants';
 import { db } from './db/index';
 import { watchedExtras, skippedTitles, getOrderCache, saveOrderCache, myWatchOrders } from './db/queries';
 import { tmdbGet } from './metadata/tmdb';
@@ -160,7 +161,7 @@ type Owned = { id: number; title: string; year: number | null; status: string; s
 
 function statusFor(entry: Owned | undefined, season: number | null): OrderStatus {
 	if (!entry) return 'none';
-	if (entry.status === 'completed') return 'watched';
+	if (isWatched(entry.status)) return 'watched';
 	if (entry.status === 'dropped') return 'dropped';
 	if (entry.status === 'watching') {
 		// A later season you haven't reached yet isn't "in progress".

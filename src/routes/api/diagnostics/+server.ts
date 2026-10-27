@@ -4,6 +4,7 @@ import { dbPath, dataDir } from '$lib/server/db';
 import { settingsPath, readSettings } from '$lib/server/settings';
 import type { RequestHandler } from './$types';
 import { slowRequests } from '$lib/server/slowRequests';
+import { liveListingState } from '$lib/server/sources/daddylive';
 import { playbackStops } from '$lib/server/playbackLog';
 import { caughtUpSummary } from '$lib/server/db/queries';
 
@@ -26,6 +27,8 @@ export const GET: RequestHandler = async () => {
 	return json({
 		// Outside requests that took over two seconds or were refused, newest first (site and path only).
 		slowRequests: slowRequests(),
+		// Live TV's listings: where the site is, how many, and why the last ask failed.
+		liveTv: liveListingState(),
 		// Times a video stopped to load, with what was going on (playbackLog.ts), newest first.
 		playbackStops: playbackStops().slice(0, 20),
 		// Shows watched to their last episode, and new episodes found for them (newEpisodes.ts).

@@ -12,6 +12,29 @@ without both.
 
 ## Unreleased
 
+## 3.7.0 — 2026-10-27 — Downloads, Rewatching and Caught up, and faster Showbox starts
+
+### New
+- **Downloads**: download a film, episode or replay from the player to watch without the internet; pick its quality (720p and up) and its captions
+- **Downloads**: captions auto-time on a download too, with no internet
+- **Downloads**: a Downloads page to play them, delete them, or save one onto a phone (an iPhone keeps it in the Files app)
+- **Downloads**: never from Showbox, so Febbox's daily allowance isn't used up; while Showbox plays, the same episode comes from 7Movies or Movy
+- **Live TV**: opening a game that hasn't started shows when it starts, with Watch the channel now and Save; it plays by itself when the game begins (Roku: OK opens the game's box)
+- **Library**: two new statuses: Rewatching, and Caught up (seen every episode out so far, more still coming)
+- **Library**: starting a finished show again marks it Rewatching; finishing the latest episode of a show still airing marks it Caught up; finishing a rewatch counts it
+- **Watch**: films still in cinemas can be watched when a source has them, with a note that copies are likely recorded in a cinema
+
+### Improved
+- **Player**: Showbox videos start much faster when Febbox's player page is slow to answer (a film that took 24 s now takes about 4)
+- **Player**: a show keeps to the source you watch it on; another source only takes over when yours fails or takes over 15 s
+- **Player**: auto-skip skips recaps too (computer, Fire TV and Roku)
+- **TV**: Up from the progress bar goes to Skip Intro, Skip Recap or Next Episode when one is showing
+- **Live TV**: the schedule and channels are kept, so they still show when the site can't be reached for a while
+
+### Fixed
+- **Live TV**: Schedule and Channels showing 0 on a computer that couldn't reach the site; it's now also asked through Catalog's own browser
+- **Live TV**: two channels being looked up at the same time could both fail to play
+
 ## 3.6.0 — 2026-10-26 — Live TV and replays, more Showbox accounts, and Roku
 
 ### New

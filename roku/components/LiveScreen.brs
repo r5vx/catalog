@@ -108,6 +108,11 @@ sub onPick()
         m.top.action = { go: "play", replay: m.game.replay, label: m.game.label }
         return
     end if
+    ' A game not on yet: its box (when it starts, its channels, Save), not what's on before it.
+    if m.game.on <> true and m.game.isChannel <> true and row.label <> "Channels" and text(m.game.game) <> "" then
+        openBox()
+        return
+    end if
     channel = m.game.channels[0]
     if channel = invalid then return
     label = m.game.label

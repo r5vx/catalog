@@ -76,15 +76,19 @@
 	// Every source asked at once; each one's progress shows under the button while it waits.
 	let watchAvailable = $state<boolean | null>(null);
 	let watchSources = $state<SourceCheck[]>([]);
+	/** Still only in cinemas: a copy online is likely recorded in one (said by the Watch button). */
+	let inCinemas = $state(false);
 	$effect(() => {
 		const [title, type, year] = checkKey.split('|');
 		const params = new URLSearchParams({ title, type });
 		if (year) params.set('year', year);
 		watchAvailable = null;
 		watchSources = [];
-		return checkWatchable(params, (available, sources) => {
+		inCinemas = false;
+		return checkWatchable(params, (available, sources, cinema) => {
 			watchAvailable = available;
 			watchSources = sources;
+			inCinemas = cinema;
 		});
 	});
 	$effect(() => {
@@ -304,6 +308,7 @@
 					{/if}
 				</span>
 			</div>
+			{#if inCinemas && watchAvailable === true}<p class="cinema-note">In cinemas: copies online are likely recorded in a cinema</p>{/if}
 			<SourceChecks sources={watchSources} />
 
 			{#if progressSummary(entry)}
@@ -407,6 +412,12 @@
 </article>
 
 <style>
+	/* A film still in cinemas: what plays is likely a recording made in one. */
+	.cinema-note {
+		margin: 8px 0 0;
+		font-size: 0.85rem;
+		color: var(--warn);
+	}
 	.notice {
 		border-radius: var(--radius-sm);
 		padding: 10px 14px;

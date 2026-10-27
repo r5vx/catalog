@@ -24,6 +24,7 @@
 	const elsewhere = [
 		{ key: 'browse', href: '/browse', label: 'Browse' },
 		{ key: 'live', href: '/live', label: 'Live TV' },
+		{ key: 'downloads', href: '/downloads', label: 'Downloads' },
 		{ key: 'settings', href: '/settings', label: 'Settings' }
 	];
 	const here = (href: string) => page.url.pathname === href || page.url.pathname.startsWith(href + '/');

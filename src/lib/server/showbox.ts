@@ -585,61 +585,83 @@ async function linkWith(
 		return { url, debug: dbg };
 	}
 
-	// Electron's net.fetch sends real browser cookies — try it first
-	const electronUrl = await tryElectronStream(shareKey, fid, debug, account);
-	if (electronUrl) {
-		const upgraded = await probeAndUpgrade(electronUrl, debug);
-		return cacheAndReturn(upgraded, debug.join(' | '));
-	}
+	// Electron's net.fetch sends real browser cookies — tried first. Its hidden window can hang
+	// until its 20 s timeout (Penguins of Madagascar took 23.6 s to start, 2026-10-26) while Febbox
+	// asked directly answers in a second or two: so after a short head start, both, first wins.
+	const viaApp = tryElectronStream(shareKey, fid, debug, account).then(async (url) =>
+		url ? cacheAndReturn(await probeAndUpgrade(url, debug), debug.join(' | ')) : null
+	);
+	let appFound = false;
+	const headStart = new Promise<void>((r) => setTimeout(r, APP_HEAD_START_MS));
+	const direct = Promise.race([viaApp.then((found) => void (appFound = Boolean(found))), headStart]).then(() =>
+		appFound ? null : viaServer()
+	);
+	const found = await firstFound([viaApp, direct]);
+	return found ?? { url: null, debug: debug.join(' | ') };
 
-	// Fallback: server-side fetch with saved cookie string (for phone access)
-	const headers = {
-		Cookie: token,
-		'User-Agent':
-			'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-		Referer: 'https://www.febbox.com/',
-		Origin: 'https://www.febbox.com'
-	};
+	/** Febbox asked straight from here, with the saved sign-in (also the way for phone access). */
+	async function viaServer(): Promise<{ url: string; debug: string } | null> {
+		const headers = {
+			Cookie: token,
+			'User-Agent':
+				'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+			Referer: 'https://www.febbox.com/',
+			Origin: 'https://www.febbox.com'
+		};
 
-	try {
-		const resp = await fetch('https://www.febbox.com/file/player', {
-			method: 'POST',
-			headers: { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' },
-			body: `fid=${fid}&share_key=${shareKey}`,
-			signal: AbortSignal.timeout(15000)
-		});
-		debug.push(`player ${resp.status}`);
-		if (resp.ok) {
-			const html = await resp.text();
-			const url = extractVideoUrl(html);
-			if (url) {
-				const upgraded = await probeAndUpgrade(url, debug);
-				return cacheAndReturn(upgraded, debug.join(' | '));
+		try {
+			const resp = await fetch('https://www.febbox.com/file/player', {
+				method: 'POST',
+				headers: { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' },
+				body: `fid=${fid}&share_key=${shareKey}`,
+				signal: AbortSignal.timeout(15000)
+			});
+			debug.push(`player ${resp.status}`);
+			if (resp.ok) {
+				const html = await resp.text();
+				const url = extractVideoUrl(html);
+				if (url) {
+					const upgraded = await probeAndUpgrade(url, debug);
+					return cacheAndReturn(upgraded, debug.join(' | '));
+				}
+				const preview = html.length < 300 ? html : `${html.length}ch`;
+				debug.push(`player: ${preview}`);
 			}
-			const preview = html.length < 300 ? html : `${html.length}ch`;
-			debug.push(`player: ${preview}`);
+		} catch (e: unknown) {
+			debug.push(`player err: ${(e as Error)?.message ?? e}`);
 		}
-	} catch (e: unknown) {
-		debug.push(`player err: ${(e as Error)?.message ?? e}`);
-	}
 
-	try {
-		const resp = await fetch(
-			`https://www.febbox.com/file/share_download?share_key=${shareKey}&fid=${fid}`,
-			{ headers, signal: AbortSignal.timeout(15000) }
-		);
-		debug.push(`dl ${resp.status}`);
-		if (resp.ok) {
-			const text = await resp.text();
-			const url = tryParseDownloadUrl(text);
-			if (url) return cacheAndReturn(url, debug.join(' | '));
-			debug.push(`dl: ${text.slice(0, 200)}`);
+		try {
+			const resp = await fetch(
+				`https://www.febbox.com/file/share_download?share_key=${shareKey}&fid=${fid}`,
+				{ headers, signal: AbortSignal.timeout(15000) }
+			);
+			debug.push(`dl ${resp.status}`);
+			if (resp.ok) {
+				const text = await resp.text();
+				const url = tryParseDownloadUrl(text);
+				if (url) return cacheAndReturn(url, debug.join(' | '));
+				debug.push(`dl: ${text.slice(0, 200)}`);
+			}
+		} catch (e: unknown) {
+			debug.push(`dl err: ${(e as Error)?.message ?? e}`);
 		}
-	} catch (e: unknown) {
-		debug.push(`dl err: ${(e as Error)?.message ?? e}`);
+		return null;
 	}
+}
 
-	return { url: null, debug: debug.join(' | ') };
+/** How long the app's hidden window has to itself before Febbox is also asked directly. */
+const APP_HEAD_START_MS = 3000;
+
+/** The first answer that isn't null (null when none has one). */
+function firstFound<T>(answers: Promise<T | null>[]): Promise<T | null> {
+	return new Promise((resolve) => {
+		let left = answers.length;
+		const none = () => {
+			if (--left === 0) resolve(null);
+		};
+		for (const answer of answers) answer.then((found) => (found ? resolve(found) : none()), none);
+	});
 }
 
 async function tryElectronStream(

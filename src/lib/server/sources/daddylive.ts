@@ -14,7 +14,8 @@
  *   (`live` kind), so phones and TVs play them as well.
  */
 import { createHash } from 'node:crypto';
-import { electronLiveCapture } from '../electron-fetch';
+import { electronFetch, electronLiveCapture } from '../electron-fetch';
+import { getOrderCache, saveOrderCache } from '../db/queries';
 import { gameEnds, sportOf, type LiveChannel, type LiveGame, type Sport } from '$lib/live';
 
 const FIRST = 'https://dlive.sx';
@@ -25,6 +26,55 @@ let site = FIRST;
 let listed: { at: number; channels: { id: number; name: string; sporty: boolean }[] } | null = null;
 const LIST_KEEP = 12 * 60 * 60 * 1000;
 
+/**
+ * The last good schedule and channel list are kept in the library too: a friend's Live TV showed
+ * 0 games and 0 channels, even after starting Catalog again, when the site couldn't be reached
+ * from his computer (2026-10-26). Now a start with the site out of reach shows the last copy.
+ */
+const KEPT_CHANNELS = 'live-channels';
+const KEPT_SCHEDULE = 'live-schedule';
+function keptCopy<T>(key: string): { at: number; value: T } | null {
+	try {
+		const kept = getOrderCache(key);
+		return kept ? { at: kept.at, value: kept.value as T } : null;
+	} catch {
+		return null;
+	}
+}
+
+/** Why the site's pages last couldn't be had (empty once they could), for /api/diagnostics. */
+let trouble = '';
+export function liveListingState() {
+	return { site, trouble, channels: listed?.channels.length ?? 0, channelsAt: listed?.at ?? null, games: scheduled?.games.length ?? 0, scheduleAt: scheduled?.at ?? null };
+}
+
+/**
+ * One of the site's pages (its home page, the channel list). Asked plainly first; when that's
+ * refused or can't connect, through the desktop app's browser, which goes out its own way
+ * (Chromium's network, its DNS and proxy settings).
+ */
+async function sitePage(path: string, timeout: number): Promise<string | null> {
+	let why = '';
+	try {
+		const resp = await fetch(`${site}${path}`, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(timeout) });
+		if (resp.ok) {
+			site = new URL(resp.url).origin;
+			trouble = '';
+			return await resp.text();
+		}
+		why = `HTTP ${resp.status}`;
+	} catch (e) {
+		why = String((e as Error)?.cause ?? (e as Error)?.message ?? e);
+	}
+	const viaApp = await electronFetch(`${site}${path}`, { headers: { 'User-Agent': UA } }).catch(() => null);
+	if (viaApp && viaApp.status >= 200 && viaApp.status < 300 && viaApp.body) {
+		trouble = `${path}: plain fetch failed (${why}), the app's browser worked`;
+		return viaApp.body;
+	}
+	trouble = `${path}: ${why}; app's browser: ${viaApp ? viaApp.error || `HTTP ${viaApp.status}` : 'no answer'} (${new Date().toISOString()})`;
+	return null;
+}
+
 const SPORTS_CHANNEL = /\b(sports?|espn|nba|nfl|nhl|mlb|mls|ufc|wwe|nfl|bein|dazn|tnt sports|sky sports|bt sport|eurosport|tennis|golf|f1|formula|racing|motor|cricket|rugby|fight|boxing|arena|premier|la ?liga|serie a|bundesliga|ligue|sportsnet|tsn|supersport|fox soccer|soccer|football|nbc sports|cbs sports|big ten|sec network|acc network|pac-12|willow|astro|canal\+ sport|movistar|ziggo|setanta|abu dhabi sports|ssc|alkass|nfl network|redzone|nba tv|mlb network|nhl network|tyc|claro sports|directv sports|tudn|espn deportes)\b/i;
 
 /**
@@ -33,6 +83,10 @@ const SPORTS_CHANNEL = /\b(sports?|espn|nba|nfl|nhl|mlb|mls|ufc|wwe|nfl|bein|daz
  */
 let listing: Promise<unknown> | null = null;
 async function listedChannels(): Promise<{ id: number; name: string; sporty: boolean }[]> {
+	if (!listed) {
+		const kept = keptCopy<{ id: number; name: string; sporty: boolean }[]>(KEPT_CHANNELS);
+		if (kept?.value?.length) listed = { at: kept.at, channels: kept.value };
+	}
 	if (listed && Date.now() - listed.at < LIST_KEEP) return listed.channels;
 	if (listed) {
 		listing ??= fetchChannelList().catch(() => {}).finally(() => (listing = null));
@@ -42,10 +96,8 @@ async function listedChannels(): Promise<{ id: number; name: string; sporty: boo
 }
 
 async function fetchChannelList(): Promise<{ id: number; name: string; sporty: boolean }[]> {
-	const resp = await fetch(`${site}/24-7-channels.php`, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(20_000) });
-	if (!resp.ok) return listed?.channels ?? [];
-	site = new URL(resp.url).origin;
-	const html = await resp.text();
+	const html = await sitePage('/24-7-channels.php', 20_000);
+	if (html === null) return listed?.channels ?? [];
 	const channels: { id: number; name: string; sporty: boolean }[] = [];
 	const seen = new Set<number>();
 	for (const card of html.matchAll(/href="\/watch\.php\?id=(\d+)"[\s\S]{0,300}?card__title">([^<]+)</g)) {
@@ -56,7 +108,10 @@ async function fetchChannelList(): Promise<{ id: number; name: string; sporty: b
 		channels.push({ id, name, sporty: SPORTS_CHANNEL.test(name) });
 	}
 	channels.sort((a, b) => Number(b.sporty) - Number(a.sporty) || a.name.localeCompare(b.name));
-	if (channels.length) listed = { at: Date.now(), channels };
+	if (channels.length) {
+		listed = { at: Date.now(), channels };
+		saveOrderCache(KEPT_CHANNELS, channels, listed.at);
+	} else trouble = `/24-7-channels.php: no channels in the page (${new Date().toISOString()})`;
 	return channels.length ? channels : (listed?.channels ?? []);
 }
 
@@ -129,6 +184,10 @@ const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', '
  * noon game is 16:00 in October, when the UK is an hour ahead), so they're read as GMT.
  */
 export async function liveSchedule(): Promise<LiveGame[]> {
+	if (!scheduled) {
+		const kept = keptCopy<LiveGame[]>(KEPT_SCHEDULE);
+		if (kept?.value?.length) scheduled = { at: kept.at, games: kept.value };
+	}
 	if (scheduled && Date.now() - scheduled.at < SCHEDULE_KEEP) return current(scheduled.games);
 	// An older schedule is answered at once; the new one comes behind it.
 	if (scheduled) {
@@ -143,12 +202,13 @@ export async function liveSchedule(): Promise<LiveGame[]> {
 let scheduling: Promise<void> | null = null;
 async function fetchSchedule(): Promise<void> {
 	try {
-		const resp = await fetch(`${site}/`, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(25_000) });
-		if (resp.ok) {
-			site = new URL(resp.url).origin;
-			const games = readSchedule(await resp.text());
-			if (games.length) scheduled = { at: Date.now(), games };
-		}
+		const html = await sitePage('/', 25_000);
+		if (html === null) return;
+		const games = readSchedule(html);
+		if (games.length) {
+			scheduled = { at: Date.now(), games };
+			saveOrderCache(KEPT_SCHEDULE, games, scheduled.at);
+		} else trouble = `/: no schedule in the page (${new Date().toISOString()})`;
 	} catch {}
 }
 

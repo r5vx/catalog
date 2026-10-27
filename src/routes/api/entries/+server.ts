@@ -1,7 +1,8 @@
 import { json, error } from '@sveltejs/kit';
 import { createFromResult } from '$lib/server/entries';
-import { markEntryCompleted, incrementRewatches, updateSeasonEpisodeReached, deleteEntry, completeProfileTitle, profileTitleReached, deleteProfileTitle, setEntryFields, type QuickFields } from '$lib/server/db/queries';
+import { entryBasics, setEntryStatus, markEntryCompleted, incrementRewatches, updateSeasonEpisodeReached, deleteEntry, completeProfileTitle, profileTitleReached, deleteProfileTitle, setEntryFields, type QuickFields } from '$lib/server/db/queries';
 import { STATUSES } from '$lib/constants';
+import { showStillAiring } from '$lib/server/stillAiring';
 import { currentProfile, MAIN_PROFILE } from '$lib/server/profile';
 import type { SearchResult } from '$lib/server/metadata';
 import type { RequestHandler } from './$types';
@@ -32,20 +33,38 @@ export const POST: RequestHandler = async ({ request }) => {
 };
 
 export const PATCH: RequestHandler = async ({ request }) => {
-	const body = (await request.json()) as { id: number; action: string; season?: number; episode?: number; fields?: Record<string, unknown> };
+	const body = (await request.json()) as { id: number; action: string; season?: number; episode?: number; status?: string; fields?: Record<string, unknown> };
 	if (!body.id) return error(400, 'Missing id');
 
 	// Someone else's profile on the TV: the id is a title on their own list. Only what the
 	// player does (Autosync) reaches here from there; the library itself isn't theirs to change.
 	if (currentProfile() !== MAIN_PROFILE) {
-		if (body.action === 'complete') completeProfileTitle(body.id);
+		if (body.action === 'complete' || body.action === 'finished_show') completeProfileTitle(body.id);
+		else if (body.action === 'status') return json({ ok: true });
 		else if (body.action === 'update_progress' && body.season != null && body.episode != null) profileTitleReached(body.id, body.season, body.episode);
 		else return error(403, 'Not on this profile');
 		return json({ ok: true });
 	}
 
 	if (body.action === 'complete') markEntryCompleted(body.id);
-	else if (body.action === 'rewatch') incrementRewatches(body.id);
+	else if (body.action === 'finished_show') {
+		// The player reached the end of the last episode out: a rewatch done (Completed, once more);
+		// otherwise Caught up while the show is still going, Completed once it has ended.
+		const entry = entryBasics(body.id);
+		if (!entry) return error(404, 'No such entry');
+		if (entry.status === 'rewatching') {
+			markEntryCompleted(body.id);
+			incrementRewatches(body.id);
+			return json({ ok: true, status: 'completed' });
+		}
+		const status = (await showStillAiring(entry.title, entry.year ? String(entry.year) : '')) ? 'caught_up' : 'completed';
+		if (status === 'completed') markEntryCompleted(body.id);
+		else setEntryStatus(body.id, status);
+		return json({ ok: true, status });
+	} else if (body.action === 'status' && (body.status === 'rewatching' || body.status === 'watching')) {
+		// The player: a watched show started again from earlier on, or a new episode of one.
+		setEntryStatus(body.id, body.status);
+	} else if (body.action === 'rewatch') incrementRewatches(body.id);
 	else if (body.action === 'set') {
 		// The clicks on an entry's page, and the player's "Rate it": only the fields sent change.
 		const fields = quickFields(body.fields ?? {});

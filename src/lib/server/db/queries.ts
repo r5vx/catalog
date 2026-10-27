@@ -2,7 +2,7 @@ import { db, plain, plainAll, toInt } from './index';
 import type { Category, Entry, EntryCard } from './types';
 import { titleKey } from '../../titleKey';
 import { currentProfile, MAIN_PROFILE } from '../profile';
-import { PROFILE_COLORS } from '../../constants';
+import { PROFILE_COLORS, WATCHED_SQL } from '../../constants';
 
 /**
  * Every database query in the app lives here, as plain SQL. If you want to
@@ -231,13 +231,13 @@ export function countsByCategory(): Record<number, number> {
 }
 
 export function completedCount(): number {
-	const row = db.prepare("SELECT COUNT(*) AS n FROM entries WHERE status = 'completed'").get() as { n: number };
+	const row = db.prepare(`SELECT COUNT(*) AS n FROM entries WHERE status IN ${WATCHED_SQL}`).get() as { n: number };
 	return row.n;
 }
 
 export function completedByCategory(): Record<number, number> {
 	const rows = db
-		.prepare("SELECT category_id AS categoryId, COUNT(*) AS n FROM entries WHERE status = 'completed' GROUP BY category_id")
+		.prepare(`SELECT category_id AS categoryId, COUNT(*) AS n FROM entries WHERE status IN ${WATCHED_SQL} GROUP BY category_id`)
 		.all() as { categoryId: number; n: number }[];
 	return Object.fromEntries(rows.map((row) => [row.categoryId, row.n]));
 }
@@ -590,6 +590,17 @@ export function setEntryFields(id: number, fields: QuickFields): { finishedOn: s
 	if (sets.length) db.prepare(`UPDATE entries SET ${sets.join(', ')}, updated_at = ? WHERE id = ?`).run(...values, new Date().toISOString(), id);
 	const row = db.prepare('SELECT finished_on AS finishedOn FROM entries WHERE id = ?').get(id) as { finishedOn: string | null } | undefined;
 	return { finishedOn: row?.finishedOn ?? null };
+}
+
+/** An entry's name, year and status (for the player's end-of-show step). */
+export function entryBasics(id: number): { title: string; year: number | null; status: string } | null {
+	const row = db.prepare('SELECT title, year, status FROM entries WHERE id = ?').get(id);
+	return row ? plain(row) : null;
+}
+
+/** Just its status (no date): Rewatching, Caught up, back to Watching. */
+export function setEntryStatus(id: number, status: string): void {
+	db.prepare('UPDATE entries SET status = ?, updated_at = ? WHERE id = ?').run(status, new Date().toISOString(), id);
 }
 
 /** The "More details" part of an entry's page: what the quick controls above it don't cover. */
@@ -1475,4 +1486,100 @@ export function noteLiveWatched(channel: number, name: string): void {
 			SELECT key FROM live_saved WHERE profile = ? AND kind = 'recent' ORDER BY saved_at DESC, rowid DESC LIMIT 12
 		)
 	`).run(currentProfile(), currentProfile());
+}
+
+/* ---------------------------------------------------------------- downloads */
+
+export type DownloadRow = {
+	id: number;
+	kind: 'film' | 'episode' | 'replay';
+	title: string;
+	year: string;
+	season: number;
+	episode: number;
+	episodeName: string | null;
+	poster: string | null;
+	source: string;
+	shareKey: string | null;
+	fid: number | null;
+	replayId: string | null;
+	replayVersion: number | null;
+	height: number;
+	audio: string;
+	hasSubtitles: boolean;
+	state: 'waiting' | 'downloading' | 'finishing' | 'done' | 'failed';
+	donePieces: number;
+	totalPieces: number;
+	bytes: number;
+	estimate: number;
+	error: string | null;
+	place: number;
+	duration: number;
+	addedAt: string;
+	finishedAt: string | null;
+};
+
+const DOWNLOAD_COLUMNS = `id, kind, title, year, season, episode, episode_name AS episodeName, poster, source,
+	share_key AS shareKey, fid, replay_id AS replayId, replay_version AS replayVersion, height, audio,
+	has_subtitles AS hasSubtitles, state, done_pieces AS donePieces, total_pieces AS totalPieces, bytes,
+	estimate, error, place, duration, added_at AS addedAt, finished_at AS finishedAt`;
+
+const downloadRow = (row: unknown) => {
+	const d = plain<DownloadRow>(row);
+	return { ...d, hasSubtitles: Boolean(d.hasSubtitles) };
+};
+
+/** Every download, newest first. */
+export function listDownloads(): DownloadRow[] {
+	return db.prepare(`SELECT ${DOWNLOAD_COLUMNS} FROM downloads ORDER BY id DESC`).all().map(downloadRow);
+}
+
+export function getDownload(id: number): DownloadRow | null {
+	const row = db.prepare(`SELECT ${DOWNLOAD_COLUMNS} FROM downloads WHERE id = ?`).get(id);
+	return row ? downloadRow(row) : null;
+}
+
+/** The same episode, film or replay already downloaded or on its way (not a failed one). */
+export function findDownload(kind: string, title: string, season: number, episode: number, replayId: string | null): DownloadRow | null {
+	const row = db
+		.prepare(
+			`SELECT ${DOWNLOAD_COLUMNS} FROM downloads WHERE kind = ? AND title = ? AND season = ? AND episode = ? AND IFNULL(replay_id, '') = ? AND state != 'failed'`
+		)
+		.get(kind, title, season, episode, replayId ?? '');
+	return row ? downloadRow(row) : null;
+}
+
+export function addDownload(d: Pick<DownloadRow, 'kind' | 'title' | 'year' | 'season' | 'episode' | 'episodeName' | 'poster' | 'source' | 'shareKey' | 'fid' | 'replayId' | 'replayVersion' | 'height' | 'audio' | 'hasSubtitles' | 'estimate'>): number {
+	const result = db
+		.prepare(
+			`INSERT INTO downloads (kind, title, year, season, episode, episode_name, poster, source, share_key, fid, replay_id, replay_version, height, audio, has_subtitles, estimate)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		)
+		.run(d.kind, d.title, d.year, d.season, d.episode, d.episodeName, d.poster, d.source, d.shareKey, d.fid, d.replayId, d.replayVersion, d.height, d.audio, toInt(d.hasSubtitles), d.estimate);
+	return Number(result.lastInsertRowid);
+}
+
+/** A download's progress or outcome. */
+export function updateDownload(id: number, fields: Partial<Pick<DownloadRow, 'state' | 'donePieces' | 'totalPieces' | 'bytes' | 'error' | 'duration'>> & { finished?: boolean }): void {
+	const sets: string[] = [];
+	const values: (string | number | null)[] = [];
+	const columns: Record<string, string> = { state: 'state', donePieces: 'done_pieces', totalPieces: 'total_pieces', bytes: 'bytes', error: 'error', duration: 'duration' };
+	for (const [key, column] of Object.entries(columns)) {
+		const value = fields[key as keyof typeof fields];
+		if (value === undefined) continue;
+		sets.push(`${column} = ?`);
+		values.push(value as string | number | null);
+	}
+	if (fields.finished) sets.push("finished_at = datetime('now')");
+	if (!sets.length) return;
+	db.prepare(`UPDATE downloads SET ${sets.join(', ')} WHERE id = ?`).run(...values, id);
+}
+
+/** Where a download was left (seconds into it). */
+export function saveDownloadPlace(id: number, place: number, duration: number): void {
+	db.prepare('UPDATE downloads SET place = ?, duration = CASE WHEN ? > 0 THEN ? ELSE duration END WHERE id = ?').run(place, duration, duration, id);
+}
+
+export function deleteDownloadRow(id: number): void {
+	db.prepare('DELETE FROM downloads WHERE id = ?').run(id);
 }

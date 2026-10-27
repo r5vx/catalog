@@ -24,6 +24,7 @@
  * Titles already watched stay in (marked): with most of the library finished, leaving them out
  * left only the poor matches. Kept a few days per title.
  */
+import { isWatched } from '$lib/constants';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmdbGet } from './metadata/tmdb';
@@ -463,7 +464,7 @@ function marked(s: Suggestion): Suggestion {
 	return {
 		...s,
 		...(mine.entryId ? { entryId: mine.entryId } : {}),
-		...(mine.status === 'completed' ? { watched: true } : mine.status === 'watching' ? { watching: true } : {})
+		...(isWatched(mine.status) ? { watched: true } : mine.status === 'watching' ? { watching: true } : {})
 	};
 }
 

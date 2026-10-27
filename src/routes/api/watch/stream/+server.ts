@@ -1,47 +1,13 @@
 import { json, error } from '@sveltejs/kit';
-import { getStreamUrl, invalidateStreamCache } from '$lib/server/showbox';
-import { readSettings } from '$lib/server/settings';
-import { aniwaveStream, parseAniwaveShareKey } from '$lib/server/sources/aniwave';
-import { vidriftStream, parseVidriftShareKey } from '$lib/server/sources/vidrift';
-import { movyStream, parseMovyShareKey } from '$lib/server/sources/movy';
+import { streamLink } from '$lib/server/streamLink';
 import type { RequestHandler } from './$types';
 
+/** A copy's playlist address (?share_key=&fid=, &refresh=1 for a new one): see streamLink.ts. */
 export const GET: RequestHandler = async ({ url }) => {
 	const shareKey = url.searchParams.get('share_key');
 	const fid = Number(url.searchParams.get('fid'));
 	const refresh = url.searchParams.get('refresh') === '1';
 
 	if (!shareKey || !fid) return error(400, 'Missing share_key or fid');
-
-	// Another source's file: its share key says which show, episode and version. Its video
-	// comes through Catalog's relay, so it plays anywhere Catalog does (phone and TV too).
-	const aniwave = parseAniwaveShareKey(shareKey);
-	if (aniwave) {
-		const stream = await aniwaveStream(aniwave.id, aniwave.episode, aniwave.kind, refresh);
-		if (!stream) return json({ url: '', debug: 'Aniwave has no server for this version right now' });
-		return json({ url: `/api/watch/relay?u=${encodeURIComponent(stream.url)}` });
-	}
-
-	// 7Movies: its playlist comes through the relay too (the video pieces mostly don't). It and
-	// Movy say which copy they are (`copy`), as their episodes are downloaded ahead by that name.
-	if (parseVidriftShareKey(shareKey)) {
-		const playlist = await vidriftStream(shareKey, refresh);
-		if (!playlist) return json({ url: '', debug: '7Movies has nothing for this right now' });
-		return json({ url: `/api/watch/relay?u=${encodeURIComponent(playlist)}&copy=${encodeURIComponent(shareKey)}` });
-	}
-
-	// Movy: found by its own page, out of sight (sources/movy.ts); played through the relay.
-	if (parseMovyShareKey(shareKey)) {
-		const playlist = await movyStream(shareKey, refresh);
-		if (!playlist) return json({ url: '', debug: 'Movy has nothing for this right now' });
-		return json({ url: `/api/watch/relay?u=${encodeURIComponent(playlist)}&copy=${encodeURIComponent(shareKey)}` });
-	}
-
-	const { febboxToken } = readSettings();
-	if (!febboxToken) return json({ url: '' });
-
-	if (refresh) invalidateStreamCache(fid);
-
-	const result = await getStreamUrl(shareKey, fid, febboxToken);
-	return json({ url: result.url ?? '', debug: result.debug });
+	return json(await streamLink(shareKey, fid, refresh));
 };

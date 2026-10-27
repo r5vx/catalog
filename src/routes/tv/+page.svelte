@@ -1,5 +1,6 @@
 <script lang="ts">
-	import TvScreen from '$lib/tv/TvScreen.svelte';
+	import { isWatched } from '$lib/constants';
+import TvScreen from '$lib/tv/TvScreen.svelte';
 	import { fromContinue, fromLibrary, fromResult, type TileRow } from '$lib/tv/tiles';
 	import type { PageData } from './$types';
 
@@ -14,7 +15,7 @@
 		{ label: 'Watching', tiles: data.library.filter((item) => item.status === 'watching').map(fromLibrary) },
 		{ label: 'Want to watch', tiles: data.library.filter((item) => item.status === 'planned').map(fromLibrary) },
 		// The 40 watched most lately: all of them (hundreds) would weigh a TV down.
-		{ label: 'Watch again', tiles: data.library.filter((item) => item.status === 'completed').slice(0, 40).map(fromLibrary) }
+		{ label: 'Watch again', tiles: data.library.filter((item) => isWatched(item.status)).slice(0, 40).map(fromLibrary) }
 	]);
 
 	const later = $derived(

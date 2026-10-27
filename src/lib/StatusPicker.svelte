@@ -58,12 +58,14 @@
 		color: var(--paper);
 	}
 
-	.status.on.completed {
+	.status.on.completed,
+	.status.on.caught_up {
 		background: var(--good);
 		border-color: var(--good);
 	}
 
-	.status.on.watching {
+	.status.on.watching,
+	.status.on.rewatching {
 		background: var(--accent);
 		border-color: var(--accent);
 		color: var(--accent-ink);

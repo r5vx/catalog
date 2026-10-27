@@ -407,6 +407,9 @@
 
 	{#if guide && !guide.playable}
 		<p class="note">Live TV plays through Catalog on the computer: open it there first.</p>
+	{:else if guide && !guide.games.length && !guide.channels.length}
+		<!-- Nothing ever fetched on this computer (a copy is kept once it has been): the site's out of reach. -->
+		<p class="note">Live TV's listings can't be reached from this computer right now. Security software (Malwarebytes, a browser's shields) or the internet provider may be blocking the site.</p>
 	{/if}
 
 	<nav class="tabs" aria-label="Live TV">

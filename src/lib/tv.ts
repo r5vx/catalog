@@ -65,14 +65,25 @@ type Direction = 'up' | 'down' | 'left' | 'right';
 
 /** The nearest candidate in that direction; things in line count for more than things off to the side. */
 function nearest(from: HTMLElement, direction: Direction): HTMLElement | null {
+	// A row can say where up goes from it (`data-tv-up="<selector>"`): the player's buttons go
+	// straight to the progress bar, past the Skip Intro button sitting above it. Choices split by
+	// " || " are tried in order: from the progress bar, Skip Intro / Next Episode if showing, else
+	// the top bar.
+	const upTo = direction === 'up' ? from.closest<HTMLElement>('[data-tv-up]')?.dataset.tvUp : undefined;
+	if (!upTo) return nearestOf(from, direction);
+	for (const choice of upTo.split('||')) {
+		const found = nearestOf(from, direction, choice.trim());
+		if (found) return found;
+	}
+	return null;
+}
+
+function nearestOf(from: HTMLElement, direction: Direction, upTo?: string): HTMLElement | null {
 	const a = from.getBoundingClientRect();
 	const ax = a.left + a.width / 2;
 	const ay = a.top + a.height / 2;
 	let best: HTMLElement | null = null;
 	let bestScore = Infinity;
-	// A row can say where up goes from it (`data-tv-up="<selector>"`): the player's buttons go
-	// straight to its top bar, past the Skip Intro button sitting on the progress bar.
-	const upTo = direction === 'up' ? from.closest<HTMLElement>('[data-tv-up]')?.dataset.tvUp : undefined;
 
 	for (const el of candidates()) {
 		if (el === from || el.contains(from) || from.contains(el)) continue;

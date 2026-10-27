@@ -17,7 +17,7 @@
 import { caughtUpChecked, caughtUpWaiting, type CaughtUp } from './db/queries';
 import { tmdbShow } from './combinedEpisodes';
 import { tmdbGet } from './metadata/tmdb';
-import { pinIsSet, sessionToken } from './settings';
+import { ownFetch, ownPortKnown } from './ownFetch';
 
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
@@ -30,12 +30,6 @@ const AIRED_LATELY = 14 * DAY;
 /** Between one show's lookup and the next. */
 const SPACING_MS = 20_000;
 
-let ownPort = process.env.PORT ?? '';
-
-/** The address this server answers on, from the first request (`npm run dev` sets no PORT). */
-export function noteOwnAddress(url: URL): void {
-	if (!ownPort && url.port) ownPort = url.port;
-}
 
 type Listed = { season: number; episode: number; available?: boolean; files?: unknown[] };
 type Spot = { season: number; episode: number };
@@ -47,16 +41,10 @@ const after = (a: Spot, b: Spot) => a.season > b.season || (a.season === b.seaso
  * isn't the whole list (Febbox refused a folder just now: another source's numbering may stand in).
  */
 async function playableEpisodes(title: string, year: string): Promise<Spot[] | null> {
-	if (!ownPort) return null;
+	if (!ownPortKnown()) return null;
 	const params = new URLSearchParams({ title, type: 'tv', year, nostream: '1' });
-	const ask = (host: string) =>
-		fetch(`http://${host}:${ownPort}/api/watch/resolve?${params}`, {
-			headers: pinIsSet() ? { cookie: `catalog_auth=${sessionToken()}` } : {},
-			signal: AbortSignal.timeout(120_000)
-		});
 	try {
-		// The app listens on every address; `npm run dev` only on localhost.
-		const resp = await ask('127.0.0.1').catch(() => ask('localhost'));
+		const resp = await ownFetch(`/api/watch/resolve?${params}`, { signal: AbortSignal.timeout(120_000) });
 		if (!resp.ok) return null;
 		const data = await resp.json();
 		if (data?.error || data?.showboxBusy || data?.episodes?.partial) return null;

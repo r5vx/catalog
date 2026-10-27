@@ -1,3 +1,4 @@
+import { isWatched } from '$lib/constants';
 import { error, json } from '@sveltejs/kit';
 import { tvLibrary } from '$lib/server/db/queries';
 import { continueWatchingWithPosters } from '$lib/server/continueWatching';
@@ -29,7 +30,7 @@ export const GET: RequestHandler = async ({ url }) => {
 			{ label: 'Continue Watching', tiles: continuing.map((item, i) => fromContinue({ ...item, link: links[i] }, overviewOf(item.title))) },
 			{ label: 'Watching', tiles: library.filter((item) => item.status === 'watching').map(fromLibrary) },
 			{ label: 'Want to watch', tiles: library.filter((item) => item.status === 'planned').map(fromLibrary) },
-			{ label: 'Watch again', tiles: library.filter((item) => item.status === 'completed').slice(0, 40).map(fromLibrary) }
+			{ label: 'Watch again', tiles: library.filter((item) => isWatched(item.status)).slice(0, 40).map(fromLibrary) }
 		];
 		later = browseShelves()
 			.then((shelves) => shelves.map((shelf) => ({ label: shelf.label, tiles: shelf.results.map(fromResult) })))
@@ -44,7 +45,7 @@ export const GET: RequestHandler = async ({ url }) => {
 		rows = [
 			{ label: 'Watching', tiles: found.library.filter((item) => item.status === 'watching').map(fromLibrary) },
 			{ label: 'Want to watch', tiles: found.library.filter((item) => item.status === 'planned').map(fromLibrary) },
-			{ label: 'Watched', tiles: found.library.filter((item) => item.status === 'completed').map(fromLibrary) }
+			{ label: 'Watched', tiles: found.library.filter((item) => isWatched(item.status)).map(fromLibrary) }
 		];
 		later = found.shelves.then((shelves) => shelves.map((shelf) => ({ label: shelf.label, tiles: shelf.results.map(fromResult) })));
 		wait = 15000;
