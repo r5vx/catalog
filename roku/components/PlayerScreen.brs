@@ -206,7 +206,7 @@ sub onSkips(event as Object)
     if answer.ok then m.skips = answer.data.segments
 end sub
 
-' As Catalog's player on a TV: an intro or the credits skipped by themselves (unless the story
+' As Catalog's player on a TV: an intro, a recap or the credits skipped by themselves (unless the story
 ' goes on over the song), the last credits going on to the next episode; otherwise a Skip button.
 sub onPosition()
     at = m.video.position
@@ -220,7 +220,7 @@ sub onPosition()
         return
     end if
     key = segment.type + text(segment.start)
-    canSkipItself = (segment.type = "intro" or segment.type = "credits") and segment.mixed <> true
+    canSkipItself = segment.mixed <> true
     if m.global.autoSkip and canSkipItself and not m.skipped.DoesExist(key) then
         m.skipped[key] = true
         skipPast(segment)

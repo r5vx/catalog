@@ -1,4 +1,4 @@
-# Handoff: where Catalog stands (2026-10-25 late night, 3.6.0 released)
+# Handoff: where Catalog stands (2026-10-26, 3.6.0 released, test build of the next round)
 
 For starting a new conversation. **New Claude: read this first, then `CLAUDE.md` (the rules)
 and `CATALOG_CONTEXT.md` (the hard-won lessons and how every piece works).** This file is a
@@ -131,7 +131,24 @@ is "Schedule". Added once to profiles that had picked their sports.
 **Before any release:** run `npm run roku` if `roku/` changed (`static/catalog-roku.zip` ships
 with it), `.claude/launch.json` must be the committed version, and `dist-app` deleted.
 
+### Next round (2026-10-26, packed in `dist-app`, not released)
+
+Under `## Unreleased` in `RELEASE_NOTES.md`; details in `CATALOG_CONTEXT.md` "After 3.6.0":
+- Showbox links: Febbox asked directly after 3 s alongside the hidden window (Penguins 23.6 s → 3.6 s).
+- A show keeps its source: another source only after the picked one fails or 15 s (Re:Zero on Aniwave).
+- Live TV: a game not on yet shows its start time and waits; listings kept on disk and fetched
+  through the app's browser when plain fetch fails; two channel reads at once no longer clash.
+- Auto-skip skips recaps; TV Up from the progress bar goes to Skip Intro/Recap/Next Episode.
+- Films in cinemas can be watched, with a warning under Watch.
+- **Downloads** (films, episodes, replays; never Showbox; 720p+): a dialog picks quality and
+  captions; Downloads page, play offline with auto-timing, save to a phone. Not tried on a real
+  iPhone. Details in CATALOG_CONTEXT.md "Downloads".
+- **Statuses Rewatching and Caught up**, set by the player too (see CATALOG_CONTEXT.md).
+
 ### Waiting on someone
+
+- **The friend with 0 games and 0 channels:** the exact error text (a photo), and
+  `/api/diagnostics` → `liveTv` from his computer once he has the next build.
 
 - **The owner's use of 3.6.0:** SVU on 7Movies HEVC (smooth, no skip after jumps), auto-timing on
   SVU, Live TV's TV shows, and Showbox while another download runs (that change is untested
@@ -305,6 +322,18 @@ Anything less has shipped broken before.
 
 **Roku:** subtitle auto-timing is on the Fire TV only. Everything else there is unproven until
 it runs on a Roku.
+
+**iPhone without a PC (researched 2026-10-26, owner wants it; dad has an iPhone):**
+- Possible for the core: Showbox search, Febbox lists and links (the direct ask works without the
+  hidden window: Penguins 3.6 s), subtitles, downloads. Needs a native app with its own small relay
+  (Febbox's video wants a Referer; iOS's player has no supported way to add one).
+- Hard or later: Movy, Live TV, anime.nexus (read in a hidden browser), auto-timing, skip finder.
+- Install: no App Store (rejected). SideStore + free Apple ID (7-day signing refreshed on the phone,
+  3 apps max, first setup on a PC), or $99/year ad hoc (100 iPhones, a year, no review).
+- Build: on GitHub Actions' Macs (as the DMG is), unsigned .ipa; test only on the owner's iPhone 13 Pro Max.
+- Node on iPhone (nodejs-mobile) is Node 18, JIT-less, community kept: not a way to reuse the server.
+- Tailscale "not working off home Wi-Fi": the iPhone's Tailscale was offline 14 days; the PC side
+  (listens on 0.0.0.0, firewall allows, Tailscale network Private) is fine. Use http://100.124.201.118:4173.
 
 **Other:**
 - Browse's "trending" shows films still in cinemas (marked "In cinemas"); hiding them was offered.

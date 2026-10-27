@@ -2486,3 +2486,102 @@ The mend of the round before was wrong, and made it worse.
   of two. On a free line nothing changes. Only Showbox goes through this loader: 7Movies and Movy
   come through the relay, which already reads six (Movy three) ahead on the computer. **Not yet
   tried on a busy line with Showbox playing** (that uses the owner's Febbox allowance).
+
+---
+
+## After 3.6.0 (2026-10-26, test build, not released)
+
+**"A friend clicked East Lake Cup, got a JavaScript error, then Schedule and Channels showed 0, even after restarting" (owner).**
+- **Not reproduced**, and the error's text is unknown. What is proven: 0 and 0 means the guide's
+  games *and* channels came back empty, which only happens when both of the site's pages
+  (`/` and `/24-7-channels.php`) couldn't be had. Nothing was kept on disk, so a restart with the
+  site out of reach from his computer stayed at 0. The owner's copy kept working because it held
+  its copy in memory. From here the site answered normally (nginx, no Cloudflare).
+- **Now** (`sources/daddylive.ts`): the last good schedule and channel list are kept in
+  `watch_order_cache` (`live-schedule`, `live-channels`) and loaded when memory has none; a page
+  that plain `fetch` can't get (refused, can't connect) is asked again through the desktop app's
+  browser (`electronFetch`: Chromium's own network, DNS and proxy). Why the last ask failed is in
+  `/api/diagnostics` → `liveTv.trouble` — ask the friend for that. Live TV says "Live TV's listings
+  can't be reached from this computer right now" when it has neither.
+- **A real bug found on the way** (`electron/liveCapture.cjs`): request hooks belong to the whole
+  `live` session, and each look set its own and cleared them when done. Two channels read at once
+  (a channel switch, the game's other channel) left one with no hook: "no stream found", then the
+  next player server. Now one pair of hooks serves every look, by `webContentsId`.
+
+**"What happens when someone clicks a game six hours away?"** It played the channel's current
+programme (or failed: event-only channels aren't on yet). Now `watchHref` carries the start
+(`&at=`), and the player shows "Starts at 9:41 PM · in 5 h 36 min" with Watch the channel now and
+Save for later, starting by itself at `EARLY_MS` (10 min) before. No stream is asked for meanwhile.
+TV: the highlight starts on Watch now. Roku: OK on a game not on yet opens its box (time, channels,
+Save) instead of playing.
+
+**"Re:Zero sometimes opens on Aniwave though I always watch on Showbox."** `linkFor` gave the
+picked copy 5 s, then whichever copy answered first played: a few slow seconds at Febbox put the
+show on Aniwave. Now another *source* only plays once the picked copy has failed or
+`PICKED_SOURCE_WAIT` (15 s) has passed; the same source's other copy still may after 5 s.
+Checked: Showbox delayed 8 s by a fetch wrapper, Re:Zero still started on Showbox. (Febbox's daily
+limit is the other way it moves to Aniwave on purpose, with a toast saying so.)
+
+**"Penguins of Madagascar took 20–30 s to start on Showbox."** Reproduced in the test app: 23.6 s.
+`linkWith` asked the hidden-window reader first and only asked Febbox directly once that gave up,
+and the window waits up to 20 s. Now Febbox is also asked directly after a 3 s head start, first
+answer wins: the same link took 3.6 s, and a never-opened film (Paddington 2) 6.6 s end to end. In
+the test app the window can't sign in (no Febbox cookies), so it always hangs; whether that's what
+hung on the owner's computer isn't proven, but either way it no longer costs 20 s.
+
+**TV: Up from the progress bar** goes to Skip Intro / Recap / Next Episode when showing, else the
+top bar: `data-tv-up` takes choices split by ` || `, tried in order (`tv.ts` `nearest`).
+Checked with the TV user agent over CDP.
+
+**Auto-skip skips recaps** (player `autoSkipCheck`, Roku `onPosition`).
+
+**Downloads** (owner, 2026-10-26: "download stuff and replays, and a section for downloads"; for
+their dad, who works where there's little Wi-Fi and only has an iPhone).
+- `src/lib/server/downloads.ts`: one at a time, 4 pieces at once, into `downloads/<id>/`
+  (`v/`, `a/` pieces, `.part` then renamed), fresh link after two failed tries, resumed at
+  start-up. AES-128 pieces decrypted. A plain-file address (not a playlist) is downloaded in 8 MB
+  ranges. Links come from `streamLink.ts` (moved out of /api/watch/stream) or `replayAnswer`;
+  relay addresses are fetched from this server with `ownFetch.ts` (the PIN cookie, as the
+  new-episode checks did).
+- **One ordinary MP4** (`mp4Flatten.ts`): Showbox sends picture and sound as two fragmented-MP4
+  series; the pieces' sample lists are read, `moov` with full sample tables is written first,
+  then every sample in time order. Nothing re-encoded. TS pieces (replays) go through mux.js
+  (`devDependency`, bundled) to fragmented MP4 first. Checked with ffmpeg: Showbox 360p episode,
+  a 61-min Dailymotion replay, a 92-min 7Movies film: decode clean, seek fine.
+- **Never Showbox** (owner: "I don't want to burn Showbox limits"): the API refuses a share key that
+  isn't Aniwave/7Movies/Movy; while Showbox plays, the menu offers the episode's other-source
+  copies in their best quality. Qualities offered: 720p and up ("360p is unwatchable"), lower only
+  if that's all a copy has. 7Movies films are often one 1080p quality (Penguins: 4.3 GB).
+- Player: Download in the top bar (not on TVs or the mini player); `/watch?download=<id>` plays
+  the file with its saved subtitles (the cues as shown, delay and auto-timing applied, `{\an8}`
+  for top lines), keeps its place on the download and in Continue Watching. `/downloads` page
+  (sidebar, and the library header without the sidebar): Play, Save to this device (`?save=1`,
+  a named attachment), Subtitles (.srt), Delete.
+- **The dialog** (owner, same day: "open like a menu to pick the quality, same with captions"):
+  quality as radio buttons, captions as a list (None / the ones showing / every one found, by
+  language, fetched then). **Auto-timing offline:** `mp4Sound.ts` hands out the download's sound
+  track as HLS fMP4 pieces (`/api/downloads/<id>/sound?p=master|track|init|<n>`), built from the
+  MP4's sample tables, so `subSync.analyseTrack` hears it as it hears Showbox's. Checked: 31
+  pieces asked in 40 s, nothing from outside.
+- **A lock-up found and fixed:** the seek-preview strip read the player's stream address as a
+  playlist; for a 4.3 GB download hls.js pulled the whole file as text and the page froze (the
+  380 MB replay just got through). `openStrip` now gathers only from playlists, never in
+  download mode.
+- **Not tried on a real iPhone yet** (Files app playback of the saved MP4).
+
+**Statuses Rewatching and Caught up** (owner: "a tag for rewatching… Re:Zero, I watched until it
+ran out and it was still coming out, so completed isn't accurate"). `WATCHED_STATUSES` /
+`isWatched` / `WATCHED_SQL` in `constants.ts` count all three as watched (stats, TV "Watched"
+rows, watch orders, recommendations). The player: an episode before the last one reached on a
+Completed show sets Rewatching; a newer one on a Completed or Caught-up show sets Watching; the
+end of the last episode out sends `finished_show`: a rewatch becomes Completed with rewatches+1,
+else Caught up when TMDB says the show is still going (`stillAiring.ts`: Returning Series, In
+Production…, or a next episode), else Completed. TMDB has Re:Zero as "Ended" (last aired
+2026-09-30), so it stays Completed unless set by hand; Delicious in Dungeon came out Caught up.
+Existing entries weren't changed.
+- Subtitles saved while Showbox plays but downloading another source's copy are Showbox-timed.
+
+**Films only in cinemas are looked for** (owner's call: warn, still let them watch). The check no
+longer skips them; `/api/watch/available?now=1` carries `inCinemas` (TMDB release kinds, kept 6 h,
+`inCinemasFor`), and the title and entry pages say "In cinemas: copies online are likely recorded
+in a cinema" under Watch. Resident Evil (2026): Showbox, 7Movies and Movy all have it.

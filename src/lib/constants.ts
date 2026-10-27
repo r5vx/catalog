@@ -1,6 +1,8 @@
 /** Watch states. Change the labels here and they change everywhere in the app. */
 export const STATUSES = [
 	{ value: 'watching', label: 'Watching' },
+	{ value: 'rewatching', label: 'Rewatching' },
+	{ value: 'caught_up', label: 'Caught up' },
 	{ value: 'completed', label: 'Completed' },
 	{ value: 'planned', label: 'Want to watch' },
 	{ value: 'paused', label: 'On hold' },
@@ -11,6 +13,15 @@ export const STATUSES = [
 export const KEPT_FILTERS = ['status', 'sort', 'tag', 'yearFrom', 'yearTo'] as const;
 
 export type StatusValue = (typeof STATUSES)[number]['value'];
+
+/**
+ * Seen all of it: Completed; Rewatching (seen, and watching again); Caught up (every episode out
+ * so far, the show still going: Re:Zero, 2026-10-26). Counted as watched wherever Completed is.
+ */
+export const WATCHED_STATUSES = ['completed', 'rewatching', 'caught_up'] as const;
+export const isWatched = (status: string | null | undefined) => (WATCHED_STATUSES as readonly string[]).includes(status ?? '');
+/** The same, for SQL: `status IN ${WATCHED_SQL}`. */
+export const WATCHED_SQL = `(${WATCHED_STATUSES.map((s) => `'${s}'`).join(', ')})`;
 
 export const statusLabel = (value: string) =>
 	STATUSES.find((s) => s.value === value)?.label ?? value;

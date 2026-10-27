@@ -267,7 +267,7 @@ db.exec(`
 db.exec(`
 	CREATE TRIGGER IF NOT EXISTS planned_to_watched
 	AFTER UPDATE OF status ON entries
-	WHEN OLD.status = 'planned' AND NEW.status IN ('completed', 'watching')
+	WHEN OLD.status = 'planned' AND NEW.status IN ('completed', 'watching', 'rewatching', 'caught_up')
 	BEGIN
 		UPDATE entries SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = NEW.id;
 	END
@@ -549,6 +549,42 @@ once('live-sports-tv-shows', () => {
 		} catch {}
 	}
 });
+
+/**
+ * Downloads (downloads.ts): films, episodes and replays kept on this computer to watch without
+ * the internet, or to save onto a phone. One folder each in downloads/, named by id. `state`:
+ * waiting, downloading, finishing (made into one file), done, failed.
+ */
+db.exec(`
+	CREATE TABLE IF NOT EXISTS downloads (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		kind TEXT NOT NULL,
+		title TEXT NOT NULL,
+		year TEXT NOT NULL DEFAULT '',
+		season INTEGER NOT NULL DEFAULT 0,
+		episode INTEGER NOT NULL DEFAULT 0,
+		episode_name TEXT,
+		poster TEXT,
+		source TEXT NOT NULL DEFAULT '',
+		share_key TEXT,
+		fid INTEGER,
+		replay_id TEXT,
+		replay_version INTEGER,
+		height INTEGER NOT NULL DEFAULT 0,
+		audio TEXT NOT NULL DEFAULT '',
+		has_subtitles INTEGER NOT NULL DEFAULT 0,
+		state TEXT NOT NULL DEFAULT 'waiting',
+		done_pieces INTEGER NOT NULL DEFAULT 0,
+		total_pieces INTEGER NOT NULL DEFAULT 0,
+		bytes INTEGER NOT NULL DEFAULT 0,
+		estimate INTEGER NOT NULL DEFAULT 0,
+		error TEXT,
+		place REAL NOT NULL DEFAULT 0,
+		duration REAL NOT NULL DEFAULT 0,
+		added_at TEXT NOT NULL DEFAULT (datetime('now')),
+		finished_at TEXT
+	)
+`);
 
 /**
  * node:sqlite hands back null-prototype objects. SvelteKit needs plain ones to

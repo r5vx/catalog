@@ -13,7 +13,9 @@ import { keepShowboxSigninFresh } from '$lib/server/showboxSignin';
 import { clearOldStrips } from '$lib/server/previewStrips';
 import { keepWithinLimit, tellAppItsShare } from '$lib/server/storage';
 import { moveOffAniList } from '$lib/server/offAniList';
-import { noteOwnAddress, scheduleNewEpisodeChecks } from '$lib/server/newEpisodes';
+import { scheduleNewEpisodeChecks } from '$lib/server/newEpisodes';
+import { noteOwnAddress } from '$lib/server/ownFetch';
+import { resumeDownloads } from '$lib/server/downloads';
 import { liveSchedule } from '$lib/server/sources/daddylive';
 import { checkNewReplays } from '$lib/server/replayAnswer';
 import { withArt } from '$lib/server/teamArt';
@@ -51,6 +53,9 @@ setInterval(forgetFinishedSubtitles, 60 * 60 * 1000).unref?.();
 
 // Shows watched to their last episode come back to Continue Watching when a new one is out.
 scheduleNewEpisodeChecks();
+
+// Downloads left unfinished when Catalog closed carry on.
+resumeDownloads();
 
 // Live TV and Replays ready before they're opened (they took 2–5 s to open each time), and kept
 // fresh every 10 minutes: the schedule, its pictures and scores, and the replays.

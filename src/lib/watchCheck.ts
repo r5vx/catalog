@@ -9,19 +9,22 @@ export type SourceCheck = { name: string; state: 'checking' | 'yes' | 'no' };
 
 export function checkWatchable(
 	params: URLSearchParams,
-	onChange: (available: boolean | null, sources: SourceCheck[]) => void
+	onChange: (available: boolean | null, sources: SourceCheck[], inCinemas: boolean) => void
 ): () => void {
 	let stopped = false;
+	// Asked a few more times for "only in cinemas" when TMDB hasn't answered yet.
+	let cinemaTries = 5;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const query = new URLSearchParams(params);
 	query.set('now', '1');
 	const ask = async () => {
 		try {
-			const answer: { available: boolean | null; sources?: SourceCheck[] } = await fetch(`/api/watch/available?${query}`).then((r) => r.json());
+			const answer: { available: boolean | null; sources?: SourceCheck[]; inCinemas?: boolean } = await fetch(`/api/watch/available?${query}`).then((r) => r.json());
 			if (stopped) return;
 			const sources = answer.sources ?? [];
-			onChange(answer.available, sources);
-			if (answer.available !== null && !sources.some((s) => s.state === 'checking')) return;
+			onChange(answer.available, sources, Boolean(answer.inCinemas));
+			const cinemaWait = answer.inCinemas === undefined && cinemaTries-- > 0;
+			if (answer.available !== null && !sources.some((s) => s.state === 'checking') && !cinemaWait) return;
 		} catch {
 			if (stopped) return;
 		}

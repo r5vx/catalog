@@ -38,6 +38,7 @@
 		<div class="header-actions">
 			<a href="/settings" class="btn" title="Settings" aria-label="Settings">⚙</a>
 			<a href="/browse" class="btn">{pm ? p('Browse') : 'Browse'}</a>
+			<a href="/downloads" class="btn downloads-link">Downloads</a>
 			<a href="/entry/new" class="btn btn-primary">{pm ? '+ Claim giblet' : '+ Add'}</a>
 		</div>
 	</div>
@@ -58,6 +59,13 @@
 </header>
 
 <style>
+	/* (With the sidebar showing, Downloads is in it.) */
+	@media (min-width: 901px) {
+		:global(.beside-nav) .downloads-link {
+			display: none;
+		}
+	}
+
 	.masthead {
 		display: flex;
 		flex-direction: column;

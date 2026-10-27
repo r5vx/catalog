@@ -149,21 +149,17 @@ function startCheck(key: string, title: string, type: string, year: string): Pro
 	if (check) return check;
 	const list: SourceCheck[] = [];
 	progress.set(key, list);
-	// A film only in cinemas so far isn't looked for: the sources would only have a recording made
-	// in a cinema, or an empty page (cinemas.ts). Movy's 50-second search isn't started either.
-	const inCinemas = type === 'movie'
-		? byTmdbId(title, type, year).then(async (what) => Boolean(what && (await filmOnlyInCinemas(what.id)) !== null)).catch(() => false)
-		: Promise.resolve(false);
-	const unlessInCinemas = (check: () => Promise<boolean>) => inCinemas.then((only) => (only ? false : check()));
+	// A film still only in cinemas is looked for too (the owner's call, 2026-10-26): a copy is
+	// likely a recording made in a cinema, which the page warns about (inCinemasFor), but it plays.
 	const checks = [
-		noted(list, 'Showbox', unlessInCinemas(() => onShowbox(title, type, year))),
-		noted(list, '7Movies', unlessInCinemas(() => on7Movies(title, type, year))),
-		noted(list, 'Aniwave', unlessInCinemas(() => onAniwave(title, type, year))),
-		noted(list, 'Movy', unlessInCinemas(() => onMovyToo(title, type, year, {
+		noted(list, 'Showbox', onShowbox(title, type, year)),
+		noted(list, '7Movies', on7Movies(title, type, year)),
+		noted(list, 'Aniwave', onAniwave(title, type, year)),
+		noted(list, 'Movy', onMovyToo(title, type, year, {
 			// Not started once another source has it, unless it's the title being looked at.
 			start: () => key === latest || (stillOpen(key) && !list.some((s) => s.state === 'yes')),
 			keep: () => stillOpen(key)
-		})))
+		}))
 	];
 	// The sources' progress stays until every one has answered, and a minute more for the page.
 	Promise.allSettled(checks).then(() => setTimeout(() => progress.delete(key), 60_000));
@@ -181,16 +177,40 @@ function startCheck(key: string, title: string, type: string, year: string): Pro
  * `available` is null until a source says yes or all have said no; `sources` is each source's
  * progress meanwhile (empty when the answer was already known).
  */
-export function availabilityNow(title: string, type: string, year: string): { available: boolean | null; sources: SourceCheck[] } {
+export function availabilityNow(title: string, type: string, year: string): { available: boolean | null; sources: SourceCheck[]; inCinemas?: boolean } {
 	const key = availabilityKey(title, type, year);
 	asked(key);
+	const inCinemas = inCinemasFor(key, title, type, year);
 	const known = getOrderCache(key);
 	if (known && Date.now() - known.at < (known.value ? 24 * HOUR : HOUR) && !underWay.has(key)) {
-		return { available: Boolean(known.value), sources: progress.get(key) ?? [] };
+		return { available: Boolean(known.value), sources: progress.get(key) ?? [], inCinemas };
 	}
 	startCheck(key, title, type, year);
 	const sources = progress.get(key) ?? [];
 	const available = sources.some((s) => s.state === 'yes') ? true : sources.length && sources.every((s) => s.state === 'no') ? false : null;
-	return { available, sources };
+	return { available, sources, inCinemas };
+}
+
+/**
+ * Whether a film is still only in cinemas (cinemas.ts), for the warning by its Watch button:
+ * undefined until TMDB has answered (asked once, kept 6 hours). Never for a series.
+ */
+const cinemaKnown = new Map<string, { at: number; only: boolean }>();
+const cinemaAsking = new Set<string>();
+function inCinemasFor(key: string, title: string, type: string, year: string): boolean | undefined {
+	if (type !== 'movie') return false;
+	const known = cinemaKnown.get(key);
+	if (known && Date.now() - known.at < 6 * HOUR) return known.only;
+	if (!cinemaAsking.has(key)) {
+		cinemaAsking.add(key);
+		byTmdbId(title, type, year)
+			.then(async (what) => Boolean(what && (await filmOnlyInCinemas(what.id)) !== null))
+			.catch(() => false)
+			.then((only) => {
+				cinemaKnown.set(key, { at: Date.now(), only });
+				cinemaAsking.delete(key);
+			});
+	}
+	return known?.only;
 }
 

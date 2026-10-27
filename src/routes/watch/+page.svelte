@@ -16,7 +16,7 @@
 	import { withFound } from '$lib/skipMerge';
 	import { ratePrompt } from '$lib/rateLater.svelte';
 	import LiveStar from '$lib/LiveStar.svelte';
-	import { sendSaved, type LiveGame } from '$lib/live';
+	import { EARLY_MS, sendSaved, whenText, type LiveGame } from '$lib/live';
 
 	const pm = $derived(page.data.poisonMode);
 
@@ -41,8 +41,15 @@
 	 * lists its versions (its site's servers).
 	 */
 	const replayMode = Boolean(page.url.searchParams.get('replay'));
-	/** Live or a replay: Catalog's player for sports, without the library's parts. */
-	const sportsMode = liveMode || replayMode;
+	/**
+	 * A download (/watch?download=<id>, src/lib/server/downloads.ts): its file on this computer,
+	 * played with the subtitles saved with it. Like live and replays, nothing is looked up for it
+	 * (it plays with no internet), but its place is kept, in Continue Watching too.
+	 */
+	const downloadMode = Boolean(page.url.searchParams.get('download'));
+	let downloaded = $state<{ id: number; kind: string; title: string; season: number; episode: number; poster: string | null; place: number; duration: number } | null>(null);
+	/** Live, a replay or a download: Catalog's player without the library's parts. */
+	const sportsMode = liveMode || replayMode || downloadMode;
 	let replayVersions = $state<string[]>([]);
 	let replayVersion = $state(0);
 	/** The replay's picture (the site's), kept with its place for Continue Watching. */
@@ -50,6 +57,42 @@
 	let liveNow = $state({ id: Number(page.url.searchParams.get('live')) || 0, name: page.url.searchParams.get('name') ?? '' });
 	let liveGame = $state<LiveGame | null>(null);
 	let liveSaved = $state(false);
+	/**
+	 * A game opened before it's on (from the schedule, hours ahead): its start time and a countdown
+	 * show instead of whatever the channel has on before it, with Watch the channel now and Save.
+	 * It starts by itself once on (EARLY_MS before its time). Null once playing.
+	 */
+	let liveWaitFor = $state<number | null>(null);
+	let liveClock = $state(Date.now());
+	let liveWaitButton = $state<HTMLButtonElement | null>(null);
+	$effect(() => {
+		const start = liveWaitFor;
+		if (start === null) return;
+		const timer = setInterval(() => {
+			liveClock = Date.now();
+			if (start - EARLY_MS <= liveClock) watchLiveNow();
+		}, 5_000);
+		return () => clearInterval(timer);
+	});
+	// On a TV the highlight starts on Watch now, so OK does something.
+	$effect(() => {
+		if (tvMode && liveWaitButton) liveWaitButton.focus({ preventScroll: true });
+	});
+	function watchLiveNow() {
+		liveWaitFor = null;
+		startLive();
+	}
+	/** "Starts at 7:00 PM" / "Starts tomorrow 1:30 PM" / "Starts Wed 8:00 PM". */
+	function startsText(start: number, now: number): string {
+		const when = whenText({ sport: liveGame?.sport ?? 'other', start }, now);
+		return /^\d/.test(when) ? `Starts at ${when}` : `Starts ${when.replace(/^Tomorrow/, 'tomorrow')}`;
+	}
+	/** "in 5 h 40 min" / "in 25 min". */
+	function untilText(start: number, now: number): string {
+		const minutes = Math.max(1, Math.round((start - now) / 60_000));
+		const hours = Math.floor(minutes / 60);
+		return hours ? `in ${hours} h${minutes % 60 ? ` ${minutes % 60} min` : ''}` : `in ${minutes} min`;
+	}
 	/** The channel carries captions (found as it plays), and the ones heard so far. */
 	let liveCaptions = $state(false);
 	let liveCues: { start: number; end: number; text: string; top: boolean }[] = [];
@@ -303,6 +346,13 @@
 	 * another source (Aniwave, 7Movies) this device can play. Empty `url` if none answers.
 	 */
 	const BURNED_IN_WAIT = 6000;
+	/**
+	 * How long the picked copy's source is waited on before another source plays instead. Its own
+	 * other copy may take over after 5 s, but a different source only once the picked one has
+	 * failed or this long has passed: Re:Zero, watched on Showbox, started on Aniwave whenever
+	 * Febbox was a few seconds slow (2026-10-26).
+	 */
+	const PICKED_SOURCE_WAIT = 15_000;
 	async function linkFor(files: FileOption[], file: FileOption): Promise<{ file: FileOption; url: string; debug?: string }> {
 		// Never a change of language by itself: someone watching in Japanese whose copy won't play
 		// isn't put on the English dub (it stays in the list, to pick by hand).
@@ -329,10 +379,12 @@
 			}
 		};
 		// The copy picked gets 5 seconds to itself. Slower than that, or no link, and whichever of
-		// the others answers first plays (the picked one still counts if it answers first). It used
+		// the others answers first plays (the picked one still counts if it answers first; another
+		// source's copy only after PICKED_SOURCE_WAIT or once the picked one has failed). It used
 		// to wait out the picked one's whole lookup — Movy took 50 s with Showbox right there.
 		// The first two to fall back on are asked alongside, so a slow pick costs those 5 s and no
 		// more; with no Showbox copy all of them are, since they'll likely be needed.
+		const started = Date.now();
 		const first = ask(file);
 		const showboxHasIt = files.some((f) => !f.source && playableHere(f));
 		const soon = others.map((copy, i) => (!showboxHasIt || i < 2 ? ask(copy) : null));
@@ -348,7 +400,20 @@
 				return { file: copy, url: data.url, debug: data.debug };
 			})
 		}));
-		const wanted = answers.filter((a) => !unwanted(a.copy)).map((a) => a.link);
+		// Another source waits until the picked copy has given up (or PICKED_SOURCE_WAIT is up).
+		let pickedGave = false;
+		const pickedDone = Promise.race([
+			first.then((data) => void (pickedGave = Boolean(data.url))),
+			new Promise<void>((r) => setTimeout(r, Math.max(0, PICKED_SOURCE_WAIT - (Date.now() - started))))
+		]);
+		const sameSource = (copy: FileOption) => (copy.source ?? '') === (file.source ?? '');
+		const afterPicked = async (link: Promise<{ file: FileOption; url: string; debug?: string }>) => {
+			const found = await link;
+			await pickedDone;
+			if (pickedGave) throw new Error('the picked copy answered');
+			return found;
+		};
+		const wanted = answers.filter((a) => !unwanted(a.copy)).map((a) => (sameSource(a.copy) ? a.link : afterPicked(a.link)));
 		const burnedIn = answers.filter((a) => unwanted(a.copy)).map((a) => a.link);
 		const burnedInLater = burnedIn.length
 			? Promise.any(burnedIn).then((link) => new Promise<typeof link>((r) => setTimeout(() => r(link), BURNED_IN_WAIT)))
@@ -901,7 +966,8 @@
 		// on (or their download, which can take seconds) isn't waited on. (Not on a TV: the
 		// computer does its hearing, once subtitles are on.)
 		const ownTrack = playlist && Boolean(track) && track !== failed && !isTv();
-		const wanted = !sportsMode && subAutoSync && (showing || fromDownloads || ownTrack);
+		const wanted = (!sportsMode || downloadMode) && subAutoSync && (showing || fromDownloads || ownTrack);
+		const download = downloaded;
 		untrack(() => {
 			if (!wanted || !videoEl) return;
 			if (!subSync) {
@@ -923,6 +989,10 @@
 				// What the player had already downloaded before this started (once: handed over again
 				// each time the subtitles changed, it was heard twice over).
 				if (subSync.useAppended()) for (const piece of appendedSound) subSync.hearAppended(piece.data, piece.at, piece.length, piece.isInit);
+			} else if (download) {
+				// A download: its sound track from this computer (mp4Sound.ts), so it times offline.
+				subSync.wholeTrack = true;
+				subSync.analyseTrack(`/api/downloads/${download.id}/sound?p=master`, '', 0);
 			} else if (showing || ownTrack) {
 				subSync.wholeTrack = showing;
 				timeSoundTrack(track);
@@ -1830,7 +1900,9 @@
 		closeStrip();
 		stripFor = id;
 		const kept = keptPictures(video);
-		const url = tvMode ? '' : await findThumbSource();
+		// (Only from a playlist: a download is one plain file, and reading it as one locked the page up.)
+		const found = tvMode || downloadMode ? '' : await findThumbSource();
+		const url = found && isPlaylist(found) ? found : '';
 		if (stripFor !== id) return;
 		const s = new PreviewStrip(url, { copies: 2 });
 		// The video itself comes first: only while it has a little loaded ahead (or is paused).
@@ -2512,6 +2584,16 @@
 		const ct = videoEl.currentTime;
 		const dur = videoEl.duration;
 		if (!dur || !isFinite(dur) || dur < 10 || ct < 3) return null;
+		// A download: its own place (sent from here, as this runs on leaving too), and the title's.
+		if (downloadMode) {
+			if (!downloaded) return null;
+			const d = downloaded;
+			try {
+				navigator.sendBeacon(`/api/downloads/${d.id}`, new Blob([JSON.stringify({ place: ct, duration: dur })], { type: 'application/json' }));
+			} catch {}
+			const type = d.kind === 'episode' ? 'tv' : d.kind === 'replay' ? 'replay' : 'movie';
+			return JSON.stringify({ title: d.title, type, season: d.season, episode: d.episode, currentTime: ct, duration: dur, posterUrl: d.poster ?? '' });
+		}
 		// A replay keeps its place too (Continue Watching, Live TV's Recently watched), by its title.
 		if (replayMode) return JSON.stringify({ title: videoTitle, type: 'replay', season: 0, episode: 0, currentTime: ct, duration: dur, posterUrl: replayPoster });
 		const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
@@ -2683,6 +2765,7 @@
 
 	/** For a plain video file (not a playlist): jumps to where it was left once it has loaded. */
 	async function loadAndResumeProgress() {
+		if (downloadMode) return;
 		const place = await savedPlace();
 		if (!place || !videoEl) return;
 		const seekTo = place.at;
@@ -3435,7 +3518,7 @@
 	}
 
 	/**
-	 * Auto-skip: intros and end credits are skipped without pressing anything. Credits that run to
+	 * Auto-skip: intros, recaps and end credits are skipped without pressing anything. Credits that run to
 	 * the end go straight to the next episode (or past them, when there's a scene after). Each is
 	 * skipped once per episode, so going back into an intro on purpose lets it play. Only
 	 * shows with known intro times (anime) have anything to skip.
@@ -3473,7 +3556,7 @@
 	function autoSkipCheck() {
 		if (!autoSkip || !videoEl || videoEl.paused || seeking || isVideoSeeking || switchingEpisode || loadingEpisode) return;
 		const seg = skipSegments.find(
-			(s) => (s.type === 'intro' || s.type === 'credits') && currentTime >= s.start && currentTime < s.end - 1
+			(s) => currentTime >= s.start && currentTime < s.end - 1
 		);
 		if (!seg) return;
 		const key = `${skipLookupKey}|${seg.type}|${seg.start}`;
@@ -3487,7 +3570,7 @@
 			playEpisode(next);
 			return;
 		}
-		showQualityToast(seg.type === 'intro' ? 'Skipped the intro' : 'Skipped the credits');
+		showQualityToast(seg.type === 'intro' ? 'Skipped the intro' : seg.type === 'recap' ? 'Skipped the recap' : 'Skipped the credits');
 		skipSegment(seg);
 	}
 
@@ -3541,6 +3624,13 @@
 			}
 		}
 		const ahead = ep.season > libLastSeason || (ep.season === libLastSeason && ep.episode > libLastEpisode);
+		// A show you'd watched, started again from earlier on: Rewatching. One you'd seen all of so
+		// far, with a newer episode playing: Watching again.
+		const status = !ahead && libraryEntryStatus === 'completed' ? 'rewatching' : ahead && (libraryEntryStatus === 'completed' || libraryEntryStatus === 'caught_up') ? 'watching' : '';
+		if (status) {
+			libraryEntryStatus = status;
+			fetch('/api/entries', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: libraryEntryId, action: 'status', status }) }).catch(() => {});
+		}
 		if (!ahead) return;
 		libLastSeason = ep.season;
 		libLastEpisode = ep.episode;
@@ -3563,14 +3653,28 @@
 			}).catch(() => {});
 			return;
 		}
-		if (!autosync || !ep || ep.season < 1 || showType !== 'tv' || libraryEntryStatus === 'completed') return;
+		if (!autosync || !ep || ep.season < 1 || showType !== 'tv' || libraryEntryStatus === 'completed' || libraryEntryStatus === 'caught_up') return;
 		const key = `${videoTitle}:${ep.season}-${ep.episode}`;
 		if (key === autosyncedEnd) return;
-		const later = episodes.some((e) => e.season > ep.season || (e.season === ep.season && e.episode > ep.episode));
+		// The last episode out (one still to come but not out yet counts too: Caught up then).
+		const later = episodes.some((e) => (e.season > ep.season || (e.season === ep.season && e.episode > ep.episode)) && e.available !== false);
 		if (later) return;
 		autosyncedEnd = key;
 		await autosyncEpisode();
-		await markEntryWatched();
+		await markShowFinished();
+	}
+
+	/** The end of the last episode out: Completed, or Caught up while the show is still going. */
+	async function markShowFinished() {
+		if (!libraryEntryId) return;
+		try {
+			const answer = await fetch('/api/entries', {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ id: libraryEntryId, action: 'finished_show' })
+			}).then((r) => (r.ok ? r.json() : null));
+			if (answer?.status) libraryEntryStatus = answer.status;
+		} catch {}
 	}
 
 	/**
@@ -4065,6 +4169,150 @@
 		return { at: kept.currentTime };
 	}
 
+	/** A download: its file, its subtitles, and where it was left. */
+	async function playDownload() {
+		const id = page.url.searchParams.get('download');
+		const d = await fetch(`/api/downloads/${id}`)
+			.then((r) => (r.ok ? r.json() : null))
+			.catch(() => null);
+		loading = false;
+		if (!d || d.state !== 'done') {
+			problem = "That download isn't ready yet.";
+			return;
+		}
+		downloaded = d;
+		const pad = (n: number) => String(n).padStart(2, '0');
+		videoTitle = d.kind === 'episode' ? `${d.title} S${d.season}E${d.episode}` : d.title;
+		if (d.place > 5 && !(d.duration > 0 && d.place / d.duration >= 0.95)) seekAfterLoad = d.place;
+		streamUrl = `/api/downloads/${d.id}/file`;
+		if (d.hasSubtitles) {
+			const text = await fetch(`/api/downloads/${d.id}/subtitles`)
+				.then((r) => (r.ok ? r.text() : ''))
+				.catch(() => '');
+			const cues = text ? parseSrt(text) : [];
+			const name = d.kind === 'episode' ? `S${pad(d.season)}E${pad(d.episode)} subtitles` : 'Subtitles';
+			if (cues.length) showSub({ id: 'download', url: '', lang: '', language: 'Subtitles', fileName: name }, cues);
+		}
+	}
+
+	/*
+	 * Downloading what's playing (Downloads, src/lib/server/downloads.ts), with the sound track and
+	 * the subtitles showing, timed as they are now. Never Showbox's copy: it would use up Febbox's
+	 * daily allowance (the owner's call, 2026-10-26). Playing another source's copy (or a replay),
+	 * its qualities of 720p and up are offered, each with its size worked out from its bit rate
+	 * (lower only when it has nothing that good). Playing Showbox's, the episode's copies from the
+	 * other sources are offered instead, in their best quality.
+	 */
+	let showDownloadMenu = $state(false);
+	/** The dialog's picks: which quality (index into downloadOptions), and which captions. */
+	let downloadPick = $state(0);
+	let downloadCaptions = $state<'none' | 'showing' | string>('none');
+	let downloadBusy = $state(false);
+	const DOWNLOAD_AT_LEAST = 720;
+	const playingOther = $derived(replayMode || Boolean(activeFile?.source));
+	const downloadChoices = $derived.by(() => {
+		if (!playingOther) return [];
+		const heights = [...new Set(hlsLevels.map((l) => l.height).filter(Boolean))].sort((a, b) => b - a);
+		const good = heights.filter((h) => h >= DOWNLOAD_AT_LEAST);
+		return (good.length ? good : heights.slice(0, 1)).map((height) => {
+			const bitrate = Math.max(...hlsLevels.filter((l) => l.height === height).map((l) => l.bitrate));
+			return { height, bytes: duration > 0 ? Math.round((bitrate * duration) / 8) : 0 };
+		});
+	});
+	/** Playing Showbox's copy: the other sources' copies of it, in the language being heard. */
+	const otherCopies = $derived.by(() => {
+		if (playingOther || replayMode) return [];
+		const dub = activeFile?.audio ? isDub(activeFile) : hearingDub();
+		const seen = new Set<string>();
+		return currentFiles.filter((f) => {
+			const key = `${f.source}|${f.audio ?? ''}|${f.burnedIn ? 1 : 0}`;
+			if (!f.source || !playableHere(f) || isDub(f) !== dub || seen.has(key)) return false;
+			seen.add(key);
+			return true;
+		});
+	});
+	/** What the dialog offers: the qualities of the copy playing, or the other sources' copies. */
+	const downloadOptions = $derived<{ label: string; height: number; bytes: number; copy?: FileOption }[]>(
+		playingOther
+			? downloadChoices.length
+				? downloadChoices.map((c) => ({ label: `${c.height}p`, height: c.height, bytes: c.bytes }))
+				: [{ label: 'Best quality', height: 0, bytes: 0 }]
+			: otherCopies.map((copy) => ({ label: `${copy.source}, best quality${copy.burnedIn ? ' (subtitles in picture)' : ''}`, height: 0, bytes: 0, copy }))
+	);
+	function openDownload() {
+		downloadPick = 0;
+		downloadCaptions = subtitlesOn && subtitleCues.length ? 'showing' : 'none';
+		showDownloadMenu = true;
+	}
+	/** The captions picked, as SRT: the ones showing as they're timed now, or another one fetched. */
+	async function captionsPicked(): Promise<string | null> {
+		if (downloadCaptions === 'none') return null;
+		if (downloadCaptions === 'showing') return subtitlesAsShown();
+		const sub = febboxSubs.find((x) => x.id === downloadCaptions);
+		const cues = sub ? await downloadSub(sub) : null;
+		return cues ? srtOf(cues, 1, 0) : null;
+	}
+
+	// (Not on a TV or in the mini player: Downloads is a page of the computer's and phone's Catalog.)
+	const canDownload = $derived(
+		!liveMode && !downloadMode && !tvMode && !miniMode && duration > 0 && (replayMode ? Boolean(page.url.searchParams.get('replay')) : playingOther || otherCopies.length > 0)
+	);
+	const sizeText = (bytes: number) => (bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1024 ** 2))} MB`);
+
+	/** The subtitles showing, as SRT, at the times they show in this video. */
+	function subtitlesAsShown(): string | null {
+		if (!subtitlesOn || !subtitleCues.length) return null;
+		return srtOf(subtitleCues, subAutoSync ? subtitleRate : 1, subtitleDelay);
+	}
+
+	/** Cues as SRT, `rate` and `delay` applied (top-of-screen lines marked so). */
+	function srtOf(cues: Cue[], rate: number, delay: number): string {
+		const stamp = (t: number) => {
+			const ms = Math.max(0, Math.round(t * 1000));
+			const pad = (n: number, w = 2) => String(n).padStart(w, '0');
+			return `${pad(Math.floor(ms / 3600000))}:${pad(Math.floor(ms / 60000) % 60)}:${pad(Math.floor(ms / 1000) % 60)},${pad(ms % 1000, 3)}`;
+		};
+		return cues
+			.map((cue, i) => `${i + 1}\n${stamp(cue.start * rate + delay)} --> ${stamp(cue.end * rate + delay)}\n${cue.top ? '{\\an8}' : ''}${cue.text}`)
+			.join('\n\n');
+	}
+
+	/** `copy`: another source's copy than the one playing (which is Showbox's). */
+	async function startDownload() {
+		const option = downloadOptions[downloadPick];
+		if (!option || downloadBusy) return;
+		const { height, bytes, copy } = option;
+		downloadBusy = true;
+		const subtitles = await captionsPicked().catch(() => null);
+		downloadBusy = false;
+		showDownloadMenu = false;
+		const file = copy ?? activeFile;
+		const track = !copy && hlsInstance && hlsInstance.audioTrack >= 0 ? hlsInstance.audioTracks[hlsInstance.audioTrack] : null;
+		const episode = !replayMode && showType === 'tv' ? activeEpisode : null;
+		const body = {
+			kind: replayMode ? 'replay' : episode ? 'episode' : 'film',
+			title: replayMode ? videoTitle : videoTitle.replace(/ S\d+E\d+$/, ''),
+			year: lastResolveArgs?.year ?? '',
+			season: episode?.season ?? 0,
+			episode: episode?.episode ?? 0,
+			episodeName: episode ? (nameOf(episode) ?? null) : null,
+			poster: (replayMode ? replayPoster : watchPosterUrl) || null,
+			source: replayMode ? (replayVersions[replayVersion] ?? '') : (file?.source ?? ''),
+			shareKey: replayMode ? null : shareOf(file),
+			fid: replayMode ? null : file?.fid,
+			replayId: replayMode ? page.url.searchParams.get('replay') : null,
+			replayVersion: replayMode ? replayVersion : null,
+			height,
+			audio: track ? `${track.lang ?? ''}|${track.name ?? ''}` : '',
+			subtitles,
+			estimate: bytes
+		};
+		const answer = await fetch('/api/downloads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+			.then((r) => (r.ok ? r.json() : null))
+			.catch(() => null);
+		showQualityToast(!answer ? "Couldn't start the download" : answer.already ? 'Already in Downloads' : 'Downloading: see Downloads');
+	}
+
 	/** Another channel showing the game: played here, the address following along. */
 	function switchLiveChannel(channel: { id: number; name: string }) {
 		showFilePicker = false;
@@ -4077,6 +4325,7 @@
 		liveNoted = false;
 		liveRestarts = 0;
 		problem = '';
+		liveWaitFor = null;
 		startLive();
 	}
 
@@ -4117,6 +4366,9 @@
 	function goBack() {
 		if (isAuto) {
 			history.back();
+		} else if (downloadMode) {
+			if (cameFromApp) history.back();
+			else goto('/downloads');
 		} else if (sportsMode) {
 			// Live and replays came from Live TV, not from the search (which Back used to open).
 			if (cameFromApp) history.back();
@@ -4600,7 +4852,7 @@
 
 	$effect(() => {
 		const q = query;
-		if (!streamUrl && !useIframe && !needsLogin && !loading) {
+		if (!streamUrl && !useIframe && !needsLogin && !loading && liveWaitFor === null) {
 			const timer = setTimeout(() => doSearch(q), 350);
 			return () => clearTimeout(timer);
 		}
@@ -4650,8 +4902,15 @@
 		resumeSeason = Number(page.url.searchParams.get('resume_s') ?? 0);
 		resumeEpisode = Number(page.url.searchParams.get('resume_e') ?? 0);
 
-		if (liveMode) {
-			startLive();
+		if (downloadMode) {
+			playDownload();
+		} else if (liveMode) {
+			const at = Number(page.url.searchParams.get('at'));
+			if (at && at - EARLY_MS > Date.now()) {
+				loading = false;
+				videoTitle = liveNow.name || `Channel ${liveNow.id}`;
+				liveWaitFor = at;
+			} else startLive();
 			loadLiveGame();
 		} else if (replayMode) {
 			startReplay(null);
@@ -5345,7 +5604,7 @@
 {/snippet}
 
 
-{#if streamUrl || useIframe || needsLogin}
+{#if streamUrl || useIframe || needsLogin || liveWaitFor !== null}
 	<!-- ============================================================= PLAYER VIEW -->
 	<div
 		class="player-page"
@@ -5366,7 +5625,7 @@
 			<h1 class="player-title">{videoTitle}</h1>
 
 			{#if liveMode}
-				<span class="live-badge">LIVE</span>
+				{#if liveWaitFor === null}<span class="live-badge">LIVE</span>{/if}
 				<!-- The game's channels, where the files would be. -->
 				<div class="file-pick-wrap">
 					<button
@@ -5434,6 +5693,10 @@
 			<!-- Shown even with one file, so it always says where the video comes from. -->
 			{#if currentFiles.length > 0}
 				{@render filePicker()}
+			{/if}
+
+			{#if canDownload}
+				<button type="button" class="bar-btn" class:active={showDownloadMenu} onclick={() => (showDownloadMenu ? (showDownloadMenu = false) : openDownload())}>Download</button>
 			{/if}
 
 			{#if !sportsMode}
@@ -5606,6 +5869,19 @@
 					{#if loadingEpisode}
 						<p class="player-status">Loading episode...</p>
 					{/if}
+					{#if liveWaitFor !== null}
+						<div class="live-wait">
+							<p class="live-wait-title">{liveGame?.title ?? videoTitle}</p>
+							<p class="live-wait-when">
+								{startsText(liveWaitFor, liveClock)} · {untilText(liveWaitFor, liveClock)}
+							</p>
+							<div class="live-wait-actions">
+								<button type="button" class="btn btn-primary" bind:this={liveWaitButton} onclick={watchLiveNow}>Watch {liveNow.name || 'the channel'} now</button>
+								<button type="button" class="btn" onclick={toggleLiveSaved}>{liveSaved ? 'Saved' : 'Save for later'}</button>
+							</div>
+							<p class="live-wait-note">Plays by itself when it starts</p>
+						</div>
+					{/if}
 
 					<!-- svelte-ignore a11y_media_has_caption -->
 					<video
@@ -5749,6 +6025,39 @@
 						{/if}
 					{/if}
 
+					<!-- Download: which quality, which captions (src/lib/server/downloads.ts) -->
+					{#if showDownloadMenu}
+						<div class="download-dialog" role="dialog" aria-label="Download">
+							<p class="download-title">Download</p>
+							<p class="download-label">Quality</p>
+							<div class="download-options">
+								{#each downloadOptions as option, i (option.label)}
+									<label class="download-option" class:on={downloadPick === i}>
+										<input type="radio" name="download-quality" value={i} bind:group={downloadPick} />
+										<span>{option.label}</span>
+										{#if option.bytes}<span class="download-size">{sizeText(option.bytes)}</span>{/if}
+									</label>
+								{/each}
+							</div>
+							<p class="download-label">Captions</p>
+							<select class="download-captions" bind:value={downloadCaptions} aria-label="Captions">
+								<option value="none">None</option>
+								{#if subtitlesOn && subtitleCues.length}<option value="showing">The ones showing ({activeSubFileName || 'loaded'})</option>{/if}
+								{#each Object.entries(subsByLanguage) as [language, subs] (language)}
+									<optgroup label={language}>
+										{#each subs.filter((sub) => !sub.check) as sub (sub.id)}
+											<option value={sub.id}>{sub.fileName || sub.language}</option>
+										{/each}
+									</optgroup>
+								{/each}
+							</select>
+							<div class="download-actions">
+								<button type="button" class="download-cancel" onclick={() => (showDownloadMenu = false)}>Cancel</button>
+								<button type="button" class="download-go" disabled={downloadBusy || !downloadOptions.length} onclick={startDownload}>{downloadBusy ? 'Getting captions…' : 'Download'}</button>
+							</div>
+						</div>
+					{/if}
+
 					<!-- "Rate it", once it's finished -->
 					<!-- skip intro / next episode -->
 					{#if activeSkip || nextEp}
@@ -5792,13 +6101,13 @@
 
 					<!-- custom controls overlay -->
 					<div class="controls" class:visible={showControls}>
-						<!-- progress bar (on a TV it can be highlighted: left and right skip, up goes on to the top bar) -->
+						<!-- progress bar (on a TV it can be highlighted: left and right skip, up goes to Skip Intro / Next Episode when showing, else the top bar) -->
 						<!-- svelte-ignore a11y_no_static_element_interactions -->
 						<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 						<div
 							class="progress-wrap"
 							tabindex={tvMode ? 0 : undefined}
-							data-tv-up=".player-bar button, .player-bar a"
+							data-tv-up=".skip-btn, .next-ep-btn || .player-bar button, .player-bar a"
 							onmousedown={(e) => { if (!liveMode) onProgressDown(e); }}
 							onmousemove={(e) => { if (!liveMode) onProgressHover(e); }}
 							onmouseleave={() => (hoverPct = -1)}
@@ -6102,7 +6411,7 @@
 									{activeSubFileName || 'Loaded subtitle'}
 								</button>
 							{/if}
-							{#if sportsMode && !liveCaptions}
+							{#if sportsMode && !liveCaptions && !downloadMode}
 								<span class="popup-item" style="opacity:0.6;cursor:default">{liveMode ? 'No captions from this channel yet' : 'This replay has no captions'}</span>
 							{/if}
 							{#if febboxSubs.length > 0 || loadingSubs}
@@ -6154,7 +6463,7 @@
 							{/if}
 							<hr class="popup-divider" />
 							<p class="popup-label">Look</p>
-							{#if !sportsMode}
+							{#if !sportsMode || downloadMode}
 								<div class="sub-look">
 									<button class="sub-delay-jump" class:on={subAutoSync} onclick={toggleAutoSync}>
 										{subAutoSync ? 'Auto-timing: On' : 'Auto-timing: Off'}
@@ -6415,6 +6724,13 @@
 	.bar-btn { flex: none; font-size: 0.82rem; font-weight: 600; padding: 5px 12px; border-radius: var(--radius-sm); border: 1px solid rgba(255, 255, 255, 0.15); background: rgba(255, 255, 255, 0.06); color: #e0e0e0; cursor: pointer; text-decoration: none; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
 	.bar-btn:hover { border-color: rgba(255, 255, 255, 0.3); color: #fff; }
 	.player-title { flex: 1; font-size: 1rem; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #fff; }
+	/* A game opened before it's on: when it starts, over the empty player. */
+	.live-wait { position: absolute; inset: 0; z-index: 12; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; text-align: center; color: #fff; background: #000; }
+	.live-wait-title { margin: 0; font-size: 1.5rem; font-weight: 600; }
+	.live-wait-when { margin: 0; font-size: 1rem; opacity: 0.8; }
+	.live-wait-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 8px; }
+	.live-wait-note { margin: 4px 0 0; font-size: 0.82rem; opacity: 0.55; }
+	:global(html.tv) .live-wait button:focus { outline: 3px solid #fff; outline-offset: 2px; }
 	.player-error { position: absolute; top: 45px; left: 0; right: 0; z-index: 15; margin: 0; padding: 6px 16px; font-size: 0.82rem; color: var(--accent); background: rgba(24, 8, 11, 0.9); border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
 	.retry-btn { margin-left: 10px; padding: 2px 12px; font-size: 0.78rem; font-weight: 600; border: 1px solid var(--accent); border-radius: var(--radius-sm); background: none; color: var(--accent); cursor: pointer; }
 	.retry-btn:hover { background: rgba(255, 255, 255, 0.06); }
@@ -6427,6 +6743,21 @@
 	.language-option { padding-left: 28px; }
 	.file-arrow.open { transform: rotate(180deg); }
 	.popup-files.popup-files { position: absolute; top: calc(100% + 4px); left: 0; right: auto; bottom: auto; min-width: 180px; z-index: 25; }
+	/* The Download dialog, over the video. */
+	.download-dialog { position: absolute; top: 60px; right: 16px; z-index: 30; width: min(360px, calc(100% - 32px)); max-height: calc(100% - 80px); overflow-y: auto; padding: 16px; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px; background: rgba(18, 18, 18, 0.97); color: #fff; display: flex; flex-direction: column; gap: 8px; }
+	.download-title { margin: 0 0 4px; font-size: 1rem; font-weight: 700; }
+	.download-label { margin: 6px 0 0; font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: rgba(255, 255, 255, 0.45); }
+	.download-options { display: flex; flex-direction: column; gap: 4px; }
+	.download-option { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 7px; cursor: pointer; font-size: 0.88rem; }
+	.download-option.on { border-color: var(--accent); background: rgba(255, 255, 255, 0.05); }
+	.download-option input { accent-color: var(--accent); margin: 0; }
+	.download-size { margin-left: auto; color: rgba(255, 255, 255, 0.55); font-size: 0.8rem; }
+	.download-captions { width: 100%; padding: 8px 10px; border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 7px; background: #1d1d1d; color: #fff; font: inherit; font-size: 0.88rem; }
+	.download-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+	.download-actions button { padding: 7px 16px; border-radius: 7px; font: inherit; font-size: 0.86rem; font-weight: 600; cursor: pointer; }
+	.download-cancel { border: 1px solid rgba(255, 255, 255, 0.2); background: none; color: #fff; }
+	.download-go { border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink, #000); }
+	.download-go:disabled { opacity: 0.6; cursor: default; }
 	.file-name-info { font-size: 0.7rem; white-space: normal; word-break: break-all; overflow: visible; }
 
 	.episodes-btn { font-size: 0.78rem; }

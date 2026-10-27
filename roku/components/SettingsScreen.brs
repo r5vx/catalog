@@ -20,7 +20,7 @@ sub show()
     lines = [
         "Who's watching: " + who,
         "Captions: " + onOff(m.global.captions),
-        "Skip intros and credits by itself: " + onOff(m.global.autoSkip),
+        "Skip intros, recaps and credits by itself: " + onOff(m.global.autoSkip),
         "Play the next episode by itself: " + onOff(m.global.autoplay),
         "Change computer"
     ]

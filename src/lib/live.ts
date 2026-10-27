@@ -107,7 +107,7 @@ export const sportLabel = (sport: Sport) => SPORTS.find((s) => s.key === sport)?
 export const itemWord = (sport: Sport | 'all', count = 1) => (sport === 'tv' ? (count === 1 ? 'show' : 'shows') : count === 1 ? 'game' : 'games');
 
 /** On from this long before the start time (pre-game shows, and clocks that are a little off). */
-const EARLY_MS = 10 * 60 * 1000;
+export const EARLY_MS = 10 * 60 * 1000;
 
 export function gameEnds(game: Pick<LiveGame, 'sport' | 'start'>): number {
 	const hours = SPORTS.find((s) => s.key === game.sport)?.hours ?? 2.5;
@@ -176,7 +176,11 @@ export const gameText = (game: LiveGame) => `${game.title} ${game.league} ${spor
  */
 export function watchHref(channel: { id: number; name: string }, game?: LiveGame | null): string {
 	const params = new URLSearchParams({ live: String(channel.id), name: channel.name });
-	if (game) params.set('game', game.id);
+	if (game) {
+		params.set('game', game.id);
+		// When it starts: the player waits for a game not on yet (rather than play what's on before it).
+		params.set('at', String(game.start));
+	}
 	return `/watch?${params}`;
 }
 

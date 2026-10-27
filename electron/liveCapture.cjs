@@ -30,27 +30,43 @@ function captureLive(page, referrer) {
 	return result;
 }
 
-async function look(page, referrer) {
-	const ses = session.fromPartition('live');
-	const site = new URL(page).host;
-	let found = null;
-	const headers = new Map();
+/**
+ * The pages being read, by their window's webContents id. One pair of request hooks serves them
+ * all: hooks belong to the whole session, so each look setting its own (and clearing them when
+ * done) left a second channel read at the same time without any, and it never found its stream.
+ */
+const reading = new Map();
+let hooked = false;
+function hook(ses) {
+	if (hooked) return;
+	hooked = true;
 	ses.webRequest.onBeforeRequest((details, done) => {
 		let host = '';
 		try {
 			host = new URL(details.url).host;
 		} catch {}
-		if (!found && isPlaylist(details.url)) found = details.url;
+		const look = reading.get(details.webContentsId);
+		if (look && !look.found && isPlaylist(details.url)) look.found = details.url;
 		done({ cancel: ADVERTS.test(host.split('.')[0]) || ADVERTS.test(host) });
 	});
 	ses.webRequest.onBeforeSendHeaders((details, done) => {
-		if (isPlaylist(details.url)) {
+		const look = reading.get(details.webContentsId);
+		if (look && isPlaylist(details.url)) {
 			const h = details.requestHeaders;
-			headers.set(details.url, { Referer: h.Referer ?? h.referer, Origin: h.Origin ?? h.origin, 'User-Agent': h['User-Agent'] });
+			look.headers.set(details.url, { Referer: h.Referer ?? h.referer, Origin: h.Origin ?? h.origin, 'User-Agent': h['User-Agent'] });
 		}
 		done({ requestHeaders: details.requestHeaders });
 	});
+}
+
+async function look(page, referrer) {
+	const ses = session.fromPartition('live');
+	hook(ses);
+	const site = new URL(page).host;
 	const win = new BrowserWindow({ show: false, width: 960, height: 540, webPreferences: { session: ses, backgroundThrottling: false } });
+	const id = win.webContents.id;
+	const found = { found: null, headers: new Map() };
+	reading.set(id, found);
 	win.webContents.setAudioMuted(true);
 	win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 	// The page itself stays put (adverts navigate it away).
@@ -64,15 +80,14 @@ async function look(page, referrer) {
 	try {
 		win.loadURL(page, referrer ? { httpReferrer: referrer } : undefined).catch(() => {});
 		const started = Date.now();
-		while (!found && Date.now() - started < 25_000 && !win.isDestroyed()) await new Promise((r) => setTimeout(r, 200));
-		if (!found) return { error: 'no stream found' };
+		while (!found.found && Date.now() - started < 25_000 && !win.isDestroyed()) await new Promise((r) => setTimeout(r, 200));
+		if (!found.found) return { error: 'no stream found' };
 		// The headers come a moment after the request itself.
-		for (let i = 0; i < 10 && !headers.has(found); i++) await new Promise((r) => setTimeout(r, 100));
-		const h = headers.get(found) ?? {};
-		return { url: found, headers: Object.fromEntries(Object.entries(h).filter(([, v]) => v)) };
+		for (let i = 0; i < 10 && !found.headers.has(found.found); i++) await new Promise((r) => setTimeout(r, 100));
+		const h = found.headers.get(found.found) ?? {};
+		return { url: found.found, headers: Object.fromEntries(Object.entries(h).filter(([, v]) => v)) };
 	} finally {
-		ses.webRequest.onBeforeRequest(null);
-		ses.webRequest.onBeforeSendHeaders(null);
+		reading.delete(id);
 		if (!win.isDestroyed()) win.destroy();
 	}
 }

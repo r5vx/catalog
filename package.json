@@ -1,7 +1,7 @@
 {
 	"name": "catalog",
 	"private": true,
-	"version": "3.6.0",
+	"version": "3.7.0",
 	"type": "module",
 	"description": "Your personal library of everything you've watched.",
 	"main": "electron/main.cjs",
@@ -38,6 +38,7 @@
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",
 		"electron": "^38.0.0",
 		"electron-builder": "^25.1.8",
+		"mux.js": "^7.1.0",
 		"svelte": "^5.56.1",
 		"svelte-check": "^4.6.0",
 		"typescript": "^6.0.3",
