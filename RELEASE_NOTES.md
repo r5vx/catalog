@@ -12,6 +12,63 @@ without both.
 
 ## Unreleased
 
+## 3.8.0 — 2026-10-31 — Catalog as a phone app, live captions timed by themselves, and mini player fixes
+
+### New
+- **Phones**: Catalog as an app on a phone's Home Screen (Settings → Phones gives the address and a code to scan)
+- **Phones**: downloads can be kept on the phone and played with no connection, with captions
+- **Phones**: each phone asks who's watching the first time, and keeps that person's Continue Watching and places
+- **Mini player**: a fullscreen button, to fill one screen with it while using Catalog on another
+- **Player**: a Hide button at the top of the episode list
+- **Roku**: preview pictures while fast-forwarding and rewinding
+- **Subtitles**: "Timing subtitles to the video…" shows while auto-timing works on them
+- **Subtitles**: right-click a caption to copy it
+- **Subtitles**: a Retime button in the captions menu works out the timing again
+- **Player**: volume goes up to 300% for quiet videos, with loud parts kept from crackling
+- **Live TV**: captions time themselves to the commentary, within seconds of a channel opening and more exactly as you watch
+- **TV**: the computer says when Windows has set its network to Public (TVs can't connect then), with a button to set it back to Private
+
+### Improved
+- **Mini player**: opens on the picture and time it left off at instead of a black loading screen
+- **Mini player**: resizes freely from any edge (it no longer grows diagonally when one side is dragged)
+- **Mini player**: dragged by its title; the edges are left free for resizing
+- **Subtitles**: the kind picked for a show goes on for each of its episodes, however the episode is opened
+- **Subtitles**: the next episode's are picked from the same release when its file names differ, and timed on their own
+- **Skips**: a recap and an intro back to back are one skip
+- **Skips**: times also come from TheIntroDB, and from whichever site more people agree on
+- **Skips**: black end credits are found from the progress bar's preview pictures, for any show or film
+- **Skips**: end credits are looked for in more episodes when the next one's ending song is different
+- **Player**: Japanese or the dub is remembered for each anime, not one choice for all of them
+- **Subtitles**: captions appear right on time instead of up to a quarter second late
+- **Library**: marking a show or film completed takes it out of Continue Watching
+- **Player**: the volume set for a film or show is remembered on that device, and carries on to the next episode
+- **Live TV**: several TVs on the same channel share one download of it, so a big game doesn't load the connection once per TV
+
+### Fixed
+- **Live TV**: missing on phones and narrow windows; it is now next to Browse and Downloads
+- **Mini player**: no longer disappears behind a fullscreen game or app when clicked, and stays above it
+- **Mini player**: Back to Catalog opens the video in Catalog when another page was opened meanwhile (it used to just close)
+- **Mini player**: starts at the exact spot, even in the end credits (it used to start the film over)
+- **Mini player**: captions sit at the bottom instead of the middle
+- **Skips**: Chernobyl no longer has false intros (its title card was marked as one)
+- **Skips**: no recap or intro taken from another cut of the episode (another country's version, say)
+- **Subtitles**: ones carried on from the last episode that don't match are swapped for ones that do
+- **Subtitles**: ones carried on to the next episode stay in the same language (a file named alike in German could go on)
+- **Subtitles**: switching subtitles quickly shows the last one picked, timed afresh
+- **Subtitles**: captions on in one episode stay on in the next, even when no file from the same release is found
+- **Live TV**: no longer shows 0 games for a while after Catalog was closed for a day
+- **Player**: an anime watched in Japanese no longer switches to the dub on an episode whose file has both
+- **Subtitles**: the delay buttons' hints said the opposite of what they do
+- **Mini player**: the picture handed over from the big player goes as soon as the video is ready, even paused
+- **Player**: the progress bar's preview pictures match the copy playing (another cut's pictures showed before)
+- **Library**: rewatching a show finished before episodes were kept marks it Rewatching, and counts the rewatch at the end
+- **Player**: when a source's server is missing part of a video, the episode's other copy (same language, no subtitles in the picture) plays on from the same spot instead of buffering forever
+- **Player**: the mouse pointer hides with the controls in fullscreen
+- **Skips**: a copy the same length as another of the episode gets its intro and credits at once (Movy's credits were missing)
+- **Player**: quality never drops by itself when part of a video fails to load; it stays on the quality picked (TVs and Roku too)
+- **TV**: videos coming through the computer (Movy, 7Movies, Aniwave) load several parts at once over Wi-Fi, so heavier copies stop buffering
+- **Player**: "Keeps stopping to load" only offers another source once that source has the episode
+
 ## 3.7.0 — 2026-10-27 — Downloads, Rewatching and Caught up, and faster Showbox starts
 
 ### New

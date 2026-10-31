@@ -45,7 +45,14 @@ function keptCopy<T>(key: string): { at: number; value: T } | null {
 /** Why the site's pages last couldn't be had (empty once they could), for /api/diagnostics. */
 let trouble = '';
 export function liveListingState() {
-	return { site, trouble, channels: listed?.channels.length ?? 0, channelsAt: listed?.at ?? null, games: scheduled?.games.length ?? 0, scheduleAt: scheduled?.at ?? null };
+	return { site, trouble, channels: listed?.channels.length ?? 0, channelsAt: listed?.at ?? null, games: scheduled?.games.length ?? 0, scheduleAt: scheduled?.at ?? null, recentTries: tries };
+}
+
+/** The last tries at channels' playlists: which player server, and what came of it ("played" or why not). */
+const tries: { at: string; channel: number; server: string; result: string }[] = [];
+export function noteLiveTry(id: number, result: string) {
+	tries.push({ at: new Date().toISOString(), channel: id, server: PLAYERS[playerFor.get(id) ?? 0], result });
+	if (tries.length > 30) tries.shift();
 }
 
 /**
@@ -189,10 +196,13 @@ export async function liveSchedule(): Promise<LiveGame[]> {
 		if (kept?.value?.length) scheduled = { at: kept.at, games: kept.value };
 	}
 	if (scheduled && Date.now() - scheduled.at < SCHEDULE_KEEP) return current(scheduled.games);
-	// An older schedule is answered at once; the new one comes behind it.
+	// An older schedule is answered at once; the new one comes behind it. Not one whose games have
+	// all ended (kept from the day before Catalog was closed): it showed Live TV with 0 games for
+	// ten minutes, so the new one is waited for.
 	if (scheduled) {
 		scheduling ??= fetchSchedule().finally(() => (scheduling = null));
-		return current(scheduled.games);
+		const games = current(scheduled.games);
+		if (games.length) return games;
 	}
 	await (scheduling ??= fetchSchedule().finally(() => (scheduling = null)));
 	// (Filled in by the fetch just waited on.)

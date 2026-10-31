@@ -7,6 +7,7 @@ import { MOVY_HEADERS } from '$lib/server/sources/movy';
 import { isNotedPiece, notePieces, pieceAhead } from '$lib/server/relayReadAhead';
 import { downloadKindOf, noteEpisode, storedPiece, wantedPiece } from '$lib/server/episodeDownloads';
 import { isPicture, videoFromPicture } from '$lib/server/pictureVideo';
+import { sharedLivePiece } from '$lib/server/liveShare';
 import { repairFrameTimes } from '$lib/server/pieceRepair';
 import { electronFetch } from '$lib/server/electron-fetch';
 
@@ -85,6 +86,18 @@ export const GET: RequestHandler = async ({ url, request }) => {
 			const bytes = mended(new Uint8Array(ahead));
 			return new Response(bytes, {
 				headers: { 'Content-Type': 'video/mp2t', 'Content-Length': String(bytes.length), 'Cache-Control': 'private, max-age=21600' }
+			});
+		}
+	}
+
+	// Live TV (and replays): each piece fetched once for every screen watching (liveShare.ts).
+	// Not playlists: they're read below (Dailymotion's first only through the app's browser).
+	if (kind === 'live' && !range && !target.pathname.endsWith('.m3u8')) {
+		const piece = await sharedLivePiece(target.href, askWith);
+		if (piece !== 'playlist' && 'refused' in piece) return error(piece.refused, 'The video server refused');
+		if (piece !== 'playlist') {
+			return new Response(new Uint8Array(piece.bytes), {
+				headers: { 'Content-Type': piece.type, 'Content-Length': String(piece.bytes.length), 'Cache-Control': 'private, max-age=3600' }
 			});
 		}
 	}

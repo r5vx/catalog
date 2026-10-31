@@ -81,6 +81,8 @@ export type Settings = {
 	nightUpdateHour?: string;
 	/** The day (YYYY-MM-DD) it last tried, so it tries once a night at most. */
 	nightUpdateTried?: string;
+	/** Networks left Public on purpose ("Not now" on the notice; networkType.ts), as a JSON list of names. */
+	publicNetworkOk?: string;
 };
 
 export function readSettings(): Settings {

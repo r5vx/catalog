@@ -1,6 +1,6 @@
 /**
  * Intro and credits found by comparing an episode's sound with a neighbouring episode's (the
- * matching is introFinder.ts). Only the first 6 and last 5 minutes of each are used, and the
+ * matching is introFinder.ts). Only the first 6 and last 7 minutes of each are used, and the
  * answer is kept for both episodes, so watching in order costs one comparison per episode or less.
  *
  * Works on every source:
@@ -20,7 +20,10 @@ import { readSoundTrack, soundBetween, soundTrackIn } from './soundTrack';
 import type { DownloadedSound } from './downloadedSound';
 
 export const HEAD = 6 * 60;
-export const TAIL = 5 * 60;
+/** Two copies of an episode this close in length (seconds) are the same version. */
+const SAME_LENGTH = 3;
+// The last 7 minutes: She-Hulk E4's animated credits begin 5:20 before its end (5 minutes cut them short).
+export const TAIL = 7 * 60;
 
 export type Found = { type: 'intro' | 'credits'; start: number; end: number };
 type Shared = { a: number; b: number; length: number };
@@ -157,19 +160,32 @@ export async function findAndKeepSkips(options: {
 	const mineTrack = isPlaylist ? await soundTrackIn(master, language, signal).catch(() => null) : null;
 	if (!mineTrack) return options.heard ? fromDownloads(options, at, options.heard) : null;
 
-	const neighbours = [episodes[at + 1], episodes[at - 1]].filter((e) => playable(e, season));
-	for (const [n, other] of neighbours.entries()) {
+	// The next episode, the one before, then two away: on while the credits aren't found, as some
+	// shows' closing songs change from episode to episode (She-Hulk E4 shares its animated credits
+	// with E6 only, E2 with E1 and E6; E3 and E5 with none), up to three comparisons.
+	const neighbours = [episodes[at + 1], episodes[at - 1], episodes[at + 2], episodes[at - 2]].filter((e) => playable(e, season));
+	// (Starting from what's kept for this copy, when it's looked at again for its credits.)
+	let mine: Found[] | null = options.known?.length ? [...options.known] : null;
+	let compared = 0;
+	for (const other of neighbours) {
+		if (compared >= 3 || mine?.some((f) => f.type === 'credits')) break;
 		const theirs = await neighbourTrack(other, options.quality, options.mainShareKey, language, signal);
 		if (!theirs) continue;
 		const result = await findSkips(mineTrack, theirs.playlist, options.canFetch, signal);
-		if (!result || signal.aborted) return null;
+		if (!result || signal.aborted) return mine;
+		compared++;
 		const [forMine, forTheirs] = result;
-		// Nothing in common (a new opening song from this episode on): try the other side.
-		if (!forMine.length && n < neighbours.length - 1) continue;
-		await keep([{ key: options.key, segments: forMine }, ...(forTheirs.length ? [{ key: theirs.key, segments: forTheirs }] : [])]);
-		return forMine;
+		// What's found already stays: another comparison only adds what it lacked.
+		mine = joinFound(mine ?? [], forMine);
+		if (mine.length || compared === 1) await keep([{ key: options.key, segments: mine }]);
+		if (forTheirs.length) await keep([{ key: theirs.key, segments: joinFound((await kept(theirs.key, signal)) ?? [], forTheirs) }]);
 	}
-	return null;
+	return mine;
+}
+
+/** What's kept, with the kinds of part it lacks taken from `more`. */
+function joinFound(found: Found[], more: Found[]): Found[] {
+	return [...found, ...more.filter((m) => !found.some((f) => f.type === m.type))].sort((a, b) => a.start - b.start);
 }
 
 /**
@@ -235,7 +251,19 @@ async function fromDownloads(
 			options.onFound?.(all);
 			return finish(all);
 		}
-		if (reference?.length) return finish(await locate(heard, twin.playlist, reference, signal, options.onFound, true));
+		// The same length as this copy (within 3 s): the same version, with nothing shifted, so its
+		// parts are this one's at once. Placing them by hearing the intro first left She-Hulk E1 on
+		// Movy with no credits, opened past the intro (2026-10-28; 7Movies' copy is 35:20 too).
+		if (reference?.length) {
+			const [mine, theirs] = await Promise.all([heard.duration(signal), readSoundTrack(twin.playlist, signal)]);
+			if (signal.aborted) return null;
+			if (mine > 0 && theirs && Math.abs(theirs.duration - mine) <= SAME_LENGTH) {
+				const all = reference.map((r) => ({ ...r, end: Math.min(r.end, mine) })).filter((r) => r.end > r.start);
+				options.onFound?.(all);
+				return finish(all);
+			}
+			return finish(await locate(heard, twin.playlist, reference, signal, options.onFound, true));
+		}
 	}
 	// Else a neighbour's, compared with the episode on its far side (never this one).
 	for (const step of [1, -1]) {

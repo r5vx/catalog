@@ -26,6 +26,8 @@
 		// Kept since 2026-10-25 (older stops don't have them):
 		what?: string;
 		stoppedSeconds?: number;
+		/** Still loading 8 s after a jump (Skip Intro, back 10 s): counted from the jump. */
+		afterJump?: boolean;
 		ended?: 'played' | 'still' | 'left';
 		pieceCameAfter?: number | null;
 		hevc?: boolean;
@@ -97,7 +99,8 @@
 		return 'No clear cause in the numbers.';
 	}
 
-	const lasted = (stop: Stop) =>
+	const lasted = (stop: Stop) => (stop.afterJump && stop.stoppedSeconds != null ? 'After a jump: ' : '') + (lastedFor(stop) ?? '');
+	const lastedFor = (stop: Stop) =>
 		stop.stoppedSeconds == null ? null : stop.ended === 'still' ? 'still stopped after 30 s' : stop.ended === 'left' ? `${stop.stoppedSeconds} s, then left or changed` : `${stop.stoppedSeconds} s`;
 </script>
 

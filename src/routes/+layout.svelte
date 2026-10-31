@@ -3,6 +3,7 @@
 	import UpdateBanner from '$lib/UpdateBanner.svelte';
 	import TvUpdated from '$lib/tv/TvUpdated.svelte';
 	import SigninBanner from '$lib/SigninBanner.svelte';
+	import NetworkBanner from '$lib/NetworkBanner.svelte';
 	import ConfirmDialog from '$lib/ConfirmDialog.svelte';
 	import RatePrompt from '$lib/RatePrompt.svelte';
 	import SideNav from '$lib/SideNav.svelte';
@@ -13,6 +14,7 @@
 	import { startTv } from '$lib/tv';
 	import { inkFor, DEFAULT_ACCENT } from '$lib/accent';
 	import { backgroundPreview } from '$lib/backgroundPreview.svelte';
+	import { sendKeptPlaces } from '$lib/phoneKeep.svelte';
 	import type { Snippet } from 'svelte';
 	import type { LayoutData } from './$types';
 
@@ -39,6 +41,16 @@
 
 	// On a TV (the Fire TV app), the remote's arrows move around the page.
 	onMount(startTv);
+
+	// The phone app (the secure Tailscale address, Settings → Phones): its offline page is made
+	// ready (static/sw.js), and places from watching with no connection are handed back. Never
+	// on the computer Catalog runs on, nor on a plain http:// address.
+	onMount(() => {
+		const local = /^(localhost|127\.|\[::1\])/.test(location.hostname);
+		if (!window.isSecureContext || local || location.protocol !== 'https:' || !('serviceWorker' in navigator)) return;
+		navigator.serviceWorker.register('/sw.js').catch(() => {});
+		sendKeptPlaces().catch(() => {});
+	});
 
 	// Opening Settings from anywhere: remember the page and scroll position to go back to.
 	beforeNavigate(({ from, to }) => {
@@ -97,6 +109,7 @@
 	<UpdateBanner />
 	<TvUpdated />
 	<SigninBanner signin={data?.showboxSignin} />
+	<NetworkBanner network={data?.publicNetwork} />
 	{@render children()}
 	<ConfirmDialog />
 	<!-- "Rate it" after leaving the player (not over it, nor on a TV's screens). -->

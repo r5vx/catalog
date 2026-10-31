@@ -67,12 +67,20 @@ sub onPlan(event as Object)
     content.url = plan.url
     content.streamFormat = plan.format
     content.httpHeaders = videoHeaders(plan.headers)
+    ' Only the top quality, never lower by itself (as on the computer and Fire TV).
+    if plan.minBandwidth <> invalid and plan.minBandwidth > 0 then content.MinBandwidth = plan.minBandwidth
     name = plan.title
     if plan.type = "tv" then
         name = name + "  ·  S" + text(plan.season) + " E" + text(plan.episode)
         if plan.episodeName <> "" then name = name + "  ·  " + plan.episodeName
     end if
     content.title = name
+    ' Preview pictures while fast-forwarding and rewinding: the computer's (/api/roku/bif).
+    if plan.bif <> invalid then
+        content.HDBifUrl = plan.bif
+        content.SDBifUrl = plan.bif
+        content.FHDBifUrl = plan.bif
+    end if
     ' Where to start: where it was left (or, after a fresh link, where it stopped working).
     if m.retryAt > 0 then
         content.playStart = m.retryAt

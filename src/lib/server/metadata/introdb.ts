@@ -16,11 +16,24 @@ import type { SkipSegment } from './skiptimes';
 const API = 'https://api.introdb.app/segments';
 const HOUR = 60 * 60 * 1000;
 
-type Part = { start_sec: number | null; end_sec: number | null } | null;
+type Part = { start_sec: number | null; end_sec: number | null; submission_count?: number } | null;
 type Answer = { intro?: Part; recap?: Part; outro?: Part };
 
+/**
+ * Parts IntroDB has wrong, left out: by IMDb id, then season (0: every season). Each was sent by
+ * one person, and nobody has corrected it there.
+ * - Chernobyl has no intro. All five episodes' "intros" came in one upload (2026-04-08, within
+ *   3 s): the 9-s "CHERNOBYL" title card (E1 6:25, E4 3:45, E5 5:19), or a part of the recap (E2, E3).
+ */
+const WRONG: Record<string, Record<number, SkipSegment['type'][]>> = {
+	tt7366338: { 1: ['intro'] }
+};
+
+export const isWrong = (imdb: string, season: number, type: SkipSegment['type']) =>
+	Boolean(WRONG[imdb]?.[season]?.includes(type) || WRONG[imdb]?.[0]?.includes(type));
+
 /** The show's IMDb id, through TMDB (kept a month; '' when it has none). */
-async function imdbIdOf(title: string): Promise<string | null> {
+export async function imdbIdOf(title: string): Promise<string | null> {
 	const key = `imdb-id|${title.toLowerCase()}`;
 	const kept = getOrderCache(key);
 	if (kept && Date.now() - kept.at < 30 * 24 * HOUR) return kept.value as string;
@@ -60,7 +73,8 @@ export async function introDbTimes(title: string, season: number, episode: numbe
 		const end = part?.end_sec ?? null;
 		// Sensible for this file: a part of 5 s or more, inside it.
 		if (start === null || end === null || end - start < 5 || end > duration + 5) continue;
-		segments.push({ type, start, end: Math.min(end, duration) });
+		if (isWrong(imdb, season, type)) continue;
+		segments.push({ type, start, end: Math.min(end, duration), votes: part?.submission_count ?? 1 });
 	}
 	return segments;
 }

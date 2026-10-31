@@ -7,8 +7,8 @@ import { consumePdfToken } from '$lib/server/pdf';
 import { scheduleBackfill } from '$lib/server/backfill';
 import { recategorizeAnime } from '$lib/server/recategorize';
 import { watchOutsideRequests } from '$lib/server/slowRequests';
-import { forgetFinishedSubtitles, profileExists } from '$lib/server/db/queries';
-import { withProfile, MAIN_PROFILE } from '$lib/server/profile';
+import { forgetFinishedSubtitles, listProfiles, profileExists } from '$lib/server/db/queries';
+import { withProfile, MAIN_PROFILE, onThisComputer } from '$lib/server/profile';
 import { keepShowboxSigninFresh } from '$lib/server/showboxSignin';
 import { clearOldStrips } from '$lib/server/previewStrips';
 import { keepWithinLimit, tellAppItsShare } from '$lib/server/storage';
@@ -16,6 +16,7 @@ import { moveOffAniList } from '$lib/server/offAniList';
 import { scheduleNewEpisodeChecks } from '$lib/server/newEpisodes';
 import { noteOwnAddress } from '$lib/server/ownFetch';
 import { resumeDownloads } from '$lib/server/downloads';
+import { publicNetwork } from '$lib/server/networkType';
 import { liveSchedule } from '$lib/server/sources/daddylive';
 import { checkNewReplays } from '$lib/server/replayAnswer';
 import { withArt } from '$lib/server/teamArt';
@@ -57,6 +58,9 @@ scheduleNewEpisodeChecks();
 // Downloads left unfinished when Catalog closed carry on.
 resumeDownloads();
 
+// Whether Windows has set the network to Public (the computer's notice; networkType.ts).
+publicNetwork();
+
 // Live TV and Replays ready before they're opened (they took 2–5 s to open each time), and kept
 // fresh every 10 minutes: the schedule, its pictures and scores, and the replays.
 const warmLive = () => {
@@ -83,7 +87,8 @@ if (typeof process.send === 'function') process.on('disconnect', () => process.e
 /** Icons and the web manifest stay reachable so "Add to Home Screen" works. */
 // catalog-tv.apk: the TV's Downloader app fetches it before the TV could ever enter a PIN.
 // /api/roku/hello and /api/roku/login: the Roku app asks whether there's a PIN, then sends it.
-const PUBLIC_PATHS = ['/manifest.webmanifest', '/favicon.ico', '/api/diagnostics', '/api/watch/save-token', '/api/watch/debug', '/catalog-tv.apk', '/api/roku/hello', '/api/roku/login'];
+// /sw.js and /offline.html: the phone app's offline page, which opens with no connection at all.
+const PUBLIC_PATHS = ['/manifest.webmanifest', '/sw.js', '/offline.html', '/favicon.ico', '/api/diagnostics', '/api/watch/save-token', '/api/watch/debug', '/catalog-tv.apk', '/api/roku/hello', '/api/roku/login'];
 const isPublic = (path: string) => PUBLIC_PATHS.includes(path) || path.startsWith('/icon');
 
 const FORM_TYPES = ['application/x-www-form-urlencoded', 'multipart/form-data', 'text/plain'];
@@ -128,10 +133,27 @@ function checkSameOrigin(event: RequestEvent): void {
 	}
 }
 
+/** Where this request is from: the computer Catalog runs on, or another device. */
+function fromThisComputer(event: RequestEvent): boolean {
+	let address = '';
+	try {
+		address = event.getClientAddress();
+	} catch {}
+	return onThisComputer(event.request.headers, address);
+}
+
+/** The profile a device picked (its catalog_profile cookie), if it still exists. */
+function chosenProfile(event: RequestEvent): number | null {
+	const value = event.cookies.get('catalog_profile');
+	if (value === undefined) return null;
+	const chosen = Number(value);
+	return Number.isInteger(chosen) && profileExists(chosen) ? chosen : null;
+}
+
 /**
- * Who's watching: a TV's chosen profile (its catalog_profile cookie), in the TV layout only.
- * The TV layout previewed on a computer counts as a TV until you leave it for another page, so
- * the computer's own Catalog is always the owner's.
+ * Who's watching: a TV's or a phone's chosen profile (its catalog_profile cookie). The TV layout
+ * previewed on a computer counts as a TV until you leave it for another page, so the computer's
+ * own Catalog is always the owner's.
  */
 function profileFor(event: RequestEvent): number {
 	const path = event.url.pathname;
@@ -146,9 +168,27 @@ function profileFor(event: RequestEvent): number {
 			else event.cookies.delete('catalog_tv_preview', { path: '/', secure: false });
 		}
 	}
-	if (!(fromTv || previewing) || readSettings().tvLayout === 'full') return MAIN_PROFILE;
-	const chosen = Number(event.cookies.get('catalog_profile') ?? MAIN_PROFILE);
-	return Number.isInteger(chosen) && profileExists(chosen) ? chosen : MAIN_PROFILE;
+	if (fromTv || previewing) {
+		if (readSettings().tvLayout === 'full') return MAIN_PROFILE;
+		return chosenProfile(event) ?? MAIN_PROFILE;
+	}
+	// A phone (or another computer): whoever was picked on it.
+	if (fromThisComputer(event)) return MAIN_PROFILE;
+	return chosenProfile(event) ?? MAIN_PROFILE;
+}
+
+/**
+ * A phone's first visit, with more than one person in the house: "Who's watching?" first
+ * (/profiles), once; the answer is kept on that phone. Not the TVs (they have their own), not
+ * the computer Catalog runs on, and not for the app's own requests.
+ */
+function mustPickProfile(event: RequestEvent): boolean {
+	const path = event.url.pathname;
+	if (event.request.method !== 'GET') return false;
+	if (/^\/(api|profiles|login|welcome|tv|_app)(\/|$)/.test(path) || isPublic(path) || /\.[a-z0-9]+$/i.test(path)) return false;
+	if (/CatalogTV\//.test(event.request.headers.get('user-agent') ?? '') || event.cookies.get('catalog_tv_preview')) return false;
+	if (fromThisComputer(event) || chosenProfile(event) !== null) return false;
+	return listProfiles().length > 1;
 }
 
 /**
@@ -199,6 +239,11 @@ export const handle: Handle = async ({ event, resolve }) => {
 		}
 
 		if (signedIn && onLoginPage) redirect(303, '/');
+	}
+
+	if (mustPickProfile(event)) {
+		const next = event.url.pathname.replace(/\/__data\.json$/, '') + event.url.search;
+		redirect(303, `/profiles?next=${encodeURIComponent(next)}`);
 	}
 
 	return resolveWith(event);
