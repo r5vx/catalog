@@ -221,26 +221,36 @@
 	 * anime put Dungeon Meshi E10 on the dub, the choice made for Re:Zero (2026-10-30).
 	 */
 	const showAudioKey = () => `catalog:showAudio:${(lastResolveArgs?.title ?? '').toLowerCase()}`;
+	/** This show's choice as kept in the library (/api/watch/show-audio), asked as the title opens. */
+	let serverShowAudio = '';
 	function animeAudio(): string {
 		try {
-			return localStorage.getItem(showAudioKey()) ?? localStorage.getItem(ANIME_AUDIO) ?? 'Japanese';
+			return localStorage.getItem(showAudioKey()) ?? (serverShowAudio || null) ?? localStorage.getItem(ANIME_AUDIO) ?? 'Japanese';
 		} catch {
-			return 'Japanese';
+			return serverShowAudio || 'Japanese';
 		}
 	}
 	function keptShowAudio(): string {
 		try {
-			return localStorage.getItem(showAudioKey()) ?? '';
+			return localStorage.getItem(showAudioKey()) ?? serverShowAudio;
 		} catch {
-			return '';
+			return serverShowAudio;
 		}
 	}
-	/** Japanese or the dub, as heard in this show: its next episodes start the same way. */
+	/** Japanese or the dub, as heard in this show: its next episodes start the same way (here and in the library). */
 	function keepShowAudio(audio: string) {
-		if (!lastResolveArgs?.title || !audio) return;
+		const title = lastResolveArgs?.title;
+		if (!title || !audio) return;
 		try {
 			localStorage.setItem(showAudioKey(), audio);
 		} catch {}
+		if (serverShowAudio === audio) return;
+		serverShowAudio = audio;
+		fetch('/api/watch/show-audio', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title, audio })
+		}).catch(() => {});
 	}
 
 	/** "1080p · 2.1 GB", or for another source's file "Japanese audio" / "English dub". */
@@ -1047,9 +1057,12 @@
 		seekTo(Math.max(0, Math.min(cap, videoEl.currentTime + delta)));
 	}
 
+	/** An intro or recap lands on its last second (owner: Skip Intro cut into the start of Dungeon Meshi's story). */
+	const SKIP_LEAVES = 1;
 	function skipSegment(seg: SkipSegment) {
 		const cap = duration > 0.5 ? duration - 0.5 : duration;
-		seekTo(Math.min(cap, seg.end));
+		const to = seg.type === 'credits' ? seg.end : Math.max(videoEl?.currentTime ?? 0, seg.end - SKIP_LEAVES);
+		seekTo(Math.min(cap, to));
 	}
 
 	function toggleMute() {
@@ -1184,15 +1197,19 @@
 				season: ep?.season ?? 0,
 				episode: ep?.episode ?? 0,
 				fid,
-				lang: language
+				lang: language,
+				// Heard from here first.
+				from: videoEl?.currentTime ?? 0
 			})
 		}).catch(() => {});
-		// It takes the computer about half a minute; looked for every 15 seconds for 3 minutes.
+		// The computer keeps what it has heard as it goes: taken every 10 seconds, more each time,
+		// until it has all of it, for up to 15 minutes. (It looked for 3 minutes, and a laptop busy
+		// with other TVs' jobs answered later: mom's Chernobyl E5 was never timed, 2026-10-31.)
 		let tries = 0;
 		const look = setInterval(async () => {
 			const current = hlsAudioTracks.find((t) => t.id === hlsActiveAudio)?.url ?? '';
-			if (++tries > 12 || !subSync || current !== track || (await subSync.useKept(fid, language))) clearInterval(look);
-		}, 15_000);
+			if (++tries > 90 || !subSync || current !== track || (await subSync.useKeptSoFar(fid, language)) === 'all') clearInterval(look);
+		}, 10_000);
 	}
 
 	// Moving the subtitles while it plays; listening as it plays when there's no sound track.
@@ -1325,11 +1342,58 @@
 
 	function setVol(e: Event) {
 		if (!videoEl) return;
-		const v = Math.round(volumeOf(+(e.target as HTMLInputElement).value) * 100) / 100;
+		const input = e.target as HTMLInputElement;
+		const v = Math.round(volumeOf(+input.value) * 100) / 100;
 		volume = v;
 		applyVolume(v);
 		keepVolume(v);
+		placeVolTip(input);
 	}
+
+	/** Double-click the volume slider: back to 100%. */
+	async function resetVol(e: Event) {
+		if (!videoEl) return;
+		const input = e.target as HTMLInputElement;
+		volume = 1;
+		if (muted) toggleMute();
+		applyVolume(1);
+		keepVolume(1);
+		// (Once the slider has moved to 100%, so the percentage sits over its knob.)
+		await tick();
+		placeVolTip(input);
+	}
+
+	/*
+	 * The percentage over the slider's knob while it's dragged (and a moment after). It sits in the
+	 * volume group, not the slider, whose box is clipped so it can slide open.
+	 */
+	let volTip = $state<{ x: number; showing: boolean }>({ x: 0, showing: false });
+	let volTipTimer: ReturnType<typeof setTimeout> | undefined;
+	function placeVolTip(input: HTMLInputElement) {
+		const group = input.closest('.vol-group');
+		if (!group) return;
+		const box = input.getBoundingClientRect();
+		const thumb = 12;
+		const x = box.left - group.getBoundingClientRect().left + thumb / 2 + (+input.value) * (box.width - thumb);
+		volTip = { x, showing: true };
+		clearTimeout(volTipTimer);
+		volTipTimer = setTimeout(() => (volTip = { ...volTip, showing: volDragging }), 700);
+	}
+	let volDragging = false;
+	function volDragStart(e: PointerEvent) {
+		volDragging = true;
+		placeVolTip(e.currentTarget as HTMLInputElement);
+		const end = () => {
+			volDragging = false;
+			clearTimeout(volTipTimer);
+			volTipTimer = setTimeout(() => (volTip = { ...volTip, showing: false }), 700);
+			window.removeEventListener('pointerup', end);
+			window.removeEventListener('pointercancel', end);
+		};
+		window.addEventListener('pointerup', end);
+		window.addEventListener('pointercancel', end);
+	}
+	onDestroy(() => clearTimeout(volTipTimer));
 
 	/** Arrow keys: 10% at a time up to 100%, then 25%. */
 	function stepVolume(up: boolean) {
@@ -2985,6 +3049,8 @@
 			currentTime: ct, duration: dur,
 			subUrl: subtitlesOn ? activeSubUrl : '',
 			subDelay: subtitleDelay,
+			// (Auto-timing's speed goes with its delay: one without the other is way out later in.)
+			subRate: subAutoSync ? subtitleRate : 1,
 			subFileName: subtitlesOn ? activeSubFileName : '',
 			posterUrl: watchPosterUrl,
 			shareKey, fid: activeFileFid
@@ -3091,7 +3157,7 @@
 		if (progressSaveTimer) { clearInterval(progressSaveTimer); progressSaveTimer = null; }
 	}
 
-	type SavedPlace = { at: number; subUrl?: string; subFileName?: string; subDelay?: number };
+	type SavedPlace = { at: number; subUrl?: string; subFileName?: string; subDelay?: number; subRate?: number };
 
 	/**
 	 * Where this video was left, in seconds (0: from the start), with the subtitles saved there.
@@ -3110,7 +3176,7 @@
 			const resp = await fetch(`/api/watch/progress?title=${encodeURIComponent(baseTitle)}&type=${showType}&season=${s}&episode=${e}`);
 			if (!resp.ok) return { at: 0 };
 			const data = await resp.json();
-			if (handedOver !== null) return { at: handedOver, subUrl: data?.subUrl, subFileName: data?.subFileName, subDelay: data?.subDelay };
+			if (handedOver !== null) return { at: handedOver, subUrl: data?.subUrl, subFileName: data?.subFileName, subDelay: data?.subDelay, subRate: data?.subRate };
 			if (!data) return { at: 0 };
 			let at = 0;
 			const pct = data.duration > 0 ? data.currentTime / data.duration : 0;
@@ -3125,7 +3191,7 @@
 			}
 			// Finished with nothing after it (the last episode, a film): from the start, not the end.
 			if (data.currentTime > 5 && pct < 0.95) at = data.currentTime;
-			return { at, subUrl: data.subUrl, subFileName: data.subFileName, subDelay: data.subDelay };
+			return { at, subUrl: data.subUrl, subFileName: data.subFileName, subDelay: data.subDelay, subRate: data.subRate };
 		} catch {
 			return { at: handedOver ?? 0 };
 		}
@@ -3144,8 +3210,15 @@
 		if (place.subUrl && (!hearingDub() || forDub)) {
 			const sub = { id: '0', url: place.subUrl, lang: 'eng', language: 'English', fileName: place.subFileName || '' };
 			// Kept for the show too, so its next episode opens with them on however it's opened.
-			loadSub(sub).then((ok) => {
+			loadSub(sub).then(async (ok) => {
 				if (ok && !keptShowSubs()) keepShowSubs(sub);
+				// Their speed with their delay, once they're in (new subtitles start auto-timing over at
+				// speed 1). Mom's Chernobyl E5 came back at −49 s and speed 1 instead of 0.959: 90 s out.
+				const rate = Number(place.subRate) || 1;
+				if (ok && subAutoSync && rate !== 1 && !subSync?.fits) {
+					await tick();
+					subtitleRate = rate;
+				}
 			});
 			if (place.subDelay) subtitleDelay = place.subDelay;
 		}
@@ -5233,9 +5306,14 @@
 					return;
 				}
 				debugInfo = (debugInfo ? debugInfo + ' | ' : '') + 'fatal: ' + errDetail;
-				// A piece the server won't give: the episode's other copy plays on (see above).
+				// A piece the server won't give: the episode's other copy plays on (see above). Only when
+				// it said so (404 or a server error): a piece that was just slow (a timeout) gets a fresh
+				// link below. Re:Zero S2E25 on Showbox switched copies "missing a part" when paused, while
+				// the player loaded minutes ahead and auto-timing fetched the sound track (2026-10-31).
 				const failedPiece = (data as { frag?: Piece }).frag;
-				if (data.type === Hls.ErrorTypes.NETWORK_ERROR && (data.details === 'fragLoadError' || data.details === 'fragLoadTimeOut') && failedPiece && !prevStreamUrl && !liveMode && switchFromMissingPiece(failedPiece)) return;
+				const refusedCode = Number((data as any).response?.code) || 0;
+				const refused = data.details === 'fragLoadError' && (refusedCode >= 500 || refusedCode === 404);
+				if (data.type === Hls.ErrorTypes.NETWORK_ERROR && refused && failedPiece && !prevStreamUrl && !liveMode && switchFromMissingPiece(failedPiece)) return;
 				if (prevStreamUrl) {
 					if (qualityTimer) { clearTimeout(qualityTimer); qualityTimer = null; }
 					showQualityToast('That file could not be played. Try a different one.');
@@ -5579,11 +5657,20 @@
 		stalledOut = false;
 		streamRefreshes = 0;
 		lastResolveArgs = { title, type, year };
-		// Anime starts in Japanese (asked alongside; the audio is put right when it answers).
+		// Anime starts in Japanese (asked alongside; the audio is put right when it answers), or in
+		// whatever this show was last heard in, as the library keeps it.
 		isAnime = false;
+		serverShowAudio = '';
+		const showAudioSoon = fetch(`/api/watch/show-audio?${new URLSearchParams({ title })}`)
+			.then((r) => (r.ok ? r.json() : {}))
+			.then((r: { audio?: string }) => {
+				if (lastResolveArgs?.title === title) serverShowAudio = r.audio ?? '';
+			})
+			.catch(() => {});
 		animeKnown = fetch(`/api/watch/is-anime?${new URLSearchParams({ title, type: type === 'movie' ? 'movie' : 'tv', year: year ?? '' })}`)
 			.then((r) => (r.ok ? r.json() : { anime: false }))
-			.then((r: { anime?: boolean }) => {
+			.then(async (r: { anime?: boolean }) => {
+				await showAudioSoon;
 				if (lastResolveArgs?.title !== title) return false;
 				isAnime = r.anime === true;
 				if (isAnime) {
@@ -6833,8 +6920,9 @@
 									{/if}
 								</button>
 								<div class="vol-slider">
-									<input type="range" min="0" max="1" step="0.005" value={muted ? 0 : sliderOf(volume)} oninput={setVol} title={`Volume ${Math.round(volume * 100)}%`} />
+									<input type="range" min="0" max="1" step="0.005" value={muted ? 0 : sliderOf(volume)} oninput={setVol} ondblclick={resetVol} onpointerdown={volDragStart} title={volTip.showing ? undefined : `Volume ${Math.round(volume * 100)}% (double-click for 100%)`} />
 								</div>
+								<span class="vol-tip" class:showing={volTip.showing} style:left="{volTip.x}px" aria-hidden="true">{muted ? 0 : Math.round(volume * 100)}%</span>
 							</div>
 
 							{#if liveMode}
@@ -7555,7 +7643,10 @@
 	.ctrl-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.1); }
 	.ctrl-btn.active { color: var(--accent, #d97a83); }
 
-	.vol-group { display: flex; align-items: center; gap: 0; }
+	.vol-group { display: flex; align-items: center; gap: 0; position: relative; }
+	/* The percentage over the knob while dragging (it follows the knob, and fades after letting go). */
+	.vol-tip { position: absolute; bottom: calc(100% + 6px); transform: translateX(-50%); padding: 3px 7px; border-radius: 5px; background: rgba(18, 18, 18, 0.92); color: #fff; font-size: 0.75rem; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity 0.15s ease; }
+	.vol-tip.showing { opacity: 1; }
 	.vol-slider { width: 0; overflow: hidden; transition: width 0.2s ease; padding-right: 0; }
 	.vol-group:hover .vol-slider { width: 138px; padding-right: 8px; }
 	.vol-slider input[type='range'] { width: 130px; height: 4px; -webkit-appearance: none; appearance: none; background: rgba(255, 255, 255, 0.25); border-radius: 2px; outline: none; cursor: pointer; vertical-align: middle; }

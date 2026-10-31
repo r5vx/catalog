@@ -16,7 +16,6 @@ import { moveOffAniList } from '$lib/server/offAniList';
 import { scheduleNewEpisodeChecks } from '$lib/server/newEpisodes';
 import { noteOwnAddress } from '$lib/server/ownFetch';
 import { resumeDownloads } from '$lib/server/downloads';
-import { publicNetwork } from '$lib/server/networkType';
 import { liveSchedule } from '$lib/server/sources/daddylive';
 import { checkNewReplays } from '$lib/server/replayAnswer';
 import { withArt } from '$lib/server/teamArt';
@@ -57,9 +56,6 @@ scheduleNewEpisodeChecks();
 
 // Downloads left unfinished when Catalog closed carry on.
 resumeDownloads();
-
-// Whether Windows has set the network to Public (the computer's notice; networkType.ts).
-publicNetwork();
 
 // Live TV and Replays ready before they're opened (they took 2–5 s to open each time), and kept
 // fresh every 10 minutes: the schedule, its pictures and scores, and the replays.

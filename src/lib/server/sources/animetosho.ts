@@ -342,16 +342,18 @@ const keeping = new Set<string>();
 /**
  * Keeps this season's English subtitles on this PC, from `episode` on, so the rest of the season
  * plays with them instantly (and without AnimeTosho, should it be down). Runs in the
- * background, one episode at a time; stops after two episodes in a row with nothing (the end of
- * the season, or episodes not out yet). Files already kept aren't fetched again.
+ * background, one episode at a time; stops at the season's last (`left`: how many episodes come
+ * after this one, when TMDB knows), or after two episodes in a row with nothing (episodes not out
+ * yet). Files already kept aren't fetched again.
  */
-export function keepSeasonSubtitles(show: string, names: string[], season: number, episode: number, overall?: number): void {
+export function keepSeasonSubtitles(show: string, names: string[], season: number, episode: number, overall?: number, left?: number): void {
 	const key = `${show.toLowerCase()}|${season}`;
 	if (keeping.has(key)) return;
 	keeping.add(key);
 	(async () => {
 		let misses = 0;
-		for (let ep = episode; ep < episode + 30 && misses < 2; ep++) {
+		// (This episode is asked again first: it's kept for six hours, so that costs nothing.)
+		for (let ep = episode; ep < episode + 30 && ep <= episode + (left ?? 29) && misses < 2; ep++) {
 			const tracks = await toshoSubtitles(names, season, ep, overall ? overall + ep - episode : undefined);
 			misses = tracks.length ? 0 : misses + 1;
 			for (const track of tracks) {

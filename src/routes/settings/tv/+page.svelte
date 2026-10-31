@@ -1,5 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import NetworkBanner from '$lib/NetworkBanner.svelte';
+	import RokuInstall from '$lib/RokuInstall.svelte';
+	import { FIRE_TV_CODE } from '$lib/tvInstall';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -36,6 +39,8 @@
 </script>
 
 <svelte:head><title>Watch on TV · Catalog</title></svelte:head>
+
+{#await data.publicNetwork then network}<NetworkBanner {network} />{/await}
 
 <section>
 	<h2>On the Fire TV</h2>
@@ -91,9 +96,15 @@
 				device name seven times.)
 			</li>
 			<li>
-				In Downloader, type
-				{#if where}<strong class="tabular">http://{where}/catalog-tv.apk</strong>{:else}this computer's address followed by <strong>/catalog-tv.apk</strong>{/if}
-				and press Go, then Install.
+				{#if FIRE_TV_CODE}
+					In Downloader, type the code <strong class="tabular">{FIRE_TV_CODE}</strong> and press Go, then Install.
+					(Or type
+					{#if where}<strong class="tabular">http://{where}/catalog-tv.apk</strong>{:else}this computer's address followed by <strong>/catalog-tv.apk</strong>{/if}.)
+				{:else}
+					In Downloader, type
+					{#if where}<strong class="tabular">http://{where}/catalog-tv.apk</strong>{:else}this computer's address followed by <strong>/catalog-tv.apk</strong>{/if}
+					and press Go, then Install.
+				{/if}
 			</li>
 			<li>
 				Open <strong>Catalog</strong> from the TV's apps. It finds this computer by itself; if it doesn't, type
@@ -104,6 +115,15 @@
 			If Windows asks whether Catalog may use the network, allow it on private networks — otherwise the TV can't
 			reach it.
 		</p>
+	</section>
+
+	<section>
+		<h2>Catalog on a Roku</h2>
+		<p class="muted">
+			Like the Fire TV, the Roku shows the Catalog on this computer. Catalog puts the app on the Roku from here; it
+			finds this computer by itself when it opens.
+		</p>
+		<RokuInstall />
 	</section>
 
 	{#if data.addresses.length > 1}

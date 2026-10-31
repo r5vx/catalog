@@ -26,6 +26,7 @@ export const load: PageServerLoad = async () => {
 		febboxAccounts().map(async (account) => ({
 			key: account.key,
 			main: account.main,
+			name: account.name,
 			expired: expired(account.token),
 			flow: await febboxFlow(account.token).catch(() => null)
 		}))

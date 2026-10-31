@@ -456,6 +456,12 @@ once('progress-per-profile', () => {
 	}
 });
 
+// How fast the subtitles run against the video (auto-timing's rate: 0.959 for subtitles made for a
+// 25 fps copy), kept with their delay. Only the delay came back on resuming, so Chernobyl E5's were a
+// minute and a half out until auto-timing fitted again, and for good on mom's TV (2026-10-31).
+// (After the move to per-profile progress above, so a new library's table gets it too.)
+try { db.exec('ALTER TABLE watch_progress ADD COLUMN sub_rate REAL NOT NULL DEFAULT 1'); } catch {}
+
 /**
  * Shows someone has watched to the last episode there was to play (src/lib/server/newEpisodes.ts).
  * They leave Continue Watching, and come back with a "New" mark when a later episode can be

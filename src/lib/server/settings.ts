@@ -54,6 +54,8 @@ export type Settings = {
 	febboxToken?: string;
 	/** More Febbox accounts' sign-ins (src/lib/server/febboxAccounts.ts), as a JSON list. */
 	febboxMore?: string;
+	/** Each Febbox account's name or email as Febbox shows it, by account (febboxAccountOf), as JSON. */
+	febboxNames?: string;
 	/** '0' centres the layout; otherwise (the default) it stretches edge-to-edge. */
 	wideLayout?: string;
 	/** '0' turns off the sidebar with the library's sections, Browse and Settings (on by default). */
@@ -81,8 +83,6 @@ export type Settings = {
 	nightUpdateHour?: string;
 	/** The day (YYYY-MM-DD) it last tried, so it tries once a night at most. */
 	nightUpdateTried?: string;
-	/** Networks left Public on purpose ("Not now" on the notice; networkType.ts), as a JSON list of names. */
-	publicNetworkOk?: string;
 };
 
 export function readSettings(): Settings {

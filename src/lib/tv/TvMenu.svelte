@@ -37,7 +37,10 @@
 	const offContinue = (title: string, type: string) =>
 		fetch(`/api/watch/progress?title=${encodeURIComponent(title)}&type=${type}&hide=1`, { method: 'DELETE' });
 
-	function actionsFor(what: TileMenu): Action[] {
+	/** Live TV's Recently watched (src/routes/tv/live): a channel or a replay. */
+	type LiveRecentMenu = { kind: 'liveRecent'; channel?: number; replay?: string };
+
+	function actionsFor(what: TileMenu | LiveRecentMenu): Action[] {
 		if (what.kind === 'continue') {
 			const dismissNew: Action[] = what.newEpisode
 				? [{ label: 'Dismiss new episode', run: () => send('/api/watch/caught-up', { title: what.title, dismiss: true }) }]
@@ -53,6 +56,17 @@
 					}
 				},
 				{ label: 'Remove from Continue Watching', run: () => offContinue(what.title, what.type) }
+			];
+		}
+		if (what.kind === 'liveRecent') {
+			// The Live TV page takes it off its own list (it isn't reloaded by invalidateAll).
+			const forget = async (body: object) => {
+				await send('/api/live/watched', body);
+				window.dispatchEvent(new CustomEvent('catalog:live-forgot', { detail: body }));
+			};
+			return [
+				{ label: 'Remove from Recently watched', run: () => forget(what.replay ? { remove: true, replay: what.replay } : { remove: true, id: what.channel }) },
+				{ label: 'Clear Recently watched', run: () => forget({ remove: 'all' }) }
 			];
 		}
 		if (what.kind === 'library') {
@@ -72,7 +86,7 @@
 	async function openFor() {
 		const from = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('[data-tv-menu]');
 		if (!from || menu) return;
-		let what: TileMenu;
+		let what: TileMenu | LiveRecentMenu;
 		try {
 			what = JSON.parse(from.dataset.tvMenu ?? '');
 		} catch {

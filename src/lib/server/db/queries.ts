@@ -881,6 +881,8 @@ interface WatchProgress {
 	subUrl: string;
 	subDelay: number;
 	subFileName: string;
+	/** How fast the subtitles run against the video (auto-timing's rate; 1 for most). */
+	subRate: number;
 }
 
 export function saveWatchProgress(
@@ -895,25 +897,27 @@ export function saveWatchProgress(
 	subFileName?: string,
 	posterUrl?: string,
 	shareKey?: string,
-	fid?: number
+	fid?: number,
+	subRate?: number
 ): void {
 	// No length yet (duration 0) is "started this episode": it moves to the front of Continue
 	// Watching, but a place already saved in it is kept.
 	db.prepare(`
-		INSERT INTO watch_progress (profile, title, type, season, episode, current_time, duration, sub_url, sub_delay, sub_file_name, poster_url, share_key, fid, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		INSERT INTO watch_progress (profile, title, type, season, episode, current_time, duration, sub_url, sub_delay, sub_file_name, poster_url, share_key, fid, sub_rate, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 		ON CONFLICT (profile, title, type, season, episode)
 		DO UPDATE SET
 			current_time = CASE WHEN excluded.duration > 0 THEN excluded.current_time ELSE watch_progress.current_time END,
 			duration = CASE WHEN excluded.duration > 0 THEN excluded.duration ELSE watch_progress.duration END,
 			sub_url = CASE WHEN excluded.duration > 0 THEN excluded.sub_url ELSE watch_progress.sub_url END,
 			sub_delay = CASE WHEN excluded.duration > 0 THEN excluded.sub_delay ELSE watch_progress.sub_delay END,
+			sub_rate = CASE WHEN excluded.duration > 0 THEN excluded.sub_rate ELSE watch_progress.sub_rate END,
 			sub_file_name = CASE WHEN excluded.duration > 0 THEN excluded.sub_file_name ELSE watch_progress.sub_file_name END,
 			poster_url = CASE WHEN excluded.poster_url != '' THEN excluded.poster_url ELSE watch_progress.poster_url END,
 			share_key = CASE WHEN excluded.share_key != '' THEN excluded.share_key ELSE watch_progress.share_key END,
 			fid = CASE WHEN excluded.fid != 0 THEN excluded.fid ELSE watch_progress.fid END,
 			updated_at = excluded.updated_at
-	`).run(currentProfile(), title, type, season, episode, currentTime, duration, subUrl ?? '', subDelay ?? 0, subFileName ?? '', posterUrl ?? '', shareKey ?? '', fid ?? 0);
+	`).run(currentProfile(), title, type, season, episode, currentTime, duration, subUrl ?? '', subDelay ?? 0, subFileName ?? '', posterUrl ?? '', shareKey ?? '', fid ?? 0, subRate && subRate > 0.5 && subRate < 2 ? subRate : 1);
 }
 
 export function getWatchProgress(
@@ -923,7 +927,7 @@ export function getWatchProgress(
 	episode: number
 ): WatchProgress | null {
 	const row = db
-		.prepare('SELECT title, type, season, episode, "current_time" AS currentTime, duration, sub_url AS subUrl, sub_delay AS subDelay, sub_file_name AS subFileName FROM watch_progress WHERE profile = ? AND title = ? AND type = ? AND season = ? AND episode = ?')
+		.prepare('SELECT title, type, season, episode, "current_time" AS currentTime, duration, sub_url AS subUrl, sub_delay AS subDelay, sub_file_name AS subFileName, sub_rate AS subRate FROM watch_progress WHERE profile = ? AND title = ? AND type = ? AND season = ? AND episode = ?')
 		.get(currentProfile(), title, type, season, episode) as WatchProgress | undefined;
 	return row ? { ...row } : null;
 }
@@ -1506,6 +1510,16 @@ export function noteLiveWatched(channel: number, name: string): void {
 			SELECT key FROM live_saved WHERE profile = ? AND kind = 'recent' ORDER BY saved_at DESC, rowid DESC LIMIT 12
 		)
 	`).run(currentProfile(), currentProfile());
+}
+
+/**
+ * Taken off Live TV's Recently watched: one channel or replay, or all of them. A replay's place
+ * stays in watch_progress (it just stops showing in Continue Watching, which lists it from here).
+ */
+export function forgetLiveWatched(what: { channel: number } | { replay: string } | 'all'): void {
+	if (what === 'all') db.prepare("DELETE FROM live_saved WHERE profile = ? AND kind IN ('recent', 'replay')").run(currentProfile());
+	else if ('replay' in what) unsaveLive('replay', what.replay);
+	else unsaveLive('recent', String(what.channel));
 }
 
 /* ---------------------------------------------------------------- downloads */

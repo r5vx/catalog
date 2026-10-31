@@ -3006,3 +3006,105 @@ every ~10 s per episode, which is what a BIF holds; offered, not built.
   (model download included) at 5.22 s on 15 runs, 5.13 s on 30 two seconds later, 5.24 s on 52 at 80 s;
   hidden page heard 10 s in ~2 s (Ryzen 7 5800X, isolated: true). Player: ESPN captions on → −5.2 at once,
   then −5.3, −5.0; hand −0.5 held 14 s; Reset back to −5.1 then −5.3/−5.2. Not tried on mom's laptop (speed).
+
+## After 3.8.0 (2026-10-31, test build, not released)
+
+### Live TV's Recently watched: remove and clear
+- `live_saved` rows of kind `recent` (channels) and `replay` are the list; `forgetLiveWatched` deletes one or
+  both kinds for the profile. `POST /api/live/watched` takes `{ remove: true, id }`, `{ remove: true, replay }`
+  or `{ remove: 'all' }` (POST, not DELETE, so the Roku's ApiTask needs nothing new).
+- A replay shows in Continue Watching only through `recentReplays()`, so removing it from Recently watched
+  hides it there too; the watch_progress row (its place) is never deleted.
+- Fire TV: the general `TvMenu` reads `data-tv-menu` on the highlighted card; its actions call
+  `invalidateAll`, which doesn't reload Live TV (it fetches its guide itself), hence the
+  `catalog:live-forgot` window event. Its own type stays local to TvMenu: adding it to `TileMenu` broke
+  `/api/roku/rows`' narrowing.
+- In the browser pane (hidden), the highlight after a menu closes isn't restored: `startTvNav` waits for an
+  animation frame. On a real TV it goes to "On now" (`data-tv-autofocus`).
+
+### Public network notice moved to Settings → TV
+- Owner: only when someone is actually connecting TVs. The root layout no longer asks; Settings → TV's load
+  returns `publicNetwork()` as a promise (streamed: the PowerShell check is ~0.75 s), `onThisComputer` only.
+- `publicNetwork()` is async now and waits for a check when its answer is over a minute old. "Not now" and the
+  `publicNetworkOk` setting were removed: on the page for connecting TVs there's nothing to dismiss.
+- A TV can't tell the computer it's failing (the firewall drops its discovery), so "trying to connect" can only be
+  judged on the computer by where the owner is: Settings → TV.
+
+### Install on Roku from Settings (2026-10-31)
+- Rokus answer SSDP `M-SEARCH` with `ST: roku:ecp` (`LOCATION: http://<ip>:8060/`); `GET :8060/query/device-info`
+  needs no password and says `user-device-name`, `friendly-model-name` and `developer-enabled`.
+- The developer installer is `POST http://<ip>/plugin_install`, multipart `mysubmit=Install` + `archive`
+  (the zip), digest auth as `rokudev` with the password set when developer mode was turned on. The first POST
+  gets the 401 challenge; the form is built again for the second. Newer firmware puts the result in a JSON
+  `"messages":[{"text":"Install Success."…}]` inside the page, older in `<font>` tags; "Identical to previous
+  version" also counts. Then `POST :8060/launch/dev` opens it.
+- The packed server finds the zip at `dirname(process.argv[1])/client/catalog-roku.zip` (build/index.js is the
+  forked entry); dev finds `static/`.
+- Only home-network IPv4 addresses are accepted, and only from the computer itself. `CATALOG_ROKU_TEST_PORT`
+  lets 127.0.0.1 and another port stand in for a Roku (testing only).
+
+### Found skips vs the databases' (2026-10-31, Hawkeye)
+- `withFound` used to drop every database part of a kind the skip finder found, wherever it was. The finder
+  hears only the first 6 minutes and the last 7, so a long cold open (Hawkeye S1E1: title at 7:01) gives it
+  the next-longest shared sound, the Marvel Studios logo (~35 s, in every episode, after the recap in E2/E3).
+  Now a database part is replaced only by a found part within 60 s of it; otherwise both are kept.
+- Several parts of one kind are fine everywhere (the progress bar keys by kind + start; Skip uses the part
+  under the playhead).
+
+### Headless Edge printing from a script
+- `msedge --headless=new --print-to-pdf` can return before the PDF is written; deleting the page or profile
+  right after kills the print. `scripts/dev/tv-guide.mjs` waits for the file. It also needs the shell's
+  sandbox off (inside it Edge exits with nothing printed).
+
+### TV subtitle timing waited on the laptop (2026-10-31, mom's Chernobyl E5)
+- A TV with a Showbox copy (separate sound track) never hears the track itself: it asks the computer
+  (`/api/watch/speech/prepare` → `/speech-maker` in a hidden window) and takes the kept speech. It also times from
+  the sound hls.js appends (`appended`), which works in desktop Chromium; on a real Fire TV it's unproven.
+- The hidden jobs run one at a time (main.cjs `stripQueue`): preview pictures for this and the next episode
+  (`askComputerForPictures`, 1 s apart), intros (`/skip-maker`), and the speech. The TV used to look for the speech
+  for 3 minutes only. Speech jobs now go first (16-min cap), start at the TV's place, keep each part as they go
+  (`.partial` marker, `X-Speech-Partial`), and the TV takes more every 10 s for 15 minutes (`useKeptSoFar`).
+- `useKeptSoFar` must not `reset()` between parts: reset → `newCues` → `useCues(…, null)` → `onRate(1)`, and a
+  subtitle running 4% fast was ~50 s out at 22 minutes until the next fit. The worker's `heard` replaces its speech,
+  so posting the longer list is enough.
+- Off-screen TV simulation: fork `build/index.js` (or `node_modules/vite/bin/vite.js dev` for `window.subSync`) with
+  IPC, answer `make-strip` by opening the maker page `&stay=1` in a second headless Edge, and play the TV in headless
+  Edge with `--user-agent=… CatalogTV/1.3`. `Page.addScriptToEvaluateOnNewDocument` needs `Page.enable` first.
+  Kill test Edge by its profile path (the launcher exits; taskkill /T misses the rest).
+- The TV's player address is `/watch?title=&type=tv&auto=1&year=&resume_s=&resume_e=` (`playHref` in tiles.ts);
+  without `auto=1` it stops at the "which title?" list.
+
+### localStorage that never reached the disk (2026-10-31)
+- The owner's installed app (Electron 38.8.6, userData `%APPDATA%\catalog`) never opened `Local Storage\leveldb`
+  after 2026-10-10 (LevelDB rotates `LOG` on every open) and no Catalog key is in it, while `Session Storage` is
+  written. Every localStorage memory was lost on each restart. Catalog's own code keeps a key across a restart in a
+  hidden test (a starter file that no-ops `BrowserWindow.prototype.show` then requires electron/main.cjs; NODE_OPTIONS
+  `--require` runs before Electron's `electron` module exists, so it can't be used), with a fresh profile or a copy
+  of the owner's storage folder. Cause not found. Mitigations: `session.defaultSession.flushStorageData()` every
+  minute, at before-quit and before quitAndInstall; anime audio per show also in the library
+  (`/api/watch/show-audio`, `show-audio|<profile>|<title>` in watch_order_cache); `/api/diagnostics` → `storage`.
+- To read Chromium's storage from outside: copy `Local Storage\leveldb` and grep the `.log`/`.ldb` files for
+  `catalog:` (keys are Latin-1 after `_http://127.0.0.1:4173\0\1`).
+
+### "Missing on its server" only on a refusal (2026-10-31)
+- hls.js's fatal `fragLoadTimeOut` (and `fragLoadError` without a 404/5xx) used to call `switchFromMissingPiece`;
+  while paused the player loads minutes ahead and auto-timing fetches the whole sound track from the same server,
+  so a slow far-ahead piece switched copies with the "missing a part" toast. Now only a refused piece does; a
+  timeout falls through to `refreshStream()`.
+
+### AnimeTosho keep-ahead past the season (2026-10-31)
+- `keepSeasonSubtitles` walked on until two empty episodes, each `toshoSubtitles` firing ~15 searches at once; at a
+  season's last episode that was ~45 searches for episodes that don't exist. It now gets `left` from TMDB's season
+  size (`tmdb.season`/`tmdb.episode`, the TMDB numbering).
+
+### Adding Febbox accounts (2026-10-31)
+- The desktop app's sign-in window (`#catalog-more`, in-memory partition `febbox-signin`) already confirms the sign-in
+  by fetching `/console/user_info` inside Febbox's page (code 1). The server's own check (`isSignedIn`, Node fetch of
+  /console) can be turned away by Cloudflare (null), which used to drop the account. The window now sends
+  `confirmed` and the name; only a pasted key is checked from the server. Settings waits for `save-token`'s GET
+  (last result) instead of a fixed delay.
+
+### Subtitle speed saved with the delay (2026-10-31)
+- `watch_progress.sub_rate` (default 1). Restoring a saved delay without the speed put rate-corrected subtitles far
+  out (Chernobyl E5: delay −49.3 at speed 1 instead of 0.959 = ~90 s at 36 minutes). The speed is applied after
+  `loadSub` resolves plus a `tick()`, because new cues make SubtitleSync call `onRate(1)`.

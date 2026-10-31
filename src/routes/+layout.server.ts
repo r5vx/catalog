@@ -6,7 +6,6 @@ import { DEFAULT_ACCENT, isHexColour } from '$lib/accent';
 import { backgroundFrom } from '$lib/background';
 import { warmBrowseCache } from '$lib/server/metadata';
 import { showboxSignin } from '$lib/server/showboxSignin';
-import { publicNetwork } from '$lib/server/networkType';
 import type { LayoutServerLoad } from './$types';
 
 let browseWarmed = false;
@@ -70,8 +69,6 @@ export const load: LayoutServerLoad = async ({ request, getClientAddress }) => {
 		poisonMode: settings.poisonMode === '1',
 		background: backgroundFrom(settings),
 		showboxSignin: showboxSignin(),
-		whoIsWatching: whoIsWatching(request, getClientAddress),
-		// The computer's own window only: Windows has set its network to Public (TVs can't connect).
-		publicNetwork: onThisComputer(request.headers, clientAddress(getClientAddress)) ? publicNetwork() : null
+		whoIsWatching: whoIsWatching(request, getClientAddress)
 	};
 };

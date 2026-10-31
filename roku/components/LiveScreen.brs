@@ -122,7 +122,11 @@ end sub
 
 sub openBox()
     row = m.rows[m.view]
-    if row.label = "Replays" or row.label = "Channels" or row.label = "Recently watched" then return
+    if row.label = "Recently watched" then
+        openForgetBox()
+        return
+    end if
+    if row.label = "Replays" or row.label = "Channels" then return
     m.game = row.items[m.grid.itemFocused]
     if m.game = invalid then return
     names = []
@@ -156,6 +160,33 @@ end sub
 
 sub onSaved()
     start()
+end sub
+
+' * on Recently watched: take that channel or replay off it, or clear it all (as the Fire TV).
+sub openForgetBox()
+    row = m.rows[m.view]
+    m.game = row.items[m.grid.itemFocused]
+    if m.game = invalid then return
+    dialog = CreateObject("roSGNode", "StandardMessageDialog")
+    dialog.title = m.game.label
+    dialog.message = [m.game.sub]
+    dialog.buttons = ["Remove from Recently watched", "Clear Recently watched"]
+    dialog.observeField("buttonSelected", "onForget")
+    m.dialog = dialog
+    m.top.getScene().dialog = dialog
+end sub
+
+sub onForget()
+    at = m.dialog.buttonSelected
+    m.dialog.close = true
+    if at = 1 then
+        body = { remove: "all" }
+    else if m.game.replay <> invalid and m.game.replay <> "" then
+        body = { remove: true, replay: m.game.replay }
+    else
+        body = { remove: true, id: m.game.channels[0].id }
+    end if
+    api("/api/live/watched", {}, "onSaved", "POST", body)
 end sub
 
 ' Down from the chips into the games, up from their top row back to the chips.

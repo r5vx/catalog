@@ -22,7 +22,25 @@ export type FebboxAccount = {
 	/** The desktop app's cookie store for it; null for the main account (the app's own). */
 	partition: string | null;
 	main: boolean;
+	/** Its name or email as Febbox shows it, when the sign-in window told us ('' before). */
+	name: string;
 };
+
+function names(): Record<string, string> {
+	try {
+		const map = JSON.parse(readSettings().febboxNames ?? '{}');
+		return map && typeof map === 'object' ? map : {};
+	} catch {
+		return {};
+	}
+}
+
+/** Remembers an account's name (from Febbox's own page, in the sign-in window). */
+export function nameFebboxAccount(token: string, name: string | undefined): void {
+	const clean = String(name ?? '').trim().slice(0, 80);
+	if (!clean) return;
+	updateSettings({ febboxNames: JSON.stringify({ ...names(), [febboxAccountOf(token)]: clean }) });
+}
 
 function moreTokens(): string[] {
 	try {
@@ -36,11 +54,15 @@ function moreTokens(): string[] {
 /** Every account signed in: the main one first. */
 export function febboxAccounts(): FebboxAccount[] {
 	const { febboxToken } = readSettings();
+	const named = names();
 	const accounts: FebboxAccount[] = [];
-	if (febboxToken) accounts.push({ key: febboxAccountOf(febboxToken), token: febboxToken, partition: null, main: true });
+	if (febboxToken) {
+		const key = febboxAccountOf(febboxToken);
+		accounts.push({ key, token: febboxToken, partition: null, main: true, name: named[key] ?? '' });
+	}
 	for (const token of moreTokens()) {
 		const key = febboxAccountOf(token);
-		if (!accounts.some((a) => a.key === key)) accounts.push({ key, token, partition: `persist:febbox-${key}`, main: false });
+		if (!accounts.some((a) => a.key === key)) accounts.push({ key, token, partition: `persist:febbox-${key}`, main: false, name: named[key] ?? '' });
 	}
 	return accounts;
 }
@@ -48,11 +70,16 @@ export function febboxAccounts(): FebboxAccount[] {
 /**
  * Adds another account by its sign-in, once Febbox says it's signed in. 'same': it's an account
  * already there (the main one, say); 'refused': not signed in; null: Febbox couldn't be asked.
+ * `confirmed`: the desktop app's sign-in window already saw it signed in, on Febbox's own page.
+ * Asking again from here could be turned away by Febbox's Cloudflare check, which dropped every
+ * account the owner signed in (2026-10-31: "No account was added", twice, with two accounts).
  */
-export async function addFebboxAccount(token: string): Promise<'added' | 'same' | 'refused' | null> {
-	const signedIn = await isSignedIn(token);
-	if (signedIn === false) return 'refused';
-	if (signedIn === null) return null;
+export async function addFebboxAccount(token: string, confirmed = false): Promise<'added' | 'same' | 'refused' | null> {
+	if (!confirmed) {
+		const signedIn = await isSignedIn(token);
+		if (signedIn === false) return 'refused';
+		if (signedIn === null) return null;
+	}
 	const key = febboxAccountOf(token);
 	const accounts = febboxAccounts();
 	if (accounts.some((a) => a.key === key && a.main)) return 'same';

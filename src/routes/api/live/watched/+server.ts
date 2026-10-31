@@ -1,5 +1,5 @@
 import { error, json } from '@sveltejs/kit';
-import { noteLiveWatched, noteReplayWatched } from '$lib/server/db/queries';
+import { forgetLiveWatched, noteLiveWatched, noteReplayWatched } from '$lib/server/db/queries';
 import { noteChannelPlayed } from '$lib/server/liveChannelPicks';
 import type { RequestHandler } from './$types';
 
@@ -13,6 +13,14 @@ import type { RequestHandler } from './$types';
  */
 export const POST: RequestHandler = async ({ request }) => {
 	const body = await request.json().catch(() => null);
+	// Taken off Recently watched: { remove: true, id } (a channel), { remove: true, replay }, or { remove: 'all' }.
+	if (body?.remove) {
+		if (body.remove === 'all') forgetLiveWatched('all');
+		else if (typeof body.replay === 'string' && body.replay) forgetLiveWatched({ replay: body.replay });
+		else if (Number.isInteger(body.id)) forgetLiveWatched({ channel: body.id });
+		else return error(400, 'Which channel or replay?');
+		return json({ ok: true });
+	}
 	if (typeof body?.replay === 'string' && body.replay && typeof body.title === 'string' && body.title) {
 		noteReplayWatched(body.replay, body.title, { poster: typeof body.poster === 'string' ? body.poster : null, sport: String(body.sport ?? 'other') });
 		return json({ ok: true });

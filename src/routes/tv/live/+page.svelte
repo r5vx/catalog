@@ -2,7 +2,8 @@
 	/**
 	 * Live TV on the TV (see /live). Along the top: On now, Your teams, Saved, each sport picked,
 	 * Channels, Replays and Search. OK on a game plays it on its best channel (one click); the
-	 * remote's menu button opens a box with its other channels, Save and its teams as favorites.
+	 * remote's menu button opens a box with its other channels, Save and its teams as favorites
+	 * (on Recently watched: Remove, or Clear all).
 	 * A channel plays straight away. Saving a channel is the star in the player. Back closes the
 	 * box first.
 	 */
@@ -83,6 +84,7 @@
 		window.addEventListener('catalog:tv-menu-close', closeGame);
 		window.addEventListener('catalog:tv-menu-close', closeSports);
 		window.addEventListener('catalog:tv-menu', menuOnGame);
+		window.addEventListener('catalog:live-forgot', forgot);
 		scorer = setInterval(() => {
 			if (guide && !document.hidden) freshScores(guide.games);
 		}, 60_000);
@@ -110,6 +112,7 @@
 		if (typeof window !== 'undefined') window.removeEventListener('catalog:tv-menu-close', closeGame);
 		if (typeof window !== 'undefined') window.removeEventListener('catalog:tv-menu-close', closeSports);
 		if (typeof window !== 'undefined') window.removeEventListener('catalog:tv-menu', menuOnGame);
+		if (typeof window !== 'undefined') window.removeEventListener('catalog:live-forgot', forgot);
 		clearInterval(scorer);
 	});
 
@@ -165,6 +168,16 @@
 	function play(game: LiveGame) {
 		const channel = bestChannel(game);
 		if (channel) goto(watchHref(channel, game));
+	}
+
+	/** Taken off Recently watched from the remote's menu (src/lib/tv/TvMenu.svelte): off this list too. */
+	function forgot(event: Event) {
+		const body = (event as CustomEvent<{ remove: true | 'all'; id?: number; replay?: string }>).detail;
+		if (!guide) return;
+		if (body.remove === 'all' || body.id !== undefined) guide.recent = body.remove === 'all' ? [] : guide.recent.filter((c) => c.id !== body.id);
+		if (body.remove === 'all' || body.replay) guide.recentReplays = body.remove === 'all' ? [] : (guide.recentReplays ?? []).filter((r) => r.id !== body.replay);
+		// Nothing left: back to On now (the Recently watched chip goes).
+		if (!guide.recent.length && !guide.recentReplays?.length && view === 'recent') view = 'now';
 	}
 
 	/** The remote's menu button on a game: its box (other channels, Save, its teams). */
@@ -284,9 +297,9 @@
 	</button>
 {/snippet}
 
-{#snippet channelCard(channel: { id: number; name: string; country?: string })}
+{#snippet channelCard(channel: { id: number; name: string; country?: string }, recent = false)}
 	{@const showing = showingNow.get(channel.id)}
-	<a class="channel" href={watchHref(channel, showing)} data-tv-item>
+	<a class="channel" href={watchHref(channel, showing)} data-tv-item data-tv-menu={recent ? JSON.stringify({ kind: 'liveRecent', channel: channel.id }) : undefined} data-tv-title={recent ? channel.name : undefined}>
 		<span class="name">{channel.name}</span>
 		{#if showing}<span class="now"><span class="dot"></span>{showing.title}</span>{:else if channel.country}<span class="country">{channel.country}</span>{/if}
 	</a>
@@ -322,7 +335,7 @@
 			{#if guide.recentReplays?.length}
 				<div class="grid" data-tv-row data-tv-grid>
 					{#each guide.recentReplays as replay (replay.id)}
-						<a class="game" href={replayHref(replay)} data-tv-item>
+						<a class="game" href={replayHref(replay)} data-tv-item data-tv-menu={JSON.stringify({ kind: 'liveRecent', replay: replay.id })} data-tv-title={replay.title}>
 							<span class="art">
 								<GameArt sport={replay.sport} poster={replay.poster} />
 								{#if replay.duration > 0 && replay.currentTime > 0}
@@ -337,7 +350,7 @@
 			{/if}
 			{#if guide.recent.length}
 				<div class="grid" data-tv-row data-tv-grid>
-					{#each guide.recent as channel (channel.id)}{@render channelCard(channelById.get(channel.id) ?? channel)}{/each}
+					{#each guide.recent as channel (channel.id)}{@render channelCard(channelById.get(channel.id) ?? channel, true)}{/each}
 				</div>
 			{/if}
 		{:else if view === 'replays'}

@@ -97,7 +97,11 @@ export const GET: RequestHandler = async ({ url }) => {
 		// Its number counting from the show's first episode, which long shows' releases go by.
 		const overall = tmdb ? episodesBefore(show, tmdb.season) + tmdb.episode : undefined;
 		tosho = await within(toshoSubtitles(names, season, episode, overall), 8000, []);
-		keepSeasonSubtitles(title, names, season, episode, overall);
+		// Only the episodes the season has left (TMDB's count): past the end it searched for two that
+		// don't exist, ~45 AnimeTosho searches as Re:Zero S2E25, the season's last, opened (2026-10-31).
+		const seasonSize = tmdb ? show.seasons.find((s) => s.number === tmdb.season)?.count : undefined;
+		const left = tmdb && seasonSize ? Math.max(0, seasonSize - tmdb.episode) : undefined;
+		keepSeasonSubtitles(title, names, season, episode, overall, left);
 	} else if (animeFilm) {
 		tosho = await within(toshoFilmSubtitles([...new Set([title, ...(filmRomaji ? [filmRomaji] : [])])]), 8000, []);
 	}

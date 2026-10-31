@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Catalog on a TV</title>
+<!--
+	The Fire TV and Roku setup guide. Printed to "Catalog TV setup.pdf" by tv-guide.mjs, which also
+	fills in the Downloader code from src/lib/tvInstall.ts (without one, step 3 uses the laptop's address).
+-->
+<style>
+	@page { size: Letter; margin: 0.55in 0.6in; }
+	:root { --ink: #1d2321; --soft: #4d5753; --faint: #7a847f; --rule: #e2e5e3; --accent: #b3437f; --line: #e59ac4; --panel: #fdf0f6; --key: #f3f4f4; }
+	* { box-sizing: border-box; }
+	body { margin: 0; color: var(--ink); font: 10pt/1.42 'Segoe UI', -apple-system, sans-serif; }
+	h1 { font-size: 22pt; margin: 0 0 1pt; color: var(--accent); letter-spacing: -0.01em; }
+	.lead { color: var(--soft); font-size: 11pt; margin: 0 0 8pt; }
+	h2 { font-size: 12pt; margin: 11pt 0 4pt; padding-bottom: 3pt; border-bottom: 2px solid var(--line); break-after: avoid; }
+	ol { margin: 4pt 0 6pt; padding-left: 20pt; }
+	li { margin: 2pt 0; break-inside: avoid; }
+	p { margin: 4pt 0 6pt; }
+	strong { font-weight: 650; }
+	code { font: 11pt Consolas, monospace; }
+	.box { border: 1.5px solid var(--line); background: var(--panel); border-radius: 8pt; padding: 6pt 12pt; margin: 6pt 0 3pt; break-inside: avoid; }
+	.box p { margin: 2pt 0; }
+	.box ul { margin: 2pt 0; padding-left: 16pt; }
+	.box.plain { background: #f2f8f4; border-color: #9fd0b0; }
+	.blank { display: inline-block; min-width: 2.4in; border-bottom: 1px solid var(--ink); }
+	.code { display: inline-block; font: 700 20pt Consolas, monospace; letter-spacing: 0.08em; padding: 1pt 10pt; border: 1.5px solid var(--ink); border-radius: 6pt; vertical-align: middle; }
+	.key { display: inline-block; min-width: 18pt; padding: 0 5pt; border: 1px solid #b9bfbc; border-radius: 4pt; background: var(--key); font-weight: 650; font-size: 9.5pt; text-align: center; line-height: 1.5; }
+	.note { color: var(--soft); font-size: 9.5pt; }
+	table { border-collapse: collapse; width: 100%; margin: 4pt 0 2pt; font-size: 9.8pt; }
+	td { border-bottom: 1px solid var(--rule); padding: 3.5pt 8pt; vertical-align: top; }
+	tr:nth-child(odd) td { background: #fafafa; }
+	td:first-child { width: 31%; font-weight: 650; }
+	.page-break { break-before: page; }
+	body.has-code .without-code, body:not(.has-code) .with-code { display: none; }
+</style>
+</head>
+<body>
+
+<!-- ================================================================ FIRE TV -->
+
+<h1>Catalog on your Fire TV</h1>
+<p class="lead">Watch everything from Mom's Catalog on your own TV. Setting it up takes about 10 minutes, once.</p>
+
+<div class="box plain">
+	<p><strong>Catalog already on your Fire TV?</strong> You don't need to do anything. Keep using it as it is. This is only for a TV that doesn't have it yet.</p>
+</div>
+
+<div class="box">
+	<p><strong>Before you start</strong></p>
+	<ul>
+		<li>Mom's laptop is <strong>on</strong>, with <strong>Catalog open</strong>.</li>
+		<li>Your Fire TV is on the <strong>same Wi-Fi</strong> as the laptop.</li>
+		<li class="without-code">The laptop's address (on the laptop: Catalog &rarr; <strong>Settings</strong> &rarr; <strong>Watch on TV</strong>): <span class="blank"></span></li>
+	</ul>
+</div>
+
+<h2>1. Install Downloader</h2>
+<ol>
+	<li>On the Fire TV's home screen, go to <strong>Find</strong> (the magnifying glass) and search for <strong>Downloader</strong>.</li>
+	<li>Pick the orange <strong>Downloader</strong> app (by AFTVnews) and press <strong>Get</strong> or <strong>Download</strong>. It's free.</li>
+</ol>
+
+<h2>2. Let Downloader install apps</h2>
+<ol>
+	<li>Go to <strong>Settings</strong> (the gear) &rarr; <strong>My Fire TV</strong> &rarr; <strong>Developer options</strong>.</li>
+	<li>Choose <strong>Install unknown apps</strong> and turn it <strong>ON</strong> for <strong>Downloader</strong>.</li>
+</ol>
+<p class="note">No "Developer options"? Go to <strong>My Fire TV &rarr; About</strong>, highlight the TV's name (the first line) and press <span class="key">OK</span> seven times. A message says you're a developer, and Developer options appears.</p>
+
+<h2>3. Install Catalog</h2>
+<ol>
+	<li>Open <strong>Downloader</strong>. If it asks for permission to use files, choose <strong>Allow</strong>.</li>
+	<li class="with-code">In the address box, type this code and press <strong>Go</strong>: <span class="code">{{CODE}}</span></li>
+	<li class="without-code">In the address box, type the laptop's address followed by <code>/catalog-tv.apk</code>, like this:<br /><code>http://</code> <span class="blank"></span> <code>/catalog-tv.apk</code></li>
+	<li>When it finishes downloading, press <strong>Install</strong>, then <strong>Done</strong>.</li>
+	<li>Downloader offers to delete the file it downloaded: choose <strong>Delete</strong> (twice). You don't need it any more.</li>
+</ol>
+
+<h2>4. Open it and pick who's watching</h2>
+<ol>
+	<li>Open <strong>Catalog</strong> from <strong>Apps</strong> on the home screen. To keep it on the home row, highlight it, press <span class="key">&#9776;</span> (menu) and choose <strong>Move</strong>.</li>
+	<li>It finds Mom's laptop by itself. If it asks, type the laptop's address (Catalog &rarr; Settings &rarr; Watch on TV on the laptop).</li>
+	<li>If it asks for a <strong>PIN</strong>, type Catalog's PIN with the number keys on screen.</li>
+	<li>On <strong>Who's watching?</strong>, pick your name. Not there yet? Choose <strong>Add profile</strong>, type your name and choose <strong>Save</strong>.</li>
+</ol>
+<p class="note">Your profile has your own Continue Watching, the episodes you've watched, and My List. Nobody else's gets mixed in.</p>
+
+<div class="page-break"></div>
+
+<h2>Using it with the remote</h2>
+<table>
+	<tr><td>Move around</td><td>The arrow buttons. What's highlighted has a white outline. <span class="key">OK</span> opens it.</td></tr>
+	<tr><td>The menu</td><td>On the left: Search, Home, Movies, TV Shows, Anime, My Library, Live TV, Settings. Press <span class="key">&#9664;</span> to open it.</td></tr>
+	<tr><td>Back</td><td><span class="key">&#8617;</span> goes back. On a page from the menu it opens the menu; once more goes Home; once more from Home closes Catalog.</td></tr>
+	<tr><td>More choices</td><td><span class="key">&#9776;</span> on a title: add to My List, mark as watched, take off Continue Watching.</td></tr>
+	<tr><td>Live TV</td><td><span class="key">OK</span> on a game plays it on its best channel. <span class="key">&#9776;</span> shows its other channels and Save. On Recently watched, <span class="key">&#9776;</span> removes it.</td></tr>
+	<tr><td>Switch person</td><td>Open the menu and go to the colored square with your initial at the top.</td></tr>
+</table>
+
+<h2>While something is playing</h2>
+<table>
+	<tr><td>Pause / play</td><td><span class="key">OK</span> or <span class="key">&#9199;</span></td></tr>
+	<tr><td>Skip 10 seconds</td><td><span class="key">&#9664;</span> and <span class="key">&#9654;</span></td></tr>
+	<tr><td>Fast-forward / rewind</td><td>Press <span class="key">&#9193;</span> or <span class="key">&#9194;</span> <strong>once</strong>: it keeps going by itself. Press again to go faster. <span class="key">OK</span> plays from there.</td></tr>
+	<tr><td>Captions and more</td><td><span class="key">&#9650;</span> or <span class="key">&#9660;</span> shows the buttons: captions, audio, episodes.</td></tr>
+	<tr><td>Intros and credits</td><td>Skipped by themselves on TVs. <span class="key">&#9650;</span> from the progress bar goes to Skip Intro or Next Episode.</td></tr>
+	<tr><td>Next episode</td><td>Plays by itself at the end.</td></tr>
+</table>
+
+<h2>If something isn't working</h2>
+<table>
+	<tr><td>Can't find the computer</td><td>Mom's laptop may be asleep, closed, or Catalog isn't open. Wake it, open Catalog, then open Catalog on the TV again. On the laptop, Catalog &rarr; Settings &rarr; Watch on TV says if Windows set the Wi-Fi to Public (TVs can't connect then), with a button to fix it.</td></tr>
+	<tr><td>A video won't start</td><td>Press <span class="key">&#8617;</span> and try once more. Another episode or film usually plays fine.</td></tr>
+	<tr><td>Catalog on the TV looks old</td><td>It updates by itself from Mom's laptop. Only reinstalling the app itself (step 3) ever needs doing again, and only if Mom asks.</td></tr>
+</table>
+
+<h2>For Mom's laptop</h2>
+<ul>
+	<li>Keep it <strong>plugged in</strong> and <strong>open</strong> (a closed lid makes it sleep), with <strong>Catalog open</strong>.</li>
+	<li>Stop it going to sleep: <strong>Start &rarr; Settings &rarr; System &rarr; Power &amp; battery &rarr; Screen, sleep &amp; hibernate timeouts</strong>, and set <strong>"When plugged in, put my device to sleep after"</strong> to <strong>Never</strong>. The screen turning off is fine.</li>
+	<li>Several TVs (Fire TV and Roku) can watch at the same time.</li>
+</ul>
+
+<!-- ================================================================ ROKU -->
+
+<div class="page-break"></div>
+
+<h1>Catalog on your Roku</h1>
+<p class="lead">Watch everything from Mom's Catalog on your Roku TV. Setting it up takes about 5 minutes, once, with the Roku remote in your hand and Mom's laptop next to you.</p>
+
+<div class="box">
+	<p><strong>Before you start</strong></p>
+	<ul>
+		<li>Mom's laptop is <strong>on</strong>, with <strong>Catalog open</strong>.</li>
+		<li>Your Roku is on the <strong>same Wi-Fi</strong> as the laptop.</li>
+		<li>On the laptop, Catalog &rarr; <strong>Settings</strong> &rarr; <strong>Watch on TV</strong> has a <strong>Catalog on a Roku</strong> section. If it doesn't, update Catalog first (Settings &rarr; Updates).</li>
+	</ul>
+</div>
+
+<h2>1. Turn on the Roku's developer mode</h2>
+<ol>
+	<li>On the Roku remote, at the home screen, press: <span class="key">Home</span> <span class="key">Home</span> <span class="key">Home</span> <span class="key">&#9650;</span> <span class="key">&#9650;</span> <span class="key">&#9654;</span> <span class="key">&#9664;</span> <span class="key">&#9654;</span> <span class="key">&#9664;</span> <span class="key">&#9654;</span></li>
+	<li>A <strong>Developer Settings</strong> screen opens. Choose <strong>Enable installer and restart</strong>, then agree to the license.</li>
+	<li>Pick a <strong>password</strong> and write it here: <span class="blank"></span></li>
+	<li>The Roku restarts. That's all on the Roku.</li>
+</ol>
+<p class="note">Roku only lets apps from outside its store in this way. It's safe, and it stays on.</p>
+
+<h2>2. Install Catalog from Mom's laptop</h2>
+<ol>
+	<li>On the laptop, open Catalog &rarr; <strong>Settings</strong> &rarr; <strong>Watch on TV</strong>, and find <strong>Catalog on a Roku</strong>.</li>
+	<li>Click <strong>Find Rokus</strong>. Your Roku shows up with its name and <strong>Developer mode on</strong>. Click it.</li>
+	<li>Type the password from step 1 and click <strong>Install on</strong> (your Roku's name).</li>
+	<li>It says <strong>Installed</strong>, and Catalog opens on the TV by itself. It stays in the Roku's list of channels.</li>
+</ol>
+<p class="note">Roku not in the list? On the Roku: Settings &rarr; Network &rarr; About shows its <strong>IP address</strong>. Type it in the box under the list and click <strong>Add</strong>.</p>
+
+<h2>3. Open it and pick who's watching</h2>
+<ol>
+	<li>Open <strong>Catalog</strong> from the Roku's home screen.</li>
+	<li>It finds Mom's laptop by itself. If it asks, type the laptop's address (shown on the same Watch on TV page).</li>
+	<li>If it asks for a <strong>PIN</strong>, type Catalog's PIN.</li>
+	<li>On <strong>Who's watching?</strong>, pick your name.</li>
+</ol>
+<p class="note">A new version of the Roku app goes on the same way: step 2 again, over the old one. Nothing you saved is lost.</p>
+
+<div class="page-break"></div>
+
+<h2>Using it with the remote</h2>
+<table>
+	<tr><td>Move around</td><td>The arrow buttons. What's highlighted has a white outline. <span class="key">OK</span> opens it.</td></tr>
+	<tr><td>The menu</td><td>On the left: Search, Home, Movies, TV Shows, Anime, My Library, Live TV, Settings. Press <span class="key">&#9664;</span> to open it.</td></tr>
+	<tr><td>Back</td><td><span class="key">&#8617;</span> goes back. On a page from the menu it opens the menu; once more goes Home; once more from Home closes Catalog.</td></tr>
+	<tr><td>More choices</td><td><span class="key">&#10033;</span> on a title: add to My List, mark as watched.</td></tr>
+	<tr><td>Live TV</td><td><span class="key">OK</span> on a game plays it on its best channel. <span class="key">&#10033;</span> shows its other channels and Save. On Recently watched, <span class="key">&#10033;</span> removes it.</td></tr>
+	<tr><td>Switch person</td><td>Open the menu and go to the colored square with your initial at the top.</td></tr>
+</table>
+
+<h2>While something is playing</h2>
+<table>
+	<tr><td>Pause / play</td><td><span class="key">&#9199;</span></td></tr>
+	<tr><td>Fast-forward / rewind</td><td><span class="key">&#9193;</span> or <span class="key">&#9194;</span>: press again to go faster, then <span class="key">&#9199;</span> to play from there. Pictures show where you are.</td></tr>
+	<tr><td>Captions</td><td>On to start with. <span class="key">&#10033;</span> while playing has the Roku's captions settings.</td></tr>
+	<tr><td>Intros and credits</td><td>Skipped by themselves. A <strong>Skip</strong> button shows when it can't tell: <span class="key">OK</span> presses it.</td></tr>
+	<tr><td>Next episode</td><td>Plays by itself at the end.</td></tr>
+</table>
+
+<h2>If something isn't working</h2>
+<table>
+	<tr><td>Can't find the computer</td><td>Mom's laptop may be asleep, closed, or Catalog isn't open. Wake it, open Catalog, then open Catalog on the Roku again.</td></tr>
+	<tr><td>"No Roku found"</td><td>Check the Roku is on and on the same Wi-Fi, then click <strong>Look again</strong>, or type its address (Roku Settings &rarr; Network &rarr; About).</td></tr>
+	<tr><td>"Didn't accept that password"</td><td>Type the password from step 1 again. Forgot it? Do step 1 again to set a new one.</td></tr>
+	<tr><td>"Developer mode off"</td><td>Step 1 wasn't finished, or the Roku was reset. Do step 1, then click <strong>Look again</strong>.</td></tr>
+	<tr><td>Catalog disappeared from the Roku</td><td>Roku removes apps from outside its store if developer mode is turned off or the Roku is reset. Do steps 1 and 2 again.</td></tr>
+	<tr><td>A video won't start</td><td>Press <span class="key">&#8617;</span> and try once more. Another episode or film usually plays fine.</td></tr>
+</table>
+
+<p class="note">Mom's laptop: keep it plugged in and open, with Catalog open, and never sleeping when plugged in (see the Fire TV pages). Several TVs, Roku and Fire TV, can watch at the same time.</p>
+
+</body>
+</html>

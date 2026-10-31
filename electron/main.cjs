@@ -399,7 +399,10 @@ let stripBusy = false;
 function makeStrip(pagePath) {
 	// (/skip-maker and /speech-maker do other work for a TV the same way.)
 	if (!/^\/(strip|skip|speech)-maker\?/.test(pagePath) || stripQueue.includes(pagePath)) return;
-	stripQueue.push(pagePath);
+	// Someone is watching with subtitles waiting on this one: ahead of preview pictures and
+	// intros, which can wait (mom's Chernobyl E5 was never timed behind them, 2026-10-31).
+	if (pagePath.startsWith('/speech-maker?')) stripQueue.unshift(pagePath);
+	else stripQueue.push(pagePath);
 	nextStrip();
 }
 
@@ -434,7 +437,8 @@ function nextStrip() {
 		stripBusy = false;
 		setTimeout(nextStrip, 2000);
 	};
-	const timer = setTimeout(done, 6 * 60 * 1000);
+	// Hearing a whole sound track on a slow laptop takes longer (the page gives up at 15 minutes).
+	const timer = setTimeout(done, (pagePath.startsWith('/speech-maker?') ? 16 : 6) * 60 * 1000);
 	win.on('closed', done);
 	win.loadURL(`${ORIGIN}${pagePath}`).catch(done);
 }
@@ -562,6 +566,7 @@ function startServer() {
 			// the installer's own window rather than a silent install, which can fail there unseen.
 			const quietly = canWriteAppFolder();
 			rememberUpdateAttempt();
+			try { session.defaultSession.flushStorageData(); } catch {}
 			updateLog(`installing ${readyVersion ?? '?'} over ${app.getVersion()}${quietly ? '' : ', with the installer window (the app folder needs permission)'}`);
 			setTimeout(() => autoUpdater().quitAndInstall(quietly, true), 1500);
 		}
@@ -1390,7 +1395,9 @@ function createWindow() {
 		};
 		loginSession.cookies.on('changed', cookieListener);
 
-		async function captureCookies() {
+		// `confirmed`: Febbox's own page said signed in (the server needn't ask again, which its
+		// Cloudflare check can turn away); `name`: the account's name or email there.
+		async function captureCookies(confirmed = false, name = '') {
 			try {
 				const allCookies = await loginSession.cookies.get({});
 				const cookies = allCookies.filter(
@@ -1399,7 +1406,7 @@ function createWindow() {
 				if (!cookies.length) return;
 
 				const cookieStr = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
-				const body = JSON.stringify({ token: cookieStr, more: another });
+				const body = JSON.stringify({ token: cookieStr, more: another, confirmed, name });
 
 				const req = http.request(`${ORIGIN}/api/watch/save-token`, {
 					method: 'POST',
@@ -1433,17 +1440,22 @@ function createWindow() {
 					fetch('/console/user_info', { credentials: 'include' })
 						.then(function(r) { return r.text(); })
 						.then(function(t) {
-							try { var d = JSON.parse(t); return d.code === 1 ? 'ok' : 'no:' + d.code; }
+							try {
+								var d = JSON.parse(t);
+								if (d.code !== 1) return 'no:' + d.code;
+								var u = d.user || d.data || {};
+								return 'ok|' + (u.email || u.username || u.nickname || '');
+							}
 							catch(e) { return 'html'; }
 						})
 						.catch(function(e) { return 'err:' + e.message; })
 				`);
-				console.log(`[login] poll #${pollCount}: ${result}`);
-				if (result === 'ok') {
+				console.log(`[login] poll #${pollCount}: ${String(result).split('|')[0]}`);
+				if (String(result).startsWith('ok')) {
 					captured = true;
 					clearInterval(loginPoll);
 					console.log('[login] session confirmed — capturing cookies');
-					await captureCookies();
+					await captureCookies(true, String(result).slice(3));
 					childWindow.close();
 				} else if (pollCount === 30) {
 					console.log('[login] still not signed in after a minute', JSON.stringify({ navigations: navLog.slice(-8), cookieChanges: cookieChanges.slice(-8) }));
@@ -1482,6 +1494,13 @@ if (!app.requestSingleInstanceLock()) {
 
 	app.whenReady().then(async () => {
 		Menu.setApplicationMenu(null);
+
+		// What pages remember (localStorage: each show's audio and subtitles, volume) written to the
+		// disk every minute, not only whenever Chromium gets to it: the owner's copy had kept none of
+		// it since 2026-10-10, so Dungeon Meshi came back in the dub after each update (2026-10-31).
+		setInterval(() => {
+			try { session.defaultSession.flushStorageData(); } catch {}
+		}, 60_000);
 
 		// Strip framing restrictions so febbox loads inside webviews,
 		// and inject CORS headers on external CDN responses so HLS.js
@@ -1863,6 +1882,8 @@ if (!app.requestSingleInstanceLock()) {
 
 	app.on('before-quit', () => {
 		quitting = true;
+		// What pages remember (each show's audio and subtitles, volume): onto the disk now.
+		try { session.defaultSession.flushStorageData(); } catch {}
 		// Closing with an update waiting installs it: remembered, so the next start can check.
 		if (readyVersion && updater?.autoInstallOnAppQuit) rememberUpdateAttempt();
 		// On a Mac, a downloaded update is swapped in now, for next time (as on Windows).

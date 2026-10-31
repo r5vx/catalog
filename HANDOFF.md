@@ -1,4 +1,4 @@
-# Handoff: where Catalog stands (2026-10-31 early morning, 3.7.0 released, test build of the next round in `dist-app`)
+# Handoff: where Catalog stands (2026-10-31, 3.9.0 released, nothing in `dist-app`)
 
 For starting a new conversation. **New Claude: read this first, then `CLAUDE.md` (the rules)
 and `CATALOG_CONTEXT.md` (the hard-won lessons and how every piece works).** This file is a
@@ -339,7 +339,14 @@ round 3", "Roku preview pictures". All under `## Unreleased` in `RELEASE_NOTES.m
   to a disguised news page (profitfinderz.com) holding 12 Dailymotion players, 11 of them decoys. Built to
   stop programs reading it; getting past it means faking clicks and picking the visible player. Not done.
 
-### 2026-10-31 (built and tested in the test app; released the same night on the owner's go-ahead, see §3.8)
+### 3.8.0 ("Catalog as a phone app, live captions timed by themselves, and mini player fixes"), released 2026-10-31 on the owner's go-ahead
+
+Everything from "Next round (2026-10-28 to 10-30)" down to here shipped in 3.8.0 (commit "Release 3.8.0",
+tag v3.8.0). **Verified:** `latest.yml` fetched anonymously says 3.8.0, `Catalog-Setup-3.8.0.exe` (151,360,296
+bytes) downloaded and its sha512 matched. The owner hadn't tried every item in a test build first (the list
+under "Waiting on someone" is now what to watch for in 3.8.0). Mom gets it by her automatic updates.
+
+### 2026-10-31 (built and tested in the test app; in 3.8.0)
 
 - **Live captions time themselves to the commentary** (owner: "a 5 second listen … then keeps dialing it
   in"; Live TV only, other auto-timing untouched). The computer's hidden `/caption-timer` page hears each
@@ -351,6 +358,122 @@ round 3", "Roku preview pictures". All under `## Unreleased` in `RELEASE_NOTES.m
   (~75 MB) downloads from Hugging Face the first time; ~22 MB of speech engine is in the installer now.
   Details in CATALOG_CONTEXT.md "Live captions timed by their words, built".
 - **SportsBite removed** (see the 2026-10-30 night bullet).
+
+### 3.9.0 ("TV subtitles timed again, Roku installs from Catalog, and skip fixes"), released 2026-10-31 on the owner's go-ahead
+
+Everything in this section shipped in 3.9.0. The owner had not tried every item in a test build first.
+
+Under `## Unreleased` in `RELEASE_NOTES.md` (no title on the heading yet: add one before releasing).
+- **Remove from Live TV's Recently watched** (owner's ask): an x on each replay and channel there on the
+  computer (shows on hover; always on touch screens), **Clear** beside the heading, and "Remove from Recently
+  watched" in a channel's right-click menu. Fire TV: the menu button on one opens Remove / Clear
+  (`liveRecent` in `TvMenu.svelte`; the page drops it via the `catalog:live-forgot` event). Roku: * on one,
+  same two choices (`openForgetBox` in `LiveScreen.brs`; BrighterScript clean, zip rebuilt, never on a real
+  Roku). Server: `POST /api/live/watched` with `remove` (`forgetLiveWatched`). A removed replay also leaves
+  Continue Watching (it's listed from there); its place stays in watch_progress. Tested in the dev server on
+  a library copy: computer x, channel x, Fire TV Remove and Clear.
+- **"TVs can't connect" notice only in Settings → TV** (owner: only when actually connecting TVs). It was on
+  every page of the computer's window; now it's at the top of Settings → TV (computer only), checked when that
+  page opens (streamed in, ~0.75 s of PowerShell). **Not now** and `publicNetworkOk` are gone (old values in
+  settings are just ignored). Checked: the check finds the owner's Ethernet as Public; the page renders; the
+  library no longer shows it. **Not seen drawn in the desktop app** (the dev server isn't the desktop app).
+- **Install on Roku** (Settings → Watch on TV → Catalog on a Roku; `rokuInstall.ts`, `/api/roku-install`,
+  `RokuInstall.svelte`, computer only): Find Rokus (SSDP `roku:ecp`, then each one's device-info on 8060:
+  name, model, developer mode), or type an address; developer-mode steps shown when it's off; the password
+  typed each time (never kept) → zip POSTed to `/plugin_install` with digest sign-in (`rokudev`) → ECP
+  `/launch/dev`. Tested against a pretend Roku (`CATALOG_ROKU_TEST_PORT`, script in the session scratchpad):
+  wrong password refused, right one sent the whole 270 KB zip and launched. The real search ran (2.5 s, none at
+  the owner's). **Never tried on a real Roku.**
+- **Fire TV fixed link:** `FIRE_TV_APK` in `src/lib/tvInstall.ts` is the repo's raw `static/catalog-tv.apk` on
+  GitHub (works today, follows each release commit). **Downloader code 5785169** (`FIRE_TV_CODE`, made by the
+  owner at go.aftvnews.com; checked: it points at that link). Shown in Settings → TV and the guide
+  (`node scripts/dev/tv-guide.mjs`, needs the sandbox off for Edge). The TV app itself is unchanged, so the
+  3 connected Fire TVs need nothing.
+- **Skips: the databases win** (owner: trust the skip sites). `withFound` keeps every database part and adds a
+  found part only where none of its kind is within 60 s. Hawkeye S1E1 on Showbox: the skip finder found the
+  Marvel logo (0:01–0:37), which used to replace IntroDB's real intro (7:01–8:34); now both show. **The finder
+  hears the first 12 minutes** (was 6; `HEAD` in skipFinder.ts, ~4× the matching, still under a second).
+  Merge checked on Hawkeye's real data; the 12-minute finder **not run live** (it would use the owner's Febbox
+  allowance). Copies already kept keep their old finds.
+- **Guide:** `Catalog TV and Roku setup.pdf` in the owner's Downloads (source `scripts/dev/tv-guide.html`, 4
+  pages: Fire TV, Roku). The old `Catalog TV setup.pdf` / `Catalog Roku setup.pdf` are left as they were.
+- **nyaa.si** looked at (anime torrents, RSS with seeders); not built, see §8.
+- **Mom's TV: Chernobyl E5 captions never timed (2026-10-31; "Timing subtitles…" forever, every caption out).**
+  Her laptop isn't on Tailscale, so it was reproduced off screen (`tvsim-subs.mjs` in the session scratchpad: the
+  built or dev server forked like main.cjs forks it, its make-strip queue run one job at a time in a headless Edge,
+  a headless Edge with the Fire TV's user agent playing `/watch?…&auto=1`). Findings: E5's subtitles are **53 s off
+  and 4% fast** (made for 25 fps); a TV times either from the sound it downloads (`appended`; works in Edge, **never
+  proven on a real Fire TV**) or from the laptop's `/speech-maker` answer, which it looked for **only 3 minutes**
+  while that job could wait behind preview pictures (next episode too), intros and other TVs' jobs. With the TV's
+  own decoding switched off and the queue busy for 120 s, the answer landed at 180 s (just in time); any longer and
+  the captions are never timed. **Fixed:** speech jobs go first in main.cjs's queue (16-min cap); `/speech-maker`
+  starts at the TV's place (`from`) and keeps what it has after each part (`.partial` beside the kept speech,
+  `X-Speech-Partial` header; the computer's own player ignores unfinished ones); the TV takes it every 10 s for up
+  to 15 minutes (`useKeptSoFar`, which updates the worker's speech without a reset: a reset put the speed back to
+  1.0 for a few seconds each time, 50 s out on E5); prepare asks once per file+language per 15 minutes.
+  **Proven in the simulation:** queue busy 200 s (beyond the old window), TV can't decode: captions fitted 12 s after
+  the laptop started hearing (−52.8 s, rate 0.959), refined as more came, no drops between refreshes. **Not proven:**
+  what exactly failed on her TV/laptop. Not covered: Febbox's allowance used up (360p, no separate sound track):
+  the laptop can't hear that; `/api/diagnostics` → `speechJobs` now says how each ask ended, so check that on her
+  laptop next time.
+- **Hawkeye S1E1 credits from 43:35** (owner, watching: real credits 44:50). The black-roll finder took the dark last
+  scene (white lights, no colour) for names, and one colourful picture was allowed through, joining it to the fade
+  and the roll; that roll was added as a second credits part before IntroDB's right one (44:51), so Next Episode came
+  75 s early. In 3.8.0 too. **Fixed:** credits that already reach the end win (`withCreditRoll`), and the finder only
+  lets one odd picture through between two with names or in the last 40 s (an end logo), starting at the first names.
+  Checked on Hawkeye's real kept pictures (44:55 now, also without IntroDB) and on made-up endings; She-Hulk's kept
+  pictures were already cleared by the storage limit, so not re-checked on them.
+- **Recap and intro are two skips again** (owner: someone may want to skip the recap but watch the intro).
+  `joinedOpening` removed from skipMerge.ts.
+- **YouTube: saved for later** (owner, 2026-10-31: installing Catalog is a hassle and people use YouTube on phones).
+- **The owner's desktop app keeps no localStorage (found 2026-10-31).** `%APPDATA%\catalog\Local Storage\leveldb`
+  was last opened 2026-10-10 (its LOG) and holds no keys; no `showAudio`/`volume` key exists anywhere in the
+  profile, while Session Storage is written daily. So every per-device memory (show audio, captions per show,
+  volume per title, live caption delay, kept source) lasted only until Catalog closed; updates restart it, hence
+  "Dungeon Meshi in dub after updating" (the fallback is the last anime pick: Re:Zero's dub that day). **Not the
+  code:** Catalog's main.cjs run hidden (a starter that no-ops `BrowserWindow.show`, `ls-test/` in the scratchpad)
+  keeps a key across a restart, in a fresh profile and in a copy of the owner's storage folder. **Cause unknown.**
+  Done: `flushStorageData()` every minute, before quit and before installing an update; each anime's
+  Japanese/dub choice also kept per profile in the library (`/api/watch/show-audio`, read as the title opens);
+  `/api/diagnostics` → `storage` says per screen whether its marker survived since the last start (`keptSince`
+  null after a restart = still broken). **Check that after the owner's next update.**
+- **Re:Zero S2E25 on Showbox (owner, 2026-10-31): captions "never synced, ~1 s off", and pausing switched copies
+  "missing a part".** Not reproduced: the same episode in the off-screen setup (computer mode) fitted in 5 s. Offline
+  fits on the Japanese speech: AnimeTosho's track (the default) +0.1 s (already right); the Netflix SRT −0.3 s, then
+  +1.1 s from 12:22 and +4.1 s from 19:00 (so "1 s off" = Netflix's file, untimed, past 12 minutes). The owner's
+  library: no `-ja` speech kept (only `-en` from the dub at 10:59), captions with no file name, delay −0.4.
+  **Fixed around it:** (1) a piece that timed out (or failed without a 404/5xx) no longer switches copies as "missing
+  on its server": only a refusal does; a timeout gets a fresh link (pausing loads minutes ahead while auto-timing
+  fetches the whole sound track); (2) AnimeTosho's season keep-ahead stops at the season's last episode (TMDB
+  count): opening S2E25 searched E26/E27 (~45 searches in 70 s, all of `slowRequests`).
+- **Skip Intro/Recap land 1 s before the end** (computer `SKIP_LEAVES`, Roku `skipPast`); credits unchanged. Dungeon
+  Meshi E13: IntroDB 1:31.99, found 1:31.4, so the jump went just past the song.
+- **More Febbox accounts never got added (owner, 2026-10-31: "No account was added", twice, two accounts).** The
+  library had 0 extra accounts. The sign-in window confirms the sign-in on Febbox's own page (`/console/user_info`),
+  but the server then asked again from Node (`isSignedIn`, behind Cloudflare), and a turned-away answer (null) dropped
+  the account; Settings also judged after a fixed 2.5 s. Now the window sends `confirmed: true` and the account's
+  name/email (user_info's email/username), `addFebboxAccount(token, confirmed)` skips the re-check, `save-token` keeps
+  the last result (GET, computer only) and Settings waits up to 30 s for it, saying added / already here / refused /
+  unreachable. Names in settings `febboxNames` (by account); shown in Settings (main: "Logged in as …" after its next
+  login). Tested with a pretend sign-in in the dev server (added, then "same"); **not with a real Febbox login**.
+  Showbox working again that day was the main account's allowance resetting, not an added account.
+- **Mom's theory "subtitles get messed up and don't reset after forward/back":** jumps themselves are fine (off-screen
+  TV on Chernobyl E5: +600 s, −300 s, remote right ×3, left: delay and speed stayed right, lines matched). What was
+  wrong: resuming restored the saved **delay** but not auto-timing's **speed** (0.959 there), so captions were ~90 s
+  out until auto-timing fitted again, and for good when it never did (mom's TV). Now `watch_progress.sub_rate`
+  (added after the per-profile migration) is saved and restored with the delay (after the subtitles load, since new
+  cues reset the speed to 1). Proven: resumed at −49.3 s and 0.959 from the first second with the TV's own hearing off.
+- **Volume:** double-click the slider → 100% (`resetVol`); a percentage bubble follows the knob while dragging and
+  fades 0.7 s after (`.vol-tip`, placed in `.vol-group` because `.vol-slider` is clipped to slide open). Checked in
+  the browser pane with synthetic events (200%, 60%, double-click → 100% over the middle).
+- **Volume past 100% "didn't feel like 300%" (owner, 2026-10-31):** the boost is really 300% (measured with the player's own
+  gain + limiter in an OfflineAudioContext: quiet sound +7.2 dB at 200%, +10.7 dB at 300%). It feels smaller because (1) the
+  slider's right half is linear, so 200% sits at three-quarters and the last quarter adds only ~3.5 dB; (2) the limiter holds
+  loud parts near -3 dBFS, so loud scenes barely get louder past ~200% (a -12 dB tone: -4.8 at 200%, -3.7 at 300%). Not
+  changed. Ideas offered: even loudness steps on the slider; a "night mode"-style squeeze so loud scenes get louder too.
+- **Hawkeye E2's animated ending (45:29–~46:50, before the roll at 46:53) isn't detectable:** its song differs per
+  episode (no shared sound found in any Hawkeye ending) and its pictures match nothing in E1's or E3's endings (17–24
+  of 64 bits differ). IntroDB/TheIntroDB start E2's credits at 47:24. Idea only: a per-episode "credits start here".
 
 ### Waiting on someone
 
@@ -402,8 +525,8 @@ round 3", "Roku preview pictures". All under `## Unreleased` in `RELEASE_NOTES.m
   the real code and every live playlist answered "Internal Error". Caught in the test app before packing.
   After removing a temporary line, look at the lines around it (`sed -n`), and grep for TEMP-TEST before
   every pack.
-- **Bot checks (2026-10-30):** making requests pass for a browser's (headers) or picking a site's real player
-  out of decoys is getting around the site's protection: refused, and not to be tried another way.
+- **Bot checks (2026-10-30):** defeating SportsBite's anti-automation player and Watch-Wrestling's decoys was
+  **my own refusal, not the owner's rule** (the owner corrected this 2026-10-31). Never say "you told me not to".
 
 - **On-screen tests while the owner is at the PC (2026-10-28):** a test fullscreen window covered their
   screen for 12 s and the test mini player played over their Re:Zero. Check the foreground window first
@@ -664,6 +787,38 @@ copy's real bitrate in the copy picker is an idea only (not offered yet).
   `tailscale serve` (HTTPS isn't on in the owner's tailnet; the button would change their Tailscale).
 - Tailscale "not working off home Wi-Fi": the iPhone's Tailscale was offline 14 days; the PC side
   (listens on 0.0.0.0, firewall allows, Tailscale network Private) is fine. Use http://100.124.201.118:4173.
+
+**YouTube inside Catalog (explored 2026-10-31, not built):** the desktop app could show youtube.com itself in
+its own panel (own sign-in kept in its own browser storage, For You and subscriptions as on YouTube), with
+Ghostery's ad blocker (`@ghostery/adblocker-electron`, lists update themselves) and SponsorBlock skips. Computer
+only (phones/TVs can't embed a signed-in YouTube). Unknowns: **Google may refuse sign-in inside an app**
+("This browser or app may not be secure"); then the panel would use a normal Chrome user agent (Electron is
+Chromium; fine for the owner's own account). YouTube fights ad blockers
+(ads put into the video itself reported in 2026), so ad blocking may break at times. First step offered: a
+prototype that just tries sign-in and ad blocking. TVs: SmartTube is an existing free ad-free YouTube for
+Fire TV (sideloaded).
+**The owner's r/Adblock thread (PDF, 2026-10-31):** uBlock Origin for computers, **Morphe** (a patched YouTube
+app for Android, by former ReVanced people, real project: morphe.software, GitHub MorpheApp; needs MicroG) for
+Android phones, Brave on iPhone; nothing for TVs. Plan offered (not built): computer = YouTube panel in Catalog
+with uBlock Origin's lists (Ghostery's Electron blocker reads them); Fire TV = a YouTube tile that opens
+SmartTube (needs a one-time Catalog TV app update: the app can't open other apps yet); Android phone = Morphe;
+iPhone = Brave; **Roku = not possible** (closed system, no ad-free YouTube).
+
+**nyaa.si as a source (looked at 2026-10-31; the owner said no, no VPN for now):** anime only (Hawkeye: nothing), an RSS feed per
+search with seeders and sizes. It's torrents: Catalog would download pieces in order while playing
+(WebTorrent-style) and **upload to others while doing so, from the home IP** (ISP copyright letters are
+real for torrents, unlike streaming). Speed depends on seeders (popular anime fast, older slow). Files are
+mostly MKV with HEVC/AV1 and FLAC/Opus/TrueHD and styled ASS subtitles: many need converting (ffmpeg) or a
+subtitle renderer before Chromium plays them. A debrid service (paid, an account) would turn torrents into
+fast direct links, against "no new accounts".
+
+**Free servers / easier installs (explored 2026-10-31, not built):** moving Catalog's server to a free cloud
+machine (Oracle's Always Free) is not recommended: Febbox/sites would see a datacenter address, the hidden
+windows (Live TV, Movy) need a desktop, and it'd be the family's pirated streams on one rented machine.
+Cloudflare Tunnel's terms don't allow video on the free plan. What helps installs without a server:
+the APK on GitHub Releases at a fixed latest link + one Downloader code that never changes; Settings → TV
+"Install on Roku" (Catalog uploads the zip to the Roku's developer page; the owner types the Roku's
+password into Catalog); and later a tiny free pairing service (Cloudflare Worker) only if discovery keeps failing.
 
 **Other:**
 - Browse's "trending" shows films still in cinemas (marked "In cinemas"); hiding them was offered.

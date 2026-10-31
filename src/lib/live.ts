@@ -222,6 +222,15 @@ export function sendSaved(what: { kind: 'game'; game: LiveGame } | { kind: 'chan
 	}).catch(() => null);
 }
 
+/** Takes a channel, a replay, or everything off Recently watched. */
+export function sendForget(what: { id: number } | { replay: string } | 'all') {
+	return fetch('/api/live/watched', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(what === 'all' ? { remove: 'all' } : { ...what, remove: true })
+	}).catch(() => null);
+}
+
 /**
  * Channels from the viewer's own country first (Where to watch, as the guide's `homeCountry`),
  * then these (the family watches in English), then the rest.
