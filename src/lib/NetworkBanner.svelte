@@ -1,46 +1,43 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
-	import { page } from '$app/state';
 
 	/**
-	 * On the computer Catalog runs on, when Windows has set its network to Public: the TVs can't
-	 * reach Catalog then (src/lib/server/networkType.ts). "Set to Private" asks Windows once;
-	 * "Not now" leaves that network Public for good.
+	 * On Settings → TV on the computer Catalog runs on, when Windows has set its network to Public:
+	 * the TVs can't reach Catalog then (src/lib/server/networkType.ts). "Set to Private" asks
+	 * Windows once.
 	 */
 	let { network }: { network: { name: string } | null | undefined } = $props();
 
 	let busy = $state(false);
 	let declined = $state(false);
 
-	async function act(action: 'private' | 'leave') {
+	async function setPrivate() {
 		busy = true;
 		declined = false;
 		try {
 			const r = await fetch('/api/desktop/network', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ action })
+				body: JSON.stringify({ action: 'private' })
 			});
 			const answer = (await r.json().catch(() => ({}))) as { ok?: boolean };
-			if (action === 'private' && !answer.ok) declined = true;
+			if (!answer.ok) declined = true;
 			await invalidateAll();
 		} finally {
 			busy = false;
 		}
 	}
 
-	const showing = $derived(Boolean(network) && page.url.pathname !== '/watch');
 </script>
 
-{#if showing && network}
+{#if network}
 	<div class="banner" role="status">
 		<span class="what">
 			<strong>TVs can't connect to Catalog.</strong> Windows set this network ({network.name}) to Public.
 			{#if declined}Windows didn't allow the change.{/if}
 		</span>
 		<span class="actions">
-			<button type="button" class="btn btn-primary" disabled={busy} onclick={() => act('private')}>{busy ? 'Waiting for Windows…' : 'Set to Private'}</button>
-			<button type="button" class="btn" disabled={busy} onclick={() => act('leave')}>Not now</button>
+			<button type="button" class="btn btn-primary" disabled={busy} onclick={setPrivate}>{busy ? 'Waiting for Windows…' : 'Set to Private'}</button>
 		</span>
 	</div>
 {/if}

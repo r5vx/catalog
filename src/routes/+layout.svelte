@@ -3,7 +3,6 @@
 	import UpdateBanner from '$lib/UpdateBanner.svelte';
 	import TvUpdated from '$lib/tv/TvUpdated.svelte';
 	import SigninBanner from '$lib/SigninBanner.svelte';
-	import NetworkBanner from '$lib/NetworkBanner.svelte';
 	import ConfirmDialog from '$lib/ConfirmDialog.svelte';
 	import RatePrompt from '$lib/RatePrompt.svelte';
 	import SideNav from '$lib/SideNav.svelte';
@@ -50,6 +49,24 @@
 		if (!window.isSecureContext || local || location.protocol !== 'https:' || !('serviceWorker' in navigator)) return;
 		navigator.serviceWorker.register('/sw.js').catch(() => {});
 		sendKeptPlaces().catch(() => {});
+	});
+
+	// Whether this browser keeps what pages remember from one start to the next (/api/diagnostics →
+	// storage): the owner's desktop app kept nothing after 2026-10-10. Once per start.
+	onMount(() => {
+		let since: string | null = null;
+		let works = true;
+		try {
+			since = localStorage.getItem('catalog:storageSince');
+			if (!since) localStorage.setItem('catalog:storageSince', String(Date.now()));
+		} catch {
+			works = false;
+		}
+		fetch('/api/storage-health', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ since: since ? Number(since) : null, works })
+		}).catch(() => {});
 	});
 
 	// Opening Settings from anywhere: remember the page and scroll position to go back to.
@@ -109,7 +126,6 @@
 	<UpdateBanner />
 	<TvUpdated />
 	<SigninBanner signin={data?.showboxSignin} />
-	<NetworkBanner network={data?.publicNetwork} />
 	{@render children()}
 	<ConfirmDialog />
 	<!-- "Rate it" after leaving the player (not over it, nor on a TV's screens). -->

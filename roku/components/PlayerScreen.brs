@@ -245,7 +245,12 @@ sub skipPast(segment as Object)
         load(plan.title, plan.type, text(plan.year), plan.next.season, plan.next.episode, false)
         return
     end if
-    m.video.seek = segment.end
+    ' An intro or recap lands on its last second, as on the computer (the story's first words weren't cut off).
+    if segment.type = "credits" then
+        m.video.seek = segment.end
+    else
+        m.video.seek = segment.end - 1
+    end if
 end sub
 
 sub showSkip(segment as Object)

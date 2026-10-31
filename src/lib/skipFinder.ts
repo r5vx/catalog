@@ -1,6 +1,6 @@
 /**
  * Intro and credits found by comparing an episode's sound with a neighbouring episode's (the
- * matching is introFinder.ts). Only the first 6 and last 7 minutes of each are used, and the
+ * matching is introFinder.ts). Only the first 12 and last 7 minutes of each are used, and the
  * answer is kept for both episodes, so watching in order costs one comparison per episode or less.
  *
  * Works on every source:
@@ -19,7 +19,9 @@ import { RATE } from './introFinder';
 import { readSoundTrack, soundBetween, soundTrackIn } from './soundTrack';
 import type { DownloadedSound } from './downloadedSound';
 
-export const HEAD = 6 * 60;
+// The first 12 minutes: Hawkeye S1E1's title comes at 7:01, after a long cold open; with 6 the
+// Marvel logo at the very start was the longest shared sound (2026-10-31).
+export const HEAD = 12 * 60;
 /** Two copies of an episode this close in length (seconds) are the same version. */
 const SAME_LENGTH = 3;
 // The last 7 minutes: She-Hulk E4's animated credits begin 5:20 before its end (5 minutes cut them short).

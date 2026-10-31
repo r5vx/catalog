@@ -266,18 +266,37 @@ export class SubtitleSync {
 	 * or by the computer for a TV), used instead of hearing the sound track. False if none.
 	 */
 	async useKept(fid: number, language: string): Promise<boolean> {
-		const key = `kept|${fid}|${language}`;
-		if (key === this.track) return true;
+		return (await this.useKeptSoFar(fid, language, false)) === 'all';
+	}
+
+	/**
+	 * For a TV while the computer hears the sound track (/speech-maker): what it has heard so far,
+	 * taken again whenever there's more. 'all' once it's finished, 'partial' while it goes on,
+	 * 'none' before it has anything. `partial: false` takes only a finished one (the computer's own
+	 * player hears the rest itself).
+	 */
+	async useKeptSoFar(fid: number, language: string, partial = true): Promise<'all' | 'partial' | 'none'> {
+		if (this.track === `kept|${fid}|${language}`) return 'all';
 		const resp = await fetch(`/api/watch/speech?fid=${fid}&lang=${encodeURIComponent(language)}`).catch(() => null);
-		if (!resp?.ok) return false;
+		if (!resp?.ok) return 'none';
+		const unfinished = resp.headers.get('X-Speech-Partial') === '1';
+		if (unfinished && !partial) return 'none';
 		const bytes = new Uint8Array(await resp.arrayBuffer());
-		this.reset();
+		// The same as last time: nothing new to fit.
+		let heard = 0;
+		for (const b of bytes) if (b !== 255) heard++;
+		const key = unfinished ? `kept|${fid}|${language}|${heard}` : `kept|${fid}|${language}`;
+		if (key === this.track) return 'partial';
+		// More of the same file: the worker just takes the longer list, and the timing showing stays
+		// meanwhile. (A reset put the speed back to normal until it fitted again: Chernobyl E5's
+		// subtitles run 4% fast, so they were 50 s out for a few seconds at each refresh.)
+		if (!this.track.startsWith(`kept|${fid}|${language}|`)) this.reset();
 		this.track = key;
 		const speech = new Float32Array(bytes.length);
 		for (let i = 0; i < bytes.length; i++) speech[i] = bytes[i] === 255 ? NaN : bytes[i] / 254;
 		this.worker.postMessage({ kind: 'heard', speech }, [speech.buffer]);
 		this.worker.postMessage({ kind: 'fit' });
-		return true;
+		return unfinished ? 'partial' : 'all';
 	}
 
 	/** Everything heard so far, as the worker has it. */
@@ -293,8 +312,8 @@ export class SubtitleSync {
 		});
 	}
 
-	/** Keeps the talking heard for Showbox file `fid` on the computer (see useKept). */
-	private async keepHeard(fid: number, language: string): Promise<void> {
+	/** Keeps the talking heard for Showbox file `fid` on the computer (see useKept); `partial` while it goes on. */
+	private async keepHeard(fid: number, language: string, partial = false): Promise<void> {
 		let speech = await this.heardSoFar();
 		// (The worker's list runs on past the end of the video, unheard.)
 		let end = speech.length;
@@ -303,7 +322,7 @@ export class SubtitleSync {
 		const bytes = new Uint8Array(speech.length);
 		for (let i = 0; i < speech.length; i++) bytes[i] = Number.isNaN(speech[i]) ? 255 : Math.round(Math.min(1, Math.max(0, speech[i])) * 254);
 		// (Without saying what it is, the bytes arrive empty.)
-		await fetch(`/api/watch/speech?fid=${fid}&lang=${encodeURIComponent(language)}`, {
+		await fetch(`/api/watch/speech?fid=${fid}&lang=${encodeURIComponent(language)}${partial ? '&partial=1' : ''}`, {
 			method: 'POST',
 			body: bytes,
 			headers: { 'Content-Type': 'application/octet-stream' }
@@ -314,8 +333,10 @@ export class SubtitleSync {
 	 * Fetches and hears the whole sound track in `language` (from the video's main playlist),
 	 * from where the video is to the end, then the start. False if it can't be read (the caller
 	 * listens instead). `keepAs`: the Showbox file it is, to keep what's heard for next time.
+	 * `from`: where to start instead of where the video is (a TV's place, for /speech-maker), and
+	 * `keepAsItGoes`: keep what's heard after each group too, so a TV can time from it straight away.
 	 */
-	async analyseTrack(masterUrl: string, language: string, keepAs = 0): Promise<boolean> {
+	async analyseTrack(masterUrl: string, language: string, keepAs = 0, options: { from?: number; keepAsItGoes?: boolean } = {}): Promise<boolean> {
 		const key = `${masterUrl.split('?')[0]}|${language}`;
 		if (key === this.track) return true;
 		this.reset();
@@ -333,7 +354,8 @@ export class SubtitleSync {
 			// long as a first answer needs, fetched in one go (Showbox's pieces are 6½ s, so it took
 			// two rounds of twenty), so the timing's ready a few seconds sooner.
 			const count = track.pieces.length;
-			const here = Math.max(0, track.pieces.findIndex((p) => p.at + p.length > this.video.currentTime));
+			const startAt = options.from ?? this.video.currentTime;
+			const here = Math.max(0, track.pieces.findIndex((p) => p.at + p.length > startAt));
 			let enough = here + 1;
 			while (enough < count && track.pieces[enough].at - track.pieces[here].at < FIRST_ANSWER) enough++;
 			const groups: [number, number][] = [[here, enough]];
@@ -357,6 +379,7 @@ export class SubtitleSync {
 				this.worker.postMessage({ kind: 'fit' });
 				previousEnd = at + samples.length / RATE;
 				heard += samples.length / RATE;
+				if (keepAs && options.keepAsItGoes && end !== groups[groups.length - 1][1]) await this.keepHeard(keepAs, language, true);
 			}
 			if (keepAs && !stop.signal.aborted) await this.keepHeard(keepAs, language);
 			return true;

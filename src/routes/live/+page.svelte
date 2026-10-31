@@ -33,6 +33,7 @@
 		replayHref,
 		scoreText,
 		sendSaved,
+		sendForget,
 		sendTeam,
 		sportLabel,
 		timeGroup,
@@ -316,7 +317,34 @@
 		guide.savedChannels = saved ? [channel.id, ...guide.savedChannels] : guide.savedChannels.filter((id) => id !== channel.id);
 		sendSaved({ kind: 'channel', id: channel.id, name: channel.name }, saved);
 	}
+
+	/** Off Recently watched: one channel, one replay, or all of them. */
+	function forgetChannel(id: number) {
+		if (!guide) return;
+		guide.recent = guide.recent.filter((c) => c.id !== id);
+		sendForget({ id });
+	}
+	function forgetReplay(replay: string) {
+		if (!guide) return;
+		guide.recentReplays = (guide.recentReplays ?? []).filter((r) => r.id !== replay);
+		sendForget({ replay });
+	}
+	function forgetAll() {
+		if (!guide) return;
+		guide.recent = [];
+		guide.recentReplays = [];
+		sendForget('all');
+	}
+	const recentIds = $derived(new Set(guide?.recent.map((c) => c.id) ?? []));
 </script>
+
+{#snippet removeButton(label: string, onclick: () => void)}
+	<button type="button" class="remove" aria-label="Remove {label} from Recently watched" title="Remove from Recently watched" {onclick}>
+		<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+			<path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none" />
+		</svg>
+	</button>
+{/snippet}
 
 <svelte:head><title>Live TV · Catalog</title></svelte:head>
 
@@ -354,9 +382,9 @@
 	</li>
 {/snippet}
 
-{#snippet channelCard(channel: LiveChannel | { id: number; name: string; country?: string })}
+{#snippet channelCard(channel: LiveChannel | { id: number; name: string; country?: string }, recent = false)}
 	{@const showing = showingNow.get(channel.id)}
-	<li class="channel" oncontextmenu={(e) => openMenu(e, { channel })}>
+	<li class="channel" class:recent oncontextmenu={(e) => openMenu(e, { channel })}>
 		<a href={watchHref(channel, showing)}>
 			<span class="name">{channel.name}</span>
 			{#if showing}
@@ -366,6 +394,7 @@
 			{/if}
 		</a>
 		<LiveStar saved={savedChannelIds.has(channel.id)} label={channel.name} onclick={() => saveChannel(channel)} />
+		{#if recent}{@render removeButton(channel.name, () => forgetChannel(channel.id))}{/if}
 	</li>
 {/snippet}
 
@@ -395,6 +424,9 @@
 			<button type="button" role="menuitem" onclick={() => fromMenu(() => goto(watchHref(channel, showing)))}>▶ Watch</button>
 			<hr />
 			<button type="button" role="menuitem" onclick={() => fromMenu(() => saveChannel(channel))}>{savedChannelIds.has(channel.id) ? 'Unsave' : 'Save'}</button>
+			{#if recentIds.has(channel.id)}
+				<button type="button" role="menuitem" onclick={() => fromMenu(() => forgetChannel(channel.id))}>Remove from Recently watched</button>
+			{/if}
 			{#if showing && !savedGameIds.has(showing.id)}
 				<button type="button" role="menuitem" onclick={() => fromMenu(() => saveGame(showing))}>Save {showing.title}</button>
 			{/if}
@@ -503,7 +535,7 @@
 			<section>
 				<h2 class="label">Watched lately</h2>
 				<ul class="channels">
-					{#each savedFound.recent as channel (channel.id)}{@render channelCard(channelById.get(channel.id) ?? channel)}{/each}
+					{#each savedFound.recent as channel (channel.id)}{@render channelCard(channelById.get(channel.id) ?? channel, true)}{/each}
 				</ul>
 			</section>
 		{/if}
@@ -528,11 +560,15 @@
 			{#if sport === 'all'}
 				{#if !searched && (guide.recentReplays?.length || guide.recent.length)}
 					<section>
-						<div class="section-head"><h2>Recently watched</h2></div>
+						<div class="section-head">
+							<h2>Recently watched</h2>
+							<button type="button" class="see-all" onclick={forgetAll}>Clear</button>
+						</div>
 						{#if guide.recentReplays?.length}
 							<ul class="replays recent">
 								{#each guide.recentReplays as replay (replay.id)}
-									<li>
+									<li class="recent">
+										{@render removeButton(replay.title, () => forgetReplay(replay.id))}
 										<a class="replay" href={replayHref(replay)}>
 											<span class="replay-art">
 												<GameArt sport={replay.sport} poster={replay.poster} />
@@ -551,7 +587,7 @@
 						{/if}
 						{#if guide.recent.length}
 							<ul class="channels recent-channels">
-								{#each guide.recent.slice(0, 6) as channel (channel.id)}{@render channelCard(channelById.get(channel.id) ?? channel)}{/each}
+								{#each guide.recent.slice(0, 6) as channel (channel.id)}{@render channelCard(channelById.get(channel.id) ?? channel, true)}{/each}
 							</ul>
 						{/if}
 					</section>
@@ -1189,6 +1225,56 @@
 
 	.recent-channels {
 		margin-top: 12px;
+	}
+
+	/* The x that takes a channel or replay off Recently watched: shows on hover (always on touch screens). */
+	.remove {
+		display: grid;
+		place-items: center;
+		flex: none;
+		width: 30px;
+		height: 30px;
+		padding: 0;
+		border: none;
+		border-radius: 50%;
+		background: transparent;
+		color: var(--ink-faint);
+		cursor: pointer;
+		opacity: 0;
+	}
+
+	.remove:hover {
+		background: var(--surface-2);
+		color: var(--ink);
+	}
+
+	.recent:hover .remove,
+	.remove:focus-visible {
+		opacity: 1;
+	}
+
+	@media (hover: none) {
+		.remove {
+			opacity: 1;
+		}
+	}
+
+	/* On a replay it sits over the top right corner of the picture. */
+	.replays .recent {
+		position: relative;
+	}
+
+	.replays .recent .remove {
+		position: absolute;
+		top: 6px;
+		right: 6px;
+		z-index: 1;
+		background: rgb(0 0 0 / 0.6);
+		color: #fff;
+	}
+
+	.replays .recent .remove:hover {
+		background: rgb(0 0 0 / 0.85);
 	}
 
 	.replay-art img {

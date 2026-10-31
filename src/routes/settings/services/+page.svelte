@@ -49,10 +49,14 @@
 	}
 
 	/** Another Febbox account's sign-in, in a window of its own (the main account stays signed in). */
+	/** How the last account added went, as the app saved it: shown under More accounts. */
+	let moreResult = $state<{ ok: boolean; text: string } | null>(null);
+
 	function addAccount() {
 		addingMore = true;
 		moreFailed = false;
-		const before = others.length;
+		moreResult = null;
+		const asked = Date.now();
 		const popup = window.open('https://www.febbox.com/login#catalog-more', '_blank');
 		if (!popup) {
 			addingMore = false;
@@ -61,11 +65,20 @@
 		const poll = setInterval(async () => {
 			if (!popup.closed) return;
 			clearInterval(poll);
-			// The window saves the sign-in as it closes: a moment for that, then look again.
-			await new Promise((r) => setTimeout(r, 2500));
+			// The app saves the sign-in as the window closes: its answer is waited for (it took longer
+			// than the 2.5 s this used to wait, which said "No account was added" wrongly).
+			let last: { at: number; result: string; name: string } | null = null;
+			for (let i = 0; i < 30 && !(last && last.at >= asked); i++) {
+				await new Promise((r) => setTimeout(r, 1000));
+				last = await fetch('/api/watch/save-token').then((r) => (r.ok ? r.json() : null)).catch(() => null);
+			}
 			await invalidateAll();
-			moreFailed = others.length === before;
 			addingMore = false;
+			if (!last || last.at < asked) moreFailed = true;
+			else if (last.result === 'added') moreResult = { ok: true, text: `Added ${last.name || 'the account'}.` };
+			else if (last.result === 'same') moreResult = { ok: false, text: `${last.name || 'That account'} is already signed in here. Log in with a different one.` };
+			else if (last.result === 'refused') moreResult = { ok: false, text: "Febbox didn't log that account in. Try again." };
+			else moreResult = { ok: false, text: "Febbox couldn't be reached. Try again in a minute." };
 		}, 500);
 	}
 
@@ -222,7 +235,7 @@
 
 		{#if data.febboxKeySaved}
 			<div class="saved-row">
-				<span class="muted">Logged in.{#if mainAccount && usage(mainAccount)}<span class="usage">{usage(mainAccount)}</span>{/if}</span>
+				<span class="muted">{mainAccount?.name ? `Logged in as ${mainAccount.name}.` : 'Logged in.'}{#if mainAccount && usage(mainAccount)}<span class="usage">{usage(mainAccount)}</span>{/if}</span>
 				<div class="saved-actions">
 					<button type="button" class="btn" onclick={copyKey}>
 						{copied ? 'Copied' : 'Copy key'}
@@ -253,16 +266,18 @@
 					Each Febbox account gets its own HD allowance a day. With more than one, every video uses
 					whichever has the most left, so several TVs can watch at once without dropping to 360p.
 				</p>
-				{#if form?.moreError}
+				{#if moreResult}
+					<p class="msg" class:good={moreResult.ok} class:bad={!moreResult.ok} role="status">{moreResult.text}</p>
+				{:else if form?.moreError}
 					<p class="msg bad" role="alert">{form.moreError}</p>
 				{:else if form?.moreOk}
 					<p class="msg good" role="status">{form.moreOk}</p>
 				{:else if moreFailed}
-					<p class="msg bad" role="alert">No account was added. A different account than the ones above has to log in.</p>
+					<p class="msg bad" role="alert">No account was added: the login window closed before Febbox logged in.</p>
 				{/if}
 				{#each others as account, at (account.key)}
 					<div class="saved-row">
-						<span class="muted">Account {at + 2}{#if usage(account)}<span class="usage">{usage(account)}</span>{/if}</span>
+						<span class="muted">{account.name || `Account ${at + 2}`}{#if usage(account)}<span class="usage">{usage(account)}</span>{/if}</span>
 						<form method="POST" action="?/removeFebboxMore">
 							<input type="hidden" name="key" value={account.key} />
 							<button type="submit" class="btn btn-danger">Remove</button>

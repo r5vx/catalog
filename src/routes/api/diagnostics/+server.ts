@@ -6,6 +6,8 @@ import type { RequestHandler } from './$types';
 import { slowRequests } from '$lib/server/slowRequests';
 import { liveListingState } from '$lib/server/sources/daddylive';
 import { playbackStops } from '$lib/server/playbackLog';
+import { speechJobs } from '$lib/server/heardSpeech';
+import { storageReports } from '$lib/server/storageHealth';
 import { caughtUpSummary } from '$lib/server/db/queries';
 
 const describe = (path: string) => {
@@ -31,6 +33,10 @@ export const GET: RequestHandler = async () => {
 		liveTv: liveListingState(),
 		// Times a video stopped to load, with what was going on (playbackLog.ts), newest first.
 		playbackStops: playbackStops().slice(0, 20),
+		// TVs' asks for the computer to hear a sound track for subtitle timing, and how each went (heardSpeech.ts).
+		speechJobs: speechJobs(),
+		// Whether each screen's browser kept what pages remember since its last start (storage-health).
+		storage: storageReports(),
 		// Shows watched to their last episode, and new episodes found for them (newEpisodes.ts).
 		caughtUp: caughtUpSummary(),
 		settingsStoredIn: 'settings table inside library.db',

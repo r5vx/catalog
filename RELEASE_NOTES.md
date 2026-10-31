@@ -12,6 +12,33 @@ without both.
 
 ## Unreleased
 
+## 3.9.0 — 2026-10-31 — TV subtitles timed again, Roku installs from Catalog, and skip fixes
+
+### New
+- **Roku**: Settings → Watch on TV finds the Rokus on the Wi-Fi and installs Catalog on one, no web browser needed
+- **Player**: double-click the volume slider to go back to 100%, and the percentage shows over it while dragging
+- **Settings**: each Febbox account shows its name or email
+- **Live TV**: take a channel or replay off Recently watched, or clear it all (the x on the computer, the menu button on the Fire TV, * on the Roku)
+
+### Improved
+- **Fire TV**: new TVs install Catalog by typing one code in Downloader (5785169)
+- **TV**: the "TVs can't connect" notice only shows in Settings → TV, not on every page
+- **Skips**: intro and credits times from the skip sites are used first; Catalog finds its own only where they have none
+- **Skips**: intros that start after a long opening scene (up to 12 minutes in) are found
+- **Skips**: a recap and an intro back to back are two skips again, so the intro can be watched
+- **Skips**: Skip Intro and Skip Recap leave the last second, so the story's first words aren't cut off
+- **Anime**: each show's Japanese or dub choice is kept with your profile, so TVs and phones start the same way
+
+### Fixed
+- **TV**: subtitles get timed to the video even while the computer is busy with other TVs (they could stay out of time for good)
+- **Subtitles**: picking up where you left off brings back the subtitles' speed along with their delay (some were far out until re-timed)
+- **Settings**: adding another Febbox account no longer fails with "No account was added" when it logged in fine
+- **Computer**: things Catalog remembers on this computer (each show's audio and subtitles, volume) are kept after closing it; an update could put an anime back on the dub
+- **Player**: a slow part no longer counts as "missing on its server" (it switched copies after pausing); it gets a fresh link instead
+- **Subtitles**: opening an anime's last episode of a season no longer searches for episodes after it, so its subtitles come sooner
+- **Skips**: credits no longer start early when an episode ends on a dark scene
+- **Skips**: a show's real intro is no longer lost when a studio logo plays at the start of each episode
+
 ## 3.8.0 — 2026-10-31 — Catalog as a phone app, live captions timed by themselves, and mini player fixes
 
 ### New
