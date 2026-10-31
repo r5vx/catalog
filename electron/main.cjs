@@ -403,6 +403,21 @@ function makeStrip(pagePath) {
 	nextStrip();
 }
 
+/*
+ * Live captions timed by the commentary (/caption-timer, src/lib/liveCaptionTiming.ts): one window
+ * nobody sees, for every channel being watched; it closes itself a minute after the last screen
+ * stops asking. Muted, and at full speed while hidden (it listens with Whisper).
+ */
+let captionTimer = null;
+function openCaptionTimer() {
+	if (quitting || (captionTimer && !captionTimer.isDestroyed())) return;
+	captionTimer = new BrowserWindow({ show: false, width: 480, height: 270, webPreferences: { backgroundThrottling: false } });
+	captionTimer.webContents.setAudioMuted(true);
+	captionTimer.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+	captionTimer.on('closed', () => (captionTimer = null));
+	captionTimer.loadURL(`${ORIGIN}/caption-timer`).catch(() => captionTimer?.destroy());
+}
+
 function nextStrip() {
 	if (stripBusy || !stripQueue.length || quitting) return;
 	stripBusy = true;
@@ -463,6 +478,8 @@ function startServer() {
 		if (message?.type === 'print-pdf') makePdf(message.id, message.path);
 
 		if (message?.type === 'make-strip') makeStrip(String(message.path));
+
+		if (message?.type === 'caption-timer') openCaptionTimer();
 
 		if (message?.type === 'clear-app-cache') session.defaultSession.clearCache().catch(() => {});
 

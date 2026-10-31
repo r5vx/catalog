@@ -14,7 +14,7 @@
  * `mixed`: the story carries on over the song (AniSkip's mixed-ed, Anime Skip's Mixed Credits):
  * the Skip button shows, but it's never skipped by itself.
  */
-export type SkipSegment = { type: 'intro' | 'recap' | 'credits'; start: number; end: number; mixed?: boolean };
+export type SkipSegment = { type: 'intro' | 'recap' | 'credits'; start: number; end: number; mixed?: boolean; votes?: number };
 
 type KitsuAnime = {
 	id: string;

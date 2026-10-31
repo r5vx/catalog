@@ -36,9 +36,16 @@
 	<div class="title-row">
 		<h1>{pm ? p('Catalog') : 'Catalog'}</h1>
 		<div class="header-actions">
+			{#if page.data.whoIsWatching}
+				<!-- who's watching on this phone: tapped, the picker -->
+				<a href="/profiles?next={encodeURIComponent(page.url.pathname + page.url.search)}" class="who" title="Watching as {page.data.whoIsWatching.name}. Change" aria-label="Watching as {page.data.whoIsWatching.name}. Change">
+					<span class="who-avatar" style:background={page.data.whoIsWatching.color}>{page.data.whoIsWatching.name.slice(0, 1).toUpperCase()}</span>
+				</a>
+			{/if}
 			<a href="/settings" class="btn" title="Settings" aria-label="Settings">⚙</a>
 			<a href="/browse" class="btn">{pm ? p('Browse') : 'Browse'}</a>
-			<a href="/downloads" class="btn downloads-link">Downloads</a>
+			<a href="/live" class="btn side-link">Live TV</a>
+			<a href="/downloads" class="btn side-link">Downloads</a>
 			<a href="/entry/new" class="btn btn-primary">{pm ? '+ Claim giblet' : '+ Add'}</a>
 		</div>
 	</div>
@@ -59,9 +66,9 @@
 </header>
 
 <style>
-	/* (With the sidebar showing, Downloads is in it.) */
+	/* (With the sidebar showing, Live TV and Downloads are in it.) */
 	@media (min-width: 901px) {
-		:global(.beside-nav) .downloads-link {
+		:global(.beside-nav) .side-link {
 			display: none;
 		}
 	}
@@ -91,6 +98,22 @@
 		gap: 8px;
 	}
 
+	.who {
+		display: flex;
+		align-items: center;
+		text-decoration: none;
+	}
+
+	.who-avatar {
+		display: grid;
+		place-items: center;
+		width: 36px;
+		height: 36px;
+		border-radius: 8px;
+		font-weight: 600;
+		color: #fff;
+	}
+
 	/* On a phone the buttons get their own row rather than running off the
 	   right edge, and share the width evenly. */
 	@media (max-width: 460px) {
@@ -98,7 +121,7 @@
 			width: 100%;
 		}
 
-		.header-actions a:not([aria-label='Settings']) {
+		.header-actions a:not([aria-label='Settings']):not(.who) {
 			flex: 1;
 			justify-content: center;
 		}

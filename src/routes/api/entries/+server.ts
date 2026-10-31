@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { createFromResult } from '$lib/server/entries';
-import { entryBasics, setEntryStatus, markEntryCompleted, incrementRewatches, updateSeasonEpisodeReached, deleteEntry, completeProfileTitle, profileTitleReached, deleteProfileTitle, setEntryFields, type QuickFields } from '$lib/server/db/queries';
+import { entryBasics, setEntryStatus, markEntryCompleted, incrementRewatches, updateSeasonEpisodeReached, deleteEntry, completeProfileTitle, hideCompletedFromContinueWatching, profileTitleReached, deleteProfileTitle, setEntryFields, type QuickFields } from '$lib/server/db/queries';
 import { STATUSES } from '$lib/constants';
 import { showStillAiring } from '$lib/server/stillAiring';
 import { currentProfile, MAIN_PROFILE } from '$lib/server/profile';
@@ -39,15 +39,21 @@ export const PATCH: RequestHandler = async ({ request }) => {
 	// Someone else's profile on the TV: the id is a title on their own list. Only what the
 	// player does (Autosync) reaches here from there; the library itself isn't theirs to change.
 	if (currentProfile() !== MAIN_PROFILE) {
-		if (body.action === 'complete' || body.action === 'finished_show') completeProfileTitle(body.id);
-		else if (body.action === 'status') return json({ ok: true });
+		if (body.action === 'complete' || body.action === 'finished_show') {
+			completeProfileTitle(body.id);
+			// Marked completed by hand: out of Continue Watching too.
+			if (body.action === 'complete') hideCompletedFromContinueWatching(body.id);
+		} else if (body.action === 'status') return json({ ok: true });
 		else if (body.action === 'update_progress' && body.season != null && body.episode != null) profileTitleReached(body.id, body.season, body.episode);
 		else return error(403, 'Not on this profile');
 		return json({ ok: true });
 	}
 
-	if (body.action === 'complete') markEntryCompleted(body.id);
-	else if (body.action === 'finished_show') {
+	if (body.action === 'complete') {
+		markEntryCompleted(body.id);
+		// Marked completed by hand: out of Continue Watching too.
+		hideCompletedFromContinueWatching(body.id);
+	} else if (body.action === 'finished_show') {
 		// The player reached the end of the last episode out: a rewatch done (Completed, once more);
 		// otherwise Caught up while the show is still going, Completed once it has ended.
 		const entry = entryBasics(body.id);

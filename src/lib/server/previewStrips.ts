@@ -16,9 +16,26 @@ const KEEP_DAYS = 60;
 
 export type Strip = { key: string; frames: Record<string, string> };
 
-/** Which video a strip belongs to: the same film or episode, whichever copy it was taken from. */
-export function stripKey(title: string, type: string, season: number, episode: number): string {
-	return `${title.trim().toLowerCase()}|${type}|${type === 'tv' ? season : 0}|${type === 'tv' ? episode : 0}`;
+/**
+ * Which video a strip belongs to: the film or episode, and its length to the nearest 10 s. Copies
+ * of the same version (a few seconds apart) share one; another cut has its own. They were shared
+ * by every copy once, and Chernobyl E5's showed HBO's pictures (from Showbox) over Sky's cut (on
+ * 7Movies), minutes apart. (Strips kept without a length, from then, are no longer read.)
+ */
+export function stripKey(title: string, type: string, season: number, episode: number, length: number): string {
+	return `${title.trim().toLowerCase()}|${type}|${type === 'tv' ? season : 0}|${type === 'tv' ? episode : 0}|${Math.round(length / 10)}`;
+}
+
+/** The strip kept for a video this long: its own, or one of a copy within about 10 s of it. */
+export function stripFor(title: string, type: string, season: number, episode: number, length: number): Strip {
+	const key = stripKey(title, type, season, episode, length);
+	const own = readStrip(key);
+	if (Object.keys(own.frames).length) return own;
+	for (const near of [length - 10, length + 10]) {
+		const other = readStrip(stripKey(title, type, season, episode, near));
+		if (Object.keys(other.frames).length) return { key, frames: other.frames };
+	}
+	return own;
 }
 
 const fileFor = (key: string) => join(dir, `${createHash('sha1').update(key).digest('hex').slice(0, 24)}.json`);

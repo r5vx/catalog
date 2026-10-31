@@ -3,11 +3,14 @@
 	 * Downloads (src/lib/server/downloads.ts): films, episodes and replays kept on the computer,
 	 * started from Download in the player. Each plays here with no internet, or can be saved onto
 	 * this device (a phone: an iPhone keeps it in the Files app) with its subtitles beside it.
+	 * In the phone app (the secure address, Settings → Phones) each can be kept on the phone
+	 * instead, to play with no connection (phoneKeep.svelte.ts); Play then uses that copy.
 	 * Asks every two seconds while one is downloading.
 	 */
 	import { onDestroy, onMount } from 'svelte';
 	import { confirmAction } from '$lib/confirm.svelte';
 	import { downloadName } from '$lib/downloadName';
+	import { canKeep, kept, keepOnPhone, refreshKept, removeFromPhone, stopKeeping } from '$lib/phoneKeep.svelte';
 
 	type Download = {
 		id: number;
@@ -47,8 +50,40 @@
 		}
 	}
 
+	/** In the phone app: downloads can be kept on the phone. */
+	let phoneApp = $state(false);
+
+	function keep(d: Download) {
+		keepOnPhone({
+			id: d.id,
+			kind: d.kind,
+			title: d.title,
+			year: d.year,
+			season: d.season,
+			episode: d.episode,
+			episodeName: d.episodeName,
+			poster: d.poster,
+			bytes: d.bytes,
+			duration: d.duration,
+			place: d.place,
+			hasSubtitles: d.hasSubtitles,
+			name: downloadName(d)
+		});
+	}
+
+	async function unkeep(d: Download) {
+		const yes = await confirmAction({
+			title: `Remove "${downloadName(d)}" from this phone?`,
+			message: 'It stays on the computer, to keep again later.',
+			confirmLabel: 'Remove'
+		});
+		if (yes) removeFromPhone(d.id);
+	}
+
 	let timer: ReturnType<typeof setInterval> | undefined;
 	onMount(() => {
+		phoneApp = canKeep() && location.protocol === 'https:';
+		if (phoneApp) refreshKept();
 		load();
 		timer = setInterval(() => {
 			if (downloads?.some((d) => d.state !== 'done' && d.state !== 'failed')) load();
@@ -67,7 +102,8 @@
 		const quality = d.height ? `${d.height}p` : '';
 		if (d.state === 'done') {
 			const left = d.place > 5 && d.duration > 0 && d.place / d.duration < 0.95 ? `${minutes(d.duration - d.place)} left` : '';
-			return [left, quality, size(d.bytes), d.source].filter(Boolean).join(' · ');
+			const where = kept.ids.includes(d.id) ? 'On this phone' : d.id in kept.saving ? `Saving to this phone · ${Math.floor(((kept.saving[d.id] ?? 0) / Math.max(1, d.bytes)) * 100)}%` : '';
+			return [where, left, quality, size(d.bytes), d.source].filter(Boolean).join(' · ');
 		}
 		if (d.state === 'waiting') return d.donePieces ? `Waiting · ${pct(d)}%` : 'Waiting';
 		if (d.state === 'finishing') return 'Making the file';
@@ -78,6 +114,7 @@
 	const pct = (d: Download) => (d.totalPieces ? Math.floor((d.donePieces / d.totalPieces) * 100) : 0);
 
 	async function remove(d: Download) {
+		if (kept.ids.includes(d.id)) await removeFromPhone(d.id);
 		const yes = await confirmAction({
 			title: `Delete "${downloadName(d)}"?`,
 			message: d.state === 'done' ? 'Its file goes from this computer.' : 'Its download stops.',
@@ -128,13 +165,29 @@
 						<span class="status">{status(d)}</span>
 						{#if d.state === 'downloading' || (d.state === 'waiting' && d.donePieces)}
 							<span class="bar"><span style:width="{pct(d)}%"></span></span>
+						{:else if d.id in kept.saving}
+							<span class="bar"><span style:width="{Math.floor(((kept.saving[d.id] ?? 0) / Math.max(1, d.bytes)) * 100)}%"></span></span>
 						{/if}
+						{#if kept.problems[d.id]}<span class="status problem">{kept.problems[d.id]}</span>{/if}
 					</div>
 					<div class="actions">
 						{#if d.state === 'done'}
-							<a class="btn btn-primary" href="/watch?download={d.id}">Play</a>
-							<a class="btn" href="/api/downloads/{d.id}/file?save=1" download>Save to this device</a>
-							{#if d.hasSubtitles}<a class="btn" href="/api/downloads/{d.id}/subtitles?save=1" download>Subtitles</a>{/if}
+							{#if phoneApp && kept.ids.includes(d.id)}
+								<!-- the copy on the phone: no data used, and it plays anywhere -->
+								<a class="btn btn-primary" href="/offline.html?play={d.id}">Play</a>
+								<button type="button" class="btn" onclick={() => unkeep(d)}>Remove from phone</button>
+							{:else if phoneApp}
+								<a class="btn btn-primary" href="/watch?download={d.id}">Play</a>
+								{#if d.id in kept.saving}
+									<button type="button" class="btn" onclick={() => stopKeeping(d.id)}>Stop saving</button>
+								{:else}
+									<button type="button" class="btn" onclick={() => keep(d)}>Keep on this phone</button>
+								{/if}
+							{:else}
+								<a class="btn btn-primary" href="/watch?download={d.id}">Play</a>
+								<a class="btn" href="/api/downloads/{d.id}/file?save=1" download>Save to this device</a>
+								{#if d.hasSubtitles}<a class="btn" href="/api/downloads/{d.id}/subtitles?save=1" download>Subtitles</a>{/if}
+							{/if}
 						{:else if d.state === 'failed'}
 							<button type="button" class="btn" onclick={() => retry(d)}>Try again</button>
 						{/if}
@@ -143,7 +196,11 @@
 				</li>
 			{/each}
 		</ul>
-		<p class="faint small">On an iPhone, a video saved to this device is in the Files app, under Downloads.</p>
+		{#if phoneApp}
+			<p class="faint small">Kept on this phone, a download plays with no connection: open Catalog from the Home Screen and it's listed there. Keep Catalog open while one saves.</p>
+		{:else}
+			<p class="faint small">On an iPhone, a video saved to this device is in the Files app, under Downloads.</p>
+		{/if}
 	{/if}
 </div>
 
@@ -169,6 +226,10 @@
 	.faint {
 		margin: 0;
 		color: var(--ink-faint);
+	}
+
+	.status.problem {
+		color: var(--accent);
 	}
 
 	.small {

@@ -90,6 +90,10 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	// Showbox's own video server wants Febbox's Referer (what the desktop app and the TV app add).
 	const fromShowbox = !new URL(chosen.url).pathname.startsWith('/api/');
 	const shareKey = chosen.file.shareKey || episode?.shareKey || found.shareKey || '';
+	// Only the copy's top quality: the Roku's player would otherwise start lower and change quality
+	// by itself, which Catalog never does (the player's holdLevel). In kbps, for MinBandwidth.
+	const format = /\.mp4(\?|$)/i.test(chosen.url) ? 'mp4' : 'hls';
+	const minBandwidth = format === 'hls' ? await topBandwidth(chosen.url, fromShowbox ? { Referer: 'https://www.febbox.com/' } : forward) : 0;
 	// English subtitles (/api/roku/subtitles), unless they're part of the picture.
 	const subtitles = new URLSearchParams({ title: found.title, type, year, share: chosen.file.source ? shareKey : '' });
 	if (episode) {
@@ -97,9 +101,23 @@ export const GET: RequestHandler = async ({ url, request }) => {
 		subtitles.set('episode', String(number));
 	}
 
+	// Preview pictures while fast-forwarding (/api/roku/bif, from the computer's for this copy):
+	// the computer is asked to make them now if it hasn't, without waiting, so nothing starts later.
+	const which = { title: found.title, type, season: String(season), episode: String(number), fid: String(chosen.file.fid), share: shareKey };
+	const bif = /\.mp4(\?|$)/i.test(chosen.url) ? null : new URL(`/api/roku/bif?${new URLSearchParams(which)}`, url.origin).href;
+	if (bif) {
+		fetch(new URL('/api/watch/strip/prepare', url.origin), {
+			method: 'POST',
+			headers: { ...forward, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ ...which, year, share: chosen.file.source ? shareKey : undefined })
+		}).catch(() => {});
+	}
+
 	return json({
 		url: chosen.url,
-		format: /\.mp4(\?|$)/i.test(chosen.url) ? 'mp4' : 'hls',
+		format,
+		minBandwidth,
+		bif,
 		headers: fromShowbox ? ['Referer: https://www.febbox.com/'] : [],
 		title: found.title,
 		type,
@@ -120,3 +138,18 @@ export const GET: RequestHandler = async ({ url, request }) => {
 		next: next ? { season: next.season, episode: next.episode } : null
 	});
 };
+
+/** The highest H.264 quality a playlist lists, in kbps; 0 for a single-quality one or no answer. */
+async function topBandwidth(playlist: string, headers: Record<string, string>): Promise<number> {
+	try {
+		const r = await fetch(playlist, { headers, signal: AbortSignal.timeout(5000) });
+		if (!r.ok) return 0;
+		const qualities = (await r.text()).match(/#EXT-X-STREAM-INF:[^\n]*/g) ?? [];
+		const bandwidths = qualities
+			.filter((line) => !/hvc1|hev1/.test(line))
+			.map((line) => Number(line.match(/[:,]BANDWIDTH=(\d+)/)?.[1] ?? 0));
+		return bandwidths.length > 1 ? Math.floor(Math.max(...bandwidths) / 1000) : 0;
+	} catch {
+		return 0;
+	}
+}

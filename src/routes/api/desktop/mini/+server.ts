@@ -3,7 +3,8 @@ import type { RequestHandler } from './$types';
 
 /**
  * The computer's mini player (electron/miniPlayer.cjs). Body: { open: "/watch?…" } to open it,
- * or { back: seconds, playing, season, episode, fid } as it goes back to the big window. 409 outside the desktop app
+ * or { back: seconds, playing, season, episode, fid, reopen, path } as it goes back to the big window
+ * (`reopen`: its "Back to Catalog", which opens `path` if the big window is on another page). 409 outside the desktop app
  * (a phone, `npm run dev`): the player then uses the browser's picture-in-picture.
  */
 export const POST: RequestHandler = async ({ request }) => {
@@ -21,7 +22,9 @@ export const POST: RequestHandler = async ({ request }) => {
 			playing: Boolean(body.playing),
 			season: number(body.season),
 			episode: number(body.episode),
-			fid: number(body.fid)
+			fid: number(body.fid),
+			reopen: Boolean(body.reopen),
+			path: typeof body.path === 'string' && body.path.startsWith('/watch?') ? body.path : undefined
 		});
 		return json({ ok: true });
 	}

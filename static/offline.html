@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="theme-color" content="#111614" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="apple-touch-icon" href="/icon-192.png" />
+<title>Catalog</title>
+<!--
+	The phone app with no connection (static/sw.js answers with this page when Catalog can't be
+	reached). It plays the downloads kept on this phone (src/lib/phoneKeep.svelte.ts wrote them into
+	the browser's private files, `kept/`), with their captions, and keeps where each was left in
+	`catalog:keptPlaces` for Catalog to take back once it's reachable. Nothing here needs the computer.
+-->
+<style>
+	:root { --paper: #111614; --surface: #1a201e; --ink: #ecefed; --ink-soft: #b4bcb8; --ink-faint: #7d8783; --rule: #2b3330; --accent: #e88fbf; }
+	* { box-sizing: border-box; }
+	body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); }
+	h1 { font-size: 1.8rem; margin: 8px 0 4px; }
+	.note { color: var(--ink-faint); font-size: 0.9rem; margin: 0 0 16px; }
+	.again { font: inherit; font-size: 0.9rem; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--rule); background: var(--surface); color: var(--ink); margin-bottom: 20px; }
+	ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+	li button { display: flex; gap: 12px; align-items: center; width: 100%; text-align: left; padding: 8px; border-radius: 10px; border: 1px solid var(--rule); background: var(--surface); color: var(--ink); font: inherit; }
+	.poster { width: 64px; height: 96px; flex: none; border-radius: 6px; background: #000 center / cover no-repeat; }
+	.name { font-weight: 600; display: block; }
+	.sub { color: var(--ink-soft); font-size: 0.85rem; display: block; }
+	.empty { color: var(--ink-soft); }
+	.player { position: fixed; inset: 0; background: #000; display: none; flex-direction: column; z-index: 5; }
+	.player.open { display: flex; }
+	.player video { flex: 1; width: 100%; min-height: 0; background: #000; }
+	.player .bar { display: flex; align-items: center; gap: 10px; padding: max(10px, env(safe-area-inset-top)) 12px 10px; }
+	.player .bar span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #ddd; font-size: 0.9rem; }
+	.player .close { display: flex; align-items: center; gap: 4px; font: inherit; font-size: 0.9rem; padding: 6px 12px 6px 8px; border-radius: 8px; border: 1px solid #444; background: #1c1c1c; color: #fff; }
+	.player .close svg { width: 18px; height: 18px; fill: currentColor; }
+</style>
+</head>
+<body>
+	<h1>Catalog</h1>
+	<p class="note" id="note">Catalog's computer can't be reached right now. What's kept on this phone still plays.</p>
+	<button class="again" type="button" id="again">Try Catalog again</button>
+	<ul id="list"></ul>
+	<p class="empty" id="empty" hidden>Nothing is kept on this phone yet. When Catalog can be reached, open Downloads and tap Keep on this phone.</p>
+
+	<div class="player" id="player">
+		<div class="bar">
+			<button class="close" type="button" id="close"><svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>Back</button>
+			<span id="playing"></span>
+		</div>
+		<video id="video" controls playsinline preload="metadata"></video>
+	</div>
+
+<script>
+(() => {
+	const PLACES = 'catalog:keptPlaces';
+	const list = document.getElementById('list');
+	const empty = document.getElementById('empty');
+	const player = document.getElementById('player');
+	const video = document.getElementById('video');
+	const playingName = document.getElementById('playing');
+	let current = null;
+	let urls = [];
+
+	document.getElementById('again').onclick = () => { location.href = '/'; };
+
+	const pad = (n) => String(n).padStart(2, '0');
+	const minutes = (s) => { const m = Math.max(1, Math.round(s / 60)); return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`; };
+	const readPlaces = () => { try { return JSON.parse(localStorage.getItem(PLACES) || '{}'); } catch { return {}; } };
+
+	async function folder() {
+		const root = await navigator.storage.getDirectory();
+		return root.getDirectoryHandle('kept', { create: true });
+	}
+
+	async function fileOf(dir, name) {
+		try { return await (await dir.getFileHandle(name)).getFile(); } catch { return null; }
+	}
+
+	async function load() {
+		if (!navigator.storage || !navigator.storage.getDirectory) { empty.hidden = false; return; }
+		const dir = await folder();
+		const items = [];
+		for await (const name of dir.keys()) {
+			if (!/^\d+\.json$/.test(name)) continue;
+			const file = await fileOf(dir, name);
+			try { items.push(JSON.parse(await file.text())); } catch {}
+		}
+		items.sort((a, b) => (b.keptAt || 0) - (a.keptAt || 0));
+		empty.hidden = items.length > 0;
+		const places = readPlaces();
+		for (const item of items) {
+			const li = document.createElement('li');
+			const button = document.createElement('button');
+			button.type = 'button';
+			const poster = document.createElement('span');
+			poster.className = 'poster';
+			const picture = await fileOf(dir, `${item.id}.jpg`);
+			if (picture) { const url = URL.createObjectURL(picture); urls.push(url); poster.style.backgroundImage = `url("${url}")`; }
+			const about = document.createElement('span');
+			const name = document.createElement('span');
+			name.className = 'name';
+			name.textContent = item.name || item.title;
+			const sub = document.createElement('span');
+			sub.className = 'sub';
+			const place = Math.max(places[item.id]?.place || 0, item.place || 0);
+			const parts = [];
+			if (item.episodeName) parts.push(item.episodeName);
+			if (place > 5 && item.duration > 0 && place / item.duration < 0.95) parts.push(`${minutes(item.duration - place)} left`);
+			else if (item.duration > 0) parts.push(minutes(item.duration));
+			sub.textContent = parts.join(' · ');
+			about.append(name, sub);
+			button.append(poster, about);
+			button.onclick = () => play(item, dir);
+			li.append(button);
+			list.append(li);
+		}
+	}
+
+	async function play(item, dir) {
+		const file = await fileOf(dir, `${item.id}.mp4`);
+		if (!file) return;
+		current = item;
+		video.querySelectorAll('track').forEach((t) => t.remove());
+		const src = URL.createObjectURL(file);
+		urls.push(src);
+		const captions = await fileOf(dir, `${item.id}.vtt`);
+		if (captions) {
+			const track = document.createElement('track');
+			track.kind = 'subtitles';
+			track.label = 'English';
+			track.srclang = 'en';
+			track.default = true;
+			track.src = URL.createObjectURL(captions);
+			urls.push(track.src);
+			video.append(track);
+		}
+		playingName.textContent = item.name || item.title;
+		player.classList.add('open');
+		const place = Math.max(readPlaces()[item.id]?.place || 0, item.place || 0);
+		video.src = src;
+		video.addEventListener('loadedmetadata', () => {
+			if (place > 5 && video.duration && place / video.duration < 0.95) video.currentTime = place;
+			if (video.textTracks[0]) video.textTracks[0].mode = 'showing';
+			video.play().catch(() => {});
+		}, { once: true });
+	}
+
+	let lastSaved = 0;
+	function savePlace(force) {
+		if (!current || !video.duration || video.currentTime < 3) return;
+		const now = Date.now();
+		if (!force && now - lastSaved < 5000) return;
+		lastSaved = now;
+		const places = readPlaces();
+		places[current.id] = { place: video.currentTime, duration: video.duration, at: now };
+		try { localStorage.setItem(PLACES, JSON.stringify(places)); } catch {}
+	}
+	video.addEventListener('timeupdate', () => savePlace(false));
+	video.addEventListener('pause', () => savePlace(true));
+	window.addEventListener('pagehide', () => savePlace(true));
+
+	document.getElementById('close').onclick = () => {
+		savePlace(true);
+		video.pause();
+		video.removeAttribute('src');
+		video.load();
+		player.classList.remove('open');
+		current = null;
+		list.textContent = '';
+		load();
+	};
+
+	// Opened from Catalog's Downloads (a kept copy, to save data): straight to it.
+	const wanted = Number(new URLSearchParams(location.search).get('play'));
+	if (wanted) {
+		document.getElementById('note').textContent = 'Playing the copy kept on this phone.';
+	}
+	load().then(async () => {
+		if (!wanted) return;
+		const dir = await folder();
+		const file = await fileOf(dir, `${wanted}.json`);
+		if (file) play(JSON.parse(await file.text()), dir);
+	}).catch(() => { empty.hidden = false; });
+})();
+</script>
+</body>
+</html>

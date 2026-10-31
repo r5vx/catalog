@@ -7,9 +7,10 @@
 	/**
 	 * The computer making a video's preview pictures by itself, in a window nobody sees
 	 * (electron/main.cjs opens it when /api/watch/strip/prepare asks): for a TV playing it, and the
-	 * next episode. Finds the video like the player does, gathers its whole strip from the
-	 * smallest copy there is, keeps the pictures as it goes, and closes when done (or after 5
-	 * minutes).
+	 * next episode. Finds the video like the player does, gathers its whole strip from the copy
+	 * asked for (`fid`, `share`: the one playing, or the one the next episode will likely play;
+	 * else the smallest there is), keeps the pictures as it goes under that copy's length, and
+	 * closes when done (or after 5 minutes).
 	 */
 	type File = { fid: number; quality: string; source?: string; shareKey?: string; hevc?: boolean };
 	type Episode = { season: number; episode: number; files: File[]; shareKey?: string };
@@ -21,7 +22,9 @@
 		title: params.get('title') ?? '',
 		type: params.get('type') === 'tv' ? 'tv' : 'movie',
 		season: Number(params.get('season')) || 0,
-		episode: Number(params.get('episode')) || 0
+		episode: Number(params.get('episode')) || 0,
+		// Known once the copy's playlist is read.
+		length: 0
 	};
 
 	/**
@@ -67,7 +70,10 @@
 				share = ep?.shareKey || share;
 			}
 			let url = '';
-			for (const file of smallestFirst(files)) {
+			// The copy asked for first: another one may be another cut, with other pictures at each time.
+			const wantedFid = Number(params.get('fid')) || 0;
+			const wanted = files.filter((f) => f.fid === wantedFid && (!params.get('share') || (f.shareKey ?? '') === params.get('share') || !f.source));
+			for (const file of wanted.length ? wanted : smallestFirst(files)) {
 				url = await streamFor(file, share).catch(() => '');
 				if (url) break;
 			}
@@ -78,14 +84,22 @@
 
 			status = 'Gathering…';
 			strip = new PreviewStrip(url, { copies: 2 });
-			await strip.addSaved(await keptPictures(video));
+			const s = strip;
+			strip.start();
+			// Its length, from its playlist, says which strip the pictures belong to.
+			for (let i = 0; i < 60 && !s.duration; i++) await new Promise((r) => setTimeout(r, 500));
+			if (!s.duration) {
+				status = 'No playlist.';
+				return finish();
+			}
+			video.length = Math.round(s.duration);
+			await s.addSaved(await keptPictures(video));
 			let sinceKept = 0;
 			strip.onFrame = async () => {
 				if (++sinceKept < 15) return;
 				sinceKept = 0;
 				keepPictures(video, await strip!.takeFresh());
 			};
-			strip.start();
 			const check = setInterval(() => {
 				if (!strip?.finished) return;
 				clearInterval(check);

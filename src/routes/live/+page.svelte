@@ -104,10 +104,13 @@
 			guide = fresh;
 			if (!countryPicked && guide?.homeCountry) country = guide.homeCountry;
 			failed = false;
+			// No games at all is never the real schedule: asked again soon, not in ten minutes.
+			if (!fresh?.games?.length && emptyTries++ < 6) setTimeout(load, 20_000);
 		} catch {
 			if (!guide) failed = true;
 		}
 	}
+	let emptyTries = 0;
 
 	let ticker: ReturnType<typeof setInterval> | undefined;
 	let reloader: ReturnType<typeof setInterval> | undefined;

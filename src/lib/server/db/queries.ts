@@ -1078,6 +1078,26 @@ export function continueWatchingList(): ContinueItem[] {
 	}
 }
 
+/**
+ * Marked completed by hand: out of this profile's Continue Watching, under every name and kind
+ * it was watched as (any case). Owner, 2026-10-30: "if i finish a series and mark it as completed
+ * it should leave continue watching". Watching it again, or a new episode, brings it back.
+ * `entryId` is a library entry, or on another profile a title on their list.
+ */
+export function hideCompletedFromContinueWatching(entryId: number): void {
+	try {
+		const table = currentProfile() === MAIN_PROFILE ? 'entries' : 'profile_titles';
+		const named = db.prepare(`SELECT title FROM ${table} WHERE id = ?`).get(entryId) as { title?: string } | undefined;
+		if (!named?.title) return;
+		const watched = db
+			.prepare('SELECT DISTINCT title, type FROM watch_progress WHERE profile = ? AND lower(title) = lower(?)')
+			.all(currentProfile(), named.title) as { title: string; type: string }[];
+		for (const row of watched) hideFromContinueWatching(row.title, row.type);
+	} catch (e) {
+		console.error('[hideCompletedFromContinueWatching]', e);
+	}
+}
+
 export function hideFromContinueWatching(title: string, type: string): void {
 	db.prepare(`
 		INSERT INTO continue_hidden (profile, title, type, hidden_at) VALUES (?, ?, ?, datetime('now'))

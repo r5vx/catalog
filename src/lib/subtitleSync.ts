@@ -73,6 +73,13 @@ export class SubtitleSync {
 	onRate: ((rate: number) => void) | null = null;
 	/** Told once when the subtitles clearly don't fit this video at all. */
 	onMismatch: (() => void) | null = null;
+	/** Told each time the timing is worked out again: whether these subtitles fit the video yet. */
+	onFits: ((fits: boolean) => void) | null = null;
+
+	/** The subtitles showing have a timing that fits. */
+	get fits(): boolean {
+		return Boolean(this.plan?.fits);
+	}
 
 	constructor(
 		private readonly video: HTMLVideoElement,
@@ -104,6 +111,7 @@ export class SubtitleSync {
 			}
 			this.plan = event.data.plan;
 			this.last = { plan: this.plan, heard: Math.round(event.data.heard) };
+			this.onFits?.(this.fits);
 			// "Don't match" only once it still doesn't after three more minutes heard (or most of
 			// the video). A video heard bit by bit as it loads (7Movies, Movy) was judged on its first
 			// minutes: Netflix captions on 7Movies' longer copy of Dungeon Meshi E6 were called
@@ -153,6 +161,12 @@ export class SubtitleSync {
 		this.chosen = '';
 		this.useCues(cues, null);
 		this.worker.postMessage({ kind: 'fit' });
+	}
+
+	/** Worked out again from the start for the subtitles showing (Retime): a delay set by hand is let go. */
+	retime(): void {
+		this.chosen = '';
+		this.newCues();
 	}
 
 	/**

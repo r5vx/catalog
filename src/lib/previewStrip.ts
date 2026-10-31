@@ -11,7 +11,8 @@ import Hls from 'hls.js';
  * the next time, on any screen. Used by the player and by /strip-maker, the computer's own
  * gatherer for TVs and the next episode.
  */
-export type StripVideo = { title: string; type: string; season: number; episode: number };
+/** `length`: the copy's length in seconds (pictures are kept per version: previewStrips.ts). */
+export type StripVideo = { title: string; type: string; season: number; episode: number; length: number };
 
 type Copy = { video: HTMLVideoElement; hls: Hls; ready: boolean; busy: boolean };
 
@@ -227,14 +228,18 @@ export class PreviewStrip {
 		return this.pieceStarts.length > 0 && this.nextTarget() === null && this.wanted === null;
 	}
 
-	/** The next picture to gather: rough pass (a minute apart) first, then every `step`. */
+	/**
+	 * The next picture to gather: rough pass (a minute apart) first, then the last 9 minutes every
+	 * `step` (the player looks for the black credit roll in them: creditRoll.ts), then the rest.
+	 */
 	private nextTarget(): number | null {
 		if (this.frames.size >= (this.options.max ?? 600) || !this.duration) return null;
-		for (const step of [60, this.step]) {
-			const from = Math.max(0, Math.floor(this.playhead() / step) * step);
+		const passes: [number, number][] = [[60, 0], [this.step, Math.max(0, this.duration - 9 * 60)], [this.step, 0]];
+		for (const [step, first] of passes) {
+			const from = Math.floor(Math.max(first, this.playhead()) / step) * step;
 			const order = [];
 			for (let t = from; t < this.duration; t += step) order.push(t);
-			for (let t = 0; t < from; t += step) order.push(t);
+			for (let t = first; t < from; t += step) order.push(t);
 			for (const t of order) {
 				const piece = this.pieceAt(t);
 				// Already has one close enough (a picture kept from another copy counts).
@@ -295,7 +300,7 @@ export class PreviewStrip {
 
 /** Keeps pictures on the computer. */
 export async function keepPictures(video: StripVideo, frames: Record<string, string>): Promise<void> {
-	if (!Object.keys(frames).length) return;
+	if (!Object.keys(frames).length || !(video.length > 0)) return;
 	await fetch('/api/watch/strip', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
@@ -306,7 +311,8 @@ export async function keepPictures(video: StripVideo, frames: Record<string, str
 /** The pictures kept for a video, as base64 JPEGs by second. */
 export async function keptPictures(video: StripVideo): Promise<Record<string, string>> {
 	try {
-		const params = new URLSearchParams({ title: video.title, type: video.type, season: String(video.season), episode: String(video.episode) });
+		if (!(video.length > 0)) return {};
+		const params = new URLSearchParams({ title: video.title, type: video.type, season: String(video.season), episode: String(video.episode), length: String(Math.round(video.length)) });
 		const response = await fetch(`/api/watch/strip?${params}`);
 		return response.ok ? ((await response.json()).frames ?? {}) : {};
 	} catch {
@@ -314,8 +320,11 @@ export async function keptPictures(video: StripVideo): Promise<Record<string, st
 	}
 }
 
-/** Asks the computer to make a video's pictures itself (for TVs, and the next episode). */
-export function askComputerForPictures(video: StripVideo & { year?: string | number | null }): void {
+/**
+ * Asks the computer to make a video's pictures itself (for TVs, and the next episode), from that
+ * copy (`fid`, `share`). Its length can be 0 when not known yet: the computer finds it.
+ */
+export function askComputerForPictures(video: StripVideo & { year?: string | number | null; fid?: number; share?: string }): void {
 	fetch('/api/watch/strip/prepare', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },

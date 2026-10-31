@@ -9,8 +9,14 @@ import type { FragmentLoaderConstructor, FragmentLoaderContext, Loader, LoaderCa
  * house connection was fine), each single download slows down, and one at a time can fall
  * behind the video even though the connection could carry far more. So while the player fetches
  * a piece, the next two are fetched alongside it — three downloads at once — and handed over
- * from memory when it asks for them. The pieces of Catalog's relay are fetched ahead on the
- * computer instead (relayReadAhead.ts), so those are left alone here.
+ * from memory when it asks for them.
+ *
+ * The pieces of Catalog's relay are fetched ahead on the computer (relayReadAhead.ts), so on the
+ * computer itself they're left alone. A TV gets them over the house's Wi-Fi, though, and that's
+ * where one at a time fell behind: mom's SVU S28E4 had only Movy (about 6 Mbps; 7Movies' HEVC,
+ * her usual, is 1.6), the computer had it downloaded minutes ahead, and single pieces reached the
+ * TV at 5–11 Mbps, "0 of the last 6 from memory", buffering (2026-10-30). So on any other device
+ * they're fetched ahead too.
  *
  * When the connection is shared with something greedy (a Steam download, 2026-10-25: Showbox
  * pieces came at 0.4–1.3 Mbps, the video needs 1.9), each download only gets its share, and more
@@ -136,6 +142,8 @@ async function fetchPiece(url: string, kind: PieceNote['kind'], seconds: number)
 }
 
 const isRelayed = (url: string) => url.includes('/api/watch/relay?');
+/** The page is open on the computer Catalog runs on (its relay is next door, not over Wi-Fi). */
+const onTheComputer = () => /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/.test(location.hostname);
 
 type Base = new (config: unknown) => Loader<LoaderContext>;
 
@@ -151,7 +159,7 @@ export function fetchAheadLoader(hls: () => Hls | null): FragmentLoaderConstruct
 			const kind: PieceNote['kind'] = frag?.type === 'audio' ? 'audio' : 'video';
 			// (hls.js always fills these in, with 0s for a whole piece.)
 			const ranged = Boolean(context.rangeEnd);
-			if (!frag || ranged || isRelayed(context.url)) return this.plain(context, config, callbacks, kind);
+			if (!frag || ranged || (isRelayed(context.url) && onTheComputer())) return this.plain(context, config, callbacks, kind);
 
 			forgetOld();
 			this.fetchNext(frag, kind);

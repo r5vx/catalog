@@ -31,6 +31,7 @@
 		{ href: '/settings/watch-progress', label: 'Watch Progress', hint: 'Saved positions and history' },
 		{ href: '/settings/privacy', label: 'Privacy', hint: 'PIN lock' },
 		{ href: '/settings/tv', label: 'Watch on TV', hint: 'Catalog on a Fire TV' },
+		{ href: '/settings/phones', label: 'Phones', hint: 'Catalog as an app on a phone' },
 		{ href: '/settings/updates', label: 'Updates', hint: 'Keep Catalog current', flag: 'updates' }
 	];
 

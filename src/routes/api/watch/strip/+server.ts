@@ -1,22 +1,29 @@
 import { json, error } from '@sveltejs/kit';
-import { addToStrip, readStrip, stripKey } from '$lib/server/previewStrips';
+import { addToStrip, stripFor, stripKey } from '$lib/server/previewStrips';
 import type { RequestHandler } from './$types';
 
-const keyFrom = (params: URLSearchParams | Record<string, unknown>) => {
+/** Which video: title, type, season, episode and its length in seconds (null without them). */
+const videoFrom = (params: URLSearchParams | Record<string, unknown>) => {
 	const get = (name: string) => (params instanceof URLSearchParams ? params.get(name) : params[name]);
 	const title = String(get('title') ?? '').trim();
-	if (!title) return null;
-	return stripKey(title, String(get('type') ?? 'movie'), Number(get('season') ?? 0), Number(get('episode') ?? 0));
+	const length = Number(get('length'));
+	if (!title || !(length > 0)) return null;
+	return { title, type: String(get('type') ?? 'movie'), season: Number(get('season') ?? 0), episode: Number(get('episode') ?? 0), length };
 };
 
-/** A film's or episode's saved preview pictures. ?title=&type=&season=&episode= */
+const keyFrom = (params: URLSearchParams | Record<string, unknown>) => {
+	const v = videoFrom(params);
+	return v ? stripKey(v.title, v.type, v.season, v.episode, v.length) : null;
+};
+
+/** A film's or episode's saved preview pictures, for a copy this long. ?title=&type=&season=&episode=&length= */
 export const GET: RequestHandler = async ({ url }) => {
-	const key = keyFrom(url.searchParams);
-	if (!key) error(400, 'Which video?');
-	return json({ frames: readStrip(key).frames });
+	const v = videoFrom(url.searchParams);
+	if (!v) error(400, 'Which video?');
+	return json({ frames: stripFor(v.title, v.type, v.season, v.episode, v.length).frames });
 };
 
-/** Pictures to keep: { title, type, season, episode, frames: { "<second>": "<base64 JPEG>" } }. */
+/** Pictures to keep: { title, type, season, episode, length, frames: { "<second>": "<base64 JPEG>" } }. */
 export const POST: RequestHandler = async ({ request }) => {
 	const body = await request.json().catch(() => null);
 	const key = body ? keyFrom(body) : null;

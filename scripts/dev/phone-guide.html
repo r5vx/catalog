@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Catalog on an iPhone</title>
+<style>
+	@page { size: Letter; margin: 0.6in 0.65in; }
+	:root { --ink: #1d2321; --soft: #4d5753; --faint: #7a847f; --rule: #d9dedb; --accent: #b3437f; --panel: #f4f6f5; }
+	* { box-sizing: border-box; }
+	body { margin: 0; color: var(--ink); font: 11pt/1.5 'Segoe UI', -apple-system, sans-serif; }
+	h1 { font-size: 24pt; margin: 0 0 4pt; letter-spacing: -0.01em; }
+	.lead { color: var(--soft); font-size: 12pt; margin: 0 0 14pt; }
+	h2 { font-size: 15pt; margin: 22pt 0 6pt; padding-bottom: 4pt; border-bottom: 2px solid var(--accent); break-after: avoid; }
+	h2 .who { font-size: 10pt; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; display: block; margin-bottom: 2pt; }
+	h3 { font-size: 11.5pt; margin: 12pt 0 4pt; break-after: avoid; }
+	ol { margin: 4pt 0 8pt; padding-left: 20pt; }
+	li { margin: 4pt 0; break-inside: avoid; }
+	p { margin: 4pt 0 8pt; }
+	strong { font-weight: 650; }
+	.ui { font-weight: 650; white-space: nowrap; }
+	.box { background: var(--panel); border-left: 4px solid var(--accent); padding: 8pt 12pt; margin: 10pt 0; break-inside: avoid; }
+	.box p { margin: 2pt 0; }
+	.box.warn { border-left-color: #c78a16; }
+	.map { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: center; gap: 8pt; margin: 10pt 0 6pt; text-align: center; font-size: 10pt; }
+	.map .node { border: 1px solid var(--rule); border-radius: 8pt; padding: 8pt; background: #fff; }
+	.map .node b { display: block; font-size: 10.5pt; }
+	.map .arrow { color: var(--faint); font-size: 14pt; }
+	table { border-collapse: collapse; width: 100%; margin: 6pt 0; font-size: 10pt; }
+	td, th { border: 1px solid var(--rule); padding: 5pt 7pt; vertical-align: top; text-align: left; }
+	th { background: var(--panel); }
+	.small { font-size: 9.5pt; color: var(--soft); }
+	.page-break { break-before: page; }
+</style>
+</head>
+<body>
+
+<h1>Catalog on an iPhone</h1>
+<p class="lead">Setting up Dad's iPhone with Mom's laptop, so he can watch anywhere, and keep replays on his phone to watch at work with no Wi-Fi or signal.</p>
+
+<div class="map">
+	<div class="node"><b>Mom's laptop</b>Catalog runs here (the TVs use it too)</div>
+	<div class="arrow">&harr;</div>
+	<div class="node"><b>Tailscale</b>a private link between the family's devices, at home or away</div>
+	<div class="arrow">&harr;</div>
+	<div class="node"><b>Dad's iPhone</b>Catalog on the Home Screen, with his own profile</div>
+</div>
+<p class="small">Everything here is free. Part 1 is done once on Mom's laptop; Part 2 once on each phone. It takes about 15 minutes.</p>
+
+<div class="box warn">
+	<p><strong>Before starting:</strong> Mom's laptop needs the Catalog version that has <span class="ui">Settings &rarr; Phones</span>. If that section isn't there, update Catalog first (<span class="ui">Settings &rarr; Updates</span>).</p>
+</div>
+
+<h2><span class="who">Part 1 &middot; Mom's laptop &middot; once</span>Tailscale and the phone address</h2>
+
+<h3>1. Install Tailscale</h3>
+<ol>
+	<li>On the laptop, go to <strong>tailscale.com/download</strong> and download Tailscale for Windows. Install it.</li>
+	<li>Click <span class="ui">Log in</span> and sign in. Use <strong>one account for the whole family</strong> (for example Mom's Google account). Every phone will sign in with this same account.</li>
+	<li>Tailscale's icon appears by the clock. It should say <span class="ui">Connected</span>.</li>
+</ol>
+
+<h3>2. Turn on the phone address in Catalog</h3>
+<ol>
+	<li>Open Catalog. Go to <span class="ui">Settings &rarr; Phones</span>.</li>
+	<li>Click <span class="ui">Turn on the phone address</span>.</li>
+	<li><strong>The first time only,</strong> Catalog may say Tailscale wants HTTPS turned on. Click the link it shows, sign in with the family Tailscale account, click <span class="ui">Enable</span>, then go back to Catalog and click <span class="ui">Turn on the phone address</span> again.</li>
+	<li>Catalog now shows a <strong>square code</strong> and an address like <strong>https://moms-laptop.tail1234.ts.net</strong>. Leave this page open for Part 2.</li>
+</ol>
+
+<h3>3. Keep the laptop awake</h3>
+<ol>
+	<li>Windows <span class="ui">Settings &rarr; System &rarr; Power</span>: when plugged in, put the device to sleep after <span class="ui">Never</span>.</li>
+	<li>Keep it plugged in, with Catalog open (minimized is fine). If the laptop sleeps or Catalog is closed, phones and TVs can't reach it, but downloads kept on a phone still play.</li>
+</ol>
+
+<h2><span class="who">Part 2 &middot; Dad's iPhone &middot; once</span>Tailscale, Catalog on the Home Screen, his profile</h2>
+
+<h3>1. Tailscale on the iPhone</h3>
+<ol>
+	<li>Open the <strong>App Store</strong>, search <strong>Tailscale</strong>, and install it (free).</li>
+	<li>Open it, tap <span class="ui">Log in</span>, and sign in with <strong>the same family account</strong> as the laptop.</li>
+	<li>When the iPhone asks to <span class="ui">Add VPN Configurations</span>, tap <span class="ui">Allow</span> (and enter the passcode).</li>
+	<li>In Tailscale's settings, turn on <span class="ui">VPN On Demand</span> so it reconnects by itself. The laptop should be listed in the app as connected.</li>
+</ol>
+
+<h3>2. Open Catalog and add it to the Home Screen</h3>
+<ol>
+	<li>Open the iPhone's <strong>Camera</strong> and point it at the square code on the laptop's <span class="ui">Settings &rarr; Phones</span> page. Tap the yellow link that appears. (Or type the address into Safari.)</li>
+	<li>Catalog opens in Safari (if it asks <span class="ui">Who's watching?</span>, tap Dad). Tap the <span class="ui">Share</span> button (the square with the arrow), then <span class="ui">Add to Home Screen</span>, then <span class="ui">Add</span>.</li>
+	<li>Close Safari. From now on, <strong>always open Catalog from its Home Screen icon</strong>: only that one keeps downloads on the phone.</li>
+</ol>
+
+<h3>3. Who's watching</h3>
+<ol>
+	<li>Open Catalog from the Home Screen. It asks <span class="ui">Who's watching?</span> once more (the Home Screen app keeps its own memory, apart from Safari).</li>
+	<li>Tap <strong>Dad</strong>. If he doesn't have a profile yet, tap <span class="ui">Add profile</span>, type his name, and tap <span class="ui">Add</span>.</li>
+	<li>That's remembered on his phone. It's the same profile as on the TVs, so what he watches on the phone shows in his Continue Watching on the TV, and the other way round.</li>
+	<li>To change it later, tap the picture with his initial at the top of the library.</li>
+</ol>
+
+<h2 class="page-break"><span class="who">Every time &middot; at home</span>Keeping a replay on the phone</h2>
+<ol>
+	<li>At home (on Wi-Fi), open Catalog from the Home Screen and find the game, film or episode.</li>
+	<li>Start it playing, then tap <span class="ui">Download</span> at the top and pick the quality (and captions if wanted). The laptop downloads it; this can take a few minutes. Watch it in <span class="ui">Downloads</span>.</li>
+	<li>When it shows its size (no more percent), tap <span class="ui">Keep on this phone</span>.</li>
+	<li><strong>Keep Catalog open and the screen on</strong> until it says <span class="ui">On this phone</span>. (An iPhone pauses a web app in the background; if it stops, tap <span class="ui">Keep on this phone</span> again and it carries on from where it got to.)</li>
+</ol>
+<div class="box">
+	<p><strong>How much room?</strong> A 3-hour game in 720p is about 2&ndash;4 GB. The iPhone's <span class="ui">Settings &rarr; General &rarr; iPhone Storage</span> shows what's free.</p>
+</div>
+
+<h2><span class="who">At work &middot; no connection</span>Watching</h2>
+<ol>
+	<li>Open Catalog from the Home Screen. With no connection it opens a simple list: <strong>what's kept on this phone</strong>.</li>
+	<li>Tap one to play it, with its captions. The phone remembers where he stopped.</li>
+	<li>Back at home, opening Catalog sends those places to the laptop, so Continue Watching is right on the TVs too.</li>
+	<li>When it's watched, <span class="ui">Downloads &rarr; Remove from phone</span> frees the room (it stays on the laptop).</li>
+</ol>
+
+<h2><span class="who">If something's wrong</span>Quick fixes</h2>
+<table>
+	<tr><th>What happens</th><th>Try this</th></tr>
+	<tr><td>Catalog says the computer can't be reached, at home</td><td>Is the laptop on, awake, with Catalog open? Is Tailscale <span class="ui">Connected</span> on the phone (open the Tailscale app)? Then tap <span class="ui">Try Catalog again</span>.</td></tr>
+	<tr><td>No <span class="ui">Keep on this phone</span> button</td><td>Catalog was opened in Safari or from the plain <strong>http://100&hellip;</strong> address. Open it from the Home Screen icon made from the <strong>https://</strong> address.</td></tr>
+	<tr><td>The wrong person's Continue Watching</td><td>Tap the picture with the initial at the top of the library and pick the right person.</td></tr>
+	<tr><td>Keeping stopped partway</td><td>Tap <span class="ui">Keep on this phone</span> again with Catalog open; it carries on.</td></tr>
+	<tr><td>The square code doesn't open anything</td><td>Type the address shown under it into Safari exactly, starting with https://.</td></tr>
+</table>
+
+<p class="small">More phones: anyone in the family can do Part 2 with their own phone (the same Tailscale account, then pick their own name). Everyone shares the laptop's Showbox allowance; downloads don't use it.</p>
+
+</body>
+</html>

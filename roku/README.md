@@ -42,7 +42,10 @@ Laid out like the Fire TV app, and fed by the same code where it can be:
   `/api/roku/season`, which uses the player's own numbering where it differs), More like this.
 - `PlayerScreen`: `/api/roku/play` finds the copy as Catalog's player does; the Roku's own player
   plays it. Intros and credits skipped (`/api/roku/skips`), the next episode, a fresh link if it
-  stops working, Japanese and English subtitles for anime (`/api/roku/subtitles`). Live TV plays
+  stops working, Japanese and English subtitles for anime (`/api/roku/subtitles`). Preview pictures
+  while fast-forwarding: a BIF file (`/api/roku/bif`, `src/lib/server/bif.ts`) built from the
+  pictures the computer keeps for the progress bar, one every 10 s; the computer makes them for the
+  copy the Roku plays when it starts. Live TV plays
   `/api/live/playlist`, replays `/api/live/replay`.
 - `TileItem`: every tile (posters, chips, buttons, episodes, games, faces). `ApiTask`,
   `DiscoverTask`: the asking, off the screens' thread.

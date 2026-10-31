@@ -2585,3 +2585,424 @@ Existing entries weren't changed.
 longer skips them; `/api/watch/available?now=1` carries `inCinemas` (TMDB release kinds, kept 6 h,
 `inCinemasFor`), and the title and entry pages say "In cinemas: copies online are likely recorded
 in a cinema" under Watch. Resident Evil (2026): Showbox, 7Movies and Movy all have it.
+
+## Mini player round (2026-10-28, test build, not released)
+
+**"No Live TV button on the phone."** A plain bug: Live TV was only ever in `SideNav.svelte`, which is
+hidden under 900 px. Downloads had a fallback in `LibraryHeader.svelte`; Live TV now sits beside it
+(`.side-link`, hidden while the sidebar shows). On a 375 px phone "+ Add" wraps to its own full row.
+
+**"The mini player vanishes when clicked over a fullscreen app."** Electron on Windows treats the
+levels `floating`, `torn-off-menu`, `modal-panel`, `main-menu` and `status` as "behind the taskbar":
+each activation moves the window to just under the taskbar in z-order. `floating` is also the
+default. With a fullscreen app on that screen the taskbar is under the app, so the mini player went
+behind it the moment it was clicked. Now `screen-saver` (`keepOnTop` in `miniPlayer.cjs`), plus
+`moveTop()` 150 ms after each blur, so a topmost game that takes focus doesn't stay over it.
+
+**"Resizing drags it diagonally."** `setAspectRatio(16/9)`: dragging one side changes both. Removed;
+black fills the rest. The drag area was the whole top strip, touching the window's top edge and
+corners, where a drag region takes the place of the resize border. Now only `.mini-title` drags (6 px
+in from the top, away from the sides).
+
+**Fullscreen in the mini player:** `fullscreenable: true`, the player's own fullscreen button shown
+there. While fullscreen it isn't always on top (Alt+Tab, Catalog on the same screen); back on top on
+leaving it.
+
+**"Back to Catalog does nothing when I've gone to another page."** `catalogBackFromMini` only exists
+on the watch page that opened it. `backFromMini` now returns whether it took over; when nothing did,
+the Back button's message carries `reopen` and the mini player's own `watchAddress({})`, and the app
+does `main.loadURL(origin + path)` (the place was saved just before). ✕ still only closes.
+
+**"Swapping to the mini player loads the whole film again."** Measured in the test app on 7Movies
+(Penguins at 33 min): the mini player plays after ~2.3 s. Resolve and the stream link come from cache
+(3 ms); almost all of it is the video's playlists fetched again through the relay (~0.7 s each, one
+after the other); pieces come off the disk. Found on the way: **the mini player started a film over
+from 0:00** when it was opened past 95 % (credits), because it resumed from the saved place, which
+counts as finished there (a TV episode would even have moved on to the next). Now:
+- the place goes in the address (`place=`, tenths of a second) and `savedPlace` takes it as is;
+- the big player puts a 960-px JPEG of its picture in `localStorage` (`catalog:miniStill`, with the
+  place and length); the mini player shows it (`.mini-still`) and the right time until `playing`.
+  Checked: 0.3 s after the click the mini player showed the frame at 25:01 and "25:01 / 1:32:26".
+Not done: a relay cache for playlists (Showbox doesn't use the relay; the gain lasts only while links
+do). Showbox's mini start wasn't measured (it would spend the owner's Febbox allowance).
+
+**"Choppy when I focus the fullscreen window."** Not reproduced. The mini player already has
+`backgroundThrottling: false`. A borderless topmost window over the whole screen (PowerShell
+WinForms) covered it: still 24 fps, 0 dropped, `visibilityState` visible. But Windows' foreground lock
+kept that window from taking focus, so "focused" wasn't truly tried. The level fix above may be part
+of it (the old level kept re-placing the window under the taskbar). If it's still choppy, read
+Playback stats (frames dropped) in the mini player while the game has focus.
+**Gotcha:** the owner was watching on the same screen during that test. Look at the foreground window
+before any on-screen test, and launch the test app with `--mute-audio`.
+
+**Owner's round 2, same day (Chernobyl):**
+- **Mini player captions in the middle:** `.subtitle-display` sits 80 px up, the middle of a 270-px
+  window. In mini mode: 10 px, 52 px while `.controls.visible` (`:has`), top ones at 40 px.
+- **Episode list Hide:** `.sidebar-head` with a Hide button (`toggleEpisodes`); the top bar's "Hide
+  episodes" hides along with the controls.
+- **"Timing subtitles to the video…"** (`timingSubs`): from subtitles going on (auto-timing on, not
+  live/replays) until `subSync.onFits(true)` (new callback, plus a `fits` getter), "don't match", or
+  2 minutes. Shown in the toast's place, without its 5 s fade.
+- **Chernobyl's false intro** (E1 6:25–6:34, E4 3:45–3:55) came from **IntroDB**, not the skip finder:
+  the 9-s "CHERNOBYL" title card. IntroDB's raw answers: every Chernobyl part has
+  `submission_count: 1`, all sent within 3 s on 2026-04-08 (one upload of the whole show), and
+  all five "intros" are wrong (title card in E1/E4/E5, inside the recap in E2/E3). They're left out
+  by `WRONG` in `introdb.ts` (IMDb id → season → types). Dropping every intro under 15 s was
+  tried first and **rejected by the owner**: real short intros exist (a title card after a cold
+  open is many shows' whole intro). **E2 Skip Intro then Skip
+  Recap:** IntroDB has recap 0:00–0:58 and intro 0:00–0:37; a recap and an intro that overlap or are
+  within 5 s are now one part (the type of the one that starts first), unless either is `mixed`.
+  Both apply on the Roku too (`/api/roku/skips` uses `withFound`).
+- **E1 had no credits:** IntroDB's 56:20 start is past the end of the 56:30 Showbox copy (another cut),
+  so it's left out, and comparing sound with E2 found nothing. E2–E4 have credits.
+- **Subtitles not carried to E2:** only an in-page episode switch carried them, and only when
+  picked by hand (`!subsAuto`); a fresh page (Continue Watching, a link) started with none. Now the
+  kind put on for a show is kept per device (`catalog:showSubs:<title>`, set on a menu pick or a
+  fit-switch) and used for any episode with none on, unless captions are off for the show, or it's
+  the dub and they aren't CC/SDH. **E4 "doesn't match":** E4's REWARD file is named with the episode's
+  title, so stripping S01E04 didn't match E1's name and the language-only fallback took the AMZN HI
+  file; as a carried pick it counted as "by hand", so a mismatch only said so. Now: same release
+  (`releaseOf`: "bluray|reward") before language-only; carried-over subtitles count as automatic, so
+  a mismatch tries the other English ones; and the last episode's delay isn't carried while
+  auto-timing is on (E1 was +11.6 s, E2 +69.1 s, so a carried delay was wrong).
+- Checked in the browser pane (built server, library copy, 7Movies, muted): kept REWARD choice put
+  subtitles on E4 from a fresh page, the timing note showed, Hide/Episodes toggle. Auto-timing's
+  verdict on E4 wasn't seen (pane hidden, 2-min cap reached).
+- **Two skip databases, and cuts (owner's round 3).** TheIntroDB (theintrodb.org, API
+  `api.theintrodb.org/v4/media`, OpenAPI at `/openapi.yaml`) takes `imdb_id`, `season`, `episode`,
+  `duration_ms` and answers for the version within 5 min, with `group_duration_ms` and (with
+  `details=true`) `submission_count` per part. Chernobyl there is just as thin (1 submission each),
+  and both sites had E5's recap 0:00–0:56. The owner said E5 has no recap: **both were right** —
+  7Movies' E5 is the **Sky** cut (Sky logo at 0:12, black, new scene at 1:05; 68:40 long), and the
+  Amazon/HBO release (72:31) opens with clips of E4 (its subtitles' first lines are E4's). So the
+  fix is the cut: when TheIntroDB's version differs from the copy by more than 20 s, neither
+  database's times are used (`otherCut`). A subtitle-based recap check was written and dropped: the
+  subtitle file was for the HBO cut too, so it said "real recap".
+- **Preview pictures from another cut (owner's round 4).** Strips were keyed by title/season/episode
+  only ("whichever copy it was taken from"), and /strip-maker always used Showbox's smallest file, so
+  Chernobyl E5 on 7Movies (Sky, 68:40) showed HBO pictures (dialogue at 1:07:36 over the credits). Now
+  keyed by length to 10 s (`stripFor` also reads ±10 s), the player opens its strip once `duration`
+  is known, and the computer makes strips from the copy asked for. Checked: Arcane E1 165 pictures at
+  2600 s, none for +300 s; strip-maker on E2's 7Movies copy filed 46 under 2430 s.
+- **Rewatch not counted (Chernobyl).** Daily snapshots showed it Completed with `last_season` NULL until
+  2026-10-27, then Watching with last episode 1: the player took E1 as "ahead" of nothing and used the
+  "newer episode of a finished show → Watching" rule, so `finished_show` saw Watching and counted no
+  rewatch (the 1 there now was set 8 s after the end, likely by hand). Now a Completed/Caught-up entry
+  with no episode noted is taken as seen to the end (`endUnknown`).
+- **She-Hulk S1E1 buffering for good (owner, 2026-10-28 evening).** The stop log said "waiting on
+  picture piece #6" and `/api/diagnostics` → `slowRequests` showed edge.reelvault.click `/proxy`
+  502s. Reproduced from a test server: pieces 2–5 and 7–8 came in ~0.01 s (downloaded ahead), #6 was
+  502 every time, through the relay and asked directly. hls.js retried (4 tries, ~15 s), gave up,
+  `refreshStream` brought the same hole back: forever. Stepping over the 6 s was built first; the owner
+  rejected it ("I would rather it just swaps sources"), so the episode's other alike copy plays on from
+  the same spot (see HANDOFF). By 2026-10-30 the piece was there again: the hole lasted hours. Movy then showed
+  the intro (from the databases) but no credits: its found parts are placed by hearing the intro in
+  what's downloaded, and it was opened at 0:36. 7Movies' copies: HEVC 2120.0 s, H.264 2122.0 s.
+- **Shell gotcha again:** a Python heredoc turned a regex's backslash-b into backspace characters (byte 08).
+  Write such edits as a script file with the Write tool; scan changed files for byte 08 after.
+
+## She-Hulk round (2026-10-30, test build, not released)
+
+**"HD HEVC 7Movies says 1080 but looks like 480p/720p."** Not Catalog: 7Movies' Orion (HEVC) copy of
+She-Hulk is a real 1920×1080 picture starved of bits. Its master lists 1080/720/480, all HEVC, the
+1080 at BANDWIDTH 982,732; the CDN folder is named `…_1080_h265_966` (966 kbps). Measured pieces:
+189 KB and 334 KB per 5 s (0.3–0.5 Mbps), 2.2 MB in a busy part. The H.264 copy is only 720p at a
+similar trickle, so the HEVC copy is 7Movies' best. The player does play the 1080 level
+(`hls.loadLevel` is manual). Showbox's copy would be far better (not fetched: the owner's allowance).
+
+**She-Hulk's endings (skip finder).** No database (IntroDB, TheIntroDB) has She-Hulk, so all its
+skips are the skip finder's. Endings looked at from contact sheets (ffmpeg, a frame every 10 s): story
+→ ~1:50 of animated credits (different artwork each episode) → black credit roll (~2.5 min); some
+episodes have a short scene between. The **animated part's song repeats only in some episodes**:
+E4/E6 share 108 s, E2/E6 84 s, E1/E2 ~76 s; E3 and E5 share nothing ≥15 s with E1–E6. The black
+roll's music differs per episode. The finder compares one neighbour's last 5 minutes and keeps the
+longest shared run, so most She-Hulk episodes got no credits (kept: credits for E1, E6, E7, E8 only).
+Scratch tools for this: pull an episode's last N minutes of sound with ffmpeg through the test
+relay (`-extension_picky 0 -allowed_segment_extensions ALL`, the relay's piece names have no
+extension), then peel shared runs with `longestShared` (blank each found run, look again).
+Ideas offered, not built.
+
+**German subtitles on E5.** Confirmed: E4's English file was
+`She-Hulk.Attorney.at.Law.S01E04.1080p.WEB.h264-KOGi.srt`; for E5 the English KOGi files are named
+`720p`, and the German one is `…S01E05.1080p.WEB.h264-KOGi.srt`. The carry-over's exact-name and
+name-without-episode matches never checked the language. Now every step keeps the language (when
+known), and among one release a hearing-impaired file only follows a hearing-impaired one.
+`switchToFittingSubs` tries the language showing, not always English. Checked in the pane: E4 →
+E5 put on `S01E05.720p.WEB.h264-KOGi.srt` (English).
+
+**Quick subtitle swaps.** `loadSub` downloads finished in any order, so an earlier slow pick could go
+on after the one chosen last; now only the latest asked for goes on (`subLoads`; a superseded load
+returns null, no "couldn't be loaded" toast). A pick from the menu starts at delay 0 under
+auto-timing (the last file's delay was for that file). **Retime** in the captions menu (with
+auto-timing on): delay 0, a failed sound track tried again, `SubtitleSync.retime()` (a fresh plan; a
+delay moved by hand is let go). Checked: three picks in a row ended on the third; +5 s by hand,
+Retime → +0.2 s.
+
+**Copy caption:** right-click on the captions (`openCaptionMenu`, the episode menu's look); the
+captions take clicks now (left click and double click still pause and go fullscreen). Copies the
+lines without i/b/u tags, with line breaks; falls back to `execCommand('copy')` where the clipboard
+API isn't allowed (plain http on a phone).
+
+**Volume on reopening** was already in this build (`catalog:volume:<title>`); checked: a saved volume
+came back on a fresh page, and a change was saved.
+
+### Owner's round 2, 2026-10-30
+
+**Live TV showed 0 games (both builds).** The site was fine (dlive.sx → thedaddy.pk, 592 events,
+read as 344 games). `liveSchedule` answered at once from the kept copy (`live-schedule`) and fetched
+behind it; a copy kept from the day before has only ended games, so `current()` gave 0, and the page
+re-asks only every 10 minutes. Now a stale copy with nothing left on it is not answered: the fresh
+fetch is waited for (checked: copy aged 3 days, guide answered 280 games in 2 s). The page also asks
+again after 20 s (up to 6 times) when it gets no games.
+
+**She-Hulk E6, no highlights in the test build.** Not reproduced. Its place was last saved 10-29 on
+7Movies' H.264 copy (fid -4), which has no kept parts of its own; the same-length rule (HEVC 1715.7 s
+vs H.264 1716.4 s) borrows the HEVC copy's intro and credits, and did in the pane, fresh and switched.
+Asked the owner which copy (Movy can't be tried on the dev server).
+
+**Captions not on for She-Hulk E6 (3.7.0).** Only subtitles picked by hand (`!subsAuto`) carried to the
+next episode; carried-over or restored-with-the-place ones didn't. Owner: "if the user has captions on
+in a previous episode … they are gonna want them on." Now any subtitles on carry (not ones that went on
+by themselves over the dub, unless CC/SDH), and when nothing alike is found the first of that language,
+then the first English, is put on (up to 4 tried; auto-timing times them). Subtitles restored with a
+saved place are kept as the show's kind (`catalog:showSubs:`) when none is. Checked: E2 (GLHF) → E3
+(GLHF) → E4 (no GLHF: first English, KOGi).
+
+**Dungeon Meshi E10 on the dub, no captions (test build).** E9 played fid 8686088 (900 MB, one track
+"JPN"); E10's pick was 29980193 (2.8 GB: "JPN (5.1)", "JPN", "ENG (5.1)" DEFAULT=YES; also EC-3 copies),
+the dual-language preference of `pickFile`. Japanese or English for anime came from one device-wide
+choice (`catalog:animeAudio`), set by any audio pick on any anime: Re:Zero is watched dubbed on this PC,
+so most likely English. Then the carried subtitles went off over the "dub". Now `animeAudio()` reads
+the show's own choice first (`catalog:showAudio:<title>`), set by an audio pick, by the language heard
+on a two-language copy at an episode switch, and by a Japanese-only copy when the show has none yet.
+(The owner's localStorage couldn't be read to confirm the device-wide value.) The 900 MB file being
+slower afterwards (auto-timing late, back 10 s loading for good) was not reproduced (Showbox, the
+owner's allowance).
+
+**"Skip Intro on Dungeon Meshi E10 loaded for a while."** Nothing in the stop log: a load right after
+a jump was never logged, however long. Now one still loading 8 s after the jump is logged from the jump
+(`watchJumpLoad`, `afterJump`; Settings → Playback says "After a jump:").
+
+**Skips, ideas 1 and 2 built (owner: "do 1 and 2 together").**
+- `findAndKeepSkips` compares with next, previous, +2, −2 while the credits are missing, up to three
+  comparisons; what's found stays (`joinFound`), and a neighbour's kept parts aren't replaced by a
+  poorer answer. `TAIL` 5 → 7 minutes (She-Hulk E4's animated credits start 5:20 before its end).
+  Copies with their own sound track kept without credits are compared once more per device
+  (`catalog:creditsAgain:<copy>`). Checked: She-Hulk E2 HEVC got credits 23:47–24:27 (via E1); its
+  intro kept. Only the longest shared run is taken, so E2's ~1:35 animated part is found as its last 40 s.
+- **Black credit roll from the preview pictures** (`creditRoll.ts`): a picture with ≤0.3% coloured
+  pixels and ≥65% dark is roll ("names" with >0.2% white text, else "black"); the run reaching the
+  end (gaps ≤25 s, ≥3 with names, ≤1 miss in a row, 30 s–10 min) is the roll. She-Hulk numbers: roll
+  74–99% dark, 0% colour; the animated credits 40–70% colour. Offline on E2/E5/E6 (ffmpeg frames
+  every 10 s at 192×108): rolls from 25:15, 26:15, 26:05; E5/E6's start right where the animation
+  ends. `withCreditRoll` (skipMerge.ts) joins it to credits ending ≤15 s before it, else adds its
+  own part, so a scene between (E2's minute) isn't skipped. The player looks after kept pictures load
+  and as pictures of the last 11 min arrive; the strip now gathers the last 9 minutes at full detail
+  right after its one-a-minute pass. Not on the Roku (no pictures there).
+- **Bug found:** the bar's `{#each skipSegments … (seg.type)}` keyed by kind: two credits parts broke
+  it. Keyed by kind and start now.
+- Kept strips can hold pictures past the copy's end (E2's at 1665 s had 1860 and 1920): ignored for the
+  roll; where they come from not looked into.
+
+### Owner's round 3, 2026-10-30
+
+**"Captions half a second late, slow to appear" (Venom 3 two-thirds in; She-Hulk E8).** Two causes found:
+- **The caption clock.** `activeSubs` went by `currentTime`, set on `timeupdate`: measured every 263–279 ms
+  (avg 267), so each caption came 0–0.27 s late on top of its timing. Now `frameClock` from
+  `requestVideoFrameCallback` (each shown picture's `mediaTime`), used while within 1 s of
+  `currentTime`. Measured in headless Edge (She-Hulk E8): captions 10–80 ms after their cue, against
+  90–430 ms before. The browser pane can't show this when the Claude window is behind others (no
+  frames drawn at all: rAF and rVFC both 0); headless Edge does draw.
+- **E8's saved delay was +0.5 s** while auto-timing's plan, with the whole episode heard, is +0.1 s, and
+  replaying the plan as the sound is heard in any order never gives more than +0.2 s. So the +0.5
+  wasn't auto-timing's (where it came from isn't known; a saved place's delay goes on at opening until
+  the plan comes). Found on the way: **the delay panel's hints were backwards** ("+0.5s: Subs appear
+  after audio — push them earlier" made them later); now "Captions early: show them later" etc.
+- Venom 3's place in the library had no subtitles saved, so its timing couldn't be looked at.
+
+**Mini player showing "the default picture" at the end of Venom 3 (a friend, 3.7.0).** 3.7.0 started a
+film over when the mini player opened in its last 5%; the test build starts at the exact spot
+(`place=`), checked again: She-Hulk E9's mini page at 1905.3 s of 1919 s played to the end. Also the big
+player's handed-over picture (`miniStill`) only went on `playing`: a paused mini player that was moved
+kept it over the video. Now it also goes on `canplay` (past the first second).
+
+**Mark as completed left the show in Continue Watching.** Continue Watching never looked at the status
+(a show leaves when caught up or removed), and caught-up is only noted at the very end (She-Hulk E9
+was left at 92.5%). Now the `complete` action (every screen: player, library, TV menus, Roku, watch
+orders) hides the title from this profile's Continue Watching under every name and kind it was
+watched as (`hideCompletedFromContinueWatching`), and the player stops saving that episode's place
+once marked (`markedDone`), since a later save would bring it back. Another episode played brings it
+back as before. Checked on a copy: mark in the player, leave, gone (3 left).
+**Testing gotcha:** headless Edge started from a Node script keeps running (and playing, and saving
+places every 10 s) after the script kills its launcher process; close every msedge whose command line
+has the scratch profile.
+
+**Roku preview pictures:** the Roku app was never given any (Roku shows them from a BIF file, set as
+the content's `HDBifUrl`/`SDBifUrl`, or from an HLS image playlist). The computer keeps 192×108 JPEGs
+every ~10 s per episode, which is what a BIF holds; offered, not built.
+
+### Roku preview pictures (2026-10-30, owner: "build that thing for roku")
+- `src/lib/server/bif.ts` writes a BIF (Roku's trick-play format: 64-byte header with magic
+  `89 42 49 46 0D 0A 1A 0A`, version 0, count, step in ms; an index of (number, offset) pairs ended by
+  `0xFFFFFFFF` + the file's end; then the JPEGs) from the kept strip pictures: one every 10 s, each the
+  kept picture nearest that moment. Needs at least 10 kept pictures.
+- `/api/roku/bif?title&type&season&episode&fid&share`: the copy's length is read from its playlist
+  (the cached stream link, first quality's EXTINFs; Febbox's Referer for Showbox) **here, not in
+  `/api/roku/play`**, so the Roku's start isn't held up; remembered per copy. Then `stripFor` by that length.
+- `/api/roku/play` answers `bif` (not for a plain MP4) and asks the computer to make the copy's strip
+  (`/api/watch/strip/prepare`, not waited on). `PlayerScreen.brs` sets `HDBifUrl`, `SDBifUrl`, `FHDBifUrl`.
+- Checked: She-Hulk E2 asked as the Roku → 167 pictures, 582 KB, index and JPEGs valid, 24:10 shows the
+  animated credits and 26:40 the black roll; first ask 3.1 s, then 0.008 s. BrighterScript clean.
+  **Not tried on a real Roku** (whether it fetches the BIF with the content's cookie, as it does
+  captions, is assumed). Pictures made after the Roku asked show the next time it's played.
+
+### No quality drops by hls.js (2026-10-30 evening, owner: "i dont want it dropping quality automatically ever")
+- **What hls.js did.** Setting `loadLevel` picks a level by hand, but hls.js 1.7's error controller,
+  once a piece has failed its retries (4, about 15 s), sets `loadLevel = -1` (automatic) unless
+  `preserveManualLevelOnError`, and switches to another level within `minAutoLevel`..`maxAutoLevel`.
+  From then on its bandwidth guesses changed quality freely. That was the "quality changed" in stop logs.
+- **Now** (`holdLevel` in `watch/+page.svelte`): `preserveManualLevelOnError: true`, and the auto range
+  pinned to the picked level (`autoLevelCapping` = it, `config.minAutoBitrate` = its `maxBitrate`; both
+  are read live). With no other level to go to, the failure is fatal to hls.js and the player's own
+  recovery runs: `switchFromMissingPiece` (the other copy at the same spot) or `refreshStream`.
+  `setHlsLevel` (the quality menu, "Lower quality" in the slow-playback box) calls it too; anything new
+  that sets a level must.
+- **Proven** with hls.js 1.7.3 in the browser pane: a two-quality ffmpeg test video (720p/360p, 4 s
+  pieces) with the 720p piece #3 answered 502. Old settings: five 502s, then pieces 3–14 at 360p. New: five
+  502s, then a fatal `fragLoadError`, nothing at 360p. Picking 360p then 720p by hand still switches.
+- **Roku** plays with its own player, which climbs and drops between a playlist's qualities by itself.
+  `/api/roku/play` reads the playlist and answers `minBandwidth` (its top H.264 BANDWIDTH in kbps, 0 for
+  one quality) → `content.MinBandwidth` in `PlayerScreen.brs`. BrighterScript clean; untried on a Roku.
+- The missing-piece copy switch (by design, with its toast) can still land on a lower-quality copy.
+
+### Live TV shared between screens (2026-10-30 evening, for the Super Bowl at mom's)
+- **Why.** Each screen fetched every live piece itself through the relay, and each playlist poll went to
+  the site, so 4–5 TVs on one game were 4–5 downloads of everything over mom's connection, from a site at
+  its busiest. Also each screen's failed playlist called `liveTrouble`, moving the channel on several
+  player servers at once.
+- **`src/lib/server/liveShare.ts`:** `sharedLivePiece(address, headers)` fetches a live piece whole once;
+  every ask while it comes or within 60 s gets the same bytes (250 MB cap, oldest out first). Keyed by the
+  address minus signing parameters (`token`, `t`, `x-expires`, `x-signature`, `refresh_token`…): some servers
+  sign each playlist afresh. Unmatched addresses simply aren't shared. A refusal passes its own status on
+  (the player treats 403/410 differently from 5xx) and isn't kept. PNG-wrapped pieces are unwrapped there.
+- **Relay:** `kind === 'live'`, no Range, path not ending `.m3u8` → `sharedLivePiece`. Replays' pieces are
+  `live` too and share; their playlists don't (Dailymotion's first answers only the app's browser, which the
+  relay handles further down). A piece that turns out to be a playlist falls through to the relay.
+- **`/api/live/playlist`:** the built playlist is shared per channel for 2 s (`sharedPlaylist`); a failed one
+  isn't kept.
+- **Tested** (desktop test app, empty library with `setupDone` set, window minimized with ShowWindow since
+  CDP's `Browser.setWindowBounds` isn't in Electron): 5 Node "TVs" polling ESPN USA every 3 s, staggered
+  0.5 s, 45 s: 45 pieces asked, 9 fetched from the site, identical sha1 on every TV, no errors. Then the
+  player: ESPN USA live 30 s at 720p, an NFL Dailymotion replay 35 s (480p, its best), no stops.
+
+### Mom's SVU S28E4 buffering on the TV (2026-10-30 night)
+- **Her photo:** Movy · 1080p · through this computer, 53 s loaded ahead, the computer 56% downloaded
+  (4:53 past her spot), pieces reaching the TV at 5–11 Mbps, **"From memory: 0 of the last 6"**, and
+  "hls: 1 lvl (0p/?)" three times in Stream info (three `refreshStream`s from the stall watch).
+- **Why only E4:** 7Movies has nothing for E4 yet (both copies), so Movy is its only source. Measured
+  through the owner's Catalog by piece sizes (one byte asked per piece, size from Content-Range): Movy E3
+  and E4 need 5–8 Mbps; 7Movies' HEVC 1080p (her usual SVU copy) 1.0–2.0. Four times the bitrate over a
+  Wi-Fi link that gave single pieces 5–11 Mbps.
+- **Why "0 from memory":** `fetchAhead.ts` left every relayed piece to hls.js (one at a time), on the idea
+  that the computer fetches those ahead (relayReadAhead / downloads ahead). It does, but the TV still got
+  them one at a time over Wi-Fi. Now relayed pieces are fetched ahead on any page not opened on the
+  computer itself (`onTheComputer`: localhost / 127.x / [::1]).
+- **Tested:** test app on a library copy, headless Edge opening it at the PC's LAN address (192.168.68.101)
+  like a TV: E4 on Movy 1080p played 80 s and then 40 s with no stop; 67 of 71 pieces fetched ahead and
+  overlapping, 4 asked twice (the 4 s re-ask). Mom's Wi-Fi can't be reproduced here: how much it helps there
+  is unproven. 7Movies' E4 (1.6 Mbps HEVC) will be picked again once it's there (the source was not picked by
+  hand, so it isn't remembered).
+- The first test Edge kept running after its Node script ended (as in §3 Mistakes): close msedge by the
+  scratch profile in the command line every time.
+
+### Public network notice, SportsBite (off), Watch-Wrestling (2026-10-30 night)
+- **Mom's TVs "couldn't reach Catalog"**: Windows had set her Wi-Fi to Public; Catalog's firewall rule is
+  private/domain only, so UDP discovery and the server were both blocked for the TVs. `networkType.ts` runs
+  `Get-NetConnectionProfile` (no permission needed) once a minute in the Windows desktop app and the layout
+  passes `publicNetwork` to the computer's own window only (`onThisComputer`). NetworkCategory 0 = Public;
+  Tailscale and virtual adapters are ignored. Set to Private: `Start-Process powershell -Verb RunAs -Wait`
+  with `Set-NetConnectionProfile -InterfaceIndex <n> -NetworkCategory Private`; declining the prompt leaves it
+  and says "Windows didn't allow the change". The TV app can't help itself here: a new APK means sideloading
+  it on every TV, so fixes for mom's TVs go on the laptop.
+- **SportsBite as a second live source** (`sportsbite.ts`, merged in `liveSources.ts`; every Live TV user
+  imports liveSources now). Channels keep DaddyLive's numbers; a SportsBite channel with the same
+  `channelKey` (name without brackets, quality words or its own country at the end, "espn 2" → "espn2") and
+  country is a second source of it; else `looseKey` (same words in any order); a missing country comes from
+  the name's last word (`COUNTRIES`, now exported from daddylive.ts); SportsBite's country names are mapped
+  ("Czech Republic" → Czechia, Qatar/UAE/MENA → Arabic, GB → UK). Its own channels get
+  `1_000_000_000 + sha1(key) % 1e9` (stable, under 2^31 for the Roku). Games: SportsBite's streams name
+  DaddyLive channels as `/dk-embed/embed/<id>`; a game matches within 90 min on a shared channel with one team
+  alike, or both teams alike (common words like United/City/Real don't count). Measured on the real lists:
+  0 channels twice, 0 games doubled, 2 near-twin channels inside games out of 608 games.
+- **Why it's off** (`SPORTSBITE_ON = false`): SportsBite's player pages answer Node's fetch (it sends
+  `Sec-Fetch-Mode: cors`) with the site's home page, while curl gets the player page with the playlist in
+  `window.atob("…")`. Changing the request to look like a browser frame was refused as getting around the
+  site's check. Some of its feeds were simply down too ("cinevid stream HTTP 500", `retry_after: 2`, for 15 s+).
+  If the owner wants it: read its player pages in the app's hidden window (liveCapture), noting playlists that
+  don't end in .m3u8 (`/247/<name>`, `/cv/<name>`).
+- **Playlist tries**: `/api/live/playlist` tries each source of a channel in turn within one ask, and every
+  try is logged (`liveTv.recentTries` in /api/diagnostics: channel, site, "played" or why not).
+- **Watch-Wrestling.eu**: `data-src` is base64 JSON whose keys are the character codes of `issued_at`'s UTC date
+  ("Sat, 31 Oct 2026 …"): taking each character's next chunk in order gives `<base64>::<binary>`, an encrypted
+  text. A real click builds a form (`id`, `id_enc` made in the page) posted to techradan.com in a new tab, which
+  goes on to a disguised news page (profitfinderz.com) whose `embed_player_provider` frame holds 12 Dailymotion
+  players, one visible. Made to stop programs reading it: not built.
+
+### SportsBite through the hidden window (2026-10-31): still no
+- Owner's go-ahead to read SportsBite like DaddyLive. Built: `captureLive(page, referrer, playlist)` takes a
+  pattern for playlist addresses that don't end in .m3u8 (`/cv/<name>`, `/247/<name>`, `/selfhost/play/…`),
+  passed from `electronLiveCapture(page, referrer, playlist)`; `sportsbiteLink` uses it instead of decoding the
+  page. Test app: every SportsBite channel "no link" (`no stream found` after 25 s). In the browser pane,
+  SportsBite's own `/watch/channel/abc` page puts `/cv-embed/embed/abc-usa` in a frame, and that frame showed the
+  site's home page: no video, no playlist asked for. So real browsers don't get the player; only plain
+  non-browser requests do. `SPORTSBITE_ON = false` again; nothing more is to be tried to get past it.
+- Its playlists themselves, once known, answer a plain Node fetch (`/cv/abc-usa`, `/247/espn`: 200, HLS).
+
+### SportsBite removed; live caption timing by words measured (2026-10-31)
+- **SportsBite removed** (owner: "just get rid of sportsbite then if it doesnt work"). liveSources.ts and
+  sportsbite.ts are out of the repo; every Live TV user imports daddylive.ts again; liveCapture.cjs,
+  main.cjs and electron-fetch.ts are back to what they were. Kept: `noteLiveTry` in daddylive.ts
+  (`liveTv.recentTries`: channel, player server, "played" or why not), the 2 s shared playlist and the
+  shared pieces (liveShare.ts).
+- **Live captions, matched by words** (owner: try it, Live TV only, don't touch auto-timing elsewhere). Kent
+  State vs Sacramento State on ESPN2, 10.5 min recorded through the test app (105 pieces, 241 MB, no gaps):
+  - The captions are CEA-608 CC1 inside the H.264 SEI ("GA94", cc_type 0; the first byte's low 2 bits are the
+    type, bit 2 is "valid": taking 3 bits counted every 608 pair as 708 at first). ffmpeg's
+    `movie=…[out0+subcc]` gave nothing on the joined pieces; `scripts/dev/caption-timing/captions-from-ts.mjs`
+    reads them, a control code counting as a space (else "POINTCONVERSION"). 1,333 words.
+  - Sound: `aresample=async=1:first_pts=0` keeps it on its own clock; it started 0.066 s before the video.
+  - Whisper base.en q8 (transformers.js 3.7.5, Node, word timestamps): 1,087 words in 60 s for 10.5 min.
+  - Three-word runs matched where the run is unique within the 20 s before: 773 matches; captions **5.28 s
+    late** (middle half 5.10–5.49, 10–90% 4.97–5.76); per minute 5.21–5.34; every sliding one-minute estimate
+    5.2–5.4. The owner's −5.5 s by hand agrees. Unlike the 2026-10-25 "first line after a pause" measure
+    (0.8–8 s), word matching sees the stenographer's lag directly, and it's steady.
+
+### Live captions timed by their words, built (2026-10-31, owner: "a 5 second listen … then keeps dialing it in")
+- **Owner's terms:** Live TV only; auto-timing for films and shows untouched until this has proved itself.
+- **`src/lib/liveCaptionTiming.ts`** (shared, plain code): `TsReader` splits a live piece into H.264 and
+  ADTS PES (a PES open at a piece's end carries on; PMT types 0x1b video, 0x0f AAC), caption byte pairs from
+  the SEI (`GA94`; first byte: bit 2 valid, bits 0–1 type), frames sorted by PTS (B-frames); `CaptionWords`
+  (CC1 only, control code = space, a 0.5 s gap ends a word, each word at its last letter's time);
+  `LagFinder` (three-word runs, all-short runs skipped, found exactly once in the heard words from 20 s
+  before to 3 s after; median of the last 3 min once 3 agree within 0.5 s). Checked in Node on the recorded
+  game: 1,371 caption words, 5.29 s; 5/10/20/30 s heard → 5.21/5.24/5.17/5.19.
+- **`/caption-timer`** (hidden window, `openCaptionTimer` in main.cjs, one for all channels; COOP same-origin
+  + COEP credentialless from its `+page.server.ts`, so `crossOriginIsolated` and Whisper gets up to 4
+  threads): asks `/api/live/caption-delay?work=1` which channels screens want (asked in the last 30 s), takes
+  each channel's playlist pieces (the shared relay copies), decodes ADTS with `OfflineAudioContext` at 16 kHz,
+  hears parts with transformers.js 3.7.5 (`Xenova/whisper-base.en`, q8, WASM; a devDependency bundled by
+  Vite, so ~22 MB of ort WASM in the build; the model, ~75 MB, downloads from Hugging Face on first use and
+  stays in the window's cache). Order: from the ~36 s already listed, 5 s ending 10 s before the newest, 5 s
+  before that, 10 s before that, the newest 10; then new sound 10 s at a time; once 40 runs, 10 s a minute.
+  Posts `{ch, lag, matches}` after each. Closes a minute after the last ask. tiny.en was measured too
+  (37 s vs 60 s for 10.5 min in Node; never off by more than 0.6 s but only 74–92% within 0.3 s): not used.
+- **Server** (`liveCaptionDelay.ts`): answers `{delay: −lag, matches, heard}`; the last lag per channel kept
+  in `live-caption-lags` (order cache) once on 15+ runs, so a channel starts right next time.
+- **Player:** asks every 3 s while a live channel has captions; sets the delay unless changed by hand this
+  game (`liveDelayByHand`); Reset goes back to the heard delay; "Timing captions to the commentary…" while
+  under 15 runs (60 s at most) with captions on. TVs and phones use the same page; the Roku doesn't (its own
+  player draws live captions).
+- **Tested** in the desktop test app (empty library): ESPN2 first answer 16 s after opening on a fresh install
+  (model download included) at 5.22 s on 15 runs, 5.13 s on 30 two seconds later, 5.24 s on 52 at 80 s;
+  hidden page heard 10 s in ~2 s (Ryzen 7 5800X, isolated: true). Player: ESPN captions on → −5.2 at once,
+  then −5.3, −5.0; hand −0.5 held 14 s; Reset back to −5.1 then −5.3/−5.2. Not tried on mom's laptop (speed).
