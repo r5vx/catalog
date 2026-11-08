@@ -30,9 +30,10 @@ import {
 	type ShowboxResult
 } from './showbox';
 import { getOrderCache, saveOrderCache } from './db/queries';
-import { aniwaveFiles, aniwaveSeriesStarts, episodesBefore, type AniwaveCopies } from './sources';
+import { aniwaveFiles, aniwaveSeriesStarts, episodesBefore, hianimeFiles, type AniwaveCopies } from './sources';
 import { vidriftCopies } from './sources/vidrift';
 import { movyCopy } from './sources/movy';
+import { vidfastCopy } from './sources/vidfast';
 
 export type ListedEpisode = EpisodeInfo & {
 	/** The share this episode plays from, when it isn't the main entry's. */
@@ -458,12 +459,27 @@ export async function combineEpisodes(
 					const aired = dates.get(episode);
 					if (!aired || !hasAired(aired)) continue;
 					const what = { type: 'tv' as const, id: show.id, season: season.number, episode };
-					const files = [...vidriftCopies(what), movyCopy(what)];
+					const files = [...vidriftCopies(what), movyCopy(what), vidfastCopy(what)];
 					const listed = episodes.find((e) => e.season === season.number && e.episode === episode);
 					if (listed) listed.files = [...listed.files, ...files];
 					else episodes.push({ season: season.number, episode, files });
 					have.add(`${season.number}-${episode}`);
 				}
+			}
+		}
+
+		// HiAnime, for anime (sources/hianime.ts): asked by MyAnimeList numbering, which counts from the
+		// series' first episode, so it lines up with whichever way this list numbers its seasons
+		// (Showbox's or TMDB's). At most a few seconds the first time (kept after).
+		if (show.anime) {
+			const last = new Map<number, number>();
+			for (const e of episodes) if (e.season > 0) last.set(e.season, Math.max(last.get(e.season) ?? 0, e.episode));
+			const before = (season: number) => [...last].filter(([s]) => s < season).reduce((n, [, count]) => n + count, 0);
+			const listed = episodes.filter((e) => e.season > 0 && e.files.length > 0).map((e) => ({ season: e.season, episode: e.episode, overall: before(e.season) + e.episode }));
+			const hianime = await hianimeFiles(show, mainTitle, listed, mainShowboxId ? 6000 : 15000);
+			for (const e of episodes) {
+				const files = hianime.get(`${e.season}-${e.episode}`);
+				if (files) e.files = [...e.files, ...files];
 			}
 		}
 

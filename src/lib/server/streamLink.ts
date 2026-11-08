@@ -9,6 +9,9 @@ import { readSettings } from './settings';
 import { aniwaveStream, parseAniwaveShareKey } from './sources/aniwave';
 import { vidriftStream, parseVidriftShareKey } from './sources/vidrift';
 import { movyStream, parseMovyShareKey } from './sources/movy';
+import { hianimeStream, parseHianimeShareKey } from './sources/hianime';
+import { vidfastStream, parseVidfastShareKey } from './sources/vidfast';
+import { nothingFrom } from './reachable';
 
 export async function streamLink(shareKey: string, fid: number, refresh = false): Promise<{ url: string; debug?: string }> {
 	// Another source's file: its share key says which show, episode and version. Its video
@@ -16,7 +19,15 @@ export async function streamLink(shareKey: string, fid: number, refresh = false)
 	const aniwave = parseAniwaveShareKey(shareKey);
 	if (aniwave) {
 		const stream = await aniwaveStream(aniwave.id, aniwave.episode, aniwave.kind, refresh);
-		if (!stream) return { url: '', debug: 'Aniwave has no server for this version right now' };
+		if (!stream) return { url: '', debug: await nothingFrom('Aniwave', 'Aniwave has no server for this version right now') };
+		return { url: `/api/watch/relay?u=${encodeURIComponent(stream.url)}` };
+	}
+
+	// HiAnime: asked by MyAnimeList number and episode; its video comes through the relay.
+	const hianime = parseHianimeShareKey(shareKey);
+	if (hianime) {
+		const stream = await hianimeStream(hianime.mal, hianime.episode, hianime.kind, refresh);
+		if (!stream) return { url: '', debug: await nothingFrom('HiAnime', 'HiAnime has nothing for this version right now') };
 		return { url: `/api/watch/relay?u=${encodeURIComponent(stream.url)}` };
 	}
 
@@ -24,15 +35,22 @@ export async function streamLink(shareKey: string, fid: number, refresh = false)
 	// Movy say which copy they are (`copy`), as their episodes are downloaded ahead by that name.
 	if (parseVidriftShareKey(shareKey)) {
 		const playlist = await vidriftStream(shareKey, refresh);
-		if (!playlist) return { url: '', debug: '7Movies has nothing for this right now' };
+		if (!playlist) return { url: '', debug: await nothingFrom('7Movies', '7Movies has nothing for this right now') };
 		return { url: `/api/watch/relay?u=${encodeURIComponent(playlist)}&copy=${encodeURIComponent(shareKey)}` };
 	}
 
 	// Movy: found by its own page, out of sight (sources/movy.ts); played through the relay.
 	if (parseMovyShareKey(shareKey)) {
 		const playlist = await movyStream(shareKey, refresh);
-		if (!playlist) return { url: '', debug: 'Movy has nothing for this right now' };
+		if (!playlist) return { url: '', debug: await nothingFrom('Movy', 'Movy has nothing for this right now') };
 		return { url: `/api/watch/relay?u=${encodeURIComponent(playlist)}&copy=${encodeURIComponent(shareKey)}` };
+	}
+
+	// Vidfast: found by its own page, out of sight (sources/vidfast.ts); played through the relay.
+	if (parseVidfastShareKey(shareKey)) {
+		const playlist = await vidfastStream(shareKey, refresh);
+		if (!playlist) return { url: '', debug: await nothingFrom('Vidfast', 'Vidfast has nothing for this right now') };
+		return { url: `/api/watch/relay?u=${encodeURIComponent(playlist)}` };
 	}
 
 	const { febboxToken } = readSettings();

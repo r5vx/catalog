@@ -333,7 +333,8 @@
 	{/if}
 
 	{#if data.releases.length > 0}
-		<section class="changes">
+		<!-- Long: across both columns with the wide layout (settings/+layout.svelte). -->
+		<section class="changes wide-full">
 			<div class="head"><h2>What's new</h2></div>
 
 			{#each data.releases as rel, i (rel.version)}

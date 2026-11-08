@@ -25,6 +25,32 @@ const FIRST_ANSWER = 270; // seconds of sound a first answer needs (three 3-minu
 // Seconds heard before subtitles go on. (An opening song leaves little to go by: Frieren S1E13's
 // first answer came with nine minutes heard. Ten minutes of sound is about 2% of a 1080p episode.)
 const HEARD_AHEAD = 600;
+/*
+ * Hearing is most of the wait (Re:Zero S3E2, 2026-11-02: 4½ minutes of sound arrived in 0.5 s and
+ * took 3.7 s to hear; each 2 minutes more, 1.7 s; the whole episode 20 s). The model hears one
+ * slice after another, so it's done in parts side by side, one helper each (`HELPERS`). Each
+ * part starts a few seconds early to let the model settle (`SETTLE`), and those seconds are left
+ * out: what's heard is the same as in one go.
+ */
+const HELPERS = Math.max(1, Math.min(4, Math.floor((globalThis.navigator?.hardwareConcurrency || 2) / 2)));
+const SETTLE = 3; // seconds
+const SMALLEST_PART = 30; // seconds: shorter parts aren't worth a helper
+const FRAME_SECONDS = SAMPLES / RATE;
+
+/**
+ * Which copy kept talking belongs to: a Showbox file's number, or another copy's share key (7Movies,
+ * Movy, Aniwave: theirs is heard from the player's own downloads).
+ */
+export type SpeechKey = number | string;
+const speechQuery = (key: SpeechKey, language: string) =>
+	`${typeof key === 'number' ? `fid=${key}` : `copy=${encodeURIComponent(key)}`}&lang=${encodeURIComponent(language)}`;
+
+/** Kept talking (one byte a slice, 255 = not heard) as the worker takes it. */
+function speechOf(bytes: Uint8Array): Float32Array {
+	const speech = new Float32Array(bytes.length);
+	for (let i = 0; i < bytes.length; i++) speech[i] = bytes[i] === 255 ? NaN : bytes[i] / 254;
+	return speech;
+}
 
 export class SubtitleSync {
 	private worker: Worker;
@@ -34,6 +60,10 @@ export class SubtitleSync {
 	private told = false;
 	/** Seconds heard when a plan last said these subtitles fit. */
 	private fittedWith = 0;
+	/** Timing from the words themselves (wordTiming.ts), when the computer has it: wins over the listening. */
+	private wordPlan: DelayPlan | null = null;
+	/** Until then (ms clock), a small shift from the listening waits for the words instead of moving the subtitles first. */
+	private waitForWordsUntil = 0;
 	/** Seconds heard when a plan first said they don't fit (null: none has since one did). */
 	private mismatchFrom: number | null = null;
 	private applying: ReturnType<typeof setInterval> | undefined;
@@ -100,6 +130,11 @@ export class SubtitleSync {
 				return;
 			}
 			if (event.data.kind !== 'plan' || event.data.round !== this.round) return;
+			// Timed by the words already: the listening's answer is only noted.
+			if (this.wordPlan) {
+				this.last = { ...this.last, listening: event.data.plan };
+				return;
+			}
 			// Fitting over a good part of the video already: a later "doesn't fit" (a long noisy
 			// part heard — a friend's Hurt Locker at 1:50, 2026-10-25, put the subtitles back out
 			// of time and said they didn't match) keeps the timing that fitted.
@@ -128,7 +163,12 @@ export class SubtitleSync {
 				const heard = Number(event.data.heard) || 0;
 				this.mismatchFrom ??= heard;
 				const duration = Number.isFinite(this.video.duration) ? this.video.duration : Infinity;
-				if (heard >= this.mismatchFrom + 180 || heard >= duration * 0.8) {
+				// And never before 20 minutes are heard (or most of a shorter video): loosely timed
+				// subtitles take that long to show they fit. Ice Age 3's R5 ones, two speakers to a
+				// line, were called wrong at 13 minutes and fit at 20 (2026-11-07); the whole sound
+				// track is heard in a minute or two, so this costs little.
+				const enough = Math.min(1200, duration * 0.8);
+				if ((heard >= this.mismatchFrom + 180 && heard >= enough) || heard >= duration * 0.8) {
 					this.told = true;
 					this.onMismatch?.();
 				}
@@ -192,6 +232,8 @@ export class SubtitleSync {
 
 	private useCues(cues: TimedCue[], plan: DelayPlan | null): void {
 		this.plan = plan;
+		this.wordPlan = null;
+		this.waitForWordsUntil = 0;
 		this.fittedWith = 0;
 		this.onRate?.(plan?.fits ? plan.rate : 1);
 		this.lastSet = null;
@@ -205,6 +247,8 @@ export class SubtitleSync {
 
 	/** Another episode or another audio track: everything heard is thrown away. */
 	reset(): void {
+		// (Asked of the worker before it forgets: its messages are handled in order.)
+		this.keepNow();
 		this.trackStop?.abort();
 		this.trackStop = null;
 		this.track = '';
@@ -215,6 +259,11 @@ export class SubtitleSync {
 		this.appendQueue = [];
 		this.appendEnd = -1;
 		clearTimeout(this.appendTimer);
+		this.kept = null;
+		this.heardFor++;
+		this.appendKeep = null;
+		clearTimeout(this.keepTimer);
+		this.keepTimer = undefined;
 		this.worker.postMessage({ kind: 'reset' });
 		this.newCues();
 	}
@@ -223,8 +272,77 @@ export class SubtitleSync {
 		this.stop();
 		this.trackStop?.abort();
 		clearInterval(this.liveFits);
+		clearTimeout(this.keepTimer);
 		this.capture?.disconnect();
 		this.worker.terminate();
+		for (const helper of this.helpers) helper.terminate();
+	}
+
+	/** Leaving the video: what's heard from its downloads since the last keep is kept first, then destroy. */
+	async close(): Promise<void> {
+		await Promise.race([this.keepNow(), new Promise((r) => setTimeout(r, 3000))]);
+		this.destroy();
+	}
+
+	/** What's heard from the player's downloads and not kept yet: kept now. */
+	private keepNow(): Promise<void> {
+		const keep = this.appendKeep;
+		if (!keep || !this.keepTimer || this.track !== 'appended') return Promise.resolve();
+		clearTimeout(this.keepTimer);
+		this.keepTimer = undefined;
+		return this.keepHeard(keep.key, keep.language, 'unless whole');
+	}
+
+	/** Counts resets: parts heard by helpers for an episode before are dropped. */
+	private heardFor = 0;
+	private helpers: Worker[] = [];
+	private helperCalls = new Map<number, (probs: Float32Array) => void>();
+	private helperCall = 0;
+
+	/** Helper `n` (see HELPERS), started the first time it's needed. */
+	private helper(n: number): Worker {
+		if (!this.helpers[n]) {
+			const helper = new Worker(new URL('./subtitleTiming.worker.ts', import.meta.url), { type: 'module' });
+			helper.onmessage = (event) => {
+				if (event.data.kind !== 'vad') return;
+				this.helperCalls.get(event.data.id)?.(event.data.probs);
+				this.helperCalls.delete(event.data.id);
+			};
+			this.helpers[n] = helper;
+		}
+		return this.helpers[n];
+	}
+
+	/**
+	 * Hears `samples` (16 kHz, from video time `at`): in parts side by side when it's long enough
+	 * (see HELPERS), else in one go, carrying on from the sound before unless `fresh`.
+	 */
+	private async hearSound(at: number, samples: Float32Array, fresh: boolean): Promise<void> {
+		const parts = Math.min(HELPERS, Math.floor(samples.length / RATE / SMALLEST_PART));
+		if (parts < 2) {
+			this.worker.postMessage({ kind: 'sound', at, samples, fresh }, [samples.buffer]);
+			return;
+		}
+		const asked = this.heardFor;
+		const slices = Math.floor(samples.length / SAMPLES);
+		const each = Math.ceil(slices / parts);
+		const settle = Math.round((SETTLE * RATE) / SAMPLES);
+		const firstSlice = Math.round((at * RATE) / SAMPLES);
+		const heard = await Promise.all(
+			Array.from({ length: parts }, (_, n) => {
+				const from = n * each;
+				const to = Math.min(slices, from + each);
+				const start = Math.max(0, from - settle);
+				const part = samples.slice(start * SAMPLES, to * SAMPLES);
+				const id = ++this.helperCall;
+				return new Promise<{ first: number; probs: Float32Array }>((done) => {
+					this.helperCalls.set(id, (probs) => done({ first: firstSlice + from, probs }));
+					this.helper(n).postMessage({ kind: 'vad', id, samples: part, skip: from - start }, [part.buffer]);
+				});
+			})
+		);
+		if (asked !== this.heardFor) return;
+		for (const { first, probs } of heard) this.worker.postMessage({ kind: 'probs', first, probs }, [probs.buffer]);
 	}
 
 	/**
@@ -240,9 +358,30 @@ export class SubtitleSync {
 		return true;
 	}
 
+	/**
+	 * The computer is timing these subtitles by their words (wordTiming.ts): a shift of under 5 s
+	 * from the listening waits for that answer (90 s at most) rather than moving them first and
+	 * back after (Ice Age: The Meltdown: the listening said −2 s, the words 0). Bigger ones (another
+	 * cut, a longer opening) can't be the listening's guess and go at once.
+	 */
+	waitForWords(ms = 90_000): void {
+		this.waitForWordsUntil = Date.now() + ms;
+	}
+
+	/** The timing from the words themselves: replaces the listening's for these subtitles. */
+	useWordTiming(plan: DelayPlan & { fits: true }): void {
+		this.wordPlan = plan;
+		this.plan = plan;
+		this.mismatchFrom = null;
+		this.last = { ...this.last, plan, words: true };
+		this.onFits?.(true);
+		this.apply();
+	}
+
 	/** Sets the delay for the part of the video playing now, from the plan. */
 	private apply(): void {
 		if (!this.running || this.heldByHand || !this.plan?.fits || !this.onDelay) return;
+		if (!this.wordPlan && Date.now() < this.waitForWordsUntil && this.plan.steps.every((s) => Math.abs(s.delay) < 5)) return;
 		const current = this.delay();
 		// Moved by hand since it last moved them: left alone from now on.
 		if (this.lastSet !== null && Math.abs(current - this.lastSet) > 0.05) {
@@ -265,7 +404,7 @@ export class SubtitleSync {
 	 * The talking already heard in Showbox file `fid` (kept on the computer by an earlier watch,
 	 * or by the computer for a TV), used instead of hearing the sound track. False if none.
 	 */
-	async useKept(fid: number, language: string): Promise<boolean> {
+	async useKept(fid: SpeechKey, language: string): Promise<boolean> {
 		return (await this.useKeptSoFar(fid, language, false)) === 'all';
 	}
 
@@ -275,9 +414,9 @@ export class SubtitleSync {
 	 * 'none' before it has anything. `partial: false` takes only a finished one (the computer's own
 	 * player hears the rest itself).
 	 */
-	async useKeptSoFar(fid: number, language: string, partial = true): Promise<'all' | 'partial' | 'none'> {
+	async useKeptSoFar(fid: SpeechKey, language: string, partial = true): Promise<'all' | 'partial' | 'none'> {
 		if (this.track === `kept|${fid}|${language}`) return 'all';
-		const resp = await fetch(`/api/watch/speech?fid=${fid}&lang=${encodeURIComponent(language)}`).catch(() => null);
+		const resp = await fetch(`/api/watch/speech?${speechQuery(fid, language)}`).catch(() => null);
 		if (!resp?.ok) return 'none';
 		const unfinished = resp.headers.get('X-Speech-Partial') === '1';
 		if (unfinished && !partial) return 'none';
@@ -292,11 +431,49 @@ export class SubtitleSync {
 		// subtitles run 4% fast, so they were 50 s out for a few seconds at each refresh.)
 		if (!this.track.startsWith(`kept|${fid}|${language}|`)) this.reset();
 		this.track = key;
-		const speech = new Float32Array(bytes.length);
-		for (let i = 0; i < bytes.length; i++) speech[i] = bytes[i] === 255 ? NaN : bytes[i] / 254;
+		const speech = speechOf(bytes);
 		this.worker.postMessage({ kind: 'heard', speech }, [speech.buffer]);
 		this.worker.postMessage({ kind: 'fit' });
 		return unfinished ? 'partial' : 'all';
+	}
+
+	/** Kept talking taken up by `resumeKept` (one byte a slice, 255 = not heard): only the rest is heard. */
+	private kept: Uint8Array | null = null;
+
+	/**
+	 * Picks up the talking kept for copy `key` from an earlier watch, finished or not (closed
+	 * partway, the next episode heard ahead): the subtitles are timed from it at once, and only
+	 * what's missing is heard after (`analyseTrack` with `resume`, or the player's downloads).
+	 * Call straight after a reset. 'none' when there's none, or it's for a copy of another length.
+	 * (Before, only a Showbox file heard to its end was kept: closing and reopening timed it all again.)
+	 */
+	async resumeKept(key: SpeechKey, language: string): Promise<'all' | 'partial' | 'none'> {
+		const round = this.heardFor;
+		const resp = await fetch(`/api/watch/speech?${speechQuery(key, language)}`).catch(() => null);
+		if (!resp?.ok || round !== this.heardFor) return 'none';
+		const unfinished = resp.headers.get('X-Speech-Partial') === '1';
+		const bytes = new Uint8Array(await resp.arrayBuffer());
+		if (round !== this.heardFor) return 'none';
+		let last = bytes.length;
+		while (last > 0 && bytes[last - 1] === 255) last--;
+		const length = this.video.duration;
+		if (!last || (Number.isFinite(length) && length > 0 && last * FRAME_SECONDS > length + 5)) return 'none';
+		this.kept = bytes;
+		const speech = speechOf(bytes);
+		this.worker.postMessage({ kind: 'heard', speech }, [speech.buffer]);
+		this.worker.postMessage({ kind: 'fit' });
+		return unfinished ? 'partial' : 'all';
+	}
+
+	/** All of `from`–`to` (seconds) is in the kept talking. */
+	private keptCovers(from: number, to: number): boolean {
+		const kept = this.kept;
+		if (!kept) return false;
+		const first = Math.max(0, Math.floor(from / FRAME_SECONDS) + 2);
+		const last = Math.floor(to / FRAME_SECONDS) - 2;
+		if (last >= kept.length) return false;
+		for (let i = first; i <= last; i++) if (kept[i] === 255) return false;
+		return true;
 	}
 
 	/** Everything heard so far, as the worker has it. */
@@ -312,17 +489,29 @@ export class SubtitleSync {
 		});
 	}
 
-	/** Keeps the talking heard for Showbox file `fid` on the computer (see useKept); `partial` while it goes on. */
-	private async keepHeard(fid: number, language: string, partial = false): Promise<void> {
+	/**
+	 * Keeps the talking heard for copy `fid` on the computer (see useKept); `partial` while it goes
+	 * on ('unless whole': partial unless nearly all of the video is heard).
+	 */
+	private async keepHeard(fid: SpeechKey, language: string, partial: boolean | 'unless whole' = false): Promise<void> {
 		let speech = await this.heardSoFar();
 		// (The worker's list runs on past the end of the video, unheard.)
 		let end = speech.length;
 		while (end > 0 && Number.isNaN(speech[end - 1])) end--;
 		speech = speech.subarray(0, end);
 		const bytes = new Uint8Array(speech.length);
-		for (let i = 0; i < speech.length; i++) bytes[i] = Number.isNaN(speech[i]) ? 255 : Math.round(Math.min(1, Math.max(0, speech[i])) * 254);
+		let heard = 0;
+		for (let i = 0; i < speech.length; i++) {
+			if (Number.isNaN(speech[i])) bytes[i] = 255;
+			else {
+				bytes[i] = Math.round(Math.min(1, Math.max(0, speech[i])) * 254);
+				heard++;
+			}
+		}
+		if (!heard) return;
+		if (partial === 'unless whole') partial = !(heard * FRAME_SECONDS >= this.video.duration * 0.97);
 		// (Without saying what it is, the bytes arrive empty.)
-		await fetch(`/api/watch/speech?fid=${fid}&lang=${encodeURIComponent(language)}${partial ? '&partial=1' : ''}`, {
+		await fetch(`/api/watch/speech?${speechQuery(fid, language)}${partial ? '&partial=1' : ''}`, {
 			method: 'POST',
 			body: bytes,
 			headers: { 'Content-Type': 'application/octet-stream' }
@@ -336,10 +525,16 @@ export class SubtitleSync {
 	 * `from`: where to start instead of where the video is (a TV's place, for /speech-maker), and
 	 * `keepAsItGoes`: keep what's heard after each group too, so a TV can time from it straight away.
 	 */
-	async analyseTrack(masterUrl: string, language: string, keepAs = 0, options: { from?: number; keepAsItGoes?: boolean } = {}): Promise<boolean> {
+	async analyseTrack(
+		masterUrl: string,
+		language: string,
+		keepAs: SpeechKey = 0,
+		options: { from?: number; keepAsItGoes?: boolean; resume?: boolean } = {}
+	): Promise<boolean> {
 		const key = `${masterUrl.split('?')[0]}|${language}`;
 		if (key === this.track) return true;
-		this.reset();
+		// (`resume`: part was kept, taken up by resumeKept just now; only the rest is heard.)
+		if (!options.resume || !this.kept) this.reset();
 		this.track = key;
 		const stop = new AbortController();
 		this.trackStop = stop;
@@ -365,6 +560,13 @@ export class SubtitleSync {
 			let previousEnd = -1;
 			let heard = 0;
 			for (const [first, end] of groups) {
+				const lastOne = track.pieces[end - 1];
+				// Heard already (kept from an earlier watch): nothing to fetch.
+				if (this.keptCovers(track.pieces[first].at, lastOne.at + lastOne.length)) {
+					previousEnd = -1;
+					heard += lastOne.at + lastOne.length - track.pieces[first].at;
+					continue;
+				}
 				// With subtitles off, only the first ten minutes or so (wholeTrack).
 				while (!this.canFetch(heard === 0) || (heard >= HEARD_AHEAD && !this.wholeTrack)) {
 					await new Promise((r) => setTimeout(r, 1000));
@@ -375,10 +577,12 @@ export class SubtitleSync {
 				this.fetchingSound = true;
 				const { at, samples } = await soundBetween(track, group[0].at, last.at + last.length, RATE, stop.signal).finally(() => (this.fetchingSound = false));
 				if (stop.signal.aborted) return true;
-				this.worker.postMessage({ kind: 'sound', at, samples, fresh: Math.abs(at - previousEnd) > 0.1 }, [samples.buffer]);
+				const seconds = samples.length / RATE;
+				await this.hearSound(at, samples, Math.abs(at - previousEnd) > 0.1);
+				if (stop.signal.aborted) return true;
 				this.worker.postMessage({ kind: 'fit' });
-				previousEnd = at + samples.length / RATE;
-				heard += samples.length / RATE;
+				previousEnd = at + seconds;
+				heard += seconds;
 				if (keepAs && options.keepAsItGoes && end !== groups[groups.length - 1][1]) await this.keepHeard(keepAs, language, true);
 			}
 			if (keepAs && !stop.signal.aborted) await this.keepHeard(keepAs, language);
@@ -424,6 +628,29 @@ export class SubtitleSync {
 		return true;
 	}
 
+	/** The copy heard from the player's downloads, to keep what's heard of it as it goes (see resumeKept). */
+	private appendKeep: { key: SpeechKey; language: string } | null = null;
+	private keepTimer: ReturnType<typeof setTimeout> | undefined;
+
+	/**
+	 * Keeps what's heard from the player's downloads for copy `key` (and takes up what was kept
+	 * before), straight after `useAppended` said it's newly started.
+	 */
+	async keepAppendedAs(key: SpeechKey, language: string): Promise<void> {
+		this.appendKeep = { key, language };
+		await this.resumeKept(key, language);
+	}
+
+	/** Kept a little after the last part heard (half a minute at most between keeps). */
+	private keepSoon(): void {
+		const keep = this.appendKeep;
+		if (!keep || this.keepTimer) return;
+		this.keepTimer = setTimeout(() => {
+			this.keepTimer = undefined;
+			if (this.track === 'appended' && this.appendKeep === keep) void this.keepHeard(keep.key, keep.language, 'unless whole');
+		}, 30_000);
+	}
+
 	/** A copy of a piece of audio the player just handed the browser (`isInit`: the format piece). */
 	hearAppended(data: Uint8Array, at: number, length: number, isInit: boolean): void {
 		if (this.track !== 'appended') return;
@@ -432,6 +659,8 @@ export class SubtitleSync {
 			this.appendTrack = aacTrackOf(data);
 			return;
 		}
+		// Heard on an earlier watch.
+		if (this.keptCovers(at, at + length)) return;
 		// Only the sound is kept: a 7Movies piece is up to 25 MB, most of it picture.
 		const adts = this.appendTrack ? adtsOf(this.appendTrack, data) : null;
 		this.appendQueue.push({ at, length, data: adts ?? data.slice(), adts: Boolean(adts) });
@@ -475,9 +704,11 @@ export class SubtitleSync {
 				for (let i = 0; i < samples.length; i++) samples[i] += channel[i] / sound.numberOfChannels;
 			}
 			const at = batch[0].at;
-			this.worker.postMessage({ kind: 'sound', at, samples, fresh: Math.abs(at - this.appendEnd) > 0.3 }, [samples.buffer]);
+			await this.hearSound(at, samples, Math.abs(at - this.appendEnd) > 0.3);
+			if (this.track !== 'appended') return;
 			this.worker.postMessage({ kind: 'fit' });
 			this.appendEnd = at + sound.duration;
+			this.keepSoon();
 		} catch {
 			// A piece the browser can't decode on its own: skipped, the next ones may be fine.
 		} finally {

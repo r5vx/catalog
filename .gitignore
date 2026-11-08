@@ -44,3 +44,7 @@ source-probe-*.txt
 
 # The Fire TV app's signing key: kept on this PC only (anyone with it could sign a fake update).
 android/*.keystore
+
+# The alternate wording's readable copy (scripts/dev/alt-text.mjs encodes it into the app)
+*.local.json
+

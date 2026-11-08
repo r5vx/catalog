@@ -3,8 +3,10 @@ import { fetchSubtitlesForTitle, type SubtitleOption } from '$lib/server/showbox
 import { tmdbShow } from '$lib/server/combinedEpisodes';
 import { nexusSubtitlesFor, tmdbEpisodeOfAniwave, episodesBefore, aniwaveExtra } from '$lib/server/sources';
 import { aniwaveStream, parseAniwaveShareKey } from '$lib/server/sources/aniwave';
+import { hianimeStream, parseHianimeShareKey } from '$lib/server/sources/hianime';
 import { toshoSubtitles, toshoFilmSubtitles, keepSeasonSubtitles, type ToshoSubtitle } from '$lib/server/sources/animetosho';
 import { fetchRomajiTitle } from '$lib/server/metadata/anilist';
+import { isCinemaRecording } from '$lib/watch';
 import type { RequestHandler } from './$types';
 
 /**
@@ -38,6 +40,7 @@ export const GET: RequestHandler = async ({ url }) => {
 	const dub = url.searchParams.get('audio') === 'dub';
 	const share = parseAniwaveShareKey(url.searchParams.get('share') ?? '');
 	const ref = parseAniwaveShareKey(url.searchParams.get('ref') ?? '');
+	const hianimeShare = parseHianimeShareKey(url.searchParams.get('share') ?? '');
 
 	if (!title) return error(400, 'Missing title');
 
@@ -62,7 +65,9 @@ export const GET: RequestHandler = async ({ url }) => {
 	// The other sites are asked straight away, alongside.
 	const playerTracksSoon = share?.kind === 'ssub'
 		? aniwaveStream(share.id, share.episode, 'ssub').then((s) => s?.tracks ?? [])
-		: Promise.resolve([]);
+		: hianimeShare?.kind === 'sub'
+			? hianimeStream(hianimeShare.mal, hianimeShare.episode, 'sub').then((s) => s?.tracks ?? [])
+			: Promise.resolve([]);
 	// Subtitle sites mostly number episodes the TMDB way (Bleach S6E13 is episode 122 there), so a
 	// show the player numbers its own way is asked for under both.
 	const othersSoon = extra?.film
@@ -117,8 +122,7 @@ export const GET: RequestHandler = async ({ url }) => {
 	// pre-release rips) go last: they're timed to another version of the film. Venom 2's top one
 	// was 22 s out for its first 20 minutes; the BluRay and WEB ones fit throughout.
 	// (And screeners sent out before release: Deadpool 2's "HQ DVDScr" was second in its list.)
-	const fromCinema = (s: Option) =>
-		/(^|[^a-z])(hd)?(cam|ts|tc|telesync|telecine|hdts|hdtc|hqcam|scr|dvdscr|screener)([^a-z]|$)|c1nem4|sunscreen/i.test(s.fileName);
+	const fromCinema = (s: Option) => isCinemaRecording(s.fileName);
 	const others: Option[] = kept
 		.map((s) => ({ ...s, default: undefined }))
 		.sort((a, b) => Number(fromCinema(a)) - Number(fromCinema(b)));
@@ -155,12 +159,12 @@ export const GET: RequestHandler = async ({ url }) => {
 		}));
 
 	const fromPlayer: Option[] = playerTracks.map((t, i) => ({
-		id: `aniwave-${i}`,
+		id: `${hianimeShare ? 'hianime' : 'aniwave'}-${i}`,
 		url: t.file,
 		lang: t.label.toLowerCase(),
 		language: ANIWAVE_LANGUAGES[t.label.toUpperCase()] ?? t.label,
-		fileName: `Aniwave ${t.label}`,
-		source: 'Aniwave'
+		fileName: `${hianimeShare ? 'HiAnime' : 'Aniwave'} ${t.label}`,
+		source: hianimeShare ? 'HiAnime' : 'Aniwave'
 	}));
 
 	// Only when nothing official was found by itself: passing anime.nexus's check (like a

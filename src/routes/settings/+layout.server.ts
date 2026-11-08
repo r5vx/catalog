@@ -15,7 +15,8 @@ export const load: LayoutServerLoad = async () => {
 	 */
 	const settings = readSettings();
 	const needs = {
-		services: !settings.tmdbApiKey || !omdbConfigured(),
+		// Optional ones too (OMDb's scores, Showbox as an extra source): the dot says there's more to add.
+		services: !settings.tmdbApiKey || !omdbConfigured() || !settings.febboxToken,
 		updates:
 			(mode === 'release' && updateState().status === 'ready') ||
 			(mode === 'source' && sourceIsStale())

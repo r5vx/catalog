@@ -21,12 +21,20 @@ export function canPlayHevc(): boolean {
 /** A copy this device can play: anything but HEVC where HEVC can't be played. */
 export const playableHere = (file: { hevc?: boolean }) => !file.hevc || canPlayHevc();
 
+/** A 4K file by its quality label ("2160p"). */
+export const isFourK = (file: { quality: string }) => (parseInt(file.quality) || 0) >= 2160;
+
 /**
  * The wanted quality if it's there, otherwise the highest (then largest) file.
  * Showbox's files come first; another source's (Aniwave) only when Showbox has none, and then
  * the one in the wanted audio ("Japanese" or "English") if there is one.
+ *
+ * When 1080p is wanted, a 4K file comes before a plain 1080p one: the player plays the 4K
+ * file's own 1080p (Febbox makes one of every file, all at the same rate), which is made from a
+ * sharper source. `fourK` says which 4K files may stand in (the player leaves out ones found to
+ * have no 1080p; the Roku, which picks its own quality, none).
  */
-export function pickFile<T extends Pickable>(files: T[], wanted: string, audio = ''): T | null {
+export function pickFile<T extends Pickable>(files: T[], wanted: string, audio = '', fourK: (file: T) => boolean = () => true): T | null {
 	files = files.filter(playableHere);
 	if (!files.length) return null;
 	const showbox = files.filter((f) => !f.source);
@@ -39,13 +47,46 @@ export function pickFile<T extends Pickable>(files: T[], wanted: string, audio =
 	// one listed: Dungeon Meshi E8 lists a 503 MB single-file copy before its 2.45 GB one. Then
 	// "largest" alone put Re:Zero S2 on its 1.67 GB Japanese-only copy, past the 458 MB "dual"
 	// one with the English dub that was being watched, 2026-10-24.)
+	// Never a recording made in a cinema (TELESYNC, CAM…) while a proper copy is listed: every copy
+	// streams at the same rate (Febbox makes its own 1080p), so the source is what you see. Brand New
+	// Day's largest 1080p file was a TELESYNC, picked over the WEB ones (2026-11-06).
+	const proper = showbox.filter((f) => !isCinemaRecording(f.name));
+	const pool = proper.length ? proper : showbox;
 	const best = (list: T[]) =>
 		[...list].sort((a, b) => Number(bothLanguages(b)) - Number(bothLanguages(a)) || bytesOf(b.size) - bytesOf(a.size))[0];
-	const exact = showbox.filter((f) => f.quality.toLowerCase() === wanted.toLowerCase());
+	const exact = pool.filter((f) => f.quality.toLowerCase() === wanted.toLowerCase());
+	if (wanted.toLowerCase() === '1080p') {
+		// A 4K file's 1080p first, unless only a 1080p copy has both languages (anime's "dual";
+		// "Multi" 4K films are Hindi/Tamil/Telugu dubs plus English, so it counts for nothing here).
+		const standIns = pool.filter((f) => isFourK(f) && fourK(f));
+		const both = [...standIns, ...exact];
+		if (standIns.length) {
+			const dual = both.filter((f) => /(^|[^a-z])dual([^a-z]|$)/i.test(f.name ?? ''));
+			const from = dual.length ? dual : both;
+			if (!from.some(isFourK)) return best(from);
+			// An SDR one first: its 1080p streams at the 1080p file's rate (3.4 Mbps), an HDR or Dolby
+			// Vision one's at ~2.3 (colors converted fine). Brand New Day, measured 2026-11-06.
+			const fourKs = from.filter(isFourK);
+			const sdr = fourKs.filter((f) => !isHdr(f.name));
+			return best(sdr.length ? sdr : fourKs);
+		}
+	}
 	if (exact.length) return best(exact);
-	const top = Math.max(...showbox.map((f) => parseInt(f.quality) || 0));
-	return best(showbox.filter((f) => (parseInt(f.quality) || 0) === top));
+	const top = Math.max(...pool.map((f) => parseInt(f.quality) || 0));
+	return best(pool.filter((f) => (parseInt(f.quality) || 0) === top));
 }
+
+/**
+ * A recording made in a cinema, or a screener sent out before release, by its file name: CAM, TS,
+ * TELESYNC, HDTS, TC, SCR, R5… (and c1nem4/SUNSCREEN's pre-release rips). Video copies and subtitles
+ * alike. (R5 subtitles are loosely timed, two speakers to a line: Ice Age 3's came first in the list
+ * and auto-timing took 20 minutes to fit them, 2026-11-07.)
+ */
+export const isCinemaRecording = (name: string | undefined) =>
+	/(^|[^a-z])(hd)?(cam|ts|tc|telesync|telecine|hdts|hdtc|hqcam|scr|dvdscr|screener|r5)([^a-z]|$)|c1nem4|sunscreen/i.test(name ?? '');
+
+/** A copy whose name says it's HDR or Dolby Vision ("HDR10+", "DV", "DoVi", "HLG"). */
+export const isHdr = (name: string | undefined) => /(^|[^a-z])(hdr\d*\+?|dv|dovi|dolby.?vision|hlg)([^a-z]|$)/i.test(name ?? '');
 
 /** A copy whose name says it has more than one language ("….1080p.dual.mkv", "Dual-Audio", "Multi"). */
 export const bothLanguages = (file: { name?: string }) => /(^|[^a-z])(dual|multi)([^a-z]|$)/i.test(file.name ?? '');

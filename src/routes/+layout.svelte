@@ -11,7 +11,9 @@
 	import { rememberBeforeSettings } from '$lib/nav';
 	import { onMount } from 'svelte';
 	import { startTv } from '$lib/tv';
+	import { startGamepad } from '$lib/gamepad';
 	import { inkFor, DEFAULT_ACCENT } from '$lib/accent';
+	import { applyCustomTheme } from '$lib/customTheme';
 	import { backgroundPreview } from '$lib/backgroundPreview.svelte';
 	import { sendKeptPlaces } from '$lib/phoneKeep.svelte';
 	import type { Snippet } from 'svelte';
@@ -40,6 +42,7 @@
 
 	// On a TV (the Fire TV app), the remote's arrows move around the page.
 	onMount(startTv);
+	onMount(startGamepad);
 
 	// The phone app (the secure Tailscale address, Settings → Phones): its offline page is made
 	// ready (static/sw.js), and places from watching with no connection are handed back. Never
@@ -80,6 +83,8 @@
 		const t = data?.theme;
 		if (t) document.documentElement.dataset.theme = t;
 		else delete document.documentElement.dataset.theme;
+		// The Custom theme's own colours (Settings → Personalization → Theme), or none.
+		applyCustomTheme(t === 'custom' ? (data?.customTheme ?? null) : null);
 	});
 
 	/**
@@ -100,7 +105,7 @@
 
 	<!-- "Add to Home Screen" on your phone uses these. -->
 	<link rel="manifest" href="/manifest.webmanifest" />
-	<link rel="apple-touch-icon" href="/icon-180.png" />
+	<link rel="apple-touch-icon" href="/icon-phone.png" />
 	<meta name="apple-mobile-web-app-capable" content="yes" />
 	<meta name="apple-mobile-web-app-title" content="Catalog" />
 	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />

@@ -1,4 +1,5 @@
 import { tvLibrary } from '$lib/server/db/queries';
+import { withNextAir } from '$lib/server/nextAirs';
 import { continueWatchingWithPosters } from '$lib/server/continueWatching';
 import { browseShelves } from '$lib/server/metadata';
 import { tvTitleLink } from '$lib/server/tvLinks';
@@ -9,7 +10,7 @@ import type { PageServerLoad } from './$types';
  * comes from TMDB and AniList, so it follows when it's ready instead of holding the page up.
  */
 export const load: PageServerLoad = async () => {
-	const library = tvLibrary();
+	const library = withNextAir(tvLibrary());
 	// Each opens its own page (Resume, and its episodes), not straight into the player.
 	const continuing = await continueWatchingWithPosters();
 	const links = await Promise.all(continuing.map((item) => (item.type === 'replay' ? null : tvTitleLink(item.title, item.type).catch(() => null))));

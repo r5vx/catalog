@@ -96,6 +96,41 @@ export async function fetchScores(lookup: {
 	}
 }
 
+/**
+ * One season's episodes with their IMDb ratings (OMDb's `Season=`), for the episode ratings
+ * chart (episodeRatings.ts), and how many seasons IMDb has. Null when OMDb couldn't be asked; an
+ * episode not rated yet has null.
+ */
+export async function omdbSeason(
+	imdbId: string,
+	season: number
+): Promise<{ totalSeasons: number; episodes: { episode: number; title: string; rating: number | null }[] } | null> {
+	const key = omdbKey();
+	if (!key) return null;
+	const url = new URL('https://www.omdbapi.com/');
+	url.searchParams.set('apikey', key);
+	url.searchParams.set('i', imdbId);
+	url.searchParams.set('Season', String(season));
+	try {
+		const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+		if (!response.ok) return null;
+		const data = (await response.json()) as {
+			Response?: string;
+			totalSeasons?: string;
+			Episodes?: { Episode?: string; Title?: string; imdbRating?: string }[];
+		};
+		if (data.Response !== 'True') return { totalSeasons: 0, episodes: [] };
+		return {
+			totalSeasons: Number(data.totalSeasons) || 0,
+			episodes: (data.Episodes ?? [])
+				.map((e) => ({ episode: Number(e.Episode), title: e.Title ?? '', rating: Number(e.imdbRating) || null }))
+				.filter((e) => e.episode > 0)
+		};
+	} catch {
+		return null;
+	}
+}
+
 const WEEK = 7 * 24 * 60 * 60 * 1000;
 
 /**

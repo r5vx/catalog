@@ -214,15 +214,16 @@
 
 	<section>
 		<div class="head">
-			<h2>Watch</h2>
+			<h2>Showbox</h2>
 			<span class="pill" class:completed={data.febboxKeySaved} class:planned={!data.febboxKeySaved}>
 				{data.febboxKeySaved ? 'On' : 'Off'}
 			</span>
 		</div>
 
 		<p class="muted">
-			Lets you watch movies and shows inside Catalog. Log in once and the key saves itself.
-			To share with a friend, have them paste your key below.
+			An extra source for films and shows, often the biggest and sharpest copies. Optional:
+			Catalog plays from its other sources without it. Needs a free Febbox account; log in once
+			and the key saves itself. To share with a friend, have them paste your key below.
 		</p>
 
 		{#if loginFailed}

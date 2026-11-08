@@ -35,6 +35,8 @@ export const tvPlayer: {
 	stopScan?: () => boolean;
 	/** Closes a menu open in the player (settings, subtitles, sources…). False if none was. */
 	closeMenu?: () => boolean;
+	/** The TV app says the TV is on the refresh rate asked for (tvFrameRate.ts). */
+	displayChanged?: () => void;
 } = {};
 
 const FOCUSABLE =
@@ -146,13 +148,16 @@ const DIRECTIONS: Record<string, Direction> = {
 function onKey(event: KeyboardEvent) {
 	// The remote's OK is Enter, which doesn't tick a checkbox the way it presses a button.
 	const focused = document.activeElement;
-	if (event.key === 'Enter' && focused instanceof HTMLInputElement && (focused.type === 'checkbox' || focused.type === 'radio')) {
+	if (event.key === 'Enter' && isTv() && focused instanceof HTMLInputElement && (focused.type === 'checkbox' || focused.type === 'radio')) {
 		event.preventDefault();
 		focused.click();
 		return;
 	}
 	const direction = DIRECTIONS[event.key];
 	if (!direction || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+	// On the computer, only while a game controller is in use (src/lib/gamepad.ts): the keyboard's
+	// arrows scroll the page as usual.
+	if (!isTv() && !document.documentElement.classList.contains('pad')) return;
 	// The TV screens (src/routes/tv) move the highlight their own way (src/lib/tvNav.ts).
 	if (document.querySelector('[data-tv-app]')) return;
 
@@ -207,12 +212,22 @@ function openMenu() {
 export function startTv(): void {
 	if (!isTv()) return;
 	document.documentElement.classList.add('tv');
+	startRemoteKeys();
+}
+
+let remoteKeysOn = false;
+
+/** The remote's arrows and buttons: on the TV, and on the computer once a game controller is used. */
+export function startRemoteKeys(): void {
+	if (remoteKeysOn) return;
+	remoteKeysOn = true;
 	window.addEventListener('keydown', onKey);
 	(window as unknown as { __catalogTv: unknown }).__catalogTv = {
 		playPause: () => tvPlayer.playPause?.(),
 		seek: (seconds: number) => tvPlayer.seek?.(seconds),
 		scan: (direction: number) => tvPlayer.scan?.(direction),
 		menu: openMenu,
+		displayChanged: () => tvPlayer.displayChanged?.(),
 		// The remote's Back (TV app 1.2 and later asks first): "handled", "exit", or "default"
 		// for going back a page as usual.
 		// (In the player, an open menu closes first: Back used to leave the episode.)

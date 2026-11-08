@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { tvBridge } from '$lib/tvFrameRate';
 
 	/** The TV's settings: the normal layout instead, or a different computer. */
 	let onTvApp = $state(false);
@@ -14,6 +15,44 @@
 			body: JSON.stringify({ layout: 'full' })
 		});
 		window.location.href = '/';
+	}
+
+	/* This profile's audio language (audioLanguage.ts): OK steps to the next one. */
+	const LANGUAGES = [
+		{ code: '', name: 'Original' },
+		{ code: 'es', name: 'Spanish' },
+		{ code: 'fr', name: 'French' },
+		{ code: 'de', name: 'German' },
+		{ code: 'hi', name: 'Hindi' }
+	];
+	let audioLanguage = $state('');
+	onMount(() => {
+		fetch('/api/profile-audio')
+			.then((r) => (r.ok ? r.json() : null))
+			.then((d) => {
+				if (d) audioLanguage = d.language ?? '';
+			})
+			.catch(() => {});
+	});
+	const languageName = $derived(LANGUAGES.find((l) => l.code === audioLanguage)?.name ?? 'Original');
+	async function nextLanguage() {
+		const at = LANGUAGES.findIndex((l) => l.code === audioLanguage);
+		audioLanguage = LANGUAGES[(at + 1) % LANGUAGES.length].code;
+		await fetch('/api/profile-audio', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ language: audioLanguage }) }).catch(() => {});
+	}
+
+	/* The TV's refresh rate matched to each video's frame rate (TV app 1.7 and later, tvFrameRate.ts). */
+	let frameRateKnown = $state(false);
+	let frameRateOn = $state(true);
+	onMount(() => {
+		const tv = tvBridge();
+		if (!tv?.frameRateMatching) return;
+		frameRateKnown = true;
+		frameRateOn = tv.frameRateMatching();
+	});
+	function toggleFrameRate() {
+		frameRateOn = !frameRateOn;
+		tvBridge()?.setFrameRateMatching?.(frameRateOn);
 	}
 
 	function changeComputer() {
@@ -34,6 +73,16 @@
 			<strong>Profiles</strong>
 			<span>Everyone gets their own Continue Watching and My List.</span>
 		</a>
+		<button type="button" class="option" data-tv-item onclick={nextLanguage}>
+			<strong>Audio language: {languageName}</strong>
+			<span>For this profile: dubbed in this language where there's a copy in it. OK changes it.</span>
+		</button>
+		{#if frameRateKnown}
+			<button type="button" class="option" data-tv-item onclick={toggleFrameRate}>
+				<strong>Match frame rate: {frameRateOn ? 'On' : 'Off'}</strong>
+				<span>The TV switches to each video's own frame rate, so films don't judder. The screen goes dark for a moment when it does.</span>
+			</button>
+		{/if}
 		<button type="button" class="option" data-tv-item onclick={normalLayout}>
 			<strong>Use the normal layout</strong>
 			<span>The same screens as on the computer. Settings → Watch on TV brings this one back.</span>

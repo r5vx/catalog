@@ -1594,15 +1594,15 @@ export function addDownload(d: Pick<DownloadRow, 'kind' | 'title' | 'year' | 'se
 }
 
 /** A download's progress or outcome. */
-export function updateDownload(id: number, fields: Partial<Pick<DownloadRow, 'state' | 'donePieces' | 'totalPieces' | 'bytes' | 'error' | 'duration'>> & { finished?: boolean }): void {
+export function updateDownload(id: number, fields: Partial<Pick<DownloadRow, 'state' | 'donePieces' | 'totalPieces' | 'bytes' | 'error' | 'duration' | 'hasSubtitles'>> & { finished?: boolean }): void {
 	const sets: string[] = [];
 	const values: (string | number | null)[] = [];
-	const columns: Record<string, string> = { state: 'state', donePieces: 'done_pieces', totalPieces: 'total_pieces', bytes: 'bytes', error: 'error', duration: 'duration' };
+	const columns: Record<string, string> = { state: 'state', donePieces: 'done_pieces', totalPieces: 'total_pieces', bytes: 'bytes', error: 'error', duration: 'duration', hasSubtitles: 'has_subtitles' };
 	for (const [key, column] of Object.entries(columns)) {
 		const value = fields[key as keyof typeof fields];
 		if (value === undefined) continue;
 		sets.push(`${column} = ?`);
-		values.push(value as string | number | null);
+		values.push(typeof value === 'boolean' ? toInt(value) : (value as string | number | null));
 	}
 	if (fields.finished) sets.push("finished_at = datetime('now')");
 	if (!sets.length) return;
@@ -1616,4 +1616,17 @@ export function saveDownloadPlace(id: number, place: number, duration: number): 
 
 export function deleteDownloadRow(id: number): void {
 	db.prepare('DELETE FROM downloads WHERE id = ?').run(id);
+}
+
+/* ---------------------------------------------------------------- next episodes' air dates */
+
+/** Shows someone is caught up with (any profile): the ones whose next episode is worth a countdown. */
+export function caughtUpShows(): { title: string; year: string }[] {
+	return db
+		.prepare(`
+			SELECT title, COALESCE(CAST(year AS TEXT), '') AS year FROM entries WHERE status = 'caught_up'
+			UNION
+			SELECT title, COALESCE(CAST(year AS TEXT), '') AS year FROM profile_titles WHERE status = 'caught_up'
+		`)
+		.all() as { title: string; year: string }[];
 }

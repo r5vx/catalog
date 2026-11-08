@@ -3,6 +3,7 @@
  * for auto-timing subtitles (subtitleSync.ts) and finding intros and credits (skipFinder.ts).
  * Its pieces are plain downloads anyone may read, so this works on a phone too.
  */
+import { aacTrackOf, adtsOf } from './aacFrames';
 
 export type SoundTrack = {
 	/** Address of the playlist's starting piece (the format details), if it has one. */
@@ -66,7 +67,16 @@ export async function soundBetween(
 			init = new Uint8Array(await (await fetch(track.init, { signal })).arrayBuffer());
 			initCache.set(track.init, init);
 		}
-		parts.unshift(init);
+		// Fragmented MP4 sound is rewrapped as plain AAC frames first (aacFrames.ts). Catalog's
+		// browser engine (Electron 38) decoded Ice Age: The Meltdown's Showbox pieces 4% short
+		// and smeared (6.21 s of sound from each 6.48 s piece), so everything heard drifted early
+		// within each group of pieces: auto-timing put its subtitles 2 s early (2026-11-04). As
+		// plain AAC the same piece decodes exactly (6.485 s, sample for sample as ffmpeg).
+		const aac = aacTrackOf(init);
+		const frames = aac ? parts.map((p) => adtsOf(aac, p)) : [];
+		if (aac && frames.every(Boolean)) {
+			parts.splice(0, parts.length, ...(frames as Uint8Array<ArrayBuffer>[]));
+		} else parts.unshift(init);
 	}
 	const bytes = new Uint8Array(parts.reduce((n, b) => n + b.length, 0));
 	let offset = 0;

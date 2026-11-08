@@ -277,7 +277,7 @@ export function electronGetSubtitles(
  * movy.sx's video playlist for a page of its (electron/main.cjs opens it out of sight and notes
  * what its player asks for). `url` is empty when none came (it hasn't got it, or took too long).
  */
-export function electronMovyFind(pageUrl: string, signal?: AbortSignal): Promise<{ url: string; error?: string }> {
+export function electronMovyFind(pageUrl: string, signal?: AbortSignal, site: 'movy' | 'vidfast' = 'movy', dub?: string): Promise<{ url: string; error?: string }> {
 	if (typeof process.send !== 'function') {
 		return Promise.resolve({ url: '', error: 'not in Electron' });
 	}
@@ -285,7 +285,7 @@ export function electronMovyFind(pageUrl: string, signal?: AbortSignal): Promise
 	const id = String(++counter);
 	return new Promise((resolve) => {
 		pending.set(id, resolve);
-		process.send!({ type: 'movy-find', id, url: pageUrl });
+		process.send!({ type: 'movy-find', id, url: pageUrl, site, dub });
 		// Called off (no longer needed, or making way): its window closes, its answer is 'cancelled'.
 		signal?.addEventListener('abort', () => process.send!({ type: 'movy-stop', id }), { once: true });
 		// Its own limit is 45 s, after waiting for its turn (two at once).

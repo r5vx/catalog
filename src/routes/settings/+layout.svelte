@@ -4,6 +4,7 @@
 	import { beforeSettings } from '$lib/nav';
 	import type { Snippet } from 'svelte';
 	import { p, pHint } from '$lib/altText';
+	import { pressedSection } from '$lib/codeBox.svelte';
 	import type { LayoutData } from './$types';
 
 	let { children, data }: { children: Snippet; data: LayoutData } = $props();
@@ -18,7 +19,7 @@
 	};
 
 	const SECTIONS: Section[] = [
-		{ href: '/settings/personalization', label: 'Personalization', hint: 'Colour and sorting' },
+		{ href: '/settings/personalization', label: 'Personalization', hint: 'Theme, colors and layout' },
 		{ href: '/settings/library', label: 'Library', hint: 'Export, where your files live' },
 		{ href: '/settings/storage', label: 'Storage', hint: 'Space kept to load faster' },
 		{ href: '/settings/playback', label: 'Playback', hint: 'Times a video stopped to load' },
@@ -88,6 +89,7 @@
 				<li>
 					<a
 						href={section.href}
+						onclick={() => pressedSection(section.href)}
 						class:active={page.url.pathname.startsWith(section.href)}
 						aria-current={page.url.pathname.startsWith(section.href) ? 'page' : undefined}
 					>
@@ -111,11 +113,12 @@
 		</ul>
 
 		{#if data.appVersion}
-			<p class="version faint tabular">{pm ? 'Catalog' : 'Catalog'} {data.appVersion}</p>
+			<p class="version faint tabular">{pm ? p('alt:Catalog') : 'Catalog'} {data.appVersion}</p>
 		{/if}
 	</nav>
 
-	<div class="panel">
+	<!-- With the wide layout, the sections fill the room (two columns on a big window). -->
+	<div class="panel" class:wide={page.data.wideLayout}>
 		{@render children()}
 	</div>
 </div>
@@ -225,6 +228,42 @@
 	.panel {
 		min-width: 0;
 		max-width: 62ch;
+	}
+
+	/*
+	 * Wide layout (Settings → Personalization → Layout): the page uses the whole width. Sections
+	 * flow into two columns once there's room for both; text lines stay short enough to read.
+	 */
+	.panel.wide {
+		max-width: none;
+		container-type: inline-size;
+	}
+
+	.panel.wide :global(p) {
+		max-width: 80ch;
+	}
+
+	@container (min-width: 980px) {
+		.panel.wide :global(.sections) {
+			display: block;
+			columns: 2;
+			column-gap: 56px;
+		}
+
+		.panel.wide :global(.sections > section) {
+			break-inside: avoid;
+			margin-bottom: 38px;
+		}
+
+		/*
+		 * A section much longer than the rest (Updates' What's new, Playback's stop log) runs across
+		 * both columns under the short ones; alone in a column it left the other one empty.
+		 */
+		.panel.wide :global(.sections > section.wide-full) {
+			column-span: all;
+			/* (The columns above drop their last section's bottom margin.) */
+			padding-top: 24px;
+		}
 	}
 
 	@media (min-width: 721px) {

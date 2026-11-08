@@ -21,6 +21,10 @@ db.exec(`
 	);
 `);
 
+// The alternate wording's setting had another name before (2026-11-04): whoever had it on keeps it
+// on, with no code to enter. (The old name is written encoded, like the wording itself.)
+db.prepare("UPDATE OR IGNORE settings SET key = 'altMode' WHERE key = ?").run(atob('cG9pc29uTW9kZQ=='));
+
 export type Settings = {
 	/** Free key from themoviedb.org. Without it, only anime search works. */
 	tmdbApiKey?: string;
@@ -48,8 +52,10 @@ export type Settings = {
 	notesSort?: string;
 	/** Two-letter country for "where to watch". Blank means use this PC's. */
 	watchRegion?: string;
-	/** Theme override: light, dark, black. Empty means follow the OS. */
+	/** Theme override: light, dark, black, custom. Empty means follow the OS. */
 	theme?: string;
+	/** The Custom theme's colours, as JSON of hex codes (src/lib/customTheme.ts). */
+	customTheme?: string;
 	/** Serialised febbox cookies — stored after login, or pasted by a friend. */
 	febboxToken?: string;
 	/** More Febbox accounts' sign-ins (src/lib/server/febboxAccounts.ts), as a JSON list. */
@@ -58,13 +64,15 @@ export type Settings = {
 	febboxNames?: string;
 	/** '0' centres the layout; otherwise (the default) it stretches edge-to-edge. */
 	wideLayout?: string;
+	/** Your ratings as 5 stars (default) or 10 (Settings → Personalization → Ratings); stored out of 10 either way. */
+	ratingStars?: string;
 	/** '0' turns off the sidebar with the library's sections, Browse and Settings (on by default). */
 	sideNav?: string;
 	/** Settings → Storage: how many MB Catalog may keep to load things faster (src/lib/server/storage.ts). */
 	storageLimitMb?: string;
 	/** Settings → Storage: how many GB the episodes downloaded ahead may take (episodeDownloads.ts). */
 	downloadsAheadGb?: string;
-	/** When '1', UI text gets replaced with alternate wording. */
+	/** When '1', the alternate wording is on (src/lib/altText.ts; Settings → Personalization → Code). */
 	altMode?: string;
 	/** A picture behind the pages (Settings → Personalization): its "/media/…" address. */
 	backgroundImage?: string;
@@ -75,6 +83,8 @@ export type Settings = {
 	/** SubDL's key and its "seen" mark: no longer used (SubDL dropped 2026-10-20), cleared at start-up. */
 	subdlApiKey?: string;
 	subdlSeen?: string;
+	/** '1' when YouTube on the computer opens over all of Catalog's window instead of its own (the YouTube page's switch). */
+	youtubeInside?: string;
 	/** 'full' when the TV app shows the normal layout instead of the TV one (Settings → Watch on TV). */
 	tvLayout?: string;
 	/** '1' to install a downloaded update by itself at night (Settings → Updates). Off unless turned on. */

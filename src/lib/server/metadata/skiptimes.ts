@@ -128,6 +128,12 @@ async function locate(title: string, overallEpisode: number) {
 	return null;
 }
 
+/**
+ * Which MyAnimeList entry and episode the nth episode of a series is (counted from its first),
+ * or null. HiAnime's player is asked by these (sources/hianime.ts).
+ */
+export const malEpisodeOf = (title: string, overallEpisode: number) => locate(title, overallEpisode);
+
 const KIND: Record<string, SkipSegment['type']> = {
 	op: 'intro',
 	'mixed-op': 'intro',

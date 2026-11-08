@@ -195,6 +195,7 @@ export function fitDelays(speech: Float32Array, cues: TimedCue[]): DelayPlan | n
 	return best;
 }
 
+
 /** Speeds subtitles are often made for, against the one the video plays at. */
 const RATES = [25 / 23.976, 23.976 / 25, 25 / 24, 24 / 25, 24 / 23.976, 23.976 / 24];
 
@@ -280,7 +281,7 @@ function agreement(speech: Float32Array, cues: TimedCue[], first: number, last: 
 		const b = Math.min(last, a + span);
 		let heard = 0;
 		for (let i = a; i < b; i++) if (!Number.isNaN(speech[i])) heard++;
-		if (heard < enough) continue;
+		if (heard < enough || !hasLines(cues, a, b, whole.shift, 2)) continue;
 		tried++;
 		if (Math.abs(quickShift(speech, cues, a, b, -FAR, FAR).shift - whole.shift) <= 2) agree++;
 	}
@@ -288,7 +289,22 @@ function agreement(speech: Float32Array, cues: TimedCue[], first: number, last: 
 	return { steps: [{ from: 0, delay: round(whole.shift) }], fits: true, clear: agree / tried, rate };
 }
 
-/** Each 3-minute stretch with a minute or more heard, looked at within 20 s of `overall`. */
+/**
+ * Whether the subtitles have enough lines in video time `a`..`b` (slices) at about `delay` for a
+ * stretch there to say anything. A stretch of the opening music with no lines can't line up or
+ * fail to: counted as unclear, it made right subtitles look wrong (Ice Age 3's R5 ones, made for
+ * a copy 4% faster, were called "don't match" after 13 minutes; at 20 they fit, 2026-11-07).
+ */
+const LINES_TO_JUDGE = 6;
+function hasLines(cues: TimedCue[], a: number, b: number, delay: number, slack: number): boolean {
+	const from = a * FRAME - delay - slack;
+	const to = b * FRAME - delay + slack;
+	let lines = 0;
+	for (const cue of cues) if (cue.start >= from && cue.start < to && ++lines >= LINES_TO_JUDGE) return true;
+	return false;
+}
+
+/** Each 3-minute stretch with a minute or more heard (and lines to go by), looked at within 20 s of `overall`. */
 function stretches(speech: Float32Array, cues: TimedCue[], first: number, last: number, overall: number) {
 	const span = Math.round(WINDOW / FRAME);
 	const stride = Math.round(STRIDE / FRAME);
@@ -299,7 +315,7 @@ function stretches(speech: Float32Array, cues: TimedCue[], first: number, last: 
 		const b = Math.min(last, a + span);
 		let heard = 0;
 		for (let i = a; i < b; i++) if (!Number.isNaN(speech[i])) heard++;
-		if (heard < enough) continue;
+		if (heard < enough || !hasLines(cues, a, b, overall, NEAR)) continue;
 		tried++;
 		const fit = quickShift(speech, cues, a, b, overall - NEAR, overall + NEAR);
 		if (confident(fit)) points.push({ t: ((a + b) / 2) * FRAME, delay: fit.shift });

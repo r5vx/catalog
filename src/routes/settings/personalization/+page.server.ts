@@ -1,11 +1,16 @@
 import { readSettings, updateSettings, type Settings } from '$lib/server/settings';
 import { backgroundFrom, clampTo, isOwnPicture, DEFAULT_DIM, MAX_DIM, MAX_BLUR } from '$lib/background';
 import { DEFAULT_ACCENT, isHexColour } from '$lib/accent';
+import { readCustomTheme, CUSTOM_COLOURS } from '$lib/customTheme';
 import { SORTS } from '$lib/constants';
 import { fail } from '@sveltejs/kit';
+import { createHash } from 'node:crypto';
 import type { PageServerLoad, Actions } from './$types';
 
-const VALID_THEMES = ['', 'light', 'dark', 'black'];
+/** The code's fingerprint (Settings → Personalization → Code): the code itself isn't kept here. */
+const CODE_PRINT = '2ebac9f3e63b470d9091c1a7c751d9cd4ff9397bda3a75d284f950bdf9f2ed4a';
+
+const VALID_THEMES = ['', 'light', 'dark', 'black', 'custom'];
 
 export const load: PageServerLoad = async () => {
 	const settings = readSettings();
@@ -17,8 +22,12 @@ export const load: PageServerLoad = async () => {
 		})(),
 		hiddenSorts: (settings.hiddenSorts ?? '').split(',').filter(Boolean),
 		theme: settings.theme ?? '',
+		// The Custom theme's colours, and whether any were ever picked (none: it starts from the theme in use).
+		customTheme: readCustomTheme(settings.customTheme),
+		customSaved: Boolean(settings.customTheme),
 		wideLayout: settings.wideLayout !== '0',
 		sideNav: settings.sideNav !== '0',
+		ratingStars: settings.ratingStars === '10' ? 10 : 5,
 		altMode: settings.altMode === '1',
 		background: backgroundFrom(settings)
 	};
@@ -29,16 +38,16 @@ export const actions: Actions = {
 		const colour = String((await request.formData()).get('accentColor') ?? '').trim();
 
 		if (!isHexColour(colour)) {
-			return fail(400, { accentError: 'That is not a colour. Use the picker or a #rrggbb value.' });
+			return fail(400, { accentError: 'That is not a color. Use the picker or a #rrggbb value.' });
 		}
 
 		updateSettings({ accentColor: colour.toLowerCase() });
-		return { accentOk: 'Colour updated.' };
+		return { accentOk: 'Color updated.' };
 	},
 
 	resetAccent: async () => {
 		updateSettings({ accentColor: DEFAULT_ACCENT });
-		return { accentOk: 'Back to the original colour.' };
+		return { accentOk: 'Back to the original color.' };
 	},
 
 	saveTheme: async ({ request }) => {
@@ -48,6 +57,19 @@ export const actions: Actions = {
 		}
 		updateSettings({ theme: theme || undefined });
 		return { themeOk: 'Theme updated.' };
+	},
+
+	/** The Custom theme's colours: every one an exact #rrggbb, kept even while another theme is on. */
+	saveCustomTheme: async ({ request }) => {
+		const form = await request.formData();
+		const colours: Record<string, string> = {};
+		for (const { key } of CUSTOM_COLOURS) {
+			const value = String(form.get(key) ?? '').trim();
+			if (!isHexColour(value)) return fail(400, { customError: 'Every color needs a #rrggbb code.' });
+			colours[key] = value.toLowerCase();
+		}
+		updateSettings({ customTheme: JSON.stringify(colours), theme: 'custom' });
+		return { customOk: true };
 	},
 
 	/**
@@ -61,6 +83,11 @@ export const actions: Actions = {
 		const wide = form.get('wideLayout') === '1';
 		updateSettings({ wideLayout: wide ? '1' : '0' });
 		return { layoutOk: wide ? 'Wide layout enabled.' : 'Centered layout restored.' };
+	},
+
+	saveRatingStars: async ({ request }) => {
+		const ten = (await request.formData()).get('ratingStars') === '10';
+		updateSettings({ ratingStars: ten ? '10' : '5' });
 	},
 
 	saveSideNav: async ({ request }) => {
@@ -88,10 +115,18 @@ export const actions: Actions = {
 		return { backgroundOk: true };
 	},
 
-	saveAlt: async ({ request }) => {
-		const on = String((await request.formData()).get('altMode')) === '1';
-		updateSettings({ altMode: on ? '1' : undefined });
-		return { altOk: on ? 'Alternate wording on.' : 'Back to normal.' };
+	/** The right code turns the alternate wording on; Turn off ends it. */
+	saveCode: async ({ request }) => {
+		const form = await request.formData();
+		if (form.get('off') === '1') {
+			updateSettings({ altMode: undefined });
+			return { codeOk: true };
+		}
+		const code = String(form.get('code') ?? '').trim();
+		const print = createHash('sha256').update(`catalog:${code}`).digest('hex');
+		if (print !== CODE_PRINT) return fail(400, { codeError: 'That code does nothing.' });
+		updateSettings({ altMode: '1' });
+		return { codeOk: true };
 	},
 
 	saveSorts: async ({ request }) => {

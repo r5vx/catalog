@@ -14,12 +14,17 @@ import { clearOldStrips } from '$lib/server/previewStrips';
 import { keepWithinLimit, tellAppItsShare } from '$lib/server/storage';
 import { moveOffAniList } from '$lib/server/offAniList';
 import { scheduleNewEpisodeChecks } from '$lib/server/newEpisodes';
+import { scheduleNextAirs } from '$lib/server/nextAirs';
+import { installSecureDns } from '$lib/server/secureDns';
 import { noteOwnAddress } from '$lib/server/ownFetch';
 import { resumeDownloads } from '$lib/server/downloads';
 import { liveSchedule } from '$lib/server/sources/daddylive';
 import { checkNewReplays } from '$lib/server/replayAnswer';
 import { withArt } from '$lib/server/teamArt';
 import { withScores } from '$lib/server/liveScores';
+import { linkUnmatchedSoon } from '$lib/server/linkEntry';
+import { customThemeCss, readCustomTheme } from '$lib/customTheme';
+import { startYouTubeForPhones } from '$lib/server/youtubePhone';
 
 // Before anything asks another site for something: a time limit for every outside request,
 // and a note of the slow ones (on /api/diagnostics).
@@ -29,6 +34,8 @@ watchOutsideRequests();
 // get filled in shortly after the app opens, without anyone asking.
 scheduleBackfill();
 recategorizeAnime();
+// Titles added with only a name (no TMDB number) are matched, so they get their year and details.
+linkUnmatchedSoon();
 
 // Preview pictures not opened for 60 days go.
 clearOldStrips();
@@ -53,6 +60,9 @@ setInterval(forgetFinishedSubtitles, 60 * 60 * 1000).unref?.();
 
 // Shows watched to their last episode come back to Continue Watching when a new one is out.
 scheduleNewEpisodeChecks();
+scheduleNextAirs();
+// Names looked up over HTTPS (Cloudflare, Google), so a provider's DNS blocks don't hide the sources.
+installSecureDns();
 
 // Downloads left unfinished when Catalog closed carry on.
 resumeDownloads();
@@ -69,6 +79,9 @@ const warmLive = () => {
 };
 setTimeout(warmLive, 5_000).unref?.();
 setInterval(warmLive, 10 * 60 * 1000).unref?.();
+
+// YouTube's mobile website for phones, on Catalog's port + 1 (src/lib/server/youtubePhone.ts).
+startYouTubeForPhones();
 
 // A renewed Showbox sign-in in the app's window is saved, shortly after opening and twice a day.
 setTimeout(keepShowboxSigninFresh, 30 * 1000).unref?.();
@@ -195,14 +208,19 @@ export const handle: Handle = async ({ event, resolve }) => {
 	checkSameOrigin(event);
 	noteOwnAddress(event.url);
 
-	const theme = readSettings().theme;
+	const settingsNow = readSettings();
+	const theme = settingsNow.theme;
+	// The Custom theme's colours go on the page itself, so it never flashes the default first.
+	const themeAttrs = !theme
+		? ''
+		: theme === 'custom'
+			? ` data-theme="custom" style="${customThemeCss(readCustomTheme(settingsNow.customTheme))}"`
+			: ` data-theme="${theme}"`;
 	const resolveWith = (e: typeof event) =>
 		withProfile(profileFor(e), () =>
 			resolve(e, {
 				transformPageChunk: ({ html }) =>
-					theme
-						? html.replace('<html lang="en">', `<html lang="en" data-theme="${theme}">`)
-						: html
+					themeAttrs ? html.replace('<html lang="en">', `<html lang="en"${themeAttrs}>`) : html
 			})
 		);
 

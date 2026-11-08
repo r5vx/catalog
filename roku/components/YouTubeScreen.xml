@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- YouTube: YouTube's own places down the left (Search, Music, Gaming, News, Sports, Live, Movies,
+     Podcasts), their rows on the right as YouTube's TV app shows them (/api/youtube/rows); a channel
+     or playlist opens its own rows (Back comes out). Search: the keyboard and YouTube's results as you
+     type (/api/youtube/search). OK on a video plays it through the computer's hidden YouTube player
+     (electron/youtubeHelper.cjs). -->
+<component name="YouTubeScreen" extends="Group">
+    <interface>
+        <field id="params" type="assocarray" />
+        <field id="action" type="assocarray" />
+        <field id="closing" type="boolean" />
+        <field id="resumed" type="boolean" alwaysNotify="true" />
+    </interface>
+    <script type="text/brightscript" uri="pkg:/components/YouTubeScreen.brs" />
+    <script type="text/brightscript" uri="pkg:/components/common.brs" />
+    <children>
+        <Label text="YouTube" translation="[20, 64]" font="font:LargeBoldSystemFont" color="0xE7EDE9FF" />
+        <Label id="where" translation="[310, 76]" width="1400" font="font:MediumBoldSystemFont" color="0xA3B0A8FF" />
+        <LabelList
+            id="places"
+            translation="[20, 170]"
+            itemSize="[250, 60]"
+            color="0xA3B0A8FF"
+            focusedColor="0x141414FF"
+            font="font:MediumSystemFont"
+            focusedFont="font:MediumBoldSystemFont"
+            vertFocusAnimationStyle="floatingFocus" />
+        <Label id="status" translation="[310, 180]" width="1400" wrap="true" font="font:SmallSystemFont" color="0xA3B0A8FF" text="Loading…" />
+        <RowList
+            id="rows"
+            translation="[310, 150]"
+            itemComponentName="TileItem"
+            numRows="2"
+            itemSize="[1440, 380]"
+            rowItemSize="[[330, 300]]"
+            rowItemSpacing="[[26, 0]]"
+            showRowLabel="[true]"
+            rowLabelOffset="[[0, 12]]"
+            rowLabelColor="0xA3B0A8FF"
+            rowLabelFont="font:SmallBoldSystemFont"
+            drawFocusFeedback="false"
+            rowFocusAnimationStyle="floatingFocus"
+            vertFocusAnimationStyle="fixedFocus"
+            visible="false" />
+        <Group id="searchView" visible="false">
+            <MiniKeyboard id="keyboard" translation="[310, 170]" />
+            <Label id="found" translation="[950, 180]" width="760" font="font:SmallSystemFont" color="0xA3B0A8FF" text="Search YouTube." />
+            <MarkupGrid id="results" translation="[950, 170]" itemComponentName="TileItem" numColumns="2" numRows="2" itemSize="[330, 300]" itemSpacing="[26, 36]" drawFocusFeedback="false" visible="false" />
+        </Group>
+        <Timer id="pause" duration="0.8" />
+        <Timer id="settle" duration="0.4" />
+    </children>
+</component>

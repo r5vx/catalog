@@ -1,4 +1,5 @@
 import { watchTypeOf } from '$lib/watchType';
+import { whenText } from '$lib/airs';
 /**
  * Everything a TV screen shows as a poster, in one shape: where OK goes, and what the banner
  * above the rows says about it while it's highlighted.
@@ -66,6 +67,8 @@ type LibraryItem = {
 	lastSeason: number | null;
 	lastEpisode: number | null;
 	status: string;
+	/** A caught-up show's next episode, when announced (nextAirs.ts). */
+	nextAir?: { date: string; season: number; episode: number } | null;
 };
 
 const STATUS_WORDS: Record<string, string> = {
@@ -90,7 +93,7 @@ export function fromLibrary(item: LibraryItem): Tile {
 		poster: item.posterUrl,
 		meta: [item.year, item.categoryName, STATUS_WORDS[item.status], reached].filter(Boolean).join(' · '),
 		overview: item.overview,
-		note: item.status === 'watching' ? reached : null,
+		note: item.nextAir ? `New ep ${whenText(item.nextAir.date)}` : item.status === 'watching' ? reached : null,
 		menu: { kind: 'library', id: item.id, status: item.status }
 	};
 }

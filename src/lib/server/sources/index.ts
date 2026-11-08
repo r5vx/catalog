@@ -26,6 +26,8 @@ import {
 	type AniwaveEpisode
 } from './aniwave';
 import { searchNexus, nexusEpisodes, nexusSubtitles, type NexusShow, type NexusSubtitle } from './animenexus';
+import { hianimeCopies, hianimeHas } from './hianime';
+import { malEpisodeOf } from '../metadata/skiptimes';
 
 const DAY = 24 * 60 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
@@ -402,4 +404,43 @@ export async function nexusSubtitlesFor(
 		console.warn('[anime.nexus] could not find subtitles:', error);
 		return [];
 	}
+}
+
+/* ------------------------------------------------ HiAnime */
+
+/**
+ * HiAnime's copies of a show's episodes, by "season-episode" (of the list given, with each one's
+ * number counted from the series' first episode, `overall`). Each episode is placed on
+ * MyAnimeList's numbering (the chain AniSkip uses); whether HiAnime has a MyAnimeList entry, and
+ * its dub, is asked once per entry (kept 12 hours). Waited on for `wait` ms at most: a slower
+ * answer is kept for the next time the list is opened.
+ */
+export async function hianimeFiles(
+	show: TmdbShow,
+	title: string,
+	episodes: { season: number; episode: number; overall: number }[],
+	wait: number
+): Promise<Map<string, FileOption[]>> {
+	const out = new Map<string, FileOption[]>();
+	if (!show.anime || !episodes.length) return out;
+	const work = (async () => {
+		// One at a time: the first builds the chain (a few Kitsu requests), the rest read it.
+		const spots: { e: { season: number; episode: number }; spot: { malId: number; episode: number } | null }[] = [];
+		for (const e of episodes) {
+			spots.push({ e, spot: await malEpisodeOf(title, e.overall).catch(() => null) });
+		}
+		const entries = [...new Set(spots.flatMap((s) => (s.spot ? [s.spot.malId] : [])))];
+		const has = new Map(
+			await Promise.all(
+				entries.map(async (mal) => [mal, { sub: await hianimeHas(mal, 'sub'), dub: await hianimeHas(mal, 'dub') }] as const)
+			)
+		);
+		for (const { e, spot } of spots) {
+			if (!spot) continue;
+			const files = hianimeCopies(spot.malId, spot.episode, has.get(spot.malId) ?? { sub: false, dub: false });
+			if (files.length) out.set(`${e.season}-${e.episode}`, files);
+		}
+	})().catch((error) => console.warn('[hianime] could not list:', error));
+	await Promise.race([work, new Promise((resolve) => setTimeout(resolve, wait))]);
+	return out;
 }

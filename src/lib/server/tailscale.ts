@@ -10,6 +10,7 @@
  */
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { youtubePhonePort, SECURE_PORT } from './youtubePhone';
 
 const PLACES = [
 	'tailscale',
@@ -72,7 +73,16 @@ export async function phoneAddress(): Promise<PhoneAddress> {
 	const serving = await run(cli, ['serve', 'status', '--json'], 8000);
 	// Serving this computer's Catalog on its secure address.
 	const on = serving.ok && new RegExp(`127\\.0\\.0\\.1:${port()}|localhost:${port()}`).test(serving.out);
+	// YouTube for phones (youtubePhone.ts) on the secure address's port 8443, added when it's missing.
+	if (on && !serving.out.includes(`:${SECURE_PORT}`)) serveYouTube(cli).catch(() => {});
 	return { tailscale: true, address: name ? `https://${name}` : null, plain: ip ? `http://${ip}:${port()}` : null, on };
+}
+
+/** YouTube for phones on the secure address too: https://name:8443 goes to its own port. */
+async function serveYouTube(cli: string): Promise<void> {
+	const yt = youtubePhonePort();
+	if (!yt) return;
+	await run(cli, ['serve', '--bg', `--https=${SECURE_PORT}`, `http://127.0.0.1:${yt}`], 20_000);
 }
 
 /**
@@ -86,6 +96,9 @@ export async function turnOnPhoneAddress(): Promise<{ ok: boolean; enable?: stri
 	const answer = await run(cli, ['serve', '--bg', `http://127.0.0.1:${port()}`], 20_000);
 	const link = answer.out.match(/https:\/\/login\.tailscale\.com\/\S+/)?.[0];
 	if (link) return { ok: false, enable: link };
-	if ((await phoneAddress()).on) return { ok: true };
+	if ((await phoneAddress()).on) {
+		await serveYouTube(cli);
+		return { ok: true };
+	}
 	return { ok: false, message: answer.out.trim().split('\n').slice(-3).join(' ') || "Tailscale didn't turn it on." };
 }

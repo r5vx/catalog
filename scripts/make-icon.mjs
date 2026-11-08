@@ -93,6 +93,34 @@ function drawCircle(size, [r, g, b]) {
 }
 
 /**
+ * A solid square of the colour, for the phone's Home Screen: iPhones fill anything see-through
+ * with black (the circle's corners came out black there) and round the corners themselves.
+ */
+function drawSquare(size, [r, g, b]) {
+	const raw = Buffer.alloc(size * (1 + size * 3));
+	let offset = 0;
+	for (let y = 0; y < size; y++) {
+		raw[offset++] = 0; // filter: none
+		for (let x = 0; x < size; x++) {
+			raw[offset++] = r;
+			raw[offset++] = g;
+			raw[offset++] = b;
+		}
+	}
+	const header = Buffer.alloc(13);
+	header.writeUInt32BE(size, 0);
+	header.writeUInt32BE(size, 4);
+	header[8] = 8; // bit depth
+	header[9] = 2; // colour type: RGB, nothing see-through
+	return Buffer.concat([
+		Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+		pngChunk('IHDR', header),
+		pngChunk('IDAT', deflateSync(raw, { level: 9 })),
+		pngChunk('IEND', Buffer.alloc(0))
+	]);
+}
+
+/**
  * Bundle the PNGs into one .ico. Windows reads PNG-compressed entries directly,
  * so each size goes in exactly as drawn.
  */
@@ -135,6 +163,8 @@ writeFileSync(join(root, 'static', 'icon.png'), full);
 writeFileSync(join(root, 'static', 'icon-512.png'), full);
 writeFileSync(join(root, 'static', 'icon-192.png'), drawCircle(192, rgb));
 writeFileSync(join(root, 'static', 'icon-180.png'), drawCircle(180, rgb));
+// The phone's Home Screen icon (linked as apple-touch-icon): a full pink square.
+writeFileSync(join(root, 'static', 'icon-phone.png'), drawSquare(180, rgb));
 
 const ico = buildIco(ICO_SIZES.map((size) => ({ size, data: drawCircle(size, rgb) })));
 writeFileSync(join(root, 'assets', 'icon.ico'), ico); // builds the .exe icon

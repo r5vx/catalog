@@ -7,6 +7,9 @@
  */
 const { app, BrowserWindow, shell, Menu, session } = require('electron');
 const { openMini, closeMini } = require('./miniPlayer.cjs');
+const { openYouTube, prepareYouTube, youTubeOpen } = require('./youtubeWindow.cjs');
+const { captureYouTube } = require('./youtubeHelper.cjs');
+const { signInWithBrowser, signOutOf, youtubePartition } = require('./youtubeSignIn.cjs');
 const { captureLive } = require('./liveCapture.cjs');
 const { fork } = require('node:child_process');
 const path = require('node:path');
@@ -35,6 +38,36 @@ let window = null;
 /** Settles with `fallback` if `promise` hasn't settled within `ms` — page scripts in hidden windows can hang forever. */
 const withTimeout = (promise, ms, fallback) =>
 	Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve(fallback), ms))]);
+
+/*
+ * Computers whose graphics driver Chromium can't use: the window opens and stays blank (a hang, not a
+ * crash; Streambert's issue #169, an NVIDIA card on the nouveau driver). If Catalog's window hasn't
+ * drawn a frame a few seconds after its page loaded, this file is written and Catalog starts again
+ * without graphics acceleration, and stays that way. Deleting the file tries it again.
+ * (CATALOG_TEST_NO_DRAW=1 pretends nothing was drawn, to try the switch.)
+ */
+const GPU_OFF_FILE = path.join(app.getPath('userData'), 'graphics-off.json');
+const gpuOff = fs.existsSync(GPU_OFF_FILE);
+if (gpuOff) app.disableHardwareAcceleration();
+
+function checkWindowDraws(win) {
+	if (gpuOff) return;
+	setTimeout(async () => {
+		if (quitting || !win || win.isDestroyed() || win.isMinimized()) return;
+		const test = process.env.CATALOG_TEST_NO_DRAW === '1';
+		// Two animation frames in a row, else a picture of the window: either means it draws.
+		const frames = test ? false : await withTimeout(win.webContents.executeJavaScript('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))', true).catch(() => false), 8000, false);
+		if (frames) return;
+		const picture = test ? false : await withTimeout(win.webContents.capturePage().then((image) => !image.isEmpty()).catch(() => false), 5000, false);
+		if (picture || quitting || win.isDestroyed()) return;
+		console.log('[app] the window drew nothing: starting again without graphics acceleration');
+		try {
+			fs.writeFileSync(GPU_OFF_FILE, JSON.stringify({ since: new Date().toISOString(), why: 'the window drew nothing after loading' }));
+		} catch {}
+		app.relaunch();
+		app.quit();
+	}, 5000);
+}
 
 /**
  * Where the project lives, working back from the running exe:
@@ -178,6 +211,8 @@ const MOVY_OWN = /(^|\.)(movy\.sx|wecollege\.net)$/;
 const MOVY_AT_ONCE = 2;
 /** Its servers that only have dubbed copies (the last five in its menu). */
 const MOVY_DUBS = new Set(['munich', 'berlin', 'paris', 'delhi', 'cancun']);
+/** Its dub servers by language: a profile with an audio language set asks only these (audioLanguage.ts). */
+const MOVY_DUB_SERVERS = { de: ['munich', 'berlin'], fr: ['paris'], hi: ['delhi'], es: ['cancun'] };
 let movySessionReady = false;
 let movyRunning = 0;
 const movyWaiting = [];
@@ -202,8 +237,11 @@ function movySession() {
 /**
  * One lookup: { url } of the video's playlist, or { url: '' } (with why) if none came.
  * `onStop` is handed a function that ends it early (Catalog no longer needs it).
+ * `dub` ("es", "fr", "de", "hi"): that language's dubbed copy instead. Its other servers are refused
+ * as the page asks them, so its player moves straight on to the dub server(s).
  */
-function findOnMovyNow(pageUrl, onStop) {
+function findOnMovyNow(pageUrl, onStop, dub) {
+	const wanted = dub ? new Set(MOVY_DUB_SERVERS[dub] ?? []) : null;
 	return new Promise((resolve) => {
 		let win = null;
 		let finished = false;
@@ -238,14 +276,27 @@ function findOnMovyNow(pageUrl, onStop) {
 			const dbg = win.webContents.debugger;
 			dbg.attach('1.3');
 			dbg.sendCommand('Network.enable').catch(() => {});
+			if (wanted) dbg.sendCommand('Fetch.enable', { patterns: [{ urlPattern: '*wecollege.net/*/sources*' }] }).catch(() => {});
+			let dubAsked = 0;
 			dbg.on('message', (_event, method, params) => {
+				// A dub: only its own server(s) are let through; the rest fail at once.
+				if (method === 'Fetch.requestPaused') {
+					const server = params.request.url.match(/wecollege\.net\/([a-z]+)\/sources/)?.[1];
+					if (server && wanted.has(server)) {
+						dubAsked += 1;
+						// Asked and nothing came within 20 s: not there in that language.
+						setTimeout(() => finish({ url: '', error: 'none' }), 20000);
+						dbg.sendCommand('Fetch.continueRequest', { requestId: params.requestId }).catch(() => {});
+					} else dbg.sendCommand('Fetch.failRequest', { requestId: params.requestId, errorReason: 'Failed' }).catch(() => {});
+					return;
+				}
 				// Its servers are tried in its menu's order, and the last five only have dubs (Munich
 				// and Berlin German, Paris French, Delhi Hindi, Cancun Spanish): once it asks them,
 				// none of the original-audio ones had it. A "no" in ~28 s rather than waiting out all
 				// 18 (~50 s, the last answering "OK" with nothing in it) — and never a dub.
 				if (method === 'Network.requestWillBeSent') {
 					const server = params.request.url.match(/wecollege\.net\/([a-z]+)\/sources/)?.[1];
-					if (server && MOVY_DUBS.has(server)) finish({ url: '', error: 'none' });
+					if (!wanted && server && MOVY_DUBS.has(server)) finish({ url: '', error: 'none' });
 					return;
 				}
 				if (method !== 'Network.responseReceived') return;
@@ -263,10 +314,91 @@ function findOnMovyNow(pageUrl, onStop) {
 	});
 }
 
+/* ------------------------------------------------- Vidfast: its own page finds the video */
+
+/**
+ * vidfast.vc, like movy.sx, only hands its video link to its own page (its player works it out
+ * in the page). So the page is opened out of sight, muted, and the first video playlist it asks
+ * for from another server is noted; then it closes. Pictures, fonts, styles and other sites'
+ * frames (its adverts) aren't loaded; pop-ups are refused and it can't leave its own site.
+ * Measured 2026-11-04: Fight Club and Breaking Bad S1E1, the playlist in about 3 s, 1080p.
+ */
+const VIDFAST_OWN = /(^|\.)vidfast\.vc$/;
+let vidfastSessionReady = false;
+
+function vidfastSession() {
+	const vidfast = session.fromPartition('persist:vidfast');
+	if (vidfastSessionReady) return vidfast;
+	vidfastSessionReady = true;
+	vidfast.setUserAgent(vidfast.getUserAgent().replace(/\s*Electron\/\S+/, '').replace(/\s*catalog\/\S+/i, ''));
+	vidfast.webRequest.onBeforeRequest((details, callback) => {
+		let host = '';
+		try {
+			host = new URL(details.url).hostname;
+		} catch {}
+		const own = VIDFAST_OWN.test(host);
+		const skip = ['image', 'font', 'stylesheet', 'media'].includes(details.resourceType) || (details.resourceType === 'subFrame' && !own);
+		callback({ cancel: skip });
+	});
+	vidfast.setPermissionRequestHandler((_contents, _permission, done) => done(false));
+	return vidfast;
+}
+
+function findOnVidfastNow(pageUrl, onStop) {
+	return new Promise((resolve) => {
+		let win = null;
+		let finished = false;
+		const finish = (result) => {
+			if (finished) return;
+			finished = true;
+			clearTimeout(timer);
+			try {
+				if (win && !win.isDestroyed()) win.destroy();
+			} catch {}
+			resolve(result);
+		};
+		const timer = setTimeout(() => finish({ url: '', error: 'timeout' }), 30000);
+		onStop(() => finish({ url: '', error: 'cancelled' }));
+		try {
+			vidfastSession();
+			win = new BrowserWindow({
+				show: false,
+				webPreferences: { partition: 'persist:vidfast', contextIsolation: true, nodeIntegration: false, backgroundThrottling: false }
+			});
+			win.webContents.setAudioMuted(true);
+			win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+			win.webContents.on('will-navigate', (event, url) => {
+				try {
+					if (!VIDFAST_OWN.test(new URL(url).hostname)) event.preventDefault();
+				} catch {
+					event.preventDefault();
+				}
+			});
+			const dbg = win.webContents.debugger;
+			dbg.attach('1.3');
+			dbg.sendCommand('Network.enable').catch(() => {});
+			dbg.on('message', (_event, method, params) => {
+				if (method !== 'Network.responseReceived') return;
+				const { url, status, mimeType } = params.response;
+				let host = '';
+				try {
+					host = new URL(url).hostname;
+				} catch {}
+				const playlist = /mpegurl/i.test(mimeType) || /\.m3u8(\?|$)/i.test(url);
+				if (status === 200 && playlist && !VIDFAST_OWN.test(host)) finish({ url });
+			});
+			win.loadURL(pageUrl).catch(() => {});
+		} catch (e) {
+			finish({ url: '', error: e.message });
+		}
+	});
+}
+
 /** Lookups that can still be called off, by the server's id for them. */
 const movyStops = new Map();
 
-function findOnMovy(pageUrl, id) {
+/** A Movy or Vidfast lookup (`site`), taking turns: two at once at most. */
+function findOnMovy(pageUrl, id, site, dub) {
 	return new Promise((resolve) => {
 		let stopped = false;
 		let stopRunning = null;
@@ -280,7 +412,7 @@ function findOnMovy(pageUrl, id) {
 			// Called off while waiting: the next one goes instead.
 			if (stopped) return void movyWaiting.shift()?.();
 			movyRunning++;
-			findOnMovyNow(pageUrl, (stop) => (stopRunning = stop)).then((result) => {
+			(site === 'vidfast' ? findOnVidfastNow : findOnMovyNow)(pageUrl, (stop) => (stopRunning = stop), dub).then((result) => {
 				movyRunning--;
 				movyStops.delete(id);
 				resolve(result);
@@ -421,6 +553,20 @@ function openCaptionTimer() {
 	captionTimer.loadURL(`${ORIGIN}/caption-timer`).catch(() => captionTimer?.destroy());
 }
 
+/*
+ * Subtitles timed by their words (/word-timer, src/lib/wordTiming.ts): one window nobody sees, for
+ * every screen's ask; muted, full speed while hidden (Whisper), closes itself a minute after the last job.
+ */
+let wordTimer = null;
+function openWordTimer() {
+	if (quitting || (wordTimer && !wordTimer.isDestroyed())) return;
+	wordTimer = new BrowserWindow({ show: false, width: 480, height: 270, webPreferences: { backgroundThrottling: false } });
+	wordTimer.webContents.setAudioMuted(true);
+	wordTimer.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+	wordTimer.on('closed', () => (wordTimer = null));
+	wordTimer.loadURL(`${ORIGIN}/word-timer`).catch(() => wordTimer?.destroy());
+}
+
 function nextStrip() {
 	if (stripBusy || !stripQueue.length || quitting) return;
 	stripBusy = true;
@@ -443,6 +589,58 @@ function nextStrip() {
 	win.loadURL(`${ORIGIN}${pagePath}`).catch(done);
 }
 
+/*
+ * YouTube on phones (src/lib/server/youtubePhone.ts) uses each person's own YouTube account, signed
+ * in on this computer: the owner's is the YouTube window's (`persist:youtube`), everyone else's is
+ * in a storage of its own (youtubePartition in youtubeSignIn.cjs). The server is handed a profile's
+ * cookies when it asks, and again whenever they change (a sign-in, a sign-out, YouTube renewing
+ * them). They go nowhere else.
+ */
+const youTubeCookiesTimers = new Map();
+const watchedYouTubeCookies = new Set();
+async function tellYouTubeCookies(profile = 0) {
+	if (quitting || !server?.connected) return;
+	const partition = youtubePartition(profile);
+	const jar = session.fromPartition(partition).cookies;
+	if (!watchedYouTubeCookies.has(partition)) {
+		watchedYouTubeCookies.add(partition);
+		jar.on('changed', (_event, cookie) => {
+			if (!/(^|\.)(youtube|google)\.com$/.test(String(cookie.domain).replace(/^\./, ''))) return;
+			clearTimeout(youTubeCookiesTimers.get(partition));
+			youTubeCookiesTimers.set(partition, setTimeout(() => tellYouTubeCookies(profile).catch(() => {}), 3000));
+		});
+	}
+	const all = await jar.get({});
+	const cookies = all
+		.filter((c) => /(^|\.)(youtube|google)\.com$/.test(String(c.domain).replace(/^\./, '')))
+		.map((c) => ({ name: c.name, value: c.value, domain: c.domain }));
+	if (quitting || !server?.connected) return;
+	try { server.send({ type: 'youtube-cookies', profile: Number(profile) || 0, cookies }); } catch {}
+}
+
+/**
+ * Catalog's YouTube page on this computer: Sign in for someone (Google's page in the computer's
+ * own Edge, youtubeSignIn.cjs, into that person's storage) or sign them out.
+ */
+async function youTubeAccountFor(message) {
+	const profile = Number(message.profile) || 0;
+	const partition = youtubePartition(profile);
+	let result = 'signed-out';
+	if (message.type === 'youtube-signin') result = await signInWithBrowser(null, window && !window.isDestroyed() ? window : null, partition);
+	else await signOutOf(partition);
+	await tellYouTubeCookies(profile).catch(() => {});
+	if (quitting || !server?.connected) return;
+	try { server.send({ type: 'youtube-account-done', profile, result }); } catch {}
+}
+
+const YOUTUBE_ICON = path.join(__dirname, '..', 'build', 'client', 'icon.ico');
+function tellYouTubeState(open) {
+	// Closing Catalog closes YouTube's window after the server has stopped: nobody to tell then.
+	// (Sending anyway was the "JavaScript error" on every close, 2026-11-06.)
+	if (quitting || !server?.connected) return;
+	try { server.send({ type: 'youtube-state', open: Boolean(open) }); } catch {}
+}
+
 function startServer() {
 	const entry = path.join(__dirname, '..', 'build', 'index.js');
 
@@ -451,10 +649,14 @@ function startServer() {
 			...process.env,
 			PORT: String(PORT),
 			HOST: '0.0.0.0', // so your phone can reach it over Tailscale
+			// Uploads bigger than 512 KB (SvelteKit's default) were refused: a 2 MB background picture
+			// said "larger than 20 MB", and so did note pictures. Each upload checks its own size too.
+			BODY_SIZE_LIMIT: '64M',
 			// Lets the Settings page offer the "check for updates" button, and
 			// tells it where the project (and the updater script) lives.
 			CATALOG_DESKTOP: '1',
 			CATALOG_PROJECT: projectRoot(),
+			CATALOG_GRAPHICS_OFF: gpuOff ? '1' : '',
 			CATALOG_UPDATE_MODE: SOURCE_MODE ? 'source' : 'release',
 			// Packed alongside the app, so "what's new" works with no connection.
 			CATALOG_NOTES: path.join(__dirname, '..', 'RELEASE_NOTES.md'),
@@ -484,6 +686,7 @@ function startServer() {
 		if (message?.type === 'make-strip') makeStrip(String(message.path));
 
 		if (message?.type === 'caption-timer') openCaptionTimer();
+		if (message?.type === 'word-timer') openWordTimer();
 
 		if (message?.type === 'clear-app-cache') session.defaultSession.clearCache().catch(() => {});
 
@@ -492,6 +695,18 @@ function startServer() {
 			openMini(window, ORIGIN, String(message.path ?? ''), path.join(__dirname, '..', 'build', 'client', 'icon.ico'));
 		}
 		if (message?.type === 'mini-back') closeMini(message);
+
+		// YouTube (youtubeWindow.cjs), from Catalog's YouTube page, which is
+		// told when it opens and closes (and asks once when the server starts).
+		// `inside`: over all of Catalog's window instead (the switch on Catalog's YouTube page).
+		if (message?.type === 'youtube-open') openYouTube(YOUTUBE_ICON, tellYouTubeState, { inside: message.inside === true, host: window });
+		if (message?.type === 'youtube-ask') tellYouTubeState(youTubeOpen());
+		if (message?.type === 'youtube-cookies-ask') {
+			for (const profile of Array.isArray(message.profiles) ? message.profiles : [0]) tellYouTubeCookies(profile).catch(() => {});
+		}
+		if (message?.type === 'youtube-signin' || message?.type === 'youtube-signout') youTubeAccountFor(message).catch(() => {});
+		// YouTube for a Roku (youtubeHelper.cjs): the hidden player keeps a video's pieces.
+		if (message?.type === 'youtube-capture') captureYouTube(message).catch(() => {});
 
 		if (message?.type === 'check-for-updates') checkForUpdates();
 
@@ -519,7 +734,7 @@ function startServer() {
 		}
 
 		if (message?.type === 'movy-find') {
-			findOnMovy(String(message.url), message.id).then((result) => server?.send({ type: 'movy-find-result', id: message.id, ...result }));
+			findOnMovy(String(message.url), message.id, message.site === 'vidfast' ? 'vidfast' : 'movy', typeof message.dub === 'string' ? message.dub : undefined).then((result) => server?.send({ type: 'movy-find-result', id: message.id, ...result }));
 		}
 
 		if (message?.type === 'movy-stop') movyStops.get(message.id)?.();
@@ -582,7 +797,7 @@ function startServer() {
 
 			// Another Febbox account than the main one: asked in its own cookie store, holding its
 			// sign-in (src/lib/server/febboxAccounts.ts), so its allowance pays for this video.
-			const ses = message.partition ? session.fromPartition(String(message.partition)) : ses;
+			const ses = message.partition ? session.fromPartition(String(message.partition)) : session.defaultSession;
 
 			try {
 				if (message.partition && message.token) await holdFebboxSignin(ses, String(message.partition), String(message.token));
@@ -1033,6 +1248,9 @@ function startServer() {
 		}
 	});
 
+	// A message sent just as the server stops ("Channel closed") is reported here, not thrown:
+	// with nothing listening it became Windows' "A JavaScript error occurred" box.
+	server.on('error', (error) => console.warn('[server]', error?.message || error));
 	server.stdout?.on('data', (chunk) => console.log('[server]', String(chunk).trim()));
 	server.stderr?.on('data', (chunk) => console.error('[server]', String(chunk).trim()));
 
@@ -1317,6 +1535,7 @@ function createWindow() {
 		if (!shown.isDestroyed() && !shown.isVisible()) shown.show();
 	}, 4000);
 	let reloads = 0;
+	shown.webContents.once('did-finish-load', () => checkWindowDraws(shown));
 	shown.webContents.on('did-fail-load', (_event, _code, _description, url, isMainFrame) => {
 		if (!isMainFrame || !url.startsWith(ORIGIN) || reloads >= 30 || shown.isDestroyed()) return;
 		reloads += 1;
@@ -1494,6 +1713,14 @@ if (!app.requestSingleInstanceLock()) {
 
 	app.whenReady().then(async () => {
 		Menu.setApplicationMenu(null);
+		// Smooth video beside a game that keeps the graphics card busy (electron/gpuPriority.cjs).
+		require('./gpuPriority.cjs').keepGpuPriorityHigh();
+		// Names looked up over HTTPS first (Cloudflare, then Google), the computer's own DNS only if
+		// neither answers: a provider's DNS block can't hide a source from the hidden windows
+		// (Movy, Vidfast, Febbox, Live TV). The server does the same (src/lib/server/secureDns.ts).
+		try {
+			app.configureHostResolver({ secureDnsMode: 'automatic', secureDnsServers: ['https://cloudflare-dns.com/dns-query', 'https://dns.google/dns-query'] });
+		} catch {}
 
 		// What pages remember (localStorage: each show's audio and subtitles, volume) written to the
 		// disk every minute, not only whenever Chromium gets to it: the owner's copy had kept none of
@@ -1647,6 +1874,8 @@ if (!app.requestSingleInstanceLock()) {
 		if (!SOURCE_MODE && app.isPackaged) macUpdater?.tidy();
 
 		createWindow();
+		// YouTube's window, loaded hidden for someone who uses it, so it opens at once (youtubeWindow.cjs).
+		setTimeout(() => prepareYouTube(YOUTUBE_ICON, tellYouTubeState, window), 15000);
 
 		// Quietly, in the background — a new version downloads itself and is
 		// installed when the app next closes. Nothing interrupts you. Looked for again every four

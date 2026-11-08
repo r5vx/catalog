@@ -4,6 +4,8 @@ import { isVidriftVideo, playsDirect, VIDRIFT_HEADERS } from '$lib/server/source
 import { liveHeadersFor, trustVideoHost, trustedVideoHost } from '$lib/server/relayHosts';
 import { fetchSteadily, piecePart, splitLongPieces } from '$lib/server/relayPieces';
 import { MOVY_HEADERS } from '$lib/server/sources/movy';
+import { HIANIME_HEADERS } from '$lib/server/sources/hianime';
+import { VIDFAST_HEADERS } from '$lib/server/sources/vidfast';
 import { isNotedPiece, notePieces, pieceAhead } from '$lib/server/relayReadAhead';
 import { downloadKindOf, noteEpisode, storedPiece, wantedPiece } from '$lib/server/episodeDownloads';
 import { isPicture, videoFromPicture } from '$lib/server/pictureVideo';
@@ -34,7 +36,7 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	const kind = isVidriftVideo(target) ? 'vidrift' : isAniwaveVideo(target) ? 'aniwave' : trustedVideoHost(target);
 	if (!kind) return error(403, 'Not a video server Catalog was sent to');
 	const askWith: Record<string, string> =
-		kind === 'vidrift' ? VIDRIFT_HEADERS : kind === 'movy' ? MOVY_HEADERS : kind === 'live' ? liveHeadersFor(target) : VIDEO_HEADERS;
+		kind === 'vidrift' ? VIDRIFT_HEADERS : kind === 'movy' ? MOVY_HEADERS : kind === 'hianime' ? HIANIME_HEADERS : kind === 'vidfast' ? VIDFAST_HEADERS : kind === 'live' ? liveHeadersFor(target) : VIDEO_HEADERS;
 	// Which copy of which episode, and which piece of it (episodeDownloads.ts): 7Movies' and Movy's
 	// episodes are downloaded ahead onto this computer, and kept by these rather than by address.
 	const copy = url.searchParams.get('copy') ?? '';

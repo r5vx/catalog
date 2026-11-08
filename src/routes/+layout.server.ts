@@ -4,6 +4,7 @@ import { currentProfile, onThisComputer } from '$lib/server/profile';
 import { countNotes } from '$lib/server/db/notes';
 import { DEFAULT_ACCENT, isHexColour } from '$lib/accent';
 import { backgroundFrom } from '$lib/background';
+import { readCustomTheme } from '$lib/customTheme';
 import { warmBrowseCache } from '$lib/server/metadata';
 import { showboxSignin } from '$lib/server/showboxSignin';
 import type { LayoutServerLoad } from './$types';
@@ -63,8 +64,11 @@ export const load: LayoutServerLoad = async ({ request, getClientAddress }) => {
 		hiddenTabs: (settings.hiddenTabs ?? '').split(',').filter(Boolean),
 		tabOrder: (settings.tabOrder ?? '').split(',').filter(Boolean),
 		theme: settings.theme ?? '',
+		customTheme: settings.theme === 'custom' ? readCustomTheme(settings.customTheme) : null,
 		// Wide with the sidebar unless turned off (Settings → Personalization → Layout).
 		wideLayout: settings.wideLayout !== '0',
+		// Rating stars: 5, or 10 for halves like 8.5 (Settings → Personalization → Ratings).
+		ratingStars: settings.ratingStars === '10' ? 10 : 5,
 		sideNav,
 		altMode: settings.altMode === '1',
 		background: backgroundFrom(settings),

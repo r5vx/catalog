@@ -8,7 +8,7 @@
 	 */
 	import { onMount, untrack } from 'svelte';
 	import StarRating from '$lib/StarRating.svelte';
-	import StatusPicker from '$lib/StatusPicker.svelte';
+	import { STATUSES } from '$lib/constants';
 	import ProgressPicker from '$lib/ProgressPicker.svelte';
 
 	type Fields = {
@@ -92,10 +92,14 @@
 				<path d="M12 21s-7.5-4.6-9.6-9.2C.9 8.4 3 4.5 6.7 4.5c2.1 0 3.6 1.1 4.3 2.4.7-1.3 2.2-2.4 4.3-2.4 3.7 0 5.8 3.9 4.3 7.3C19.5 16.4 12 21 12 21z" />
 			</svg>
 		</button>
+		<!-- One menu instead of seven buttons: the status takes a line, not a block. -->
+		<select class="status" bind:value={status} aria-label="Status" onchange={() => save({ status })}>
+			{#each STATUSES as option (option.value)}
+				<option value={option.value}>{option.label}</option>
+			{/each}
+		</select>
 		{#if said}<span class="said" class:bad={said !== 'Saved'} role="status">{said}</span>{/if}
 	</div>
-
-	<StatusPicker bind:value={status} onchange={(value) => save({ status: value })} />
 
 	<div class="line">
 		{#if series && seasonsAsked}
@@ -133,15 +137,26 @@
 </div>
 
 <style>
+	/* Beside the poster, under the buttons: no box of its own, just two short lines. */
 	.quick {
 		display: flex;
 		flex-direction: column;
-		gap: 12px;
-		padding: 14px 16px;
-		border: 1px solid var(--rule);
-		border-radius: var(--radius);
-		background: var(--surface);
+		gap: 8px;
+		padding-top: 10px;
+		border-top: 1px solid var(--rule);
 		max-width: 560px;
+	}
+
+	.status {
+		width: auto;
+		padding: 5px 10px;
+		border: 1px solid var(--accent);
+		border-radius: 999px;
+		background-color: var(--accent-bg);
+		color: var(--ink);
+		font: inherit;
+		font-size: 0.86rem;
+		cursor: pointer;
 	}
 
 	.line {

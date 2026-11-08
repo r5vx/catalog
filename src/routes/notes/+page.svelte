@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { p } from '$lib/altText';
 	import MoreButton from '$lib/MoreButton.svelte';
 	import { page } from '$app/state';
 	import { invalidateAll } from '$app/navigation';
@@ -106,7 +107,7 @@
 	}
 </script>
 
-<svelte:head><title>{pm ? 'Notes' : 'Notes'} · {pm ? 'Catalog' : 'Catalog'}</title></svelte:head>
+<svelte:head><title>{pm ? p('alt:Notes') : 'Notes'} · {pm ? p('alt:Catalog#2') : 'Catalog'}</title></svelte:head>
 
 <LibraryHeader
 	categories={data.categories}
@@ -149,7 +150,7 @@
 	<div class="toolbar">
 		<input
 			type="search"
-			placeholder={pm ? 'Search notes…' : 'Search notes…'}
+			placeholder={pm ? p('alt:Search notes…') : 'Search notes…'}
 			aria-label="Search notes"
 			bind:value={query}
 		/>

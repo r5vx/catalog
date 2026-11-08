@@ -52,6 +52,8 @@ export type DownloadAsk = {
 	audio: string;
 	/** The subtitles showing, as SRT, timed to the video. */
 	subtitles: string | null;
+	/** From a title's page (titleDownloads.ts): English captions fetched when its turn comes. */
+	wantsCaptions?: boolean;
 	/** Its size, as the player worked it out (bytes; 0 if not known). */
 	estimate: number;
 };
@@ -64,7 +66,7 @@ export const subtitlesOf = (id: number) => join(folderOf(id), 'subtitles.srt');
 export function startDownload(ask: DownloadAsk): { id: number; already: boolean } {
 	const known = findDownload(ask.kind, ask.title, ask.season, ask.episode, ask.replayId);
 	if (known) return { id: known.id, already: true };
-	const id = addDownload({ ...ask, hasSubtitles: Boolean(ask.subtitles) });
+	const id = addDownload({ ...ask, hasSubtitles: Boolean(ask.subtitles || ask.wantsCaptions) });
 	mkdirSync(folderOf(id), { recursive: true });
 	if (ask.subtitles) writeFileSync(subtitlesOf(id), ask.subtitles);
 	queue();
@@ -304,6 +306,13 @@ async function download(row: DownloadRow, signal: AbortSignal): Promise<void> {
 	}
 	updateDownload(row.id, { state: 'downloading', error: null });
 	const progress = running!.progress;
+	// Asked from a title's page with captions: English ones fetched now (one per download, as each
+	// one's turn comes; not all at once). None found: it goes without.
+	if (row.hasSubtitles && !existsSync(subtitlesOf(row.id))) {
+		const text = await fetchCaptions(row).catch(() => null);
+		if (text) writeFileSync(subtitlesOf(row.id), text);
+		else updateDownload(row.id, { hasSubtitles: false });
+	}
 
 	let plan = await planFor(row, signal, false);
 	const free = freeSpace();
@@ -445,4 +454,37 @@ async function downloadWhole(row: DownloadRow, address: string, signal: AbortSig
 }
 
 /** Re-exported for the API, so it has one place to read downloads from. */
+/**
+ * English captions for a download asked from a title's page, as the player finds them (its
+ * subtitle list, then the file): the first English one that isn't signs-only. Not timed yet;
+ * playing the download times them to its sound.
+ */
+async function fetchCaptions(row: DownloadRow): Promise<string | null> {
+	const params = new URLSearchParams({ title: row.title, type: row.kind === 'episode' ? 'tv' : 'movie' });
+	if (row.kind === 'episode') {
+		params.set('season', String(row.season));
+		params.set('episode', String(row.episode));
+	}
+	if (row.year) params.set('year', row.year);
+	if (row.shareKey) params.set('share', row.shareKey);
+	const list = (await ownFetch(`/api/watch/subtitles?${params}`)
+		.then((r) => (r.ok ? r.json() : []))
+		.catch(() => [])) as { url: string; lang: string; language: string; fileName: string }[];
+	const english = list.filter((s) => (/^en/i.test(s.lang) || /^english/i.test(s.language)) && !/\b(signs?|forced)\b/i.test(`${s.language} ${s.fileName}`));
+	// A couple tried at most (an empty or broken file goes to the next).
+	for (const sub of english.slice(0, 2)) {
+		const ask = new URLSearchParams({ url: sub.url, show: row.title, lang: sub.lang });
+		if (row.kind === 'episode') {
+			ask.set('season', String(row.season));
+			ask.set('episode', String(row.episode));
+		}
+		const answer = await ownFetch(`/api/watch/subtitle-content?${ask}`)
+			.then((r) => (r.ok ? r.json() : null))
+			.catch(() => null);
+		const content = typeof answer?.content === 'string' ? answer.content : '';
+		if (/-->/.test(content)) return content;
+	}
+	return null;
+}
+
 export { getDownload, listDownloads };

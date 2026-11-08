@@ -113,12 +113,12 @@
 	const addedCount = $derived(Object.keys(added).length);
 </script>
 
-<svelte:head><title>{pm ? 'Add to your library' : 'Add to your library'} · {pm ? 'Catalog' : 'Catalog'}</title></svelte:head>
+<svelte:head><title>{pm ? p('alt:Add to your library') : 'Add to your library'} · {pm ? p('alt:Catalog#2') : 'Catalog'}</title></svelte:head>
 
 <header>
 	<a href="/" class="back faint">&larr; {pm ? p('Library') : 'Library'}</a>
-	<h1>{pm ? 'Add to your library' : 'Add to your library'}</h1>
-	<p class="muted sub">{pm ? 'Poster, year and category fill in automatically.' : 'Poster, year and category fill in automatically.'}</p>
+	<h1>{pm ? p('alt:Add to your library') : 'Add to your library'}</h1>
+	<p class="muted sub">{pm ? p('alt:Poster, year and category fill in automatically.') : 'Poster, year and category fill in automatically.'}</p>
 </header>
 
 <!-- svelte-ignore a11y_autofocus -->
@@ -126,7 +126,7 @@
 	type="search"
 	id="lookup"
 	class="lookup"
-	placeholder={pm ? "Start typing a title…" : "Start typing a title…"}
+	placeholder={pm ? p('alt:Start typing a title…') : "Start typing a title…"}
 	autocomplete="off"
 	autofocus
 	value={query}
@@ -208,7 +208,7 @@
 						disabled={busy === result.key}
 						onclick={() => add(result)}
 					>
-						{busy === result.key ? (pm ? 'Adding…' : 'Adding…') : (pm ? 'Add' : 'Add')}
+						{busy === result.key ? (pm ? p('alt:Adding…') : 'Adding…') : (pm ? p('alt:Add') : 'Add')}
 					</button>
 				{/if}
 			</div>

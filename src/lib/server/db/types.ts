@@ -95,4 +95,6 @@ export type EntryCard = Pick<
 	categoryId: number;
 	categoryName: string;
 	categoryEmoji: string;
+	/** A caught-up show's next episode, when announced (nextAirs.ts): its card counts down to it. */
+	nextAir?: { date: string; season: number; episode: number } | null;
 };

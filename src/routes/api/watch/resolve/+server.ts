@@ -27,6 +27,9 @@ import { aniwaveFilm } from '$lib/server/sources';
 import { aniwaveStream, parseAniwaveShareKey } from '$lib/server/sources/aniwave';
 import { vidriftCopies, vidriftStream } from '$lib/server/sources/vidrift';
 import { movyCopy, movyStream } from '$lib/server/sources/movy';
+import { vidfastCopy } from '$lib/server/sources/vidfast';
+import { movyDubCopy, parseMovyShareKey } from '$lib/server/sources/movy';
+import { audioLanguage, audioLanguageName } from '$lib/server/audioLanguage';
 import type { FileOption } from '$lib/server/showbox';
 import type { RequestHandler } from './$types';
 
@@ -70,7 +73,7 @@ async function filmCopies(title: string, year: string): Promise<FileOption[]> {
 	const id = await tmdbFilmId(title, year).catch(() => null);
 	if (!id) return [];
 	const what = { type: 'movie' as const, id, season: 0, episode: 0 };
-	return [...vidriftCopies(what), movyCopy(what)];
+	return [...vidriftCopies(what), movyCopy(what), vidfastCopy(what)];
 }
 
 async function findOnShowbox(title: string, type: string, year: string) {
@@ -394,6 +397,14 @@ async function lookUp(url: URL): Promise<Response> {
 	}
 
 	const { febboxToken } = readSettings();
+	// This profile's audio language (audioLanguage.ts): wherever Movy has the title, its dubbed copy
+	// in that language goes first in the list.
+	const dub = audioLanguage();
+	const withDub = (list: FileOption[]): FileOption[] => {
+		if (!dub) return list;
+		const movy = list.map((file) => parseMovyShareKey(file.shareKey ?? '')).find((what) => what && !what.dub);
+		return movy ? [movyDubCopy(movy, dub), ...list] : list;
+	};
 	const libraryEntry = findEntryByTitle(matchTitle);
 	// The library's poster, else TMDB's (Showbox's can be missing or broken, and a show only
 	// another source has has none) — it's what Continue Watching shows.
@@ -408,6 +419,7 @@ async function lookUp(url: URL): Promise<Response> {
 
 	if (matchType === 'tv') {
 		const epData = episodeData as EpisodeList;
+		if (dub) epData.episodes = epData.episodes.map((ep) => ({ ...ep, files: withDub(ep.files) }));
 		// The first episode that can be played, specials aside.
 		const playable = epData.episodes.filter((ep) => ep.available !== false && ep.files.length > 0);
 		let targetEp = playable.find((ep) => ep.season > 0) ?? playable[0];
@@ -438,6 +450,7 @@ async function lookUp(url: URL): Promise<Response> {
 			hasToken: Boolean(febboxToken),
 			febboxAccount: febboxAccountsName(),
 			episodes: epData,
+			audioLanguage: audioLanguageName(dub),
 			debug: streamDebug,
 			posterUrl,
 			libraryEntry,
@@ -447,7 +460,7 @@ async function lookUp(url: URL): Promise<Response> {
 		});
 	}
 
-	const files = movieFileList as FileOption[];
+	const files = withDub(movieFileList as FileOption[]);
 	// Showbox's best file first; the player asks for another source's link itself.
 	const showboxFiles = files.filter((f) => !f.source);
 	const defaultFile = pickFile(showboxFiles, PREFERRED_QUALITY) ?? showboxFiles[0] ?? files[0];
@@ -475,6 +488,7 @@ async function lookUp(url: URL): Promise<Response> {
 		hasToken: Boolean(febboxToken),
 		febboxAccount: febboxAccountsName(),
 		files,
+		audioLanguage: audioLanguageName(dub),
 		debug: streamDebug,
 		posterUrl,
 		libraryEntry,

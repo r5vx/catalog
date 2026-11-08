@@ -1,5 +1,5 @@
 ' As on the Fire TV: the menu's screens (Search, Home, Movies, TV Shows, Anime, My Library,
-' Live TV, Settings) sit beside the menu; a title's page, the player, "Who's watching" and
+' Live TV, YouTube, Settings) sit beside the menu; a title's page, the player, "Who's watching" and
 ' finding the computer open over them, one on another. Back closes the top one; on a menu
 ' screen it opens the menu; with the menu open it goes Home; from Home it leaves the app.
 ' Each screen asks for the next by setting its `action` field: { go: "title", ... }.
@@ -35,13 +35,14 @@ function screenFor(place as String) as String
     names = {
         connect: "ConnectScreen", profiles: "ProfileScreen", title: "TitleScreen", play: "PlayerScreen",
         home: "ShelfScreen", movies: "ShelfScreen", tv: "ShelfScreen", anime: "ShelfScreen",
-        library: "LibraryScreen", live: "LiveScreen", search: "SearchScreen", settings: "SettingsScreen"
+        library: "LibraryScreen", live: "LiveScreen", search: "SearchScreen", settings: "SettingsScreen",
+        youtube: "YouTubeScreen"
     }
     return names[place]
 end function
 
 function isMenuPlace(place as String) as Boolean
-    return Instr(1, " home movies tv anime library live search settings ", " " + place + " ") > 0
+    return Instr(1, " home movies tv anime library live youtube search settings ", " " + place + " ") > 0
 end function
 
 ' One of the menu's screens, beside the menu (the one before goes).

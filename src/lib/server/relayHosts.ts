@@ -5,7 +5,7 @@
  * Madagascar), and the servers named inside a playlist from one of those. Each remembers which
  * source it's for, since that decides the headers it's asked with. Kept while Catalog runs.
  */
-export type RelayKind = 'vidrift' | 'aniwave' | 'movy' | 'live';
+export type RelayKind = 'vidrift' | 'aniwave' | 'movy' | 'live' | 'hianime' | 'vidfast';
 
 const hosts = new Map<string, RelayKind>();
 /** Live TV's servers: the headers its player asked them with (sources/daddylive.ts). */

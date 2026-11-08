@@ -102,12 +102,55 @@
 	const lasted = (stop: Stop) => (stop.afterJump && stop.stoppedSeconds != null ? 'After a jump: ' : '') + (lastedFor(stop) ?? '');
 	const lastedFor = (stop: Stop) =>
 		stop.stoppedSeconds == null ? null : stop.ended === 'still' ? 'still stopped after 30 s' : stop.ended === 'left' ? `${stop.stoppedSeconds} s, then left or changed` : `${stop.stoppedSeconds} s`;
+
+	/*
+	 * This profile's audio language (src/lib/server/audioLanguage.ts): films and shows come dubbed
+	 * in it where Movy has a copy, the original otherwise.
+	 */
+	const LANGUAGES = [
+		{ code: '', name: 'Original' },
+		{ code: 'es', name: 'Spanish' },
+		{ code: 'fr', name: 'French' },
+		{ code: 'de', name: 'German' },
+		{ code: 'hi', name: 'Hindi' }
+	];
+	let audioLanguage = $state('');
+	let audioSaved = $state(false);
+	$effect(() => {
+		fetch('/api/profile-audio')
+			.then((r) => (r.ok ? r.json() : null))
+			.then((d) => {
+				if (d) audioLanguage = d.language ?? '';
+			})
+			.catch(() => {});
+	});
+	async function saveAudioLanguage() {
+		audioSaved = false;
+		await fetch('/api/profile-audio', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ language: audioLanguage }) }).catch(() => {});
+		audioSaved = true;
+	}
 </script>
 
 <svelte:head><title>Playback · Catalog</title></svelte:head>
 
 <div class="sections">
 	<section>
+		<div class="head"><h2>Audio language</h2></div>
+		<p class="muted">
+			For this profile. Films and shows play dubbed in this language where Movy has a copy in it (often lower quality), and in their own language otherwise. Needs Catalog open on the computer.
+		</p>
+		<div class="inline-form">
+			<select bind:value={audioLanguage} onchange={saveAudioLanguage} aria-label="Audio language">
+				{#each LANGUAGES as language (language.code)}
+					<option value={language.code}>{language.name}</option>
+				{/each}
+			</select>
+			{#if audioSaved}<span class="muted">Saved.</span>{/if}
+		</div>
+	</section>
+
+	<!-- Long: across both columns with the wide layout (settings/+layout.svelte). -->
+	<section class="wide-full">
 		<div class="head"><h2>Times a video stopped to load</h2></div>
 		<p class="muted">
 			Kept each time, here and on TVs watching through this computer, with how fast it was arriving and from where.

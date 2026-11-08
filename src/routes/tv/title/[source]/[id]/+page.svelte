@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { airsText } from '$lib/airs';
 	import { untrack } from 'svelte';
 	import { playHref, bigPicture } from '$lib/tv/tiles';
 	import { tvFocus } from '$lib/tvNav';
@@ -176,13 +177,28 @@
 		)
 			.then((r) => (r.ok ? r.json() : []))
 			.catch(() => []);
+		// TMDB's pictures (as on the computer's EpisodePicker): from its season of the same number and
+		// near the same length, or, where TMDB has the whole show as one long season (Re:Zero's 85),
+		// counted on from the seasons before.
+		const base = untrack(() => data.show);
+		const same = base?.seasons.find((s) => s.number === wanted && Math.abs(s.count - eps.length) <= 2);
+		const whole = !same && base?.seasons.length === 1 && base.seasons[0].count >= before + eps.length ? base.seasons[0] : null;
+		const from = same ?? whole;
+		const tmdb: SeasonEpisode[] = from
+			? await fetch(`/api/tv/season?${new URLSearchParams({ show: String(base!.showId), season: String(from.number) })}`)
+					.then((r) => (r.ok ? r.json() : null))
+					.then((answer: { episodes?: SeasonEpisode[] } | null) => answer?.episodes ?? [])
+					.catch(() => [])
+			: [];
+		const offset = whole ? before : 0;
+		const tmdbFor = (episode: number) => tmdb.find((t) => t.episode === episode + offset);
 		return eps.map((e) => ({
 			episode: e.episode,
 			name: names[e.episode] ?? `Episode ${e.episode}`,
-			still: null,
+			still: tmdbFor(e.episode)?.still ?? null,
 			airDate: e.airDate,
-			runtime: null,
-			overview: null,
+			runtime: tmdbFor(e.episode)?.runtime ?? null,
+			overview: tmdbFor(e.episode)?.overview ?? null,
 			progress: Math.min(1, watched.find((w) => w.season === wanted && w.episode === e.episode)?.pct ?? 0),
 			missing: !e.available
 		}));
@@ -221,8 +237,6 @@
 	// Out from 06:00 UTC the day after its US air date (hasAired on the server): one airing
 	// tonight isn't offered yet.
 	const aired = (ep: SeasonEpisode) => !ep.airDate || Date.now() >= Date.parse(`${ep.airDate}T00:00:00Z`) + 30 * 60 * 60 * 1000;
-	const airsOn = (date: string) =>
-		new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
 	let playButton: HTMLElement | undefined = $state();
 	$effect(() => {
@@ -317,7 +331,7 @@
 							</a>
 						{:else}
 							<span class="ep later">
-								<span class="still"><span class="airs">{ep.airDate && !aired(ep) ? airsOn(ep.airDate) : 'Not available'}</span></span>
+								<span class="still"><span class="airs">{ep.airDate && !aired(ep) ? airsText(ep.airDate) : 'Not available'}</span></span>
 								<span class="ep-name">{ep.episode}. {ep.name}</span>
 							</span>
 						{/if}

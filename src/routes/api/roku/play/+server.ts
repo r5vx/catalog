@@ -1,6 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import { getWatchProgress } from '$lib/server/db/queries';
 import { PREFERRED_QUALITY, pickFile } from '$lib/watch';
+import { readSettings } from '$lib/server/settings';
 import type { RequestHandler } from './$types';
 
 /**
@@ -42,7 +43,7 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	if (wanted.season) params.set('resume_s', String(wanted.season));
 	if (wanted.season && wanted.episode) params.set('resume_e', String(wanted.episode));
 	const [found, anime] = await Promise.all([
-		ask<{ title: string; shareKey?: string; files?: FileOption[]; episodes?: { episodes: Episode[] }; posterUrl?: string; error?: string }>(`/api/watch/resolve?${params}`),
+		ask<{ title: string; shareKey?: string; files?: FileOption[]; episodes?: { episodes: Episode[] }; posterUrl?: string; error?: string; audioLanguage?: string }>(`/api/watch/resolve?${params}`),
 		ask<{ anime?: boolean }>(`/api/watch/is-anime?${new URLSearchParams({ title, type, year })}`)
 	]);
 	if (!found || found.error) return json({ error: "Couldn't find that to play." });
@@ -57,11 +58,17 @@ export const GET: RequestHandler = async ({ url, request }) => {
 				null)
 			: null;
 	if (type === 'tv' && !episode) return json({ error: 'No episode of that can be played right now.' });
-	const files = (type === 'tv' ? episode!.files : (found.files ?? [])).filter((f) => !f.hevc);
+	const listed = (type === 'tv' ? episode!.files : (found.files ?? [])).filter((f) => !f.hevc);
+	// Showbox is optional: not signed in to Febbox, its copies go whenever another source has it
+	// (the same as the computer's and Fire TV's player).
+	const others = listed.filter((f) => f.source);
+	const files = readSettings().febboxToken || !others.length ? listed : others;
 	const audio = anime?.anime ? 'Japanese' : '';
 
 	// The copy Catalog's player would pick first, then the rest.
-	const first = pickFile(files, PREFERRED_QUALITY, audio);
+	// This profile's audio language first, when there's a dubbed copy in it (the original next).
+	// (Never a 4K file for its 1080p: the Roku picks its quality itself and would play the 4K.)
+	const first = files.find((f) => found.audioLanguage && f.audio === found.audioLanguage) ?? pickFile(files, PREFERRED_QUALITY, audio, () => false);
 	const order = first ? [first, ...files.filter((f) => f !== first)] : files;
 	let chosen: { file: FileOption; url: string } | null = null;
 	for (const file of order.slice(0, 4)) {

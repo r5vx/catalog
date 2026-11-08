@@ -1,6 +1,7 @@
 import { isWatched } from '$lib/constants';
 import { error, json } from '@sveltejs/kit';
 import { tvLibrary } from '$lib/server/db/queries';
+import { withNextAir } from '$lib/server/nextAirs';
 import { continueWatchingWithPosters } from '$lib/server/continueWatching';
 import { browseShelves } from '$lib/server/metadata';
 import { tvTitleLink } from '$lib/server/tvLinks';
@@ -22,7 +23,7 @@ export const GET: RequestHandler = async ({ url }) => {
 	let wait = 6000;
 
 	if (screen === 'home') {
-		const library = tvLibrary();
+		const library = withNextAir(tvLibrary());
 		const continuing = await continueWatchingWithPosters();
 		const links = await Promise.all(continuing.map((item) => (item.type === 'replay' ? null : tvTitleLink(item.title, item.type).catch(() => null))));
 		const overviewOf = (title: string) => library.find((item) => item.title.toLowerCase() === title.toLowerCase())?.overview ?? null;
@@ -37,7 +38,7 @@ export const GET: RequestHandler = async ({ url }) => {
 			.catch(() => []);
 	} else if (screen === 'library') {
 		const status = url.searchParams.get('status') ?? '';
-		const library = tvLibrary();
+		const library = withNextAir(tvLibrary());
 		rows = [{ label: '', tiles: (status ? library.filter((item) => item.status === status) : library).map(fromLibrary) }];
 	} else {
 		const found = browseFor(screen);

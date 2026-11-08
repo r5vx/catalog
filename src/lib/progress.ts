@@ -1,3 +1,4 @@
+import { daysUntil, whenText } from './airs';
 /**
  * Works out whether a series has moved on since you last watched it.
  *
@@ -65,7 +66,8 @@ export function progressSummary(entry: ProgressInput & { nextAirDate?: string | 
 		behind === 0 ? "You're caught up" : `${behind} episode${behind === 1 ? '' : 's'} waiting`;
 
 	if (ended) return `${waiting}. The show has finished.`;
-	if (entry.nextAirDate) return `${waiting}. Next episode ${entry.nextAirDate}.`;
+	// Only a date still ahead: one already past just hasn't been looked at again.
+	if (entry.nextAirDate && daysUntil(entry.nextAirDate) >= 0) return `${waiting}. Next episode ${whenText(entry.nextAirDate)}.`;
 
 	return `${waiting}. Still running.`;
 }

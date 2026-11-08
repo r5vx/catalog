@@ -1,4 +1,5 @@
 import type { RequestHandler } from './$types';
+import { isAdvert, isCredit } from '$lib/subtitleAds';
 
 /**
  * English subtitles for what the Roku plays, as WebVTT (a format the Roku reads itself):
@@ -39,13 +40,29 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	return new Response('WEBVTT\n\n', { status: 404, headers: { 'Content-Type': 'text/vtt; charset=utf-8' } });
 };
 
-/** SRT, WebVTT or ASS subtitles as WebVTT; empty when it's none of those. */
+/** SRT, WebVTT or ASS subtitles as WebVTT, without the sites' adverts; empty when it's none of those. */
 function toVtt(text: string): string {
 	text = text.replace(/^﻿/, '').replace(/\r/g, '');
-	if (/^WEBVTT/.test(text)) return text;
-	if (/^\s*Dialogue:/m.test(text)) return assToVtt(text);
+	if (/^WEBVTT/.test(text)) return withoutAdverts(text);
+	if (/^\s*Dialogue:/m.test(text)) return withoutAdverts(assToVtt(text));
 	if (!/-->/.test(text)) return '';
-	return `WEBVTT\n\n${text.replace(/(\d{1,2}:\d{2}:\d{2}),(\d{1,3})/g, '$1.$2')}`;
+	return withoutAdverts(`WEBVTT\n\n${text.replace(/(\d{1,2}:\d{2}:\d{2}),(\d{1,3})/g, '$1.$2')}`);
+}
+
+/** Drops advert lines and credit cues (the same ones the computer's and Fire TV's player drop). */
+function withoutAdverts(vtt: string): string {
+	return vtt
+		.split(/\n{2,}/)
+		.map((block) => {
+			const lines = block.split('\n');
+			const at = lines.findIndex((l) => l.includes('-->'));
+			if (at < 0) return block;
+			const said = lines.slice(at + 1).filter((l) => l.replace(/<[^>]*>/g, '').trim() && !isAdvert(l.replace(/<[^>]*>/g, '')));
+			if (!said.length || isCredit(said.map((l) => l.replace(/<[^>]*>/g, '')).join(' '))) return '';
+			return [...lines.slice(0, at + 1), ...said].join('\n');
+		})
+		.filter(Boolean)
+		.join('\n\n');
 }
 
 /** "0:01:02.34" (ASS) → "00:01:02.340". */

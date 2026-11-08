@@ -11,8 +11,14 @@
  *   { kind: 'fit' }                         work out the plan now
  *   { kind: 'best', sets }                  several subtitles' spoken lines: which fits best?
  *   { kind: 'reset' }                       another episode or another audio track
- *   { kind: 'heard', speech }               the talking, already worked out (kept on the computer)
+ *   { kind: 'heard', speech }               the talking, already worked out (kept on the computer);
+ *                                           added to what's heard here (what's heard here stays)
+ *   { kind: 'probs', first, probs }         talking worked out by a helper (below), from slice `first`
  *   { kind: 'dump' }                        send the talking heard so far back
+ * As a helper (several run side by side, each on a part of the sound: subtitleSync.ts):
+ *   { kind: 'vad', id, samples, skip }      hear `samples` from scratch, leaving out the first `skip`
+ *                                           slices (heard only to settle the model)
+ *   → { kind: 'vad', id, probs }
  * Messages out:
  *   { kind: 'plan', plan, heard, round }    plan from fitDelays; heard = seconds analysed;
  *                                           round = the subtitles it's for
@@ -38,7 +44,7 @@ function model() {
 }
 
 /** Talking probability for every 32 ms of the video; NaN where it hasn't been heard. */
-let speech = new Float32Array(0);
+let speech: Float32Array = new Float32Array(0);
 let cues: TimedCue[] = [];
 let round = 0;
 let state: Float32Array = new Float32Array(256);
@@ -74,8 +80,18 @@ async function handle(message: any): Promise<void> {
 	} else if (message.kind === 'sound') {
 		await hear(message.at, message.samples, message.fresh);
 	} else if (message.kind === 'heard') {
-		// Talking already worked out elsewhere (by the computer, for a TV): nothing to hear.
-		speech = message.speech;
+		// Talking already worked out elsewhere (by the computer, or kept from an earlier watch):
+		// nothing to hear. Anything heard here meanwhile is kept.
+		const kept: Float32Array = message.speech;
+		if (!speech.length) speech = kept;
+		else for (let i = 0; i < kept.length; i++) if (!Number.isNaN(kept[i]) && (i >= speech.length || Number.isNaN(speech[i]))) record(i, kept[i]);
+	} else if (message.kind === 'probs') {
+		const probs: Float32Array = message.probs;
+		for (let i = 0; i < probs.length; i++) record(message.first + i, probs[i]);
+	} else if (message.kind === 'vad') {
+		const { probs } = await probabilities(message.samples, new Float32Array(256), new Float32Array(CONTEXT));
+		const kept = probs.slice(Math.min(probs.length, message.skip));
+		self.postMessage({ kind: 'vad', id: message.id, probs: kept }, { transfer: [kept.buffer] });
 	} else if (message.kind === 'dump') {
 		self.postMessage({ kind: 'speech', speech: speech.slice() });
 	} else if (message.kind === 'fit') {
@@ -105,14 +121,23 @@ function heardSeconds(): number {
 }
 
 async function hear(at: number, samples: Float32Array, fresh: boolean): Promise<void> {
-	const session = await model();
-	const sr = new ort.Tensor('int64', BigInt64Array.from([BigInt(RATE)]), []);
 	if (fresh) {
 		state = new Float32Array(256);
 		previous = new Float32Array(CONTEXT);
 	}
 	const firstFrame = Math.round(at / FRAME);
-	for (let n = 0; (n + 1) * SAMPLES <= samples.length; n++) {
+	const heard = await probabilities(samples, state, previous);
+	state = heard.state;
+	previous = heard.previous;
+	for (let n = 0; n < heard.probs.length; n++) record(firstFrame + n, heard.probs[n]);
+}
+
+/** How sure the model is that someone's talking, for each 32 ms slice of `samples`, going on from `state`. */
+async function probabilities(samples: Float32Array, state: Float32Array, previous: Float32Array) {
+	const session = await model();
+	const sr = new ort.Tensor('int64', BigInt64Array.from([BigInt(RATE)]), []);
+	const probs = new Float32Array(Math.floor(samples.length / SAMPLES));
+	for (let n = 0; n < probs.length; n++) {
 		const slice = samples.subarray(n * SAMPLES, (n + 1) * SAMPLES);
 		const input = new Float32Array(CONTEXT + SAMPLES);
 		input.set(previous, 0);
@@ -124,8 +149,9 @@ async function hear(at: number, samples: Float32Array, fresh: boolean): Promise<
 			sr
 		});
 		state = out.stateN.data as Float32Array;
-		record(firstFrame + n, (out.output.data as Float32Array)[0]);
+		probs[n] = (out.output.data as Float32Array)[0];
 	}
+	return { probs, state, previous };
 }
 
 function record(frame: number, probability: number): void {

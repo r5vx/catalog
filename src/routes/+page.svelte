@@ -5,6 +5,7 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import { warmUpTitle } from '$lib/watch';
 	import { STATUSES, statusLabel, sortBadge, KEPT_FILTERS } from '$lib/constants';
+	import { whenText } from '$lib/airs';
 	import SortPicker from '$lib/SortPicker.svelte';
 
 	/** "S2E6": how far a show's been watched, for its card. */
@@ -225,6 +226,9 @@
 	}
 </script>
 
+<!-- Its own title: the window would otherwise keep the last page's (She-Hulk · Catalog after backing out). -->
+<svelte:head><title>{pm ? p('alt:Catalog') : 'Catalog'}</title></svelte:head>
+
 <LibraryHeader
 	categories={data.categories}
 	countByCategory={data.countByCategory}
@@ -248,8 +252,8 @@
 {#if data.filters.cat === 'watching'}
 	{#if continueItems.length === 0}
 		<div class="empty">
-			<h2>{pm ? 'Nothing here yet' : 'Nothing here yet'}</h2>
-			<p class="muted">{pm ? 'Start watching something and it will appear here.' : 'Start watching something and it will appear here.'}</p>
+			<h2>{pm ? p('alt:Nothing here yet') : 'Nothing here yet'}</h2>
+			<p class="muted">{pm ? p('alt:Start watching something and it will appear here.') : 'Start watching something and it will appear here.'}</p>
 		</div>
 	{:else}
 		<ul class="grid">
@@ -335,11 +339,11 @@
 		<input
 			type="search"
 			id="search"
-			placeholder={pm ? "Search titles and notes…" : "Search titles and notes…"}
+			placeholder={pm ? p('alt:Search titles and notes…') : "Search titles and notes…"}
 			bind:this={searchEl}
 			bind:value={searchValue}
 			oninput={onSearch}
-			aria-label={pm ? "Search your library" : "Search your library"}
+			aria-label={pm ? p('alt:Search your library') : "Search your library"}
 		/>
 
 		{#if data.tags.length > 0}
@@ -384,9 +388,9 @@
 				<p class="muted">Try a different search, or clear the filters.</p>
 				<a href="/?status=&tag=&yearFrom=&yearTo=" class="btn">Clear filters</a>
 			{:else}
-				<h2>{pm ? 'Your library is empty' : 'Your library is empty'}</h2>
-				<p class="muted">{pm ? "Add the first thing you've watched and it starts here." : "Add the first thing you've watched and it starts here."}</p>
-				<a href="/entry/new" class="btn btn-primary">{pm ? '+ Add your first entry' : '+ Add your first entry'}</a>
+				<h2>{pm ? p('alt:Your library is empty') : 'Your library is empty'}</h2>
+				<p class="muted">{pm ? p('alt:Add the first thing you\'ve watched and it starts here.') : "Add the first thing you've watched and it starts here."}</p>
+				<a href="/entry/new" class="btn btn-primary">{pm ? p('alt:+ Add your first entry') : '+ Add your first entry'}</a>
 			{/if}
 		</div>
 	{:else}
@@ -419,7 +423,12 @@
 								{#if sortBadge(entry, data.filters.sort)}
 									<span class="sorted tabular">{sortBadge(entry, data.filters.sort)}</span>
 								{/if}
-								<span class="pill {entry.status}">{pm ? p(statusLabel(entry.status)) : statusLabel(entry.status)}</span>
+								<!-- Caught up, with the next episode announced: when it airs instead. -->
+								{#if entry.nextAir}
+									<span class="pill {entry.status}" title="S{entry.nextAir.season}E{entry.nextAir.episode}">New ep {whenText(entry.nextAir.date)}</span>
+								{:else}
+									<span class="pill {entry.status}">{pm ? p(statusLabel(entry.status)) : statusLabel(entry.status)}</span>
+								{/if}
 							</div>
 						</div>
 					</a>

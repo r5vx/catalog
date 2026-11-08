@@ -17,15 +17,25 @@
 	--ink-faint: #77857c;
 	--rule: #d3dad5;
 	--rule-firm: #b6c0b9;
-	--accent: #8c2f39;
-	--accent-ink: #ffffff;
+	--accent: #e994c2;
+	--accent-ink: #141414;
 	--accent-bg: #f6e9ea;
 	--good: #3f6350;
 	--good-bg: #e4ede7;
 	--warn: #8a5d14;
 	--warn-bg: #f7eedc;
+	/* The pink o in the logo (src/lib/Wordmark.svelte): deeper on light backgrounds, so it holds up. */
+	--logo-dot: #d16aa6;
 	/* Your star ratings (the same in every theme). */
 	--star: #e0a526;
+	/* The episode ratings chart on a show's page (src/lib/EpisodeRatings.svelte), best to worst; the
+	   same in every theme, with dark numbers on them. */
+	--rating-great: #2f9e5b;
+	--rating-good: #7cc46b;
+	--rating-ok: #e6cf52;
+	--rating-meh: #ec9a45;
+	--rating-bad: #d9574a;
+	--rating-ink: #101512;
 	--shadow: 0 1px 2px rgb(20 32 29 / 6%), 0 6px 20px -12px rgb(20 32 29 / 25%);
 
 	/* --- type --- */
@@ -52,13 +62,14 @@
 		--ink-faint: #75837b;
 		--rule: #2a342f;
 		--rule-firm: #3c4a43;
-		--accent: #d97a83;
+		--accent: #e994c2;
 		--accent-ink: #1a1011;
 		--accent-bg: #2c1a1d;
 		--good: #7fb395;
 		--good-bg: #16251c;
 		--warn: #d7a64e;
 		--warn-bg: #2a2213;
+		--logo-dot: #e994c2;
 		--shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px -14px rgb(0 0 0 / 80%);
 	}
 }
@@ -73,13 +84,14 @@
 	--ink-faint: #75837b;
 	--rule: #2a342f;
 	--rule-firm: #3c4a43;
-	--accent: #d97a83;
+	--accent: #e994c2;
 	--accent-ink: #1a1011;
 	--accent-bg: #2c1a1d;
 	--good: #7fb395;
 	--good-bg: #16251c;
 	--warn: #d7a64e;
 	--warn-bg: #2a2213;
+	--logo-dot: #e994c2;
 	--shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px -14px rgb(0 0 0 / 80%);
 	color-scheme: dark;
 }
@@ -94,13 +106,14 @@
 	--ink-faint: #6b7970;
 	--rule: #1e2622;
 	--rule-firm: #2e3a34;
-	--accent: #d97a83;
+	--accent: #e994c2;
 	--accent-ink: #1a1011;
 	--accent-bg: #1f1113;
 	--good: #7fb395;
 	--good-bg: #0e1a13;
 	--warn: #d7a64e;
 	--warn-bg: #1e1a0d;
+	--logo-dot: #e994c2;
 	--shadow: none;
 	color-scheme: dark;
 }
@@ -298,18 +311,22 @@ textarea {
 /* ---------------------------------------------------------------- on a TV
    The Fire TV app (src/lib/tv.ts). The remote moves a highlight, so it has to be
    impossible to miss from across the room. */
-html.tv :focus {
+html.tv :focus,
+html.pad :focus {
 	outline: 3px solid var(--accent);
 	outline-offset: 3px;
 }
 
 html.tv a:focus img,
+html.pad a:focus img,
+html.pad .card:focus .poster,
 html.tv .card:focus .poster {
 	transform: scale(1.04);
 	transition: transform 0.12s ease;
 }
 
 /* Nothing hovers on a TV: what hover would show, the highlight shows. */
-html.tv .has-more:focus-within .more {
+html.tv .has-more:focus-within .more,
+html.pad .has-more:focus-within .more {
 	opacity: 1;
 }

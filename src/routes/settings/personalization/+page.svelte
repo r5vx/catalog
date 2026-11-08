@@ -2,8 +2,10 @@
 	import { untrack } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
 	import { ACCENT_PRESETS } from '$lib/accent';
+	import { CUSTOM_COLOURS, THEME_COLOURS, applyCustomTheme, type CustomTheme } from '$lib/customTheme';
 	import { DEFAULT_DIM, MAX_DIM, MAX_BLUR } from '$lib/background';
 	import { backgroundPreview } from '$lib/backgroundPreview.svelte';
+	import { codeBox } from '$lib/codeBox.svelte';
 	import { SORTS, SORT_GROUPS } from '$lib/constants';
 	import type { PageData, ActionData } from './$types';
 
@@ -17,6 +19,16 @@
 	let theme = $state(untrack(() => data.theme));
 	let wideLayout = $state(untrack(() => data.wideLayout));
 	let sideNav = $state(untrack(() => data.sideNav));
+	let ratingStars = $state(untrack(() => data.ratingStars));
+	const STAR = 'M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6-4.9-4.6 6.6-.8z';
+
+	async function chooseRatingStars(count: 5 | 10) {
+		ratingStars = count;
+		const body = new FormData();
+		body.set('ratingStars', String(count));
+		await fetch('?/saveRatingStars', { method: 'POST', body });
+		await invalidateAll();
+	}
 
 	async function chooseSideNav(on: boolean) {
 		sideNav = on;
@@ -25,22 +37,114 @@
 		await fetch('?/saveSideNav', { method: 'POST', body });
 		await invalidateAll();
 	}
-	let altMode = $state(untrack(() => (data as any).altMode as boolean));
+	const altMode = $derived((data as any).altMode as boolean);
+	let codeText = $state('');
+	let codeError = $state('');
+
+	async function applyCode(off = false) {
+		codeError = '';
+		const body = new FormData();
+		if (off) body.set('off', '1');
+		else body.set('code', codeText);
+		const resp = await fetch('?/saveCode', { method: 'POST', body, headers: { 'x-sveltekit-action': 'true' } });
+		const answer = await resp.json().catch(() => null);
+		if (answer?.type === 'success') window.location.reload();
+		else codeError = 'That code does nothing.';
+	}
 
 	const THEMES = [
 		{ value: '', label: 'System', desc: 'Follows your device', bg: '' },
 		{ value: 'light', label: 'Light', desc: 'Bright background', bg: '#f1f3f1' },
 		{ value: 'dark', label: 'Dark', desc: 'Easy on the eyes', bg: '#111614' },
-		{ value: 'black', label: 'Black', desc: 'OLED-friendly', bg: '#000000' }
+		{ value: 'black', label: 'Black', desc: 'OLED-friendly', bg: '#000000' },
+		{ value: 'custom', label: 'Custom', desc: 'Your own colors', bg: '' }
 	];
 
 	async function pickTheme(value: string) {
+		if (value === 'custom') return pickCustom();
 		theme = value;
 		if (value) document.documentElement.dataset.theme = value;
 		else delete document.documentElement.dataset.theme;
+		applyCustomTheme(null);
 		const body = new FormData();
 		body.set('theme', value);
 		await fetch('?/saveTheme', { method: 'POST', body });
+		await invalidateAll();
+	}
+
+	/* ----------------------------------------------------------- custom theme */
+
+	// Every colour of the Custom theme, as exact hex codes; `customTyped` is what's in each text
+	// box, which can be half-typed while you paste.
+	let custom = $state<CustomTheme>(untrack(() => ({ ...data.customTheme })));
+	let customTyped = $state<CustomTheme>(untrack(() => ({ ...data.customTheme })));
+	let customSaved = untrack(() => data.customSaved);
+	let copied = $state(false);
+	let saveTimer: ReturnType<typeof setTimeout> | undefined;
+
+	/** The look in use right now, as a starting point the first time Custom is picked. */
+	function currentLook(): CustomTheme {
+		if (theme === 'light' || theme === 'dark' || theme === 'black') return { ...THEME_COLOURS[theme] };
+		return { ...THEME_COLOURS[matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'] };
+	}
+
+	function pickCustom() {
+		if (!customSaved) setCustom(currentLook());
+		theme = 'custom';
+		document.documentElement.dataset.theme = 'custom';
+		applyCustomTheme($state.snapshot(custom));
+		saveCustomSoon(0);
+	}
+
+	/** All colours at once (a starting point). */
+	function setCustom(colours: CustomTheme) {
+		custom = { ...colours };
+		customTyped = { ...colours };
+	}
+
+	/** One colour changed: shown at once, saved a moment after the last change. */
+	function setColour(key: string, value: string) {
+		custom[key] = value.toLowerCase();
+		customTyped[key] = value.toLowerCase();
+		applyCustomTheme($state.snapshot(custom));
+		saveCustomSoon();
+	}
+
+	function onCustomHex(key: string, event: Event) {
+		const raw = (event.target as HTMLInputElement).value.trim();
+		const typedNow = raw.startsWith('#') || raw === '' ? raw : `#${raw}`;
+		customTyped[key] = typedNow;
+		if (isHex(typedNow)) {
+			custom[key] = typedNow.toLowerCase();
+			applyCustomTheme($state.snapshot(custom));
+			saveCustomSoon();
+		}
+	}
+
+	function startFrom(base: 'light' | 'dark' | 'black') {
+		setCustom(THEME_COLOURS[base]);
+		applyCustomTheme($state.snapshot(custom));
+		saveCustomSoon(0);
+	}
+
+	function saveCustomSoon(wait = 400) {
+		clearTimeout(saveTimer);
+		saveTimer = setTimeout(async () => {
+			const body = new FormData();
+			for (const { key } of CUSTOM_COLOURS) body.set(key, custom[key]);
+			await fetch('?/saveCustomTheme', { method: 'POST', body });
+			customSaved = true;
+			await invalidateAll();
+		}, wait);
+	}
+
+	/** Every code at once, one per line ("Background #111614"), to keep or to share. */
+	async function copyCodes() {
+		const lines = CUSTOM_COLOURS.map(({ key, label }) => `${label} ${custom[key]}`);
+		lines.push(`Accent ${accent}`);
+		await navigator.clipboard.writeText(lines.join('\n')).catch(() => {});
+		copied = true;
+		setTimeout(() => (copied = false), 1500);
 	}
 
 	/* ------------------------------------------------------- background picture */
@@ -65,14 +169,19 @@
 		const file = input.files?.[0];
 		input.value = '';
 		if (!file) return;
-		uploading = true;
 		backgroundError = '';
+		// Checked here, so the message is about the picture's real size.
+		if (file.size > 20 * 1024 * 1024) {
+			backgroundError = 'That picture is larger than 20 MB.';
+			return;
+		}
+		uploading = true;
 		try {
 			const body = new FormData();
 			body.set('file', file);
 			const resp = await fetch('/api/media', { method: 'POST', body });
 			if (!resp.ok) {
-				backgroundError = resp.status === 413 ? 'That picture is larger than 20 MB.' : 'That picture could not be used.';
+				backgroundError = 'That picture could not be used.';
 				return;
 			}
 			const { url } = await resp.json();
@@ -121,16 +230,65 @@
 				class:picked={theme === t.value}
 				onclick={() => pickTheme(t.value)}
 			>
-				<span
-					class="theme-swatch"
-					class:system={!t.bg}
-					style={t.bg ? `background: ${t.bg}` : ''}
-				></span>
+				{#if t.value === 'custom'}
+					<!-- The Custom theme's own background, cards, text and accent. -->
+					<span class="theme-swatch custom-swatch" style:background={custom.paper}>
+						<span style:background={custom.surface}></span>
+						<span style:background={custom.ink}></span>
+						<span style:background={accent}></span>
+					</span>
+				{:else}
+					<span
+						class="theme-swatch"
+						class:system={!t.bg}
+						style={t.bg ? `background: ${t.bg}` : ''}
+					></span>
+				{/if}
 				<span class="theme-label">{t.label}</span>
 				<span class="theme-desc faint">{t.desc}</span>
 			</button>
 		{/each}
 	</div>
+
+	{#if theme === 'custom'}
+		<div class="custom">
+			<div class="custom-colours">
+				{#each CUSTOM_COLOURS as colour (colour.key)}
+					<div class="custom-row">
+						<input
+							type="color"
+							aria-label="Pick the {colour.label} color"
+							value={custom[colour.key]}
+							oninput={(e) => setColour(colour.key, e.currentTarget.value)}
+						/>
+						<span class="custom-name">
+							<span class="custom-label">{colour.label}</span>
+							<span class="faint custom-hint">{colour.hint}</span>
+						</span>
+						<input
+							type="text"
+							class="hex"
+							class:wrong={!isHex(customTyped[colour.key] ?? '')}
+							value={customTyped[colour.key]}
+							oninput={(e) => onCustomHex(colour.key, e)}
+							spellcheck="false"
+							autocomplete="off"
+							maxlength="7"
+							aria-label="{colour.label} hex code"
+						/>
+					</div>
+				{/each}
+			</div>
+			<p class="faint hint">Buttons and links use the accent below.</p>
+			<div class="custom-actions">
+				<span class="faint">Start from</span>
+				<button type="button" class="btn" onclick={() => startFrom('light')}>Light</button>
+				<button type="button" class="btn" onclick={() => startFrom('dark')}>Dark</button>
+				<button type="button" class="btn" onclick={() => startFrom('black')}>Black</button>
+				<button type="button" class="btn copy" onclick={copyCodes}>{copied ? 'Copied' : 'Copy codes'}</button>
+			</div>
+		</div>
+	{/if}
 </section>
 
 <section>
@@ -251,8 +409,30 @@
 	</div>
 </section>
 
+<section>
+	<div class="head"><h2>Ratings</h2></div>
+	<p class="muted">Your ratings are out of 10 either way.</p>
+
+	<div class="layout-options">
+		<button type="button" class="layout-card" class:picked={ratingStars === 5} onclick={() => chooseRatingStars(5)}>
+			<span class="star-preview" aria-hidden="true">
+				{#each [1, 2, 3, 4, 5] as n (n)}<svg viewBox="0 0 24 24" class:half={n === 5}><path d={STAR} /></svg>{/each}
+			</span>
+			<span class="layout-label">5 stars</span>
+			<span class="layout-desc faint">4½ stars is 9</span>
+		</button>
+		<button type="button" class="layout-card" class:picked={ratingStars === 10} onclick={() => chooseRatingStars(10)}>
+			<span class="star-preview ten" aria-hidden="true">
+				{#each [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as n (n)}<svg viewBox="0 0 24 24" class:half={n === 9} class:off={n === 10}><path d={STAR} /></svg>{/each}
+			</span>
+			<span class="layout-label">10 stars</span>
+			<span class="layout-desc faint">8½ stars is 8.5</span>
+		</button>
+	</div>
+</section>
+
 <section style="--accent: {accent}">
-	<div class="head"><h2>Colour</h2></div>
+	<div class="head"><h2>Color</h2></div>
 	<p class="muted">Buttons, links and highlights.</p>
 
 	{#if form?.accentError}
@@ -279,7 +459,7 @@
 		<div class="accent-row">
 			<input
 				type="color"
-				aria-label="Pick a colour"
+				aria-label="Pick a color"
 				value={accent}
 				oninput={(e) => pick(e.currentTarget.value)}
 			/>
@@ -295,11 +475,11 @@
 				spellcheck="false"
 				autocomplete="off"
 				maxlength="7"
-				placeholder="#8c2f39"
-				aria-label="Colour hex code"
+				placeholder="#e994c2"
+				aria-label="Color hex code"
 			/>
 
-			<button type="submit" class="btn btn-primary" disabled={!isHex(typed)}>Save colour</button>
+			<button type="submit" class="btn btn-primary" disabled={!isHex(typed)}>Save color</button>
 		</div>
 
 		{#if typed && !isHex(typed)}
@@ -347,28 +527,44 @@
 		{/each}
 	</div>
 </section>
+<!-- Hidden until Personalization is pressed 7 times in a row (src/lib/codeBox.svelte.ts). -->
+{#if altMode || codeBox.shown}
 <section>
-	<div class="head"><h2>Alternate wording</h2></div>
-	<p class="muted">Replaces some of the wording.</p>
-
-	<label class="toggle">
-		<input
-			type="checkbox"
-			checked={altMode}
-			onchange={async (e) => {
-				altMode = e.currentTarget.checked;
-				const body = new FormData();
-				body.set('altMode', altMode ? '0' : '0');
-				await fetch('?/saveAlt', { method: 'POST', body });
-				window.location.reload();
+	<div class="head"><h2>Code</h2></div>
+	{#if altMode}
+		<div class="code-row">
+			<span class="muted">On</span>
+			<button type="button" class="btn" onclick={() => applyCode(true)}>Turn off</button>
+		</div>
+	{:else}
+		<form
+			class="code-row"
+			onsubmit={(e) => {
+				e.preventDefault();
+				applyCode();
 			}}
-		/>
-		{altMode ? 'Off' : 'Off'}
-	</label>
+		>
+			<input type="text" inputmode="numeric" autocomplete="off" placeholder="Enter a code" aria-label="Code" bind:value={codeText} />
+			<button type="submit" class="btn" disabled={!codeText.trim()}>Apply</button>
+		</form>
+		{#if codeError}<p class="msg bad" role="alert">{codeError}</p>{/if}
+	{/if}
 </section>
+{/if}
 </div>
 
 <style>
+	.code-row {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		flex-wrap: wrap;
+	}
+
+	.code-row input {
+		width: 160px;
+	}
+
 	.sections {
 		display: flex;
 		flex-direction: column;
@@ -556,6 +752,96 @@
 		background: linear-gradient(135deg, #f1f3f1 50%, #111614 50%);
 	}
 
+	/* The Custom card's swatch: its background, with cards, text and accent stripes on it. */
+	.custom-swatch {
+		display: flex;
+		align-items: flex-end;
+		gap: 3px;
+		padding: 5px;
+	}
+
+	.custom-swatch span {
+		flex: 1;
+		height: 60%;
+		border-radius: 2px;
+	}
+
+	.custom-swatch span:nth-child(2) {
+		height: 30%;
+	}
+
+	/* The Custom theme's colours: a picker, the name, and the exact hex code for each. */
+	.custom {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+		width: 100%;
+		padding: 16px;
+		border: 1px solid var(--rule);
+		border-radius: var(--radius);
+		background: var(--surface);
+	}
+
+	.custom-colours {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 270px), 1fr));
+		gap: 10px 22px;
+	}
+
+	.custom-row {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+	}
+
+	.custom-row input[type='color'] {
+		flex: none;
+		width: 40px;
+		height: 32px;
+		padding: 2px;
+		border: 1px solid var(--rule-firm);
+		border-radius: var(--radius-sm);
+		background: var(--surface);
+		cursor: pointer;
+	}
+
+	.custom-name {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		line-height: 1.25;
+	}
+
+	.custom-label {
+		font-size: 0.88rem;
+		font-weight: 600;
+	}
+
+	.custom-hint {
+		font-size: 0.74rem;
+	}
+
+	.custom-row .hex {
+		width: 6.6em;
+	}
+
+	.hex.wrong {
+		border-color: var(--accent);
+	}
+
+	.custom-actions {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 8px;
+		font-size: 0.85rem;
+	}
+
+	.custom-actions .copy {
+		margin-left: auto;
+	}
+
 	.theme-label {
 		font-size: 0.88rem;
 		font-weight: 600;
@@ -636,6 +922,37 @@
 		background: var(--surface);
 		cursor: pointer;
 		min-width: 120px;
+	}
+
+	/* The Ratings choice's little stars (the star colour is --star in src/app.css). */
+	.star-preview {
+		display: flex;
+		gap: 2px;
+		height: 60px;
+		align-items: center;
+	}
+
+	.star-preview svg {
+		width: 18px;
+		height: 18px;
+		fill: var(--star);
+		stroke: var(--star);
+		stroke-width: 1.4;
+		stroke-linejoin: round;
+	}
+
+	.star-preview.ten svg {
+		width: 12px;
+		height: 12px;
+	}
+
+	.star-preview svg.half {
+		fill: color-mix(in srgb, var(--star) 45%, transparent);
+	}
+
+	.star-preview svg.off {
+		fill: none;
+		stroke: var(--ink-faint);
 	}
 
 	.layout-card.picked {

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <!-- The menu down the left, as on the Fire TV (src/routes/tv/+layout.svelte): who's watching,
-     Search, Home, Movies, TV Shows, Anime, My Library, Live TV, Settings. Narrow with just its
+     Search, Home, Movies, TV Shows, Anime, My Library, Live TV, YouTube, Settings. Narrow with just its
      icons; highlighted, it opens wider with their names over a darkened screen. -->
 <component name="NavMenu" extends="Group">
     <interface>
@@ -14,6 +14,9 @@
     <children>
         <Rectangle id="dim" translation="[560, 0]" width="1360" height="1080" color="0x00000073" visible="false" />
         <Poster id="backing" width="160" height="1080" uri="pkg:/images/nav_closed.png" />
-        <Group id="items" translation="[30, 76]" />
+        <!-- The logo: the pink dot while the menu is narrow, the whole name once it opens (as the Fire TV). -->
+        <Poster id="logoDot" translation="[40, 52]" width="28" height="28" uri="pkg:/images/logo_dot.png" />
+        <Poster id="logoWord" translation="[30, 46]" width="140" height="40" uri="pkg:/images/logo_word.png" visible="false" />
+        <Group id="items" translation="[30, 120]" />
     </children>
 </component>

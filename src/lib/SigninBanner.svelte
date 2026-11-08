@@ -2,9 +2,9 @@
 	import { page } from '$app/state';
 
 	/**
-	 * Says when there's no Showbox sign-in, or Showbox has stopped accepting it — otherwise
-	 * Showbox episodes just won't load and nothing says why. "Not now" hides it until Catalog
-	 * is opened again.
+	 * Says when Showbox has stopped accepting the sign-in it had: otherwise Showbox copies just
+	 * won't load and nothing says why. "Not now" hides it until Catalog is opened again. Never
+	 * signed in isn't said here: Showbox is optional (Settings → Services shows a dot for it).
 	 */
 	type Signin = { state: 'ok' | 'missing' | 'expired' };
 
@@ -28,17 +28,13 @@
 
 	// Not where you sign in, on the PIN page, or over the player.
 	const here = $derived(['/settings/services', '/login', '/watch'].includes(page.url.pathname));
-	const showing = $derived(Boolean(signin && signin.state !== 'ok') && !dismissed && !here);
+	const showing = $derived(signin?.state === 'expired' && !dismissed && !here);
 </script>
 
 {#if showing && signin}
 	<div class="banner" role="status">
 		<span class="what">
-			{#if signin.state === 'expired'}
-				<strong>Your Showbox sign-in has run out.</strong> Showbox episodes won't play until you sign in again.
-			{:else}
-				<strong>Showbox isn't signed in.</strong> Only anime from other sources will play.
-			{/if}
+			<strong>Your Showbox sign-in has run out.</strong> Showbox copies won't play until you sign in again.
 		</span>
 		<span class="actions">
 			<a href="/settings/services" class="btn btn-primary">Sign in</a>

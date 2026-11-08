@@ -7,6 +7,7 @@
 	import { page } from '$app/state';
 	import { p } from '$lib/altText';
 	import BackToTop from '$lib/BackToTop.svelte';
+	import Wordmark from '$lib/Wordmark.svelte';
 	import type { Category } from '$lib/server/db/types';
 
 	type Props = {
@@ -34,7 +35,12 @@
 
 <header class="masthead">
 	<div class="title-row">
-		<h1>{pm ? p('Catalog') : 'Catalog'}</h1>
+		{#if pm}
+			<h1>{p('Catalog')}</h1>
+		{:else}
+			<!-- The logo; with the sidebar showing it's at the top of the sidebar instead. -->
+			<h1 class="brand"><Wordmark height="2.1rem" /></h1>
+		{/if}
 		<div class="header-actions">
 			{#if page.data.whoIsWatching}
 				<!-- who's watching on this phone: tapped, the picker -->
@@ -46,13 +52,13 @@
 			<a href="/browse" class="btn">{pm ? p('Browse') : 'Browse'}</a>
 			<a href="/live" class="btn side-link">Live TV</a>
 			<a href="/downloads" class="btn side-link">Downloads</a>
-			<a href="/entry/new" class="btn btn-primary">{pm ? '+ Add' : '+ Add'}</a>
+			<a href="/entry/new" class="btn btn-primary">{pm ? p('alt:+ Add') : '+ Add'}</a>
 		</div>
 	</div>
 	{#if showStats}
 	<div class="stat-tiles">
 		<div class="tile">
-			<span class="tile-label">{pm ? 'Watched' : 'Watched'}</span>
+			<span class="tile-label">{pm ? p('alt:Watched') : 'Watched'}</span>
 			<span class="tile-value">{completed} <span class="tile-of">of {total}</span></span>
 		</div>
 		{#each categories.filter((c) => !hiddenTabs.includes(c.slug)) as cat (cat.id)}
@@ -92,9 +98,22 @@
 		font-size: clamp(1.8rem, 5vw, 2.4rem);
 	}
 
+	.brand {
+		line-height: 0;
+		color: var(--ink);
+	}
+
+	@media (min-width: 901px) {
+		:global(.beside-nav) .brand {
+			display: none;
+		}
+	}
+
 	.header-actions {
 		display: flex;
 		flex-wrap: wrap;
+		/* Stays on the right when the logo is in the sidebar instead. */
+		margin-left: auto;
 		gap: 8px;
 	}
 

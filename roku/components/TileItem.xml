@@ -28,11 +28,11 @@
             <Label id="artLabel" color="0xFFFFFFFF" font="font:LargeBoldSystemFont" horizAlign="center" vertAlign="center" visible="false" />
             <Label id="name" color="0xE7EDE9FF" wrap="true" maxLines="3" font="font:SmallBoldSystemFont" />
             <Label id="sub" color="0xA3B0A8FF" wrap="true" maxLines="2" font="font:SmallestSystemFont" />
-            <Rectangle id="dot" color="0xD97A83FF" width="14" height="14" visible="false" />
+            <Rectangle id="dot" color="0xE994C2FF" width="14" height="14" visible="false" />
             <Poster id="noteBack" uri="pkg:/images/card.9.png" blendColor="0x000000CC" visible="false" />
             <Label id="note" color="0xFFFFFFFF" font="font:SmallestBoldSystemFont" visible="false" />
             <Rectangle id="barBack" color="0x00000099" visible="false" />
-            <Rectangle id="bar" color="0xD97A83FF" visible="false" />
+            <Rectangle id="bar" color="0xE994C2FF" visible="false" />
             <Poster id="ring" uri="pkg:/images/ring.9.png" visible="false" />
         </Group>
         <Label id="under" color="0xE7EDE9FF" wrap="true" maxLines="2" font="font:SmallestSystemFont" />

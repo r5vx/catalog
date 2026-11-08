@@ -317,21 +317,21 @@
 </script>
 
 <svelte:window onmousedown={onBrowseFilterClick} onkeydown={(e) => e.key === 'Escape' && (browseFilterOpen = false)} />
-<svelte:head><title>{pm ? 'Browse' : 'Browse'} · {pm ? 'Catalog' : 'Catalog'}</title></svelte:head>
+<svelte:head><title>{pm ? p('alt:Browse') : 'Browse'} · {pm ? p('alt:Catalog') : 'Catalog'}</title></svelte:head>
 
 <BackBar />
 
 <header class="masthead">
-	<h1>{pm ? 'Browse everything' : 'Browse everything'}</h1>
+	<h1>{pm ? p('alt:Browse everything') : 'Browse everything'}</h1>
 	<p class="muted">
-		{pm ? 'Every film, series and anime the databases know about — not only what you\'ve added.' : 'Every film, series and anime the databases know about — not only what you\'ve added.'}
+		{pm ? p('alt:Every film, series and anime the databases know about — not only what you\'ve added.') : 'Every film, series and anime the databases know about — not only what you\'ve added.'}
 	</p>
 </header>
 
 <div class="toolbar">
 	<input
 		type="search"
-		placeholder={data.cat === 'actors' ? (pm ? "Search actors…" : "Search actors…") : (pm ? "Search for anything…" : "Search for anything…")}
+		placeholder={data.cat === 'actors' ? (pm ? p('alt:Search actors…') : "Search actors…") : (pm ? p('alt:Search for anything…') : "Search for anything…")}
 		bind:value={searchText}
 		oninput={onSearch}
 		aria-label={data.cat === 'actors' ? "Search actors" : "Search every title"}
@@ -457,7 +457,7 @@
 
 	{#if !data.q && data.trending.length > 0}
 		<section class="trending">
-			<h2 class="trending-label">{pm ? 'Trending this week' : 'Trending this week'}</h2>
+			<h2 class="trending-label">{pm ? p('alt:Trending this week') : 'Trending this week'}</h2>
 			<ul class="trend-grid">
 				{#each data.trending as person (person.id)}
 					<li>
@@ -511,7 +511,7 @@
 		{/if}
 
 		{#if justAdded[keyOf(result)]}
-			<a class="added" href="/entry/{justAdded[keyOf(result)]}">{pm ? 'Added →' : 'Added →'}</a>
+			<a class="added" href="/entry/{justAdded[keyOf(result)]}">{pm ? p('alt:Added →') : 'Added →'}</a>
 		{:else if have(result)}
 			<span class="added">{pm ? p('In your library') : 'In your library'}</span>
 		{/if}
@@ -550,7 +550,7 @@
 						disabled={loading === shelf.key}
 						onclick={() => more(shelf)}
 					>
-						{loading === shelf.key ? (pm ? pRandom() : 'Finding more…') : failed[shelf.key] ? "Couldn't load more. Try again" : (pm ? 'Show more' : 'Show more')}
+						{loading === shelf.key ? (pm ? pRandom() : 'Finding more…') : failed[shelf.key] ? "Couldn't load more. Try again" : (pm ? p('alt:Show more') : 'Show more')}
 					</button>
 				{/if}
 			</section>

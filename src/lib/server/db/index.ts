@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { slimSubtitle } from '../subtitleFonts';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -354,6 +354,21 @@ once('subtitles-slimmed', () => {
 	db.exec('PRAGMA auto_vacuum = INCREMENTAL');
 	db.exec('VACUUM');
 	db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+});
+
+// Subtitles kept with "unknown character" marks: files saved in an older character set were
+// read as UTF-8 before (subtitleText.ts). They go, so the next play fetches and reads them right.
+once('subtitles-character-sets', () => db.exec('DELETE FROM saved_subtitles WHERE instr(content, char(65533)) > 0'));
+
+// Sound heard from fragmented-MP4 pieces before 2026-11-04 could be 4% short and smeared
+// (soundTrack.ts says why), so the talking kept for auto-timing and the intros and credits found
+// by sound are worked out again, once. (The skip databases' times aren't touched.)
+once('sound-heard-again', () => {
+	db.exec("DELETE FROM watch_order_cache WHERE key LIKE 'skip-found|%' OR key LIKE 'word-timing|%'");
+	const previews = join(dataDir, 'previews');
+	try {
+		for (const name of readdirSync(previews)) if (/^speech-.*\.bin(\.partial)?$/.test(name)) rmSync(join(previews, name), { force: true });
+	} catch {}
 });
 
 // Which Showbox entry a title opened as, so the slow search is skipped after a restart.

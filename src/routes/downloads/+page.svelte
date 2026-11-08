@@ -52,6 +52,19 @@
 
 	/** In the phone app: downloads can be kept on the phone. */
 	let phoneApp = $state(false);
+	/**
+	 * A phone on Catalog's plain address (http://100.x…): it can't keep anything or open with no
+	 * connection (browsers only allow that on a secure address), so in airplane mode Catalog just
+	 * stopped (owner, 2026-11-06). It's told where the secure address is.
+	 */
+	let plainPhone = $state(false);
+	let secureAddress = $state<string | null>(null);
+	async function lookForSecureAddress() {
+		const answer = await fetch('/api/phone-address')
+			.then((r) => (r.ok ? r.json() : null))
+			.catch(() => null);
+		secureAddress = answer?.on && answer.address ? answer.address : null;
+	}
 
 	function keep(d: Download) {
 		keepOnPhone({
@@ -84,6 +97,11 @@
 	onMount(() => {
 		phoneApp = canKeep() && location.protocol === 'https:';
 		if (phoneApp) refreshKept();
+		plainPhone =
+			location.protocol !== 'https:' &&
+			!/Electron\//.test(navigator.userAgent) &&
+			!/^(localhost|127\.|\[::1\])/.test(location.hostname);
+		if (plainPhone) lookForSecureAddress();
 		load();
 		timer = setInterval(() => {
 			if (downloads?.some((d) => d.state !== 'done' && d.state !== 'failed')) load();
@@ -144,10 +162,28 @@
 		{/if}
 	</header>
 
+	{#if plainPhone}
+		<div class="offline-how">
+			<strong>Watching with no connection</strong>
+			{#if secureAddress}
+				<p>
+					Open Catalog at <a href={`${secureAddress}/downloads`}>{secureAddress.replace('https://', '')}</a>, add it to
+					the Home Screen, then press Keep on this phone on a download while still connected. Kept ones play in airplane
+					mode from the Home Screen icon.
+				</p>
+			{:else}
+				<p>
+					On the computer, turn on Settings → Phones, then open Catalog on this phone from the address it shows and
+					press Keep on this phone on a download. This address only works while the phone can reach the computer.
+				</p>
+			{/if}
+		</div>
+	{/if}
+
 	{#if !downloads}
 		<p class="faint">{failed ? "Downloads can't be reached right now." : 'Loading…'}</p>
 	{:else if !downloads.length}
-		<p class="faint">Nothing downloaded yet. Download in the player keeps a film, episode or replay here to watch without the internet.</p>
+		<p class="faint">Nothing downloaded yet. Download on a title's page (a film, a season or a whole show), or in the player, keeps it here to watch without the internet.</p>
 	{:else}
 		<ul>
 			{#each downloads as d (d.id)}
@@ -209,6 +245,22 @@
 		display: flex;
 		flex-direction: column;
 		gap: 18px;
+	}
+
+	.offline-how {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		padding: 12px 14px;
+		border-radius: var(--radius);
+		background: var(--accent-bg);
+		font-size: 0.92rem;
+	}
+
+	.offline-how p {
+		margin: 0;
+		color: var(--ink-soft);
+		line-height: 1.5;
 	}
 
 	header {

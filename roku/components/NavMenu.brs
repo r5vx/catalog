@@ -2,6 +2,8 @@ sub init()
     m.items = m.top.findNode("items")
     m.backing = m.top.findNode("backing")
     m.dim = m.top.findNode("dim")
+    m.logoDot = m.top.findNode("logoDot")
+    m.logoWord = m.top.findNode("logoWord")
     m.at = 2
     build()
     m.top.observeField("focusedChild", "onFocus")
@@ -30,6 +32,7 @@ function places() as Object
         { place: "anime", label: "Anime", icon: "anime" },
         { place: "library", label: "My Library", icon: "library" },
         { place: "live", label: "Live TV", icon: "live" },
+        { place: "youtube", label: "YouTube", icon: "youtube" },
         { place: "settings", label: "Settings", icon: "settings" }
     ]
 end function
@@ -76,7 +79,7 @@ sub build()
         label.translation = [76, 4]
         label.font = "font:MediumBoldSystemFont"
         label.id = "label"
-        y = y + 96
+        y = y + 92
     end for
     paint()
 end sub
@@ -92,6 +95,8 @@ sub paint()
         m.backing.width = 160
     end if
     m.dim.visible = open
+    m.logoDot.visible = not open
+    m.logoWord.visible = open
     list = places()
     for i = 0 to m.items.getChildCount() - 1
         row = m.items.getChild(i)
@@ -100,7 +105,7 @@ sub paint()
         icon = row.findNode("icon")
         highlighted = open and i = m.at
         color = "0xA3B0A8FF"
-        if list[i].place = m.top.current then color = "0xD97A83FF"
+        if list[i].place = m.top.current then color = "0xE994C2FF"
         if highlighted then color = "0x111614FF"
         back.visible = highlighted
         back.blendColor = "0xE7EDE9FF"

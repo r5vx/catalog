@@ -1,9 +1,10 @@
 /** The colour the app ships with — the same pink as the icon. */
-export const DEFAULT_ACCENT = '#8c2f39';
+export const DEFAULT_ACCENT = '#e994c2';
 
 export const ACCENT_PRESETS = [
+	{ name: 'Catalog pink', value: '#e994c2' },
 	{ name: 'Maroon', value: '#8c2f39' },
-	{ name: 'Pink', value: '#e9699b' },
+	{ name: 'Rose', value: '#e9699b' },
 	{ name: 'Purple', value: '#7a5af5' },
 	{ name: 'Blue', value: '#2f6fd0' },
 	{ name: 'Teal', value: '#118a80' },
@@ -27,5 +28,5 @@ export function inkFor(hex: string): string {
 	});
 
 	const luminance = 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
-	return luminance > 0.45 ? '#141414' : '#ffffff';
+	return luminance > 0.18 ? '#141414' : '#ffffff';
 }

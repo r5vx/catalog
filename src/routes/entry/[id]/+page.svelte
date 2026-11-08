@@ -14,6 +14,10 @@
 	import TagChips from '$lib/TagChips.svelte';
 	import CastRow from '$lib/CastRow.svelte';
 	import WhereToWatch from '$lib/WhereToWatch.svelte';
+	import DownloadTitle from '$lib/DownloadTitle.svelte';
+	import EpisodePicker from '$lib/EpisodePicker.svelte';
+	import EpisodeRatings from '$lib/EpisodeRatings.svelte';
+	import Fold from '$lib/Fold.svelte';
 	import { progressSummary } from '$lib/progress';
 	import { money } from '$lib/format';
 	import { p } from '$lib/altText';
@@ -132,6 +136,10 @@
 	} | null>(null);
 
 	let looking = $state(false);
+	/** Entries with no TMDB number that were looked for once this visit (linkEntry.ts). */
+	const linkTried = new Set<number>();
+	/** Scores are as complete as they'll get (looked up, or nothing to look up): "why none" may show. */
+	let scoresSettled = $state(false);
 
 	// Declared after `scores` because box office only arrives with them.
 	const facts = $derived(
@@ -165,8 +173,19 @@
 		const wantScores = data.scoresAvailable && !current.scoresCheckedAt;
 		const wantDetails = !current.overview;
 
-		if (!wantScores && !wantDetails) return;
-		if (!current.sourceId) return;
+		scoresSettled = false;
+		if (!wantScores && !wantDetails) {
+			scoresSettled = true;
+			return;
+		}
+		// No TMDB number (added with only a name): the server looks for it by name, once.
+		if (!current.sourceId) {
+			if (linkTried.has(current.id)) {
+				scoresSettled = true;
+				return;
+			}
+			linkTried.add(current.id);
+		}
 
 		enrich(current.id);
 	});
@@ -184,6 +203,11 @@
 			if (!response.ok) return;
 
 			const payload = await response.json();
+			// Just found on TMDB: its name, year and poster changed (the form holds its own copies).
+			if (payload.linked) {
+				location.reload();
+				return;
+			}
 			scores = payload.scores;
 			if (payload.overview) overview = payload.overview;
 			if (payload.tags?.length) tags = payload.tags;
@@ -192,8 +216,16 @@
 			// Offline. What's stored is already on screen.
 		} finally {
 			looking = false;
+			scoresSettled = true;
 		}
 	}
+
+	/** What's inside "More about it", said on its closed line. */
+	const aboutSub = $derived(
+		[entry.sourceId ? 'where to watch' : null, scores?.awards ? 'awards' : null, tags.length ? 'tags' : null]
+			.filter(Boolean)
+			.join(', ')
+	);
 
 	/* --------------------------------------------------------- the wrong match */
 
@@ -218,7 +250,7 @@
 	}
 </script>
 
-<svelte:head><title>{entry.title} · {pm ? 'Catalog' : 'Catalog'}</title></svelte:head>
+<svelte:head><title>{entry.title} · {pm ? p('alt:Catalog') : 'Catalog'}</title></svelte:head>
 
 <BackBar href={data.back} />
 
@@ -259,6 +291,11 @@
 				contentRating={scores?.contentRating ?? null}
 				loading={looking}
 			/>
+			{#if scoresSettled && !looking && !entry.sourceId}
+				<p class="faint hint why-none">Not matched to a title on TMDB, so there are no ratings or details. Pick it under More details → Wrong match?</p>
+			{:else if scoresSettled && !looking && entry.externalRating == null && entry.rating == null && scores?.imdbRating == null && scores?.rtScore == null && scores?.metascore == null}
+				<p class="faint hint why-none">No ratings yet: TMDB, IMDb, Rotten Tomatoes and Metacritic have none for it.</p>
+			{/if}
 
 			<!-- Where a title's page from Browse has them, so they're in the same place everywhere. -->
 			<div class="title-actions">
@@ -275,6 +312,9 @@
 					<span class="btn btn-watch unavailable">Not available</span>
 				{:else}
 					<span class="btn btn-watch checking">Checking availability…</span>
+				{/if}
+				{#if watchAvailable === true}
+					<DownloadTitle title={entry.title} type={watchType} year={entry.year} poster={entry.posterUrl} />
 				{/if}
 				<span class="watch-elsewhere-wrap">
 					<button class="btn watch-elsewhere" onclick={() => showWatchElsewhere = !showWatchElsewhere}>
@@ -311,6 +351,15 @@
 			{#if inCinemas && watchAvailable === true}<p class="cinema-note">In cinemas: copies online are likely recorded in a cinema</p>{/if}
 			<SourceChecks sources={watchSources} />
 
+			<!-- Your rating, status and progress, beside the poster where they're seen at once. -->
+			{#key data.entry.id}
+				<QuickEdit
+					entry={data.entry}
+					series={watchType === 'tv' && category?.slug !== 'movies'}
+					onsaved={(fields) => (changed = { ...changed, ...fields })}
+				/>
+			{/key}
+
 			{#if progressSummary(entry)}
 				<p class="airing muted">{progressSummary(entry)}</p>
 			{/if}
@@ -321,30 +370,33 @@
 		</div>
 	</header>
 
-	{#key data.entry.id}
-		<QuickEdit
-			entry={data.entry}
-			series={watchType === 'tv' && category?.slug !== 'movies'}
-			onsaved={(fields) => (changed = { ...changed, ...fields })}
-		/>
-	{/key}
+	{#if watchType === 'tv' && entry.sourceId && (entry.source === 'tmdb' || entry.source === 'anilist')}
+		<EpisodePicker source={entry.source} sourceId={entry.sourceId} title={entry.title} year={entry.year} />
+	{/if}
 
 	<Synopsis text={overview} pending={looking} />
 
-	{#if entry.sourceId}
-		<WhereToWatch entryId={entry.id} title={entry.title} />
-	{/if}
-
-	{#if scores?.awards}
-		<section>
-			<h2 class="label">Awards</h2>
-			<p class="awards muted">{scores.awards}</p>
-		</section>
-	{/if}
-
-	<TagChips {tags} />
-
 	<CastRow {cast} back={page.url.pathname + page.url.search} />
+
+	{#if watchType === 'tv' && entry.sourceId && (entry.source === 'tmdb' || entry.source === 'anilist')}
+		<EpisodeRatings source={entry.source} sourceId={entry.sourceId} title={entry.title} />
+	{/if}
+
+	<!-- The extras, closed until wanted, so the page shows the title first. -->
+	{#if entry.sourceId || scores?.awards || tags.length}
+		<Fold title="More about it" sub={aboutSub}>
+			{#if entry.sourceId}
+				<WhereToWatch entryId={entry.id} title={entry.title} />
+			{/if}
+			{#if scores?.awards}
+				<section>
+					<h2 class="label">Awards</h2>
+					<p class="awards muted">{scores.awards}</p>
+				</section>
+			{/if}
+			<TagChips {tags} />
+		</Fold>
+	{/if}
 
 	<!-- Closed by default: opening a film should show you the film, not a
 	     wall of text boxes. Rating and status are in the box above it. -->
@@ -621,6 +673,11 @@
 
 	/* ------------------------------------------------------------- editing */
 
+	/* Right under "More about it": the two closed bars read as one pair. */
+	:global(.fold) + .editor {
+		margin-top: -20px;
+	}
+
 	.editor {
 		border: 1px solid var(--rule);
 		border-radius: var(--radius);
@@ -694,6 +751,10 @@
 		font-weight: 600;
 		margin: 0;
 		font-size: 0.93rem;
+	}
+
+	.why-none {
+		margin: 0.5rem 0 0;
 	}
 
 	.hint {

@@ -1,4 +1,5 @@
 import { json } from '@sveltejs/kit';
+import { secureDnsStats } from '$lib/server/secureDns';
 import { existsSync, statSync } from 'node:fs';
 import { dbPath, dataDir } from '$lib/server/db';
 import { settingsPath, readSettings } from '$lib/server/settings';
@@ -9,6 +10,7 @@ import { playbackStops } from '$lib/server/playbackLog';
 import { speechJobs } from '$lib/server/heardSpeech';
 import { storageReports } from '$lib/server/storageHealth';
 import { caughtUpSummary } from '$lib/server/db/queries';
+import { youtubePhoneStatus } from '$lib/server/youtubePhone';
 
 const describe = (path: string) => {
 	if (!existsSync(path)) return { path, exists: false };
@@ -27,6 +29,10 @@ export const GET: RequestHandler = async () => {
 	const settings = readSettings();
 
 	return json({
+		// The desktop app started without graphics acceleration (its window drew nothing: main.cjs).
+		graphicsOff: process.env.CATALOG_GRAPHICS_OFF === '1',
+		// Names looked up over HTTPS (Cloudflare/Google) vs. falling back to the computer's DNS (secureDns.ts).
+		secureDns: secureDnsStats,
 		// Outside requests that took over two seconds or were refused, newest first (site and path only).
 		slowRequests: slowRequests(),
 		// Live TV's listings: where the site is, how many, and why the last ask failed.
@@ -39,6 +45,8 @@ export const GET: RequestHandler = async () => {
 		storage: storageReports(),
 		// Shows watched to their last episode, and new episodes found for them (newEpisodes.ts).
 		caughtUp: caughtUpSummary(),
+		// YouTube's mobile website for phones (youtubePhone.ts): its port, whether the computer's account is in use, counts.
+		youtubePhone: youtubePhoneStatus(),
 		settingsStoredIn: 'settings table inside library.db',
 		cwd: process.cwd(),
 		appdata: process.env.APPDATA ?? null,

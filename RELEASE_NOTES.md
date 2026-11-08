@@ -12,6 +12,85 @@ without both.
 
 ## Unreleased
 
+## 4.0.0 — 2026-11-08 — YouTube with no ads on every screen, a new look, and styled anime subtitles
+
+### New
+- **Fire TV**: YouTube in the menu, with all of YouTube's own screens and sign-in, and no ads (needs the TV app update below)
+- **Fire TV**: the TV app updates itself from the computer from now on (this one update still goes through Downloader, and keeps everything)
+- **YouTube**: on the computer from the sidebar, in its own window: YouTube's normal website, with no ads before videos and ad tiles hidden
+- **YouTube**: the window opens at once after the first time, and Catalog's YouTube page shows when it's closed, with Open YouTube
+- **YouTube**: a switch on the YouTube page opens it inside Catalog instead, filling the whole window; the pink circle beside YouTube's logo comes back
+- **YouTube**: a big Open YouTube button over a moving wall of what's on YouTube; the page no longer opens YouTube by itself
+- **Downloads**: download from a title's page without opening the player: a film, any of a show's seasons, or the whole show at once, with English captions
+- **YouTube**: Sign in on the computer shows Google's sign-in over the YouTube window (through Microsoft Edge or Chrome) and closes it by itself when done
+- **Roku**: YouTube in the menu: search and play without ads, through Catalog on the computer
+- **Controller**: an Xbox or PlayStation controller works on the computer: the D-pad moves, A picks, B goes back, X opens a title's options
+- **Controller**: in the player, A or Start plays and pauses, the shoulder buttons skip 10 s (triggers 30 s), Y goes full screen
+- **Player**: the Files menu says when a copy has more than one language, like "Japanese + English"
+- **Sources**: HiAnime for anime, in Japanese with English captions and the English dub, up to 1080p
+- **Sources**: Vidfast for films and TV, up to 4K, on the computer and TVs (needs Catalog open on the computer, like Movy)
+- **Library**: shows you're caught up on count down to their next episode ("New ep in 3 days"), on the computer and TVs
+- **Audio language**: each profile can pick Spanish, French, German or Hindi, and films and shows play dubbed in it where Movy has a copy (Settings → Playback, and the TV's Settings)
+- **Ratings**: rate with 10 stars instead of 5, for halves like 8.5 (Settings → Personalization → Ratings)
+- **Subtitles**: on the computer, Whisper also checks the timing by matching the words said to the subtitles (English talking), and its answer wins
+- **Theme**: a Custom theme: pick every color yourself (background, cards, text, lines and more), each with its exact hex code, and copy the codes to share (Settings → Personalization)
+- **Episodes**: a show's page on the computer lists its episodes by season, like the TV: click one to play it, with Up next marked
+- **Logo**: Catalog has a logo: "catalog" with a pink circle for the o, at the top of the sidebar, the library, the sign-in screen and exports
+- **YouTube**: on phones, all of YouTube (home, subscriptions, comments, Shorts, your library) on YouTube's own mobile site, with no ads, through Catalog on the computer
+- **YouTube**: everyone's phone has their own YouTube account: sign each person in on the computer's YouTube page, under Phones
+- **Roku**: YouTube's own Music, Gaming, News, Sports, Live, Movies and Podcasts, in rows like YouTube's TV app; channels and playlists open their own rows
+- **TV**: the logo at the top of the TV menu, on the Fire TV and Roku: the pink dot, and the whole name when the menu opens
+- **Fire TV**: the TV switches to each video's own frame rate (24 for films), so slow pans don't judder; turn it off in the TV's Settings (needs the TV app update)
+- **Subtitles**: anime subtitles' signs and songs show as their makers styled them, placed on the sign, with karaoke and the file's fonts; the talking stays in Catalog's own style (on the computer and phones; Signs and songs in the subtitle menu switches it)
+- **Episodes**: a show's page has Episode ratings: every episode's IMDb rating in a chart by season, colored from great to bad, with each season's average
+
+### Improved
+- **Player**: volume goes up to 400%, with nothing holding loud parts back
+- **Player**: the next episode's link is fetched before the credits start, so Next Episode during long credits starts sooner
+- **Mini player**: opens and goes back without reloading in front of you; it takes over at the exact spot
+- **Subtitles**: signs-only tracks say they're written text only, show how few lines they have, and aren't auto-timed
+- **Subtitles**: auto-timing works about twice as fast
+- **Subtitles**: reopening an episode keeps its timing instead of working it out again, on every source
+- **Subtitles**: with captions on, the next episode's timing is worked out on the computer before it starts (Showbox)
+- **Skips**: a recap straight after the intro can be skipped right away, with no gap between the two
+- **Episodes**: episodes not out yet say how long until they air ("Airs Sat, Nov 7 · in 3 days")
+- **Sources**: Showbox is optional: without a Febbox login, the other sources just play, and Settings → Services offers it
+- **Settings**: with the wide layout, Settings uses the whole window, in two columns on a big screen
+- **YouTube**: the YouTube page says No ads in bold
+- **Player**: films with a 4K copy on Showbox play its 1080p, made from the sharper source (IMAX copies show the taller picture); a 4K copy with no 1080p falls back to the 1080p file
+- **Theme**: Catalog's own pink, the icon's color, is the color everything starts with (Settings → Personalization → Color still changes it)
+- **Buttons**: text on light accent colors like Catalog's pink is dark, so it's easy to read
+- **Title pages**: tidier: your rating, status and progress sit beside the poster (status is one menu), and where to watch, awards and tags fold into More about it
+- **Roku**: Catalog's pink everywhere the old maroon was, with dark text on pink, as on the Fire TV
+- **TV**: a show the player numbers its own way (like Re:Zero's 4 seasons) shows each episode's picture, length and summary on its title page
+
+### Fixed
+- **Player**: video no longer turns choppy on another monitor while a demanding game runs (Destiny 2)
+- **Settings**: with the wide layout, Updates and Playback no longer leave half the page empty: What's new and the stop log run across the page
+- **Subtitles**: auto-timing no longer calls loosely timed subtitles wrong too early (Ice Age 3's R5 ones fit after 17 minutes of sound, and it gave up at 13); films with a long quiet opening fit sooner
+- **Subtitles**: R5 subtitles (made from early pre-release copies) are listed after proper ones
+- **Subtitles**: auto-timing is on again for everyone; turning it off is remembered
+- **Phone app**: the Home Screen icon is a pink square, not a pink circle on black
+- **Subtitles**: auto-timing no longer puts some films' subtitles a couple of seconds early (their sound was read slightly short)
+- **Player**: a source the internet provider blocks is reached anyway where it can be, and otherwise says it may be blocked
+- **Showbox**: no "only anime will play" banner without a Febbox login, now that the other sources play everything
+- **Desktop app**: on a computer whose graphics Catalog can't use, it restarts without graphics acceleration instead of staying blank
+- **Library**: a title marked completed from Continue Watching gets its ratings, synopsis and cast (it was added with only its name); ones added that way before are fixed when opened
+- **Library**: a title with no ratings says why
+- **Library**: watching a film you'd already seen to the end counts as another watch
+- **Subtitles**: more subtitle-team credits are left out ("Edited by …"), on the Roku too
+- **Player**: switching the sound to a TV or headphones mid-video no longer freezes the picture when the volume is past 100% or captions are timing themselves
+- **Library**: the window title goes back to Catalog after leaving a title
+- **Subtitles**: accented letters in older subtitle files show properly instead of question marks
+- **Player**: when the video reloads by itself (often after a long pause), it says so and stays where it was
+- **Desktop app**: closing Catalog no longer shows a JavaScript error
+- **Library**: titles added with only a name get their year and details shortly after Catalog starts, without opening each one
+- **Downloads**: on a phone's plain address, the Downloads page says how to keep downloads on the phone to watch with no connection
+- **Fire TV**: Back in YouTube goes back a step, as in the YouTube app, instead of sometimes leaving YouTube; holding Back leaves
+- **YouTube**: the moving wall of thumbnails no longer jumps back every minute or so
+- **Showbox**: a film never starts on a recording made in a cinema (TELESYNC, CAM…) when a proper copy is listed
+- **Personalization**: background pictures over half a megabyte can be used again (they said "larger than 20 MB"); the same for pictures in Notes
+
 ## 3.9.0 — 2026-10-31 — TV subtitles timed again, Roku installs from Catalog, and skip fixes
 
 ### New

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { statusLabel } from '$lib/constants';
+	import Wordmark from '$lib/Wordmark.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -34,7 +35,7 @@
 
 <article class="sheet">
 	<header>
-		<h1>Catalog</h1>
+		<h1 style="line-height: 0; margin-bottom: 8px"><Wordmark height="2.2rem" /></h1>
 		<p class="sub">{data.scope} · {data.total} {data.total === 1 ? 'title' : 'titles'} · {today}</p>
 	</header>
 

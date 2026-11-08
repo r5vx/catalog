@@ -3,6 +3,8 @@
 	import { afterNavigate, pushState } from '$app/navigation';
 	import { startTvNav, tvBack, MENU_SCREENS } from '$lib/tvNav';
 	import TvMenu from '$lib/tv/TvMenu.svelte';
+	import Wordmark from '$lib/Wordmark.svelte';
+	import { p } from '$lib/altText';
 	import { onMount, tick, type Snippet } from 'svelte';
 	import type { LayoutData } from './$types';
 
@@ -25,6 +27,7 @@
 		{ href: '/tv/browse/anime', label: 'Anime', icon: 'anime' },
 		{ href: '/tv/library', label: 'My Library', icon: 'library' },
 		{ href: '/tv/live', label: 'Live TV', icon: 'live' },
+		{ href: '/tv/youtube', label: 'YouTube', icon: 'youtube' },
 		{ href: '/tv/settings', label: 'Settings', icon: 'settings' }
 	] as const;
 
@@ -71,6 +74,15 @@
 <div class="tv-app" data-tv-app bind:this={app}>
 	{#if !picking}
 	<nav class="tv-nav" data-tv-nav aria-label="Menu" inert={menuOpen}>
+		<!-- The logo: the pink dot while the menu is shut, the whole name once it opens. Not a stop for the remote. -->
+		<div class="brand" aria-hidden="true">
+			<span class="brand-dot"></span>
+			{#if page.data.altMode}
+				<span class="brand-full brand-words">{p('Catalog')}</span>
+			{:else}
+				<span class="brand-full"><Wordmark height="2.1vw" /></span>
+			{/if}
+		</div>
 		<!-- Who's watching: their picture, and OK goes to pick someone else. -->
 		<a href="/tv/profiles" class="tv-nav-item" data-tv-item>
 			<span class="avatar" style:background={data.profile.color}>{data.profile.name.slice(0, 1).toUpperCase()}</span>
@@ -94,6 +106,9 @@
 					{:else if item.icon === 'live'}
 						<!-- An aerial on a screen. -->
 						<rect x="3" y="8" width="18" height="12" rx="2" /><path d="M8 3l4 5 4-5" />
+					{:else if item.icon === 'youtube'}
+						<!-- A play button. -->
+						<rect x="2.5" y="5.5" width="19" height="13" rx="4" /><path d="M10 9.2v5.6l4.8-2.8Z" />
 					{:else}
 						<!-- A gear. -->
 						<circle cx="12" cy="12" r="3" />
@@ -135,7 +150,7 @@
 		left: 0;
 		z-index: 5;
 		width: 7vw;
-		padding: 7vh 0 0 1.6vw;
+		padding: 10vh 0 0 1.6vw;
 		display: flex;
 		flex-direction: column;
 		gap: 0.6vw;
@@ -151,6 +166,48 @@
 		/* Fades into the same darkening as the rest of the screen, so there's no seam. */
 		background: linear-gradient(90deg, var(--paper) 70%, rgb(0 0 0 / 45%));
 		box-shadow: 0 0 0 100vmax rgb(0 0 0 / 45%);
+	}
+
+	/* The logo at the top, lined up with the icons below it. */
+	.brand {
+		position: absolute;
+		top: 3.6vh;
+		left: 2.5vw;
+		height: 2.1vw;
+		display: flex;
+		align-items: center;
+	}
+
+	/* Shut: the dot alone, the icon's circle, centered over the icons. */
+	.brand-dot {
+		position: absolute;
+		left: 0.45vw;
+		width: 1.4vw;
+		height: 1.4vw;
+		border-radius: 50%;
+		background: var(--logo-dot, #e994c2);
+		transition: opacity 0.15s ease;
+	}
+
+	.brand-full {
+		opacity: 0;
+		color: var(--ink);
+		transition: opacity 0.15s ease;
+	}
+
+	.brand-words {
+		font-family: var(--display);
+		font-size: 2vw;
+		font-weight: 800;
+		white-space: nowrap;
+	}
+
+	:global(.tv-app.nav-open) .brand-dot {
+		opacity: 0;
+	}
+
+	:global(.tv-app.nav-open) .brand-full {
+		opacity: 1;
 	}
 
 	.tv-nav-item {

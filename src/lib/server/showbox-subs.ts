@@ -3,6 +3,9 @@ import { slimSubtitle } from './subtitleFonts';
 import { readSettings } from './settings';
 import { gunzipSync, inflateRawSync } from 'node:zlib';
 import xz from 'xz-decompress';
+import { subtitleText } from '$lib/subtitleText';
+import { trustedVideoHost } from './relayHosts';
+import { HIANIME_HEADERS } from './sources/hianime';
 
 const OS_REST = 'https://rest.opensubtitles.org/search';
 const GESTDOWN_API = 'https://api.gestdown.info';
@@ -276,9 +279,9 @@ function episodeScore(name: string, season?: number, episode?: number): number {
 	return ep && +ep[1] === episode ? 1 : 0;
 }
 
-function inflate(raw: Buffer, method: number): string {
-	if (method === 0) return raw.toString('utf-8');
-	if (method === 8) return inflateRawSync(raw).toString('utf-8');
+function inflate(raw: Buffer, method: number, lang?: string): string {
+	if (method === 0) return subtitleText(raw, lang);
+	if (method === 8) return subtitleText(inflateRawSync(raw), lang);
 	return '';
 }
 
@@ -287,12 +290,12 @@ function inflate(raw: Buffer, method: number): string {
  * one gave episode 1's captions on every episode. Reads the zip's central directory, which
  * always has the sizes; the per-file headers can leave them blank.
  */
-function extractFromZip(buf: Buffer, season?: number, episode?: number): string {
+function extractFromZip(buf: Buffer, season?: number, episode?: number, lang?: string): string {
 	let eocd = -1;
 	for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65_557); i--) {
 		if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
 	}
-	if (eocd < 0) return extractFromZipScan(buf);
+	if (eocd < 0) return extractFromZipScan(buf, lang);
 
 	const files: { name: string; method: number; size: number; at: number }[] = [];
 	let p = buf.readUInt32LE(eocd + 16);
@@ -313,12 +316,12 @@ function extractFromZip(buf: Buffer, season?: number, episode?: number): string 
 		.map((f, i) => ({ f, score: episodeScore(f.name, season, episode), i }))
 		.sort((a, b) => b.score - a.score || format(a.f.name) - format(b.f.name) || a.i - b.i)[0].f;
 	const dataStart = pick.at + 30 + buf.readUInt16LE(pick.at + 26) + buf.readUInt16LE(pick.at + 28);
-	const text = inflate(buf.subarray(dataStart, dataStart + pick.size), pick.method);
+	const text = inflate(buf.subarray(dataStart, dataStart + pick.size), pick.method, lang);
 	// Pictures, not text (binary): nothing that can be shown.
 	return text.includes('\0') ? '' : text;
 }
 
-function extractFromZipScan(buf: Buffer): string {
+function extractFromZipScan(buf: Buffer, lang?: string): string {
 	let offset = 0;
 	while (offset + 30 < buf.length) {
 		if (buf.readUInt32LE(offset) !== 0x04034b50) break;
@@ -331,10 +334,7 @@ function extractFromZipScan(buf: Buffer): string {
 
 		if (SUB_EXTS.some((ext) => name.toLowerCase().endsWith(ext)) && compSize > 0) {
 			const raw = buf.subarray(dataStart, dataStart + compSize);
-			if (method === 0) return raw.toString('utf-8');
-			if (method === 8) {
-				return inflateRawSync(raw).toString('utf-8');
-			}
+			if (method === 0 || method === 8) return inflate(raw, method, lang);
 		}
 		offset = dataStart + compSize;
 	}
@@ -357,9 +357,14 @@ export function isScrambled(text: string): boolean {
 }
 
 /** A subtitle file's text, or '' when it couldn't be had or is scrambled (`isScrambled`). */
-export async function downloadSubtitle(url: string, season?: number, episode?: number): Promise<string> {
-	const text = await downloadSubtitleText(url, season, episode);
-	return isScrambled(text) ? '' : slimSubtitle(text);
+export async function downloadSubtitle(url: string, season?: number, episode?: number, lang?: string): Promise<string> {
+	return slimSubtitle(await downloadSubtitleWhole(url, season, episode, lang));
+}
+
+/** The same, with nothing taken out (fonts, drawings, karaoke): for drawing it as made (styledSubtitles.ts). */
+export async function downloadSubtitleWhole(url: string, season?: number, episode?: number, lang?: string): Promise<string> {
+	const text = await downloadSubtitleText(url, season, episode, lang);
+	return isScrambled(text) ? '' : text;
 }
 
 /**
@@ -377,7 +382,7 @@ const isOpenSubtitlesFile = (url: string) => /(^|\.)opensubtitles\.(org|com)$/i.
  * connection's allowance. Its addresses go by the same file number
  * (…/filead/1953225438.gz → …/src-api/file/1953225438), and come back as plain UTF-8 text.
  */
-async function throughStremio(url: string, season?: number, episode?: number): Promise<string> {
+async function throughStremio(url: string, season?: number, episode?: number, lang?: string): Promise<string> {
 	const file = url.match(/\/filead\/(\d+)/)?.[1];
 	if (!file) return '';
 	const resp = await fetch(`https://subs5.strem.io/en/download/subencoding-stremio-utf8/src-api/file/${file}`, {
@@ -385,39 +390,44 @@ async function throughStremio(url: string, season?: number, episode?: number): P
 		signal: AbortSignal.timeout(15000)
 	});
 	if (!resp.ok) return '';
-	return fromBytes(Buffer.from(await resp.arrayBuffer()), season, episode);
+	return fromBytes(Buffer.from(await resp.arrayBuffer()), season, episode, lang);
 }
 
-async function downloadSubtitleText(url: string, season?: number, episode?: number): Promise<string> {
+async function downloadSubtitleText(url: string, season?: number, episode?: number, lang?: string): Promise<string> {
 	try {
-		if (isOpenSubtitlesFile(url) && Date.now() < openSubtitlesRestUntil) return await throughStremio(url, season, episode);
+		if (isOpenSubtitlesFile(url) && Date.now() < openSubtitlesRestUntil) return await throughStremio(url, season, episode, lang);
+		// A video source's own caption file (HiAnime's) only answers that source's player.
+		let host: URL | null = null;
+		try {
+			host = new URL(url);
+		} catch {}
 		const resp = await fetch(url, {
-			headers: { 'User-Agent': UA },
+			headers: host && trustedVideoHost(host) === 'hianime' ? HIANIME_HEADERS : { 'User-Agent': UA },
 			signal: AbortSignal.timeout(15000)
 		});
 		if (!resp.ok) {
 			if (isOpenSubtitlesFile(url) && /exceeded/i.test(await resp.text().catch(() => ''))) {
 				openSubtitlesRestUntil = Date.now() + 3 * 3600_000;
-				return await throughStremio(url, season, episode);
+				return await throughStremio(url, season, episode, lang);
 			}
 			return '';
 		}
-		return await fromBytes(Buffer.from(await resp.arrayBuffer()), season, episode);
+		return await fromBytes(Buffer.from(await resp.arrayBuffer()), season, episode, lang);
 	} catch {
 		return '';
 	}
 }
 
-/** A download's text, unpacked if it came zipped, gzipped or xz'd. */
-async function fromBytes(buf: Buffer<ArrayBuffer>, season?: number, episode?: number): Promise<string> {
-	if (buf[0] === 0x50 && buf[1] === 0x4b) return extractFromZip(buf, season, episode);
+/** A download's text, unpacked if it came zipped, gzipped or xz'd, in whatever character set it was saved (`subtitleText`). */
+async function fromBytes(buf: Buffer<ArrayBuffer>, season?: number, episode?: number, lang?: string): Promise<string> {
+	if (buf[0] === 0x50 && buf[1] === 0x4b) return extractFromZip(buf, season, episode, lang);
 	if (buf[0] === 0x1f && buf[1] === 0x8b) {
-		return gunzipSync(buf).toString('utf-8');
+		return subtitleText(gunzipSync(buf), lang);
 	}
 	// xz (AnimeTosho's subtitle downloads): FD 37 7A 58 5A 00.
 	if (buf[0] === 0xfd && buf[1] === 0x37 && buf[2] === 0x7a && buf[3] === 0x58) {
 		const stream = new Blob([buf]).stream();
-		return await new Response(new xz.XzReadableStream(stream)).text();
+		return subtitleText(new Uint8Array(await new Response(new xz.XzReadableStream(stream)).arrayBuffer()), lang);
 	}
-	return buf.toString('utf-8');
+	return subtitleText(buf, lang);
 }

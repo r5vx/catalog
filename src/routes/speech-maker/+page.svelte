@@ -50,7 +50,17 @@
 			// Not playing anything: a stand-in video, at the start.
 			sync = new SubtitleSync(document.createElement('video'), () => [], () => 0, () => true);
 			status = 'Hearing…';
-			const ok = await sync.analyseTrack(link, params.get('lang') ?? '', fid, { from: Number(params.get('from')) || 0, keepAsItGoes: true });
+			// Part heard already (the computer's player keeps it as it goes): only the rest.
+			const kept = await sync.resumeKept(fid, params.get('lang') ?? '');
+			if (kept === 'all') {
+				status = 'Done.';
+				return;
+			}
+			const ok = await sync.analyseTrack(link, params.get('lang') ?? '', fid, {
+				from: Number(params.get('from')) || 0,
+				keepAsItGoes: true,
+				resume: kept === 'partial'
+			});
 			status = ok ? 'Done.' : 'Could not read its sound.';
 		})()
 			.catch((error) => (status = `Failed: ${error}`))

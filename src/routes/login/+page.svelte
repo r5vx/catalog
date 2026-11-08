@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { isTv } from '$lib/tv';
+	import Wordmark from '$lib/Wordmark.svelte';
 	import type { ActionData } from './$types';
 
 	let { form }: { form: ActionData } = $props();
@@ -20,8 +21,7 @@
 <svelte:head><title>Catalog</title></svelte:head>
 
 <div class="gate">
-	<div class="circle" aria-hidden="true"></div>
-	<h1>Catalog</h1>
+	<h1 class="brand"><Wordmark height="3rem" /></h1>
 
 	{#if form?.error}
 		<p class="error" role="alert">{form.error}</p>
@@ -72,15 +72,10 @@
 		text-align: center;
 	}
 
-	.circle {
-		width: 64px;
-		height: 64px;
-		border-radius: 50%;
-		background: #e994c2;
-	}
-
-	h1 {
-		font-size: 1.7rem;
+	.brand {
+		line-height: 0;
+		margin-bottom: 10px;
+		color: var(--ink);
 	}
 
 	form {

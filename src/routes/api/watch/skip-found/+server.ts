@@ -11,8 +11,8 @@ import type { RequestHandler } from './$types';
 
 type Found = { type: 'intro' | 'credits'; start: number; end: number };
 
-/** A Showbox file number, or a share key of another source's (7Movies, Movy, Aniwave). */
-const isKey = (key: string) => /^\d+$/.test(key) || /^(vidrift|movy|aniwave):[\w:.-]{3,120}$/.test(key);
+/** A Showbox file number, or a share key of another source's (7Movies, Movy, Aniwave, HiAnime, Vidfast). */
+const isKey = (key: string) => /^\d+$/.test(key) || /^(vidrift|movy|aniwave|hianime|vidfast):[\w:.-]{3,120}$/.test(key);
 const keyFor = (key: string) => `skip-found|${key}`;
 
 /** ?key=, or ?fid= for a Showbox file. */

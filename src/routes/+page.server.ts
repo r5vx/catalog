@@ -1,5 +1,6 @@
 import { listCategories, listEntries, countsByCategory, completedCount, completedByCategory, sharedCatalogCount, existingSourceKeys, existingSourceKeysWithIds } from '$lib/server/db/queries';
 import { countNotes } from '$lib/server/db/notes';
+import { withNextAir } from '$lib/server/nextAirs';
 import { listTags } from '$lib/server/db/tags';
 import { SORTS, KEPT_FILTERS } from '$lib/constants';
 import { readSettings } from '$lib/server/settings';
@@ -52,7 +53,8 @@ export const load: PageServerLoad = async ({ url, request }) => {
 	const categories = listCategories();
 	const activeCategory = categories.find((c) => c.slug === cat);
 
-	const entries = listEntries({
+	// Caught-up shows carry their next episode's air date (their card's countdown).
+	const entries = withNextAir(listEntries({
 		search: q,
 		categoryId: activeCategory?.id ?? null,
 		status,
@@ -61,7 +63,7 @@ export const load: PageServerLoad = async ({ url, request }) => {
 		yearTo,
 		sortColumn: sort.column,
 		sortDir: sort.dir
-	});
+	}));
 
 	const countByCategory = countsByCategory();
 	const total = Object.values(countByCategory).reduce((sum, n) => sum + n, 0);

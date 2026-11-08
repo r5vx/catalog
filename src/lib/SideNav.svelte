@@ -8,6 +8,8 @@
 	 */
 	import CategoryTabs from '$lib/CategoryTabs.svelte';
 	import TabIcon from '$lib/TabIcon.svelte';
+	import Wordmark from '$lib/Wordmark.svelte';
+	import { p } from '$lib/altText';
 	import { page } from '$app/state';
 
 	const tabs = $derived(page.data.sideTabs);
@@ -24,6 +26,7 @@
 	const elsewhere = [
 		{ key: 'browse', href: '/browse', label: 'Browse' },
 		{ key: 'live', href: '/live', label: 'Live TV' },
+		{ key: 'youtube', href: '/youtube', label: 'YouTube' },
 		{ key: 'downloads', href: '/downloads', label: 'Downloads' },
 		{ key: 'settings', href: '/settings', label: 'Settings' }
 	];
@@ -31,6 +34,11 @@
 </script>
 
 <nav class="side" aria-label="Sections">
+	{#if page.data.altMode}
+		<a href="/" class="brand-words">{p('Catalog')}</a>
+	{:else}
+		<a href="/" class="brand" aria-label="Catalog, the library"><Wordmark height="1.75rem" /></a>
+	{/if}
 	<p class="label">Library</p>
 	{#if tabs}
 		<CategoryTabs {...tabs} {active} vertical altMode={page.data.altMode} />
@@ -66,6 +74,20 @@
 		background: color-mix(in srgb, var(--paper) 78%, transparent);
 	}
 
+	/* The logo at the top, a link back to the library. */
+	.brand,
+	.brand-words {
+		margin: -6px 0 18px;
+		padding: 4px 10px;
+		color: var(--ink);
+	}
+
+	.brand-words {
+		font-family: var(--display);
+		font-size: 1.4rem;
+		font-weight: 600;
+	}
+
 	.label {
 		font-size: 0.72rem;
 		font-weight: 600;
@@ -95,12 +117,6 @@
 		background: var(--accent-bg);
 		color: var(--accent);
 		font-weight: 600;
-	}
-
-	hr {
-		border: none;
-		border-top: 1px solid var(--rule);
-		margin: 10px 6px;
 	}
 
 	@media (max-width: 900px) {

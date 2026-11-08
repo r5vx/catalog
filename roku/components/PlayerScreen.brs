@@ -12,6 +12,7 @@ sub init()
     m.video.observeField("position", "onPosition")
     m.plan = invalid
     m.live = invalid
+    m.youtube = invalid
     m.captionsBefore = invalid
     m.skips = []
     m.skipped = {}
@@ -26,6 +27,8 @@ sub start()
         playLive(params)
     else if text(params.replay) <> "" then
         playReplay(params)
+    else if text(params.youtube) <> "" then
+        playYouTube(params)
     else
         load(text(params.title), text(params.type), text(params.year), number(params.season), number(params.episode), params.fromStart = true)
     end if
@@ -107,6 +110,34 @@ sub onPlan(event as Object)
     m.saver.control = "start"
 end sub
 
+' A YouTube video: the computer's hidden YouTube player keeps it as it plays, and Catalog hands it
+' over as HLS (/api/youtube/play, src/lib/server/youtube.ts). Nothing is saved: YouTube keeps its own.
+sub playYouTube(params as Object)
+    m.plan = invalid
+    m.replayPlan = invalid
+    m.youtube = params
+    showWaiting("Loading " + text(params.label) + "…")
+    api("/api/youtube/play", { v: params.youtube }, "onYouTube")
+end sub
+
+sub onYouTube(event as Object)
+    answer = event.getData()
+    if not answer.ok or answer.data.url = invalid then
+        problem = "This video can't be played right now."
+        if answer.data <> invalid and answer.data.error <> invalid then problem = answer.data.error
+        showWaiting(problem)
+        return
+    end if
+    content = CreateObject("roSGNode", "ContentNode")
+    content.url = m.global.server + answer.data.url
+    content.streamFormat = "hls"
+    content.httpHeaders = videoHeaders([])
+    content.title = text(m.youtube.label)
+    m.video.content = content
+    m.video.control = "play"
+    m.video.setFocus(true)
+end sub
+
 ' A replay of a past game (/api/live/replay: the first of its versions that plays).
 sub playReplay(params as Object)
     m.plan = invalid
@@ -171,6 +202,8 @@ sub onState()
     else if state = "error" then
         if m.live <> invalid then
             showWaiting("This channel can't be played right now. Press * for the game's other channels.")
+        else if m.youtube <> invalid then
+            showWaiting("The video stopped working (" + m.video.errorMsg + "). Press Back, and try again.")
         else if not m.retried and m.plan <> invalid then
             ' Stopped working: a fresh link, from where it was (once).
             m.retried = true
@@ -245,8 +278,15 @@ sub skipPast(segment as Object)
         load(plan.title, plan.type, text(plan.year), plan.next.season, plan.next.episode, false)
         return
     end if
-    ' An intro or recap lands on its last second, as on the computer (the story's first words weren't cut off).
-    if segment.type = "credits" then
+    ' An intro or recap lands on its last second, as on the computer (the story's first words weren't cut off),
+    ' unless another part starts right there (Hawkeye S1E5's recap after its intro): its Skip shows at once.
+    nextPart = false
+    if m.skips <> invalid then
+        for each one in m.skips
+            if one.start >= segment.end - 0.5 and one.start <= segment.end + 0.5 and one.start > segment.start then nextPart = true
+        end for
+    end if
+    if segment.type = "credits" or nextPart then
         m.video.seek = segment.end
     else
         m.video.seek = segment.end - 1

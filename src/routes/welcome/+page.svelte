@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Wordmark from '$lib/Wordmark.svelte';
 	import type { ActionData } from './$types';
 
 	let { form }: { form: ActionData } = $props();
@@ -7,7 +8,7 @@
 <svelte:head><title>Welcome · Catalog</title></svelte:head>
 
 <div class="wrap">
-	<h1>Catalog</h1>
+	<h1 class="brand"><Wordmark height="2.6rem" /></h1>
 	<p class="lead">Your library of every film, series and anime you've watched.</p>
 
 	<section>
@@ -57,6 +58,11 @@
 	h1 {
 		font-size: clamp(2rem, 7vw, 2.8rem);
 		margin: 0;
+	}
+
+	.brand {
+		line-height: 0;
+		color: var(--ink);
 	}
 
 	.lead {

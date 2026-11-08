@@ -61,6 +61,11 @@ public class MainActivity extends Activity {
 	private WebChromeClient.CustomViewCallback fullscreenDone;
 	/** "http://192.168.1.23:4173" — requests there are Catalog's own and are left alone. */
 	private volatile String serverOrigin;
+	/** YouTube's own TV app over Catalog (YouTubeView.java), and the app updating itself (SelfUpdate.java). */
+	private YouTubeView youtube;
+	private SelfUpdate selfUpdate;
+	/** The TV's refresh rate matched to the video's frame rate while one plays (FrameRate.java). */
+	private FrameRate frameRate;
 
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
@@ -87,6 +92,13 @@ public class MainActivity extends Activity {
 		web.setWebViewClient(new Pages());
 		web.setWebChromeClient(new FullScreen());
 		web.addJavascriptInterface(new Bridge(), "CatalogTV");
+		youtube = new YouTubeView(this, root, new Runnable() {
+			public void run() {
+				web.requestFocus();
+			}
+		});
+		selfUpdate = new SelfUpdate(this, web);
+		frameRate = new FrameRate(this, web);
 
 		String saved = prefs().getString(KEY_SERVER, null);
 		if (saved != null) open(saved);
@@ -221,6 +233,12 @@ public class MainActivity extends Activity {
 		int code = event.getKeyCode();
 		boolean down = event.getAction() == KeyEvent.ACTION_DOWN;
 
+		// YouTube showing: the remote is YouTube's (Back on its home screen returns to Catalog).
+		if (youtube.showing()) {
+			if (youtube.key(event)) return true;
+			return super.dispatchKeyEvent(event);
+		}
+
 		if (code == KeyEvent.KEYCODE_BACK) {
 			if (!down) return true;
 			if (fullscreenView != null) {
@@ -288,7 +306,10 @@ public class MainActivity extends Activity {
 		super.onRestart();
 		// Back after half an hour or more: it starts again at "Who's watching?", like Netflix.
 		String saved = prefs().getString(KEY_SERVER, null);
-		if (saved != null && leftAt > 0 && System.currentTimeMillis() - leftAt > 30 * 60 * 1000) open(saved);
+		if (saved != null && leftAt > 0 && System.currentTimeMillis() - leftAt > 30 * 60 * 1000) {
+			youtube.close();
+			open(saved);
+		}
 	}
 
 	@Override
@@ -296,6 +317,8 @@ public class MainActivity extends Activity {
 		super.onPause();
 		// Leaving the app pauses whatever was playing.
 		web.evaluateJavascript("document.querySelectorAll('video').forEach(function (v) { v.pause(); })", null);
+		youtube.pause();
+		frameRate.restore();
 	}
 
 	/* ------------------------------------------------------------ for setup.html */
@@ -374,6 +397,62 @@ public class MainActivity extends Activity {
 		@JavascriptInterface
 		public String saved() {
 			return prefs().getString(KEY_SERVER, "");
+		}
+
+		/** This app's version (AndroidManifest versionCode): Catalog offers an update when it has a newer one. */
+		@JavascriptInterface
+		public int appVersion() {
+			try {
+				return getPackageManager().getPackageInfo(getPackageName(), 0).versionCode;
+			} catch (Exception e) {
+				return 0;
+			}
+		}
+
+		/** YouTube's own TV app, over Catalog (YouTubeView.java). */
+		@JavascriptInterface
+		public void openYouTube() {
+			runOnUiThread(new Runnable() {
+				public void run() {
+					youtube.open();
+				}
+			});
+		}
+
+		/**
+		 * Puts the TV on the refresh rate that suits a video of `fps` frames a second (FrameRate.java):
+		 * "switching" (the page waits for `__catalogTv.displayChanged()`), "same", "unsupported" or "off".
+		 */
+		@JavascriptInterface
+		public String matchFrameRate(final double fps) {
+			return frameRate.match(fps);
+		}
+
+		/** The TV's own refresh rate again (leaving the player). */
+		@JavascriptInterface
+		public void restoreFrameRate() {
+			frameRate.restore();
+		}
+
+		/** Whether this TV matches the frame rate (Settings on the TV; on unless turned off). */
+		@JavascriptInterface
+		public boolean frameRateMatching() {
+			return frameRate.enabled();
+		}
+
+		@JavascriptInterface
+		public void setFrameRateMatching(boolean on) {
+			frameRate.setEnabled(on);
+		}
+
+		/** Installs the TV app from `url` over this one (SelfUpdate.java). */
+		@JavascriptInterface
+		public void installUpdate(final String url) {
+			runOnUiThread(new Runnable() {
+				public void run() {
+					selfUpdate.install(url);
+				}
+			});
 		}
 	}
 

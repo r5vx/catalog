@@ -8,6 +8,10 @@
 	import TagChips from '$lib/TagChips.svelte';
 	import CastRow from '$lib/CastRow.svelte';
 	import WhereToWatch from '$lib/WhereToWatch.svelte';
+	import DownloadTitle from '$lib/DownloadTitle.svelte';
+	import EpisodePicker from '$lib/EpisodePicker.svelte';
+	import EpisodeRatings from '$lib/EpisodeRatings.svelte';
+	import Fold from '$lib/Fold.svelte';
 	import { STATUSES } from '$lib/constants';
 	import BackBar from '$lib/BackBar.svelte';
 	import { money } from '$lib/format';
@@ -71,6 +75,13 @@
 		const timer = setTimeout(() => warmUpTitle(item), 500);
 		return () => clearTimeout(timer);
 	});
+
+	/** What's inside "More about it", said on its closed line. */
+	const aboutSub = $derived(
+		['where to watch', data.scores?.awards ? 'awards' : null, details.tags?.length ? 'tags' : null, details.homepage ? 'official site' : null]
+			.filter(Boolean)
+			.join(', ')
+	);
 
 	const facts = $derived(
 		[
@@ -143,6 +154,9 @@
 					{:else}
 						<span class="btn btn-watch checking">Checking availability…</span>
 					{/if}
+					{#if watchAvailable === true}
+						<DownloadTitle title={details.title ?? ''} type={data.watchType === 'tv' ? 'tv' : 'movie'} year={details.year} poster={details.posterUrl ?? null} />
+					{/if}
 				{/if}
 
 				{#if data.ownedEntryId}
@@ -175,23 +189,11 @@
 		</div>
 	</header>
 
-	<Synopsis text={details.overview} tagline={details.tagline} />
-
-	<WhereToWatch
-		source={data.source}
-		sourceId={data.sourceId}
-		title={details.title}
-		year={details.year}
-	/>
-
-	{#if data.scores?.awards}
-		<section class="awards">
-			<h2 class="label">Awards</h2>
-			<p class="muted">{data.scores.awards}</p>
-		</section>
+	{#if data.watchType === 'tv' && !details.unreleased}
+		<EpisodePicker source={data.source} sourceId={data.sourceId} title={details.title ?? ''} year={details.year} alt={details.altTitle} />
 	{/if}
 
-	<TagChips tags={details.tags} />
+	<Synopsis text={details.overview} tagline={details.tagline} />
 
 	<!-- Everyone is clickable: ours by id, the rest by the provider's. -->
 	<CastRow
@@ -199,13 +201,36 @@
 		back={page.url.pathname + page.url.search}
 	/>
 
-	{#if details.homepage}
-		<p class="away">
-			<a href={details.homepage} target="_blank" rel="noreferrer">Open on
-				{data.source === 'anilist' ? 'AniList' : 'the official site'} &rarr;</a
-			>
-		</p>
+	{#if data.watchType === 'tv' && !details.unreleased}
+		<EpisodeRatings source={data.source} sourceId={data.sourceId} title={details.title ?? ''} />
 	{/if}
+
+	<!-- The extras, closed until wanted, so the page shows the title first. -->
+	<Fold title="More about it" sub={aboutSub}>
+		<WhereToWatch
+			source={data.source}
+			sourceId={data.sourceId}
+			title={details.title}
+			year={details.year}
+		/>
+
+		{#if data.scores?.awards}
+			<section class="awards">
+				<h2 class="label">Awards</h2>
+				<p class="muted">{data.scores.awards}</p>
+			</section>
+		{/if}
+
+		<TagChips tags={details.tags} />
+
+		{#if details.homepage}
+			<p class="away">
+				<a href={details.homepage} target="_blank" rel="noreferrer">Open on
+					{data.source === 'anilist' ? 'AniList' : 'the official site'} &rarr;</a
+				>
+			</p>
+		{/if}
+	</Fold>
 	<MoreLikeThis source={data.source} sourceId={data.sourceId} title={details.title ?? ''} />
 </article>
 

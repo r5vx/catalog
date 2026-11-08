@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { isTv } from '$lib/tv';
+	import { TV_APP_VERSION } from '$lib/tvInstall';
 
 	/**
 	 * A TV keeps the Catalog it loaded until it's reloaded, so after the computer updates, it's
@@ -19,6 +20,33 @@
 	const watching = $derived(page.url.pathname.startsWith('/watch'));
 
 	const reload = () => location.reload();
+
+	/*
+	 * The TV app itself (android/), newer on the computer than on this TV: Update installs it from
+	 * the computer over this one, keeping everything (SelfUpdate.java, TV app 1.4 on). Fire TV asks
+	 * once to allow it, then shows its own Update screen.
+	 */
+	type TvApp = { appVersion?: () => number; installUpdate?: (url: string) => void };
+	let appOld = $state(false);
+	let appState = $state('');
+	let appButton: HTMLButtonElement | undefined = $state();
+	function updateApp() {
+		const tv = (window as unknown as { CatalogTV?: TvApp }).CatalogTV;
+		if (!tv?.installUpdate) return;
+		appState = 'Getting the update…';
+		tv.installUpdate(`${location.origin}/catalog-tv.apk`);
+	}
+	onMount(() => {
+		const tv = (window as unknown as { CatalogTV?: TvApp }).CatalogTV;
+		if (!tv?.appVersion || !tv.installUpdate) return;
+		appOld = tv.appVersion() < TV_APP_VERSION;
+		(window as unknown as { __catalogTvUpdate: (state: string, detail: string) => void }).__catalogTvUpdate = (state, detail) => {
+			if (state === 'downloading') appState = `Getting the update… ${detail}%`;
+			else if (state === 'allow') appState = 'Allow it first: Settings → My Fire TV → Developer options → Install unknown apps → Catalog → On, then Update again';
+			else if (state === 'confirm') appState = 'Choose Update on the next screen';
+			else if (state === 'failed') appState = `The update didn't install: ${detail}`;
+		};
+	});
 
 	onMount(() => {
 		if (!isTv()) return;
@@ -51,6 +79,13 @@
 		if (updated && !watching && button) button.focus({ preventScroll: true });
 	});
 </script>
+
+{#if appOld && !watching && !updated}
+	<div class="tv-updated" role="status">
+		<span>{appState || 'A new Catalog TV app is ready'}</span>
+		<button type="button" data-tv-item bind:this={appButton} onclick={updateApp}>Update</button>
+	</div>
+{/if}
 
 {#if updated && !watching}
 	<div class="tv-updated" role="status">

@@ -1,6 +1,6 @@
 ' Colors, as Catalog's dark theme (src/app.css).
 function colors() as Object
-    return { ink: "0xE7EDE9FF", soft: "0xA3B0A8FF", faint: "0x75837BFF", paper: "0x111614FF", surface: "0x1F2724FF", accent: "0xD97A83FF" }
+    return { ink: "0xE7EDE9FF", soft: "0xA3B0A8FF", faint: "0x75837BFF", paper: "0x111614FF", surface: "0x1F2724FF", accent: "0xE994C2FF" }
 end function
 
 sub init()
@@ -162,7 +162,12 @@ sub layout()
             m.noteBack.translation = [10, height - 52]
             m.note.translation = [20, height - 49]
             m.noteBack.blendColor = "0x000000CC"
-            if item.noteNew = true then m.noteBack.blendColor = c.accent
+            m.note.color = "0xFFFFFFFF"
+            ' Pink takes dark text, as on the Fire TV.
+            if item.noteNew = true then
+                m.noteBack.blendColor = c.accent
+                m.note.color = "0x141414FF"
+            end if
         end if
     end if
 
@@ -204,7 +209,7 @@ sub showFocus()
             m.back.blendColor = c.ink
             m.name.color = c.paper
         else if item.selected = true then
-            m.back.blendColor = "0xD97A8333"
+            m.back.blendColor = "0xE994C233"
             m.name.color = c.accent
         else if k = "button" and item.primary = true then
             m.back.blendColor = "0xFFFFFF33"

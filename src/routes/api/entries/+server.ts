@@ -1,6 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import { createFromResult } from '$lib/server/entries';
-import { entryBasics, setEntryStatus, markEntryCompleted, incrementRewatches, updateSeasonEpisodeReached, deleteEntry, completeProfileTitle, hideCompletedFromContinueWatching, profileTitleReached, deleteProfileTitle, setEntryFields, type QuickFields } from '$lib/server/db/queries';
+import { findOnTmdb } from '$lib/server/linkEntry';
+import { entryIdForSource, entryBasics, setEntryStatus, markEntryCompleted, incrementRewatches, updateSeasonEpisodeReached, deleteEntry, completeProfileTitle, hideCompletedFromContinueWatching, profileTitleReached, deleteProfileTitle, setEntryFields, type QuickFields } from '$lib/server/db/queries';
 import { STATUSES } from '$lib/constants';
 import { showStillAiring } from '$lib/server/stillAiring';
 import { currentProfile, MAIN_PROFILE } from '$lib/server/profile';
@@ -21,7 +22,22 @@ export const POST: RequestHandler = async ({ request }) => {
 	if (!body.result?.title) error(400, 'No result supplied.');
 	if (currentProfile() !== MAIN_PROFILE) error(403, 'Not on this profile');
 
-	const id = createFromResult(body.result, {
+	// Only a name (Continue Watching's Mark as completed for something not in the library): found
+	// on TMDB first, or nothing else (synopsis, cast, scores) could ever be looked up for it.
+	let result = body.result;
+	if (!result.sourceId) {
+		const match = await findOnTmdb(result.title, result.categorySlug, result.year);
+		if (match) {
+			const owned = entryIdForSource(match.source, match.sourceId);
+			if (owned) {
+				if ((body.status ?? 'completed') === 'completed') markEntryCompleted(owned);
+				return json({ id: owned });
+			}
+			result = match;
+		}
+	}
+
+	const id = createFromResult(result, {
 		categoryId: body.categoryId,
 		status: body.status,
 		markWatchedToday: body.markWatchedToday ?? true,

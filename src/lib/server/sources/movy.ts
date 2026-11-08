@@ -24,22 +24,32 @@ const MINUTE = 60 * 1000;
 /** What movy's video server expects to be asked with. */
 export const MOVY_HEADERS = { 'User-Agent': UA, Referer: `${SITE}/` };
 
-type What = { type: 'tv' | 'movie'; id: number; season: number; episode: number };
+/** A dubbed copy's language (its dub servers: Munich/Berlin German, Paris French, Delhi Hindi, Cancun Spanish). */
+export type MovyDub = 'es' | 'fr' | 'de' | 'hi';
+export const MOVY_DUB_NAMES: Record<MovyDub, string> = { es: 'Spanish', fr: 'French', de: 'German', hi: 'Hindi' };
 
-/** A Movy copy's share key: `movy:<tv|movie>:<TMDB id>:<season>:<episode>`. */
+type What = { type: 'tv' | 'movie'; id: number; season: number; episode: number; dub?: MovyDub };
+
+/** A Movy copy's share key: `movy:<tv|movie>:<TMDB id>:<season>:<episode>[:<dub language>]`. */
 export function movyShareKey(what: What): string {
-	return `movy:${what.type}:${what.id}:${what.season}:${what.episode}`;
+	return `movy:${what.type}:${what.id}:${what.season}:${what.episode}${what.dub ? `:${what.dub}` : ''}`;
 }
 
 export function parseMovyShareKey(shareKey: string): What | null {
-	const m = shareKey.match(/^movy:(tv|movie):(\d+):(\d+):(\d+)$/);
+	const m = shareKey.match(/^movy:(tv|movie):(\d+):(\d+):(\d+)(?::(es|fr|de|hi))?$/);
 	if (!m) return null;
-	return { type: m[1] as 'tv' | 'movie', id: Number(m[2]), season: Number(m[3]), episode: Number(m[4]) };
+	return { type: m[1] as 'tv' | 'movie', id: Number(m[2]), season: Number(m[3]), episode: Number(m[4]), ...(m[5] ? { dub: m[5] as MovyDub } : {}) };
 }
 
 /** Movy's copy of a film or episode (fid -5). Listed after the other sources' copies. */
 export function movyCopy(what: What): FileOption {
 	return { fid: -5, quality: 'HD', name: 'Movy', size: '', source: 'Movy', shareKey: movyShareKey(what) };
+}
+
+/** Movy's dubbed copy in a profile's audio language (fid -9): listed first for that profile (audioLanguage.ts). */
+export function movyDubCopy(what: What, dub: MovyDub): FileOption {
+	const language = MOVY_DUB_NAMES[dub];
+	return { fid: -9, quality: 'HD', name: `Movy · ${language}`, size: '', source: 'Movy', audio: language, shareKey: movyShareKey({ ...what, dub }) };
 }
 
 const pageFor = (what: What) =>
@@ -156,7 +166,7 @@ export function movyStream(shareKey: string, fresh = false, wanted?: Wanted): Pr
 }
 
 function lookUp(shareKey: string, what: What, signal: AbortSignal): Promise<string | null> {
-	return electronMovyFind(pageFor(what), signal).then(({ url, error }) => {
+	return electronMovyFind(pageFor(what), signal, 'movy', what.dub).then(({ url, error }) => {
 		if (url) {
 			// Its server (and those its playlists name) may now be fetched through the relay.
 			trustVideoHost(url, 'movy');

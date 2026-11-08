@@ -2,8 +2,10 @@ import { json } from '@sveltejs/kit';
 import { prefetchStreamUrls } from '$lib/server/showbox';
 import { readSettings } from '$lib/server/settings';
 import { parseAniwaveShareKey, warmAniwaveStream } from '$lib/server/sources/aniwave';
+import { parseHianimeShareKey, warmHianimeStream } from '$lib/server/sources/hianime';
 import { parseVidriftShareKey, vidriftStream } from '$lib/server/sources/vidrift';
 import { movyStream, parseMovyShareKey } from '$lib/server/sources/movy';
+import { vidfastStream, parseVidfastShareKey } from '$lib/server/sources/vidfast';
 import type { RequestHandler } from '@sveltejs/kit';
 
 export const POST: RequestHandler = async ({ request }) => {
@@ -14,6 +16,15 @@ export const POST: RequestHandler = async ({ request }) => {
 	const aniwave = parseAniwaveShareKey(String(share_key));
 	if (aniwave) {
 		warmAniwaveStream(aniwave.id, aniwave.episode, aniwave.kind);
+		return json({ ok: true });
+	}
+	const hianime = parseHianimeShareKey(String(share_key));
+	if (hianime) {
+		warmHianimeStream(hianime.mal, hianime.episode, hianime.kind);
+		return json({ ok: true });
+	}
+	if (parseVidfastShareKey(String(share_key))) {
+		vidfastStream(String(share_key)).catch(() => null);
 		return json({ ok: true });
 	}
 	// 7Movies' and Movy's next episode too (each keeps its link a while: 20 and 40 minutes).

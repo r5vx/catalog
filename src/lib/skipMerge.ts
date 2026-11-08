@@ -21,7 +21,26 @@ export function withFound(fromAniSkip: SkipSegment[], found: SkipSegment[]): Ski
 		.map((f) => (mixed(f) ? { ...f, mixed: true } : f));
 	// A recap and an intro back to back stay two skips (the owner, 2026-10-31: someone may want to
 	// skip the recap but watch the intro). They were joined into one from 2026-10-28.
-	return [...fromAniSkip, ...own].sort((a, b) => a.start - b.start);
+	return closeOpeningGaps([...fromAniSkip, ...own].sort((a, b) => a.start - b.start));
+}
+
+/**
+ * An intro and a recap a few seconds apart: the seconds between go to the recap, so Skip Recap
+ * is there the moment Skip Intro lands. Hawkeye S1E5 (2026-11-02): IntroDB's intro ends at 5:26
+ * and its recap starts at 5:35, but the "previously on" lines start at 5:23, so the player showed
+ * 9 s of recap as if it were story. Still two skips.
+ */
+const OPENING_GAP = 15;
+function closeOpeningGaps(segments: SkipSegment[]): SkipSegment[] {
+	const out = segments.map((s) => ({ ...s }));
+	for (let i = 0; i + 1 < out.length; i++) {
+		const [a, b] = [out[i], out[i + 1]];
+		const gap = b.start - a.end;
+		if (!(gap > 0 && gap <= OPENING_GAP)) continue;
+		if (a.type === 'intro' && b.type === 'recap') b.start = a.end;
+		else if (a.type === 'recap' && b.type === 'intro') a.end = b.start;
+	}
+	return out;
 }
 
 /**

@@ -4,6 +4,7 @@ import { setTags, tagsForEntry } from '$lib/server/db/tags';
 import { setCast, castForEntry } from '$lib/server/db/people';
 import { fetchDetails } from '$lib/server/metadata/details';
 import { fetchScores, omdbConfigured } from '$lib/server/metadata/omdb';
+import { linkIfUnmatched } from '$lib/server/linkEntry';
 import type { RequestHandler } from './$types';
 
 /** How long a stored score is trusted before it's looked up again. */
@@ -22,6 +23,8 @@ const isStale = (stamp: string | null) =>
  */
 export const POST: RequestHandler = async ({ request }) => {
 	const { id } = await request.json();
+	// Added with only a name: found on TMDB first (linkEntry.ts), so the rest can be looked up.
+	const linked = await linkIfUnmatched(Number(id));
 	const entry = getEntry(Number(id));
 	if (!entry) error(404, 'No such entry.');
 
@@ -84,6 +87,8 @@ export const POST: RequestHandler = async ({ request }) => {
 		overview: updated?.overview ?? null,
 		tags: tagsForEntry(entry.id),
 		cast: castForEntry(entry.id),
-		configured: omdbConfigured()
+		configured: omdbConfigured(),
+		// Just found on TMDB: the page reloads its name, year and poster.
+		linked
 	});
 };

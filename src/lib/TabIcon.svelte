@@ -51,6 +51,9 @@
 	{:else if name === 'live'}
 		<!-- An aerial on a screen. -->
 		<rect x="3" y="8" width="18" height="12" rx="2" /><path d="M8 3l4 5 4-5" />
+	{:else if name === 'youtube'}
+		<!-- a play button -->
+		<rect x="2.5" y="5.5" width="19" height="13" rx="4" /><path d="M10 9.2v5.6l4.8-2.8Z" />
 	{:else if name === 'downloads'}
 		<!-- an arrow down onto a line -->
 		<path d="M12 4v11M7 10l5 5 5-5M5 20h14" />

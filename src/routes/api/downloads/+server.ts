@@ -1,8 +1,10 @@
 import { error, json } from '@sveltejs/kit';
 import { downloadProgress, freeSpace, listDownloads, startDownload, type DownloadAsk } from '$lib/server/downloads';
 import { parseAniwaveShareKey } from '$lib/server/sources/aniwave';
+import { parseHianimeShareKey } from '$lib/server/sources/hianime';
 import { parseVidriftShareKey } from '$lib/server/sources/vidrift';
 import { parseMovyShareKey } from '$lib/server/sources/movy';
+import { parseVidfastShareKey } from '$lib/server/sources/vidfast';
 import type { RequestHandler } from './$types';
 
 /** Every download, with how far the one under way has got, and the space left on the disk. */
@@ -23,7 +25,7 @@ export const POST: RequestHandler = async ({ request }) => {
 	if (kind === 'replay' ? !body.replayId : !body.shareKey || !body.fid) return error(400, 'Which copy?');
 	// Never Showbox's copy: it would use up Febbox's daily allowance (another source's, or a replay).
 	const key = String(body.shareKey ?? '');
-	if (kind !== 'replay' && !parseAniwaveShareKey(key) && !parseVidriftShareKey(key) && !parseMovyShareKey(key)) {
+	if (kind !== 'replay' && !parseAniwaveShareKey(key) && !parseHianimeShareKey(key) && !parseVidriftShareKey(key) && !parseMovyShareKey(key) && !parseVidfastShareKey(key)) {
 		return error(400, "Showbox's copies aren't downloaded (they'd use up Febbox's daily allowance)");
 	}
 	const text = (v: unknown) => (typeof v === 'string' && v ? v : null);

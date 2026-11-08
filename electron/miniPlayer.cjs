@@ -6,6 +6,11 @@
  * It replaced the browser's picture-in-picture on the computer (2026-10-23). That one dimmed the
  * whole picture under its buttons, had only play/pause, and its look couldn't be changed. Phones
  * still use it.
+ *
+ * Nothing reloads in front of you: the mini window opens hidden and gets its video ready while the
+ * big one plays on, then takes over at the very spot (and the same on the way back). A playing
+ * video can't be moved to another window as it is: tried 2026-11-01 in Electron 38, a moved video
+ * starts over from nothing, and the browser's document picture-in-picture opens an empty window.
  */
 const { BrowserWindow, screen } = require('electron');
 
@@ -14,8 +19,24 @@ const HEIGHT = 270;
 const MARGIN = 24;
 
 let mini = null;
+/** Catalog's own window, which opened it. */
+let opener = null;
 /** Said by the mini player as it goes back: where it got to (episode, copy, place), and whether it was playing. */
 let leaving = null;
+/** Still hidden, getting ready; or on its way back. */
+let readying = false;
+let goingBack = false;
+
+/** How long the hidden mini player may take to get ready before it's shown anyway. */
+const READY_WAIT = 15000;
+
+const later = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Runs `code` in `win`'s page (as if clicked, so its sound may start); `fallback` when it fails or takes over `ms`. */
+function ask(win, code, ms, fallback) {
+	if (!win || win.isDestroyed()) return Promise.resolve(fallback);
+	return Promise.race([win.webContents.executeJavaScript(code, true).catch(() => fallback), later(ms).then(() => fallback)]);
+}
 
 /**
  * Opens the mini player on `path` (a /watch address) beside `main`, which is minimized.
@@ -24,9 +45,10 @@ let leaving = null;
 function openMini(main, origin, path, icon) {
 	if (!main || main.isDestroyed()) return;
 	if (mini && !mini.isDestroyed()) {
-		mini.focus();
+		if (!readying) mini.focus();
 		return;
 	}
+	opener = main;
 	const area = screen.getDisplayMatching(main.getBounds()).workArea;
 	leaving = null;
 	mini = new BrowserWindow({
@@ -36,6 +58,8 @@ function openMini(main, origin, path, icon) {
 		y: area.y + area.height - HEIGHT - MARGIN,
 		minWidth: 240,
 		minHeight: 135,
+		// Shown once its video is ready (handOver).
+		show: false,
 		frame: false,
 		alwaysOnTop: true,
 		// Its own fullscreen button: the picture fills that screen while Catalog is used on another.
@@ -66,6 +90,8 @@ function openMini(main, origin, path, icon) {
 	mini.on('leave-full-screen', () => keepOnTop(shown));
 	mini.on('closed', () => {
 		if (mini === shown) mini = null;
+		readying = false;
+		goingBack = false;
 		// Back to the big window: where the mini player got to (or, closed some other way, the
 		// place it last saved, which the page looks up itself).
 		const said = leaving;
@@ -84,7 +110,29 @@ function openMini(main, origin, path, icon) {
 				.catch(() => {});
 		}
 	});
-	main.minimize();
+	handOver(main, shown);
+}
+
+/**
+ * Waits for the hidden mini player's video to be ready (or READY_WAIT), then: the big player stops
+ * and says where it got to, the mini player starts from there, shows, and the big window minimizes.
+ */
+async function handOver(main, shown) {
+	readying = true;
+	const until = Date.now() + READY_WAIT;
+	while (Date.now() < until && !shown.isDestroyed()) {
+		const bigAt = await ask(main, 'window.catalogPlaceNow ? window.catalogPlaceNow() : null', 1000, null);
+		if (await ask(shown, `Boolean(window.catalogMiniReady && window.catalogMiniReady(${JSON.stringify(bigAt)}))`, 1000, false)) break;
+		await later(200);
+	}
+	if (shown.isDestroyed()) return;
+	const handed = await ask(main, 'window.catalogHandToMini ? window.catalogHandToMini() : null', 2000, null);
+	await ask(shown, `window.catalogMiniGo ? window.catalogMiniGo(${JSON.stringify(handed)}) : false`, 1500, false);
+	readying = false;
+	if (shown.isDestroyed()) return;
+	shown.show();
+	keepOnTop(shown);
+	if (!main.isDestroyed()) main.minimize();
 }
 
 /**
@@ -92,8 +140,8 @@ function openMini(main, origin, path, icon) {
  * `back.reopen` (its "Back to Catalog"): the player opens on `back.path` if Catalog's window is on
  * another page by now.
  */
-function closeMini(back) {
-	if (!mini || mini.isDestroyed()) return;
+async function closeMini(back) {
+	if (!mini || mini.isDestroyed() || goingBack) return;
 	const number = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : undefined);
 	leaving = {
 		at: number(back?.at) ?? null,
@@ -104,7 +152,19 @@ function closeMini(back) {
 		episode: number(back?.episode),
 		fid: number(back?.fid)
 	};
-	mini.close();
+	// Catalog's window gets that spot ready while the mini player plays on, then takes over from
+	// wherever the mini player is by then. (Not when it's on another page, or the mini player went
+	// to another episode: it opens that itself, as before.)
+	const shown = mini;
+	goingBack = true;
+	if (!readying && leaving.at !== null && opener && !opener.isDestroyed()) {
+		const ready = await ask(opener, `window.catalogPrepareBack ? window.catalogPrepareBack(${JSON.stringify(leaving)}) : false`, 7000, false);
+		if (ready && leaving) {
+			const now = await ask(shown, 'window.catalogMiniStop ? window.catalogMiniStop() : null', 1000, null);
+			if (now && Number.isFinite(now.at)) leaving = { ...leaving, at: now.at };
+		}
+	}
+	if (!shown.isDestroyed()) shown.close();
 }
 
 /**

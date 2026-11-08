@@ -1,5 +1,7 @@
 import { json, error } from '@sveltejs/kit';
-import { downloadSubtitle, isScrambled } from '$lib/server/showbox-subs';
+import { downloadSubtitleWhole, isScrambled } from '$lib/server/showbox-subs';
+import { slimSubtitle } from '$lib/server/subtitleFonts';
+import { keepStyled } from '$lib/server/styledSubtitles';
 import { forgetSubtitle, savedSubtitle, saveSubtitle } from '$lib/server/db/queries';
 import type { RequestHandler } from './$types';
 
@@ -24,6 +26,8 @@ export const GET: RequestHandler = async ({ url }) => {
 	const season = Number(url.searchParams.get('season')) || undefined;
 	const episode = Number(url.searchParams.get('episode')) || undefined;
 	const show = url.searchParams.get('show')?.trim();
+	// Its language, for a file saved in an older character set (subtitleText.ts).
+	const lang = url.searchParams.get('lang')?.trim() || undefined;
 
 	// A season pack holds every episode, so its copy is only reused for the same episode.
 	const key = season && episode ? `${subUrl}#${season}x${episode}` : subUrl;
@@ -32,7 +36,10 @@ export const GET: RequestHandler = async ({ url }) => {
 	// An error page (or a scrambled file) kept by mistake before: thrown away, and fetched again.
 	if (kept) forgetSubtitle(key);
 
-	const content = await downloadSubtitle(subUrl, season, episode);
+	const whole = await downloadSubtitleWhole(subUrl, season, episode, lang);
+	// The whole file too, if it has signs or songs to draw (subtitle-styled): no second download.
+	if (whole && isSubtitles(whole)) keepStyled(key, whole);
+	const content = slimSubtitle(whole);
 	if (!content || !isSubtitles(content)) return json({ content: '' });
 	if (show) saveSubtitle(key, show, content);
 	return json({ content });

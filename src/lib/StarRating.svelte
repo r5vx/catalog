@@ -1,11 +1,15 @@
 <script lang="ts">
 	/**
-	 * Five stars for a rating out of 10: each half star is one point. Click a star's left third
-	 * for a half star. Click the rating it already has to clear it. Arrow keys work too.
+	 * Stars for a rating out of 10. Five stars (the default): each half star is one point, so 4½
+	 * stars is 9. Ten stars (Settings → Personalization → Ratings): each star is one point and a
+	 * half star half a point, so 8½ stars is 8.5. Click a star's left third for a half star. Click
+	 * the rating it already has to clear it. Arrow keys work too.
 	 *
 	 * `name` puts the rating in a form (a hidden field); `onchange` hears each change.
 	 * The star colour is --star at the top of src/app.css.
 	 */
+	import { page } from '$app/state';
+
 	type Props = {
 		value: number | null;
 		onchange?: (value: number | null) => void;
@@ -16,6 +20,13 @@
 	};
 
 	let { value = $bindable(null), onchange, name, large = false, label = 'Your rating' }: Props = $props();
+
+	const ten = $derived(page.data?.ratingStars === 10);
+	const stars = $derived(ten ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] : [1, 2, 3, 4, 5]);
+	// Points per star: 2 with five stars, 1 with ten.
+	const per = $derived(ten ? 1 : 2);
+	// The smallest change: one point with five stars, half a point with ten.
+	const step = $derived(per / 2);
 
 	/** What the pointer is over (a preview), else the rating itself. */
 	let hover = $state<number | null>(null);
@@ -31,13 +42,13 @@
 	function at(event: PointerEvent | MouseEvent, star: number): number {
 		const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
 		const left = event.clientX - box.left < box.width * 0.35;
-		return star * 2 - (left ? 1 : 0);
+		return star * per - (left ? step : 0);
 	}
 
 	function onkey(event: KeyboardEvent) {
 		const now = value ?? 0;
-		if (event.key === 'ArrowRight' || event.key === 'ArrowUp') pick(Math.min(10, now + 1));
-		else if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') pick(now - 1 > 0 ? now - 1 : null);
+		if (event.key === 'ArrowRight' || event.key === 'ArrowUp') pick(Math.min(10, now + step));
+		else if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') pick(now - step > 0 ? now - step : null);
 		else if (event.key === 'Delete' || event.key === 'Backspace') pick(null);
 		else return;
 		event.preventDefault();
@@ -47,18 +58,19 @@
 <div
 	class="stars"
 	class:large
+	class:ten
 	role="slider"
 	tabindex="0"
 	aria-label={label}
 	aria-valuemin={0}
 	aria-valuemax={10}
 	aria-valuenow={value ?? 0}
-	aria-valuetext={value ? `${value / 2} of 5 stars` : 'Not rated'}
+	aria-valuetext={value ? (ten ? `${value} of 10 stars` : `${value / 2} of 5 stars`) : 'Not rated'}
 	onkeydown={onkey}
 	onpointerleave={() => (hover = null)}
 >
-	{#each [1, 2, 3, 4, 5] as star (star)}
-		{@const fill = shown >= star * 2 ? 'full' : shown >= star * 2 - 1 ? 'half' : 'empty'}
+	{#each stars as star (star)}
+		{@const fill = shown >= star * per ? 'full' : shown >= star * per - step ? 'half' : 'empty'}
 		<button
 			type="button"
 			tabindex="-1"
@@ -111,6 +123,18 @@
 	.large .star {
 		width: 34px;
 		height: 34px;
+	}
+
+	/* Ten stars take about the room of seven. */
+	.ten .star {
+		width: 20px;
+		height: 20px;
+		padding: 0;
+	}
+
+	.ten.large .star {
+		width: 28px;
+		height: 28px;
 	}
 
 	.star svg {
