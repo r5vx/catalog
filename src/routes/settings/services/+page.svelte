@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
 	import { WATCH_REGIONS } from '$lib/constants';
+	import { signInOutcome } from '$lib/signInWindow';
 	import type { PageData, ActionData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -52,55 +53,38 @@
 	/** How the last account added went, as the app saved it: shown under More accounts. */
 	let moreResult = $state<{ ok: boolean; text: string } | null>(null);
 
-	function addAccount() {
+	async function addAccount() {
 		addingMore = true;
 		moreFailed = false;
 		moreResult = null;
 		const asked = Date.now();
 		const popup = window.open('https://www.febbox.com/login#catalog-more', '_blank');
-		if (!popup) {
-			addingMore = false;
-			return;
-		}
-		const poll = setInterval(async () => {
-			if (!popup.closed) return;
-			clearInterval(poll);
-			// The app saves the sign-in as the window closes: its answer is waited for (it took longer
-			// than the 2.5 s this used to wait, which said "No account was added" wrongly).
-			let last: { at: number; result: string; name: string } | null = null;
-			for (let i = 0; i < 30 && !(last && last.at >= asked); i++) {
-				await new Promise((r) => setTimeout(r, 1000));
-				last = await fetch('/api/watch/save-token').then((r) => (r.ok ? r.json() : null)).catch(() => null);
-			}
-			await invalidateAll();
-			addingMore = false;
-			if (!last || last.at < asked) moreFailed = true;
-			else if (last.result === 'added') moreResult = { ok: true, text: `Added ${last.name || 'the account'}.` };
-			else if (last.result === 'same') moreResult = { ok: false, text: `${last.name || 'That account'} is already signed in here. Log in with a different one.` };
-			else if (last.result === 'refused') moreResult = { ok: false, text: "Febbox didn't log that account in. Try again." };
-			else moreResult = { ok: false, text: "Febbox couldn't be reached. Try again in a minute." };
-		}, 500);
+		const last = await signInOutcome('more', asked, popup);
+		await invalidateAll();
+		addingMore = false;
+		if (!last || last.result === 'closed') moreFailed = true;
+		else if (last.result === 'added') moreResult = { ok: true, text: `Added ${last.name || 'the account'}.` };
+		else if (last.result === 'same') moreResult = { ok: false, text: `${last.name || 'That account'} is already signed in here. Log in with a different one.` };
+		else if (last.result === 'refused') moreResult = { ok: false, text: "Febbox didn't log that account in. Try again." };
+		else moreResult = { ok: false, text: "Febbox couldn't be reached. Try again in a minute." };
 	}
 
-	function loginToFebbox() {
+	async function loginToFebbox() {
 		loggingIn = true;
 		loginFailed = false;
+		const asked = Date.now();
 		const popup = window.open('https://www.febbox.com/login', '_blank');
 		if (!popup) {
 			loggingIn = false;
 			return;
 		}
-		const poll = setInterval(async () => {
-			if (popup.closed) {
-				clearInterval(poll);
-				const result = await fetch('/api/watch/sync-cookies', { method: 'POST' })
-					.then((r) => r.json())
-					.catch(() => null);
-				loginFailed = result?.signedIn === false;
-				loggingIn = false;
-				invalidateAll();
-			}
-		}, 500);
+		await signInOutcome('main', asked, popup);
+		const result = await fetch('/api/watch/sync-cookies', { method: 'POST' })
+			.then((r) => r.json())
+			.catch(() => null);
+		loginFailed = result?.signedIn === false;
+		loggingIn = false;
+		invalidateAll();
 	}
 </script>
 
@@ -402,6 +386,8 @@
 		border: 1px solid var(--rule);
 		border-radius: var(--radius-sm);
 		padding: 10px 14px;
+		/* On a phone the buttons go under the name instead of past the screen's edge. */
+		flex-wrap: wrap;
 	}
 
 	.saved-row .muted {
@@ -410,6 +396,7 @@
 
 	.saved-actions {
 		display: flex;
+		flex-wrap: wrap;
 		gap: 8px;
 	}
 

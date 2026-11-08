@@ -8,7 +8,7 @@
  * says HTTPS isn't on for the network yet and gives a link to turn it on (whoever owns the
  * Tailscale account clicks it once); that link is passed on.
  */
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { youtubePhonePort, SECURE_PORT } from './youtubePhone';
 
@@ -28,6 +28,40 @@ function run(file: string, args: string[], timeout: number): Promise<Ran> {
 		execFile(file, args, { timeout, windowsHide: true }, (error, stdout, stderr) => {
 			resolve({ ok: !error, out: `${stdout ?? ''}\n${stderr ?? ''}` });
 		});
+	});
+}
+
+/**
+ * Like run, but stops as soon as `until` shows up in what it prints (it's killed then; ok false).
+ * `tailscale serve` waits for HTTPS to be turned on and prints the link to do it within a second
+ * or two: waiting out the whole timeout made the button take 20 s (owner, 2026-11-08).
+ */
+function runUntil(file: string, args: string[], timeout: number, until: RegExp): Promise<Ran> {
+	return new Promise((resolve) => {
+		let out = '';
+		let done = false;
+		const child = spawn(file, args, { windowsHide: true });
+		const finish = (ok: boolean) => {
+			if (done) return;
+			done = true;
+			clearTimeout(timer);
+			resolve({ ok, out });
+		};
+		const timer = setTimeout(() => {
+			child.kill();
+			finish(false);
+		}, timeout);
+		const heard = (chunk: Buffer) => {
+			out += chunk.toString();
+			if (until.test(out)) {
+				child.kill();
+				finish(false);
+			}
+		};
+		child.stdout?.on('data', heard);
+		child.stderr?.on('data', heard);
+		child.on('error', () => finish(false));
+		child.on('close', (code) => finish(code === 0));
 	});
 }
 
@@ -92,9 +126,11 @@ async function serveYouTube(cli: string): Promise<void> {
 export async function turnOnPhoneAddress(): Promise<{ ok: boolean; enable?: string; message?: string }> {
 	const cli = await tailscaleTool();
 	if (!cli) return { ok: false, message: 'Tailscale isn\'t installed on this computer.' };
-	// It waits for HTTPS to be turned on when it isn't yet: given 20 s, its link is read meanwhile.
-	const answer = await run(cli, ['serve', '--bg', `http://127.0.0.1:${port()}`], 20_000);
-	const link = answer.out.match(/https:\/\/login\.tailscale\.com\/\S+/)?.[0];
+	// It waits for HTTPS to be turned on when it isn't yet: its link is read as soon as its line is printed
+	// (whole: a link cut off mid-print would lead nowhere).
+	const LINK = /https:\/\/login\.tailscale\.com\/\S+/;
+	const answer = await runUntil(cli, ['serve', '--bg', `http://127.0.0.1:${port()}`], 20_000, /https:\/\/login\.tailscale\.com\/\S+\s/);
+	const link = answer.out.match(LINK)?.[0];
 	if (link) return { ok: false, enable: link };
 	if ((await phoneAddress()).on) {
 		await serveYouTube(cli);

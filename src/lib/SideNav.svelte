@@ -9,6 +9,7 @@
 	import CategoryTabs from '$lib/CategoryTabs.svelte';
 	import TabIcon from '$lib/TabIcon.svelte';
 	import Wordmark from '$lib/Wordmark.svelte';
+	import NowPlaying from '$lib/NowPlaying.svelte';
 	import { p } from '$lib/altText';
 	import { page } from '$app/state';
 
@@ -39,11 +40,12 @@
 	{:else}
 		<a href="/" class="brand" aria-label="Catalog, the library"><Wordmark height="1.75rem" /></a>
 	{/if}
+	<NowPlaying />
 	<p class="label">Library</p>
 	{#if tabs}
 		<CategoryTabs {...tabs} {active} vertical altMode={page.data.altMode} />
 	{/if}
-	<hr />
+	<div class="gap" aria-hidden="true"></div>
 	{#each elsewhere as link (link.key)}
 		<a href={link.href} class:here={here(link.href)}>
 			<TabIcon name={link.key} />
@@ -95,6 +97,12 @@
 		text-transform: uppercase;
 		color: var(--ink-faint);
 		margin: 0 10px 8px;
+	}
+
+	/* Space between the library's tabs and Browse (it was a line that shrank to a dot). */
+	.gap {
+		flex: none;
+		height: 18px;
 	}
 
 	a {

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { beforeNavigate, goto } from '$app/navigation';
+	import FindBar from '$lib/FindBar.svelte';
 
 	type Props = {
 		initialTitle: string;
@@ -42,7 +43,16 @@
 
 	let title = $state(untrack(() => initialTitle));
 	let editor = $state<HTMLDivElement | null>(null);
+	let finder = $state<FindBar | null>(null);
 	let status = $state('');
+
+	/** Closing Find leaves the caret on the match you were on, ready to type there. */
+	function afterFind(current: Range | null) {
+		if (!current || !editor) return;
+		editor.focus({ preventScroll: true });
+		getSelection()?.removeAllRanges();
+		getSelection()?.addRange(current);
+	}
 	let uploading = $state(false);
 	let resizingImg = $state<HTMLImageElement | null>(null);
 	let resizeStartX = 0;
@@ -358,7 +368,7 @@
 		<span class="sep" aria-hidden="true"></span>
 
 		<label class="image-btn" title="Add an image">
-			{uploading ? '…' : '🖼'}
+			{#if uploading}…{:else}<svg class="icon" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.5" /><path d="M2.5 11.5 6 8l2.5 2.5L10.5 9l3 3" /></svg>{/if}
 			<input
 				type="file"
 				accept="image/*"
@@ -371,6 +381,15 @@
 		</label>
 
 		<button type="button" title="Clear formatting" onclick={() => run('removeFormat')}>⌫</button>
+
+		<span class="sep" aria-hidden="true"></span>
+
+		<button type="button" title="Find in note (Ctrl+F)" aria-label="Find in note" onclick={() => finder?.show()}>
+			<svg class="icon" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+				<circle cx="7" cy="7" r="4.5" />
+				<path d="M10.4 10.4 14 14" />
+			</svg>
+		</button>
 
 		<span class="status faint" aria-live="polite">{status}</span>
 	</div>
@@ -407,9 +426,12 @@
 	</div>
 
 	<p class="hint faint">
-		Paste or drop images straight in. Saves as you type; Ctrl+S saves now.
+		<span class="keys">Paste or drop images straight in. Saves as you type; Ctrl+S saves now; Ctrl+F finds.</span>
+		<span class="touch">Saves as you type.</span>
 	</p>
 </div>
+
+<FindBar bind:this={finder} root={editor} onclose={afterFind} />
 
 <style>
 	.wrap {
@@ -473,6 +495,13 @@
 
 	.image-btn input {
 		display: none;
+	}
+
+	.icon {
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 1.6;
+		stroke-linecap: round;
 	}
 
 	.sep {
@@ -585,5 +614,20 @@
 	.hint {
 		font-size: 0.78rem;
 		margin: 0;
+	}
+
+	/* A phone has no keyboard shortcuts to tell about. */
+	.touch {
+		display: none;
+	}
+
+	@media (pointer: coarse) {
+		.keys {
+			display: none;
+		}
+
+		.touch {
+			display: inline;
+		}
 	}
 </style>

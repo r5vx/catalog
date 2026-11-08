@@ -12,6 +12,33 @@ without both.
 
 ## Unreleased
 
+## 4.1.0 — 2026-11-08 — YouTube tabs, the player kept loaded, sharper copies, and Live TV working again
+
+### New
+- **YouTube**: tabs, as in Chrome: + or Ctrl+T opens one, Ctrl+W closes it, Ctrl+Tab moves between them
+- **YouTube**: Ctrl+click or middle-click a video to open it in a new tab; right-click a link for Open link in new tab
+- **Player**: leaving the player keeps the video loaded, paused, for 30 minutes; coming back carries on at once, with no reloading or re-timing
+- **Player**: Now playing at the top of the sidebar (bottom left on phones) goes back to the video; its x closes it
+- **Notes**: Ctrl+F (or the magnifier in the toolbar) finds text in a note, with every match highlighted and Enter for the next
+- **Player**: the Files menu shows each copy's real sharpness in Mbps and marks the sharpest
+- **Player**: a film whose Showbox copy is weak plays a clearly sharper copy from another source, with the same sound
+- **Phones**: YouTube button on the library page
+
+### Improved
+- **Phones**: Turn on the phone address answers in about a second (it took 20)
+- **Sidebar**: no stray dot between the library and Browse
+- **Notes**: the picture button is an icon
+
+### Fixed
+- **Febbox**: Add another account signed the new account in over the main one; it now gets its own window and is added
+- **Febbox**: signing in with Google no longer says the window closed while it is still open
+- **Live TV**: games loaded forever after the site changed how it sends its streams
+- **Roku**: installing from Settings → TV said it couldn't reach the Roku; it now installs, or says what went wrong
+- **Fire TV**: YouTube's thumbnails are sharp and it's no longer zoomed in (TV app 1.8)
+- **Phones**: Downloads, Live TV and YouTube have a way back to the library, and back links are easier to tap
+- **Phones**: a video held upright shows the whole picture instead of a cropped middle
+- **Phones**: Live TV's tabs and the Febbox buttons in Settings → Services fit the screen; YouTube's note wraps
+
 ## 4.0.0 — 2026-11-08 — YouTube with no ads on every screen, a new look, and styled anime subtitles
 
 ### New

@@ -41,7 +41,8 @@ function key(name: string) {
 	target.dispatchEvent(new KeyboardEvent('keyup', { key: name, bubbles: true, cancelable: true }));
 }
 
-const inPlayer = () => Boolean(document.querySelector('[data-tv-player]'));
+// (Not the player kept out of sight while another page is open: src/lib/keptPlayer.svelte.ts.)
+const inPlayer = () => Boolean(document.querySelector('[data-tv-player]:not([inert] *)'));
 const remote = () =>
 	(window as unknown as { __catalogTv?: { back: () => string; menu: () => void } }).__catalogTv;
 

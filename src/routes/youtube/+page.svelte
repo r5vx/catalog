@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy, untrack } from 'svelte';
 	import NoAdsMark from '$lib/NoAdsMark.svelte';
+	import BackBar from '$lib/BackBar.svelte';
 
 	/**
 	 * YouTube from the sidebar. Nothing opens until the button is pressed. In the desktop app it opens
@@ -92,6 +93,8 @@
 </script>
 
 <svelte:head><title>YouTube · Catalog</title></svelte:head>
+
+<BackBar />
 
 <section class="stage">
 	<div class="wall" aria-hidden="true">
@@ -190,7 +193,7 @@
 		position: relative;
 		display: grid;
 		place-items: center;
-		min-height: calc(100vh - 140px);
+		min-height: calc(100vh - 180px);
 		border-radius: 18px;
 		overflow: hidden;
 		background: var(--surface);
@@ -431,7 +434,10 @@
 		min-height: 1.4em;
 		color: var(--ink-soft);
 		font-size: 0.95rem;
-		white-space: pre;
+		/* (Kept a line tall when empty; wraps on a phone.) */
+		white-space: pre-wrap;
+		text-align: center;
+		padding: 0 16px;
 	}
 
 	.elsewhere {

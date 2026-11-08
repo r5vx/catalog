@@ -70,6 +70,15 @@ final class YouTubeView {
 		settings.setDomStorageEnabled(true);
 		settings.setMediaPlaybackRequiresUserGesture(false);
 		settings.setUserAgentString(AGENT);
+		// Drawn 1920 wide, as on a TV. A Fire TV draws web pages at double density, so YouTube's TV app
+		// saw a 960x540 screen: it picked thumbnails for that size, stretched blurry over the real
+		// one (2026-11-08). 100 here is one page pixel to one screen pixel, so the page is as
+		// wide as the screen; scaled for a screen that isn't 1920. And the TV's own text size setting
+		// never enlarges YouTube (it looked zoomed in), as it doesn't in YouTube's own app.
+		int screenWide = Math.max(activity.getResources().getDisplayMetrics().widthPixels, activity.getResources().getDisplayMetrics().heightPixels);
+		view.setInitialScale(Math.max(1, Math.round(100f * screenWide / 1920f)));
+		settings.setTextZoom(100);
+		settings.setSupportZoom(false);
 		CookieManager.getInstance().setAcceptCookie(true);
 		CookieManager.getInstance().setAcceptThirdPartyCookies(view, true);
 		view.setWebViewClient(new Pages());

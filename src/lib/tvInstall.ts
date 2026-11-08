@@ -11,4 +11,4 @@ export const FIRE_TV_CODE = '5785169';
  * same). A TV app older than this is offered the update from the computer (TvUpdated.svelte);
  * from 1.4 (version 5) on it installs itself, with no Downloader.
  */
-export const TV_APP_VERSION = 8;
+export const TV_APP_VERSION = 9;

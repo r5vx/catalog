@@ -51,6 +51,7 @@
 			<a href="/settings" class="btn" title="Settings" aria-label="Settings">⚙</a>
 			<a href="/browse" class="btn">{pm ? p('Browse') : 'Browse'}</a>
 			<a href="/live" class="btn side-link">Live TV</a>
+			<a href="/youtube" class="btn side-link">YouTube</a>
 			<a href="/downloads" class="btn side-link">Downloads</a>
 			<a href="/entry/new" class="btn btn-primary">{pm ? p('alt:+ Add') : '+ Add'}</a>
 		</div>
@@ -72,7 +73,7 @@
 </header>
 
 <style>
-	/* (With the sidebar showing, Live TV and Downloads are in it.) */
+	/* (With the sidebar showing, Live TV, YouTube and Downloads are in it.) */
 	@media (min-width: 901px) {
 		:global(.beside-nav) .side-link {
 			display: none;

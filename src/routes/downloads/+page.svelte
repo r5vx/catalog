@@ -8,6 +8,7 @@
 	 * Asks every two seconds while one is downloading.
 	 */
 	import { onDestroy, onMount } from 'svelte';
+	import BackBar from '$lib/BackBar.svelte';
 	import { confirmAction } from '$lib/confirm.svelte';
 	import { downloadName } from '$lib/downloadName';
 	import { canKeep, kept, keepOnPhone, refreshKept, removeFromPhone, stopKeeping } from '$lib/phoneKeep.svelte';
@@ -153,6 +154,8 @@
 </script>
 
 <svelte:head><title>Downloads · Catalog</title></svelte:head>
+
+<BackBar />
 
 <div class="downloads">
 	<header>

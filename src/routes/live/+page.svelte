@@ -9,6 +9,7 @@
 	 * picked, its games go by On now, Later today, Tomorrow.
 	 */
 	import { onDestroy, onMount } from 'svelte';
+	import BackBar from '$lib/BackBar.svelte';
 	import { goto } from '$app/navigation';
 	import LiveStar from '$lib/LiveStar.svelte';
 	import GameArt from '$lib/GameArt.svelte';
@@ -434,6 +435,8 @@
 	</div>
 {/if}
 
+<BackBar />
+
 <div class="live">
 	<header>
 		<h1>Live TV</h1>
@@ -721,6 +724,25 @@
 		display: flex;
 		gap: 4px;
 		border-bottom: 1px solid var(--rule);
+		/* On a phone the four tabs with their counts are wider than the screen: they scroll here,
+		   not the whole page sideways. */
+		overflow-x: auto;
+		scrollbar-width: none;
+	}
+
+	.tabs button {
+		flex: none;
+	}
+
+	@media (max-width: 600px) {
+		.tabs {
+			gap: 0;
+		}
+
+		.tabs button {
+			padding: 9px 9px;
+			gap: 5px;
+		}
 	}
 
 	.tabs button {

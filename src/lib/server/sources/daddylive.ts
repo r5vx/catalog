@@ -313,7 +313,13 @@ const tidy = (text: string) =>
 const decode = (text: string) =>
 	text.replace(/&amp;/g, '&').replace(/&#0?39;|&apos;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
 
-type Link = { url: string; headers: Record<string, string>; until: number };
+/**
+ * `key`: the playlist's lines are sealed (2026-11-08: its piece addresses came AES-CTR encrypted,
+ * so every piece asked for was "404 page not found" and a live game loaded forever). The player
+ * asks `/api/playlist-token?slug=<name>` for a token and the key that opens that playlist's
+ * lines; `tokenAt` is that address, asked here directly (no hidden page) when the token runs out.
+ */
+type Link = { url: string; headers: Record<string, string>; until: number; key?: string; tokenAt?: string };
 const links = new Map<number, Link>();
 const asking = new Map<number, Promise<Link | null>>();
 /** Asked for again this long before its token runs out. */
@@ -352,20 +358,100 @@ export function liveTrouble(id: number) {
 function ask(id: number): Promise<Link | null> {
 	const already = asking.get(id);
 	if (already) return already;
-	const page = `${site}/${PLAYERS[playerFor.get(id) ?? 0]}/stream-${id}.php`;
-	const look = electronLiveCapture(page, `${site}/watch.php?id=${id}`)
-		.then((found) => {
-			if (!found?.url) {
+	const kept = links.get(id);
+	const look = (async () => {
+		// A sealed playlist's token comes from its own address: asked directly, quick.
+		if (kept?.tokenAt) {
+			const renewed = await sealedLink(kept.url, kept.headers, kept.tokenAt);
+			if (renewed) return renewed;
+		}
+		const page = `${site}/${PLAYERS[playerFor.get(id) ?? 0]}/stream-${id}.php`;
+		const found = await electronLiveCapture(page, `${site}/watch.php?id=${id}`);
+		if (!found?.url) return null;
+		const headers = { 'User-Agent': UA, ...found.headers };
+		const sealed = await sealedLink(found.url, headers);
+		if (sealed) return sealed;
+		// "?t=<seconds>.<signature>": when the token runs out (two minutes if it doesn't say).
+		const expires = Number(/[?&]t=(\d+)/.exec(found.url)?.[1]) * 1000;
+		return { url: found.url, headers, until: expires > Date.now() ? expires : Date.now() + 120_000 };
+	})()
+		.then((link) => {
+			if (!link) {
 				liveTrouble(id);
 				return null;
 			}
-			// "?t=<seconds>.<signature>": when the token runs out (two minutes if it doesn't say).
-			const expires = Number(/[?&]t=(\d+)/.exec(found.url)?.[1]) * 1000;
-			const link = { url: found.url, headers: { 'User-Agent': UA, ...found.headers }, until: expires > Date.now() ? expires : Date.now() + 120_000 };
 			links.set(id, link);
 			return link;
 		})
 		.finally(() => asking.delete(id));
 	asking.set(id, look);
 	return look;
+}
+
+/**
+ * The playlist at `url` with a token (and the key to its lines) from its server's token address,
+ * `/api/playlist-token?slug=<name>` beside it ("premium52" for `/premium52/index.m3u8`). Null
+ * when that server has no such address (its playlist isn't sealed) or didn't answer.
+ */
+async function sealedLink(url: string, headers: Record<string, string>, tokenAt?: string): Promise<Link | null> {
+	let address = tokenAt;
+	if (!address) {
+		try {
+			const parsed = new URL(url);
+			const slug = /^\/([^/]+)\/[^/]+\.m3u8$/.exec(parsed.pathname)?.[1];
+			if (!slug) return null;
+			address = `${parsed.origin}/api/playlist-token?slug=${encodeURIComponent(slug)}`;
+		} catch {
+			return null;
+		}
+	}
+	try {
+		const resp = await fetch(address, { headers, signal: AbortSignal.timeout(8_000) });
+		if (!resp.ok) return null;
+		const answer = (await resp.json()) as { k?: unknown; token?: unknown; ttl?: unknown };
+		if (typeof answer?.k !== 'string' || typeof answer.token !== 'string') return null;
+		const playlist = new URL(url);
+		playlist.search = '';
+		playlist.searchParams.set('t', answer.token);
+		const ttl = Number(answer.ttl) > 0 ? Number(answer.ttl) * 1000 : 120_000;
+		return { url: playlist.href, headers, until: Date.now() + ttl, key: answer.k, tokenAt: address };
+	} catch {
+		return null;
+	}
+}
+
+const fromBase64Url = (text: string) => Buffer.from(text.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+
+/**
+ * A sealed playlist opened: each line that isn't a "#" line is a piece's address, AES-CTR
+ * encrypted with `key`, the counter being the piece's sequence number (as the site's player
+ * does it, in daddy.min.js's openPlaylist). Lines already plain are left as they are.
+ */
+export async function openSealedPlaylist(text: string, key: string): Promise<string> {
+	const opened = await crypto.subtle.importKey('raw', fromBase64Url(key), 'AES-CTR', false, ['decrypt']);
+	const out: string[] = [];
+	let sequence = 0;
+	for (const raw of text.split('\n')) {
+		const line = raw.trim();
+		if (!line) continue;
+		if (line.startsWith('#')) {
+			const found = /^#EXT-X-MEDIA-SEQUENCE:\s*(\d+)/.exec(line);
+			if (found) sequence = Number(found[1]);
+			out.push(line);
+			continue;
+		}
+		if (/[/.:]/.test(line)) {
+			out.push(line);
+			sequence++;
+			continue;
+		}
+		const counter = new Uint8Array(16);
+		const view = new DataView(counter.buffer);
+		view.setUint32(8, Math.floor(sequence / 2 ** 32));
+		view.setUint32(12, sequence >>> 0);
+		const plain = await crypto.subtle.decrypt({ name: 'AES-CTR', counter, length: 64 }, opened, fromBase64Url(line));
+		out.push(new TextDecoder().decode(plain));
+		sequence++;
+	}
+	return out.join('\n') + '\n';
 }

@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { liveLink, liveTrouble, noteLiveTry } from '$lib/server/sources/daddylive';
+import { liveLink, liveTrouble, noteLiveTry, openSealedPlaylist } from '$lib/server/sources/daddylive';
 import { trustLiveHost } from '$lib/server/relayHosts';
 import type { RequestHandler } from './$types';
 
@@ -77,6 +77,13 @@ async function fromItsSource(id: number): Promise<Answer | null> {
 		const variant = await get(base, link.headers);
 		if (!variant?.ok) return failed(id, `quality playlist ${variant?.status ?? 'no answer'}`);
 		text = await variant.text();
+	}
+	if (link.key) {
+		try {
+			text = await openSealedPlaylist(text, link.key);
+		} catch {
+			return failed(id, 'sealed playlist would not open');
+		}
 	}
 	const relayed = (address: string) => {
 		const full = new URL(address, base);

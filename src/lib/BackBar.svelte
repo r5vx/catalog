@@ -45,6 +45,19 @@
 		color: var(--accent);
 	}
 
+	/* On a phone: big enough to hit with a thumb. */
+	@media (max-width: 700px) {
+		.bar {
+			margin: -6px 0 8px;
+			font-size: 0.98rem;
+		}
+
+		a {
+			display: inline-block;
+			padding: 8px 0;
+		}
+	}
+
 	.home::before {
 		content: '';
 		display: inline-block;

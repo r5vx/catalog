@@ -3,12 +3,17 @@
 	Looks the same as the editor. The body was cleaned when it was saved, so it's safe to show.
 -->
 <script lang="ts">
+	import FindBar from '$lib/FindBar.svelte';
+
 	let { title, body }: { title: string; body: string } = $props();
+	let page = $state<HTMLDivElement | null>(null);
 </script>
+
+<FindBar root={page} />
 
 <div class="wrap">
 	<h1 class="title">{title}</h1>
-	<div class="page">
+	<div class="page" bind:this={page}>
 		{#if body.trim()}
 			{@html body}
 		{:else}

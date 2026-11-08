@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { createSocket } from 'node:dgram';
+import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -117,7 +118,55 @@ export type InstallAnswer = { ok: boolean; message: string };
 /** Only for trying it against a pretend Roku on this computer: the real developer page is on port 80. */
 const testPort = Number(process.env.CATALOG_ROKU_TEST_PORT) || 0;
 
-/** Installs Catalog on the Roku at `address` with its developer password, then opens it. */
+/** The developer page's install form, as one finished body (a known length, never sent in chunks). */
+function installForm(zip: Buffer): { body: Buffer; type: string } {
+	const boundary = `----CatalogRoku${randomBytes(12).toString('hex')}`;
+	const line = '\r\n';
+	const head =
+		`--${boundary}${line}Content-Disposition: form-data; name="mysubmit"${line}${line}Install${line}` +
+		`--${boundary}${line}Content-Disposition: form-data; name="archive"; filename="catalog-roku.zip"${line}Content-Type: application/zip${line}${line}`;
+	const body = Buffer.concat([Buffer.from(head), zip, Buffer.from(`${line}--${boundary}--${line}`)]);
+	return { body, type: `multipart/form-data; boundary=${boundary}` };
+}
+
+type RokuReply = { status: number; headers: IncomingHttpHeaders; text: string };
+
+/**
+ * One request to the Roku's developer page. Node's plain http, told to accept loosely written
+ * replies (`insecureHTTPParser`): fetch turns away any reply a small built-in web server gets
+ * slightly wrong, and every such refusal used to come out as "Couldn't reach the Roku".
+ */
+function rokuRequest(url: string, method: 'GET' | 'POST', headers: Record<string, string | number>, body: Buffer | null, timeout: number): Promise<RokuReply> {
+	return new Promise((resolve, reject) => {
+		const req = httpRequest(url, { method, headers, insecureHTTPParser: true, timeout }, (res) => {
+			const parts: Buffer[] = [];
+			res.on('data', (part: Buffer) => parts.push(part));
+			res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, text: Buffer.concat(parts).toString('utf8') }));
+			res.on('error', reject);
+		});
+		req.on('timeout', () => req.destroy(Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' })));
+		req.on('error', reject);
+		req.end(body ?? undefined);
+	});
+}
+
+/** Why a request to the Roku failed, in words. */
+function whyUnreachable(error: unknown): string {
+	const code = String((error as { code?: string })?.code ?? (error as { cause?: { code?: string } })?.cause?.code ?? (error as { name?: string })?.name ?? '');
+	if (code === 'ECONNREFUSED') return "The Roku turned the connection down. Developer mode may have switched off: turn it on again with the remote, then try.";
+	if (/TIMEOUT|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|TimeoutError/i.test(code)) return "Couldn't reach the Roku. Is it on, and on the same Wi-Fi as this computer?";
+	return `The Roku stopped answering partway (${code || 'no reason given'}). Try again.`;
+}
+
+/**
+ * Installs Catalog on the Roku at `address` with its developer password, then opens it.
+ *
+ * The sign-in challenge is asked for first with an empty request, then the app is sent once,
+ * signed in, with a known length. It used to send the whole app straight away (the Roku answers
+ * "sign in first" and can hang up mid-upload) through fetch (strict about replies), and any failure
+ * at all said "Couldn't reach the Roku" (owner, 2026-11-08, developer mode on, the Roku found). Now
+ * a failure says what happened.
+ */
 export async function installOnRoku(address: string, password: string): Promise<InstallAnswer> {
 	const port = testPort || 80;
 	if (!isHomeAddress(address) && !(testPort && address === '127.0.0.1')) return { ok: false, message: "That isn't an address on this home network." };
@@ -125,33 +174,33 @@ export async function installOnRoku(address: string, password: string): Promise<
 	if (!zip) return { ok: false, message: "The Roku app isn't in this copy of Catalog." };
 	const uri = '/plugin_install';
 	const url = `http://${address}${port === 80 ? '' : `:${port}`}${uri}`;
-	const form = () => {
-		const body = new FormData();
-		body.set('mysubmit', 'Install');
-		body.set('archive', new Blob([new Uint8Array(zip)], { type: 'application/zip' }), 'catalog-roku.zip');
-		return body;
+	const form = installForm(zip);
+	const send = (authorization?: string) =>
+		rokuRequest(url, 'POST', { 'Content-Type': form.type, 'Content-Length': form.body.length, ...(authorization ? { Authorization: authorization } : {}) }, form.body, 90_000);
+	const challengeOf = (reply: RokuReply) => {
+		const value = reply.headers['www-authenticate'];
+		return reply.status === 401 ? String(Array.isArray(value) ? value[0] : (value ?? '')) : '';
 	};
 	try {
-		// The first ask is turned away with the digest challenge; the second answers it.
-		let resp = await fetch(url, { method: 'POST', body: form(), signal: AbortSignal.timeout(15_000) });
-		const challenge = resp.headers.get('www-authenticate') ?? '';
-		if (resp.status === 401 && /digest/i.test(challenge)) {
-			resp = await fetch(url, {
-				method: 'POST',
-				body: form(),
-				headers: { Authorization: digestHeader(challenge, 'POST', uri, 'rokudev', password) },
-				signal: AbortSignal.timeout(60_000)
-			});
+		let challenge = '';
+		try {
+			challenge = challengeOf(await rokuRequest(url, 'GET', {}, null, 10_000));
+		} catch (error) {
+			return { ok: false, message: whyUnreachable(error) };
 		}
+		let resp = await send(/digest/i.test(challenge) ? digestHeader(challenge, 'POST', uri, 'rokudev', password) : undefined);
+		// (A Roku that wanted a fresh challenge for the upload itself: answered once more.)
+		const again = challengeOf(resp);
+		if (/digest/i.test(again)) resp = await send(digestHeader(again, 'POST', uri, 'rokudev', password));
 		if (resp.status === 401) return { ok: false, message: "The Roku didn't accept that password." };
-		const said = rokuSaid(await resp.text());
-		if (!resp.ok) return { ok: false, message: said || `The Roku answered ${resp.status}.` };
+		const said = rokuSaid(resp.text);
+		if (resp.status < 200 || resp.status >= 300) return { ok: false, message: said || `The Roku answered ${resp.status}.` };
 		if (/install success|identical to previous version/i.test(said)) {
 			await fetch(`http://${address}:8060/launch/dev`, { method: 'POST', signal: AbortSignal.timeout(5000) }).catch(() => null);
 			return { ok: true, message: /identical/i.test(said) ? 'Catalog was already up to date on this Roku. Opening it.' : 'Installed. Catalog is opening on the TV.' };
 		}
 		return { ok: false, message: said || "The Roku didn't say whether it installed." };
-	} catch {
-		return { ok: false, message: "Couldn't reach the Roku. Is developer mode on, and is it on the same Wi-Fi?" };
+	} catch (error) {
+		return { ok: false, message: whyUnreachable(error) };
 	}
 }

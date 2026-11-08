@@ -26,8 +26,14 @@
  *
  * Its own browser storage (`persist:youtube`), so a YouTube sign-in stays here (and in the hidden
  * window that plays YouTube for the Roku, youtubeHelper.cjs, which shares it) and nowhere else.
+ *
+ * Tabs, as in Chrome (owner, 2026-11-08): a strip across the top, in both ways of showing it.
+ * + or Ctrl+T opens one, Ctrl+W closes one, Ctrl+Tab / Ctrl+Shift+Tab / Ctrl+1-9 move between
+ * them; Ctrl+click or a middle click on a link opens it in a new tab behind, and right-clicking a
+ * link offers it too. Each tab is a page of its own (with the no-ads script), sharing the sign-in.
+ * Closing YouTube closes every tab but the first, which goes back to the home page.
  */
-const { app, BrowserWindow, WebContentsView, session, shell } = require('electron');
+const { app, BrowserWindow, WebContentsView, Menu, clipboard, session, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { signInWithBrowser } = require('./youtubeSignIn.cjs');
@@ -79,7 +85,7 @@ app.on('before-quit', () => {
 		youtube.cookies.flushStore().catch(() => {});
 	} catch {}
 	// Inside Catalog: its page goes with Catalog's window.
-	if (inside && !inside.view.webContents.isDestroyed()) inside.view.webContents.close();
+	if (inside) inside.tabs.destroy();
 });
 
 /** A plain page while signing in, or when it can't. */
@@ -148,7 +154,7 @@ const BACK_BUTTON = `(() => {
  * sign-in, the keys, the Skip button. `owner()` is the window it's in; `goBackToCatalog` is set
  * inside Catalog only.
  */
-function setUpPage(page, owner, goBackToCatalog) {
+function setUpPage(page, owner, goBackToCatalog, tabs = null) {
 	page.setUserAgent(AGENT);
 
 	/** Sign in through the computer's browser, then back to where YouTube was. */
@@ -164,9 +170,11 @@ function setUpPage(page, owner, goBackToCatalog) {
 	};
 
 	// Links YouTube opens in a new tab: YouTube/Google ones here, the rest in the computer's browser.
-	page.setWindowOpenHandler(({ url }) => {
+	// Ctrl+click and middle clicks ask for a tab behind ("background-tab"), Ctrl+Shift+click one in front.
+	page.setWindowOpenHandler(({ url, disposition }) => {
 		if (url === BACK_TO_CATALOG) goBackToCatalog?.();
 		else if (SIGN_IN.test(url)) signIn(url);
+		else if (OWN.test(url) && tabs && /tab|window/.test(disposition)) tabs.open(url, disposition !== 'background-tab');
 		else if (OWN.test(url)) page.loadURL(url);
 		else if (/^https?:\/\//i.test(url)) shell.openExternal(url);
 		return { action: 'deny' };
@@ -200,8 +208,18 @@ function setUpPage(page, owner, goBackToCatalog) {
 		else if (input.key === 'F5') page.reload();
 		else if (input.alt && input.key === 'ArrowLeft') back();
 		else if (input.alt && input.key === 'ArrowRight') forward();
-		else return;
+		else if (!tabs || !tabs.key(input)) return;
 		event.preventDefault();
+	});
+
+	// Right-clicking a link: open it in a new tab, or copy its address.
+	page.on('context-menu', (_event, params) => {
+		if (!tabs || !params.linkURL || !OWN.test(params.linkURL)) return;
+		const link = params.linkURL;
+		Menu.buildFromTemplate([
+			{ label: 'Open link in new tab', click: () => tabs.open(link, false) },
+			{ label: 'Copy link address', click: () => clipboard.writeText(link) }
+		]).popup({ window: owner() ?? undefined });
 	});
 
 	// A video ad's Skip button, pressed as soon as it shows (youtube-tv.js covers the ad, mutes it
@@ -233,9 +251,363 @@ function setUpPage(page, owner, goBackToCatalog) {
 	};
 }
 
+/* ------------------------------------------------------------ tabs */
+
+/** The tab strip's height, in pixels. */
+const STRIP = 36;
+
+/*
+ * The tab strip: a small page drawn from what's sent to it (render), asking for things by opening
+ * "about:blank#tabs:<what>:<tab>", which is caught and never opened (like the pink circle).
+ */
+const STRIP_PAGE =
+	'data:text/html;charset=utf-8,' +
+	encodeURIComponent(`<!doctype html><meta charset="utf-8"><title>Tabs</title>
+<style>
+	html, body { margin: 0; height: 100%; background: #0f0f0f; color: #f1f1f1; font: 12.5px system-ui, 'Segoe UI', sans-serif; overflow: hidden; user-select: none; }
+	#bar { display: flex; align-items: center; gap: 4px; height: 100%; padding: 0 8px; box-sizing: border-box; }
+	#tabs { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 0 1 auto; overflow: hidden; }
+	.tab { display: flex; align-items: center; gap: 8px; flex: 0 1 220px; min-width: 44px; height: 28px; padding: 0 6px 0 10px; box-sizing: border-box; border-radius: 8px; color: #aaa; cursor: default; }
+	.tab:hover { background: #1f1f1f; color: #f1f1f1; }
+	.tab.on { background: #272727; color: #f1f1f1; }
+	.tab img, .tab .dot { width: 16px; height: 16px; flex: none; border-radius: 3px; }
+	.tab .dot { background: #3f3f3f; }
+	.tab .dot.loading { background: none; border: 2px solid #3f3f3f; border-top-color: #e994c2; border-radius: 50%; width: 12px; height: 12px; animation: spin 0.8s linear infinite; }
+	@keyframes spin { to { transform: rotate(360deg); } }
+	.tab .name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+	.tab svg { flex: none; }
+	.tab .x { flex: none; width: 20px; height: 20px; border: 0; padding: 0; border-radius: 50%; background: none; color: inherit; display: grid; place-items: center; cursor: pointer; }
+	.tab .x:hover { background: #3f3f3f; }
+	.tab.narrow .name, .tab.narrow .sound { display: none; }
+	.tab.narrow:not(.on) .x { display: none; }
+	#add, #back { flex: none; width: 28px; height: 28px; border: 0; padding: 0; border-radius: 50%; background: none; color: #f1f1f1; display: grid; place-items: center; cursor: pointer; }
+	#add:hover { background: #272727; }
+	#back { background: #e994c2; color: #141414; margin-right: 6px; width: 26px; height: 26px; }
+	#back[hidden] { display: none; }
+	#rest { flex: 1; align-self: stretch; }
+	svg path { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+</style>
+<div id="bar">
+	<button id="back" title="Back to Catalog" hidden><svg viewBox="0 0 24 24" width="14" height="14"><path d="M15 5l-7 7 7 7" stroke-width="3"/></svg></button>
+	<div id="tabs"></div>
+	<button id="add" title="New tab (Ctrl+T)"><svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5v14M5 12h14"/></svg></button>
+	<div id="rest"></div>
+</div>
+<script>
+	const ask = (what, id) => window.open('about:blank#tabs:' + what + ':' + (id || 0));
+	const NS = 'http://www.w3.org/2000/svg';
+	const icon = (d, size) => {
+		const svg = document.createElementNS(NS, 'svg');
+		svg.setAttribute('viewBox', '0 0 24 24');
+		svg.setAttribute('width', size);
+		svg.setAttribute('height', size);
+		const path = document.createElementNS(NS, 'path');
+		path.setAttribute('d', d);
+		svg.appendChild(path);
+		return svg;
+	};
+	document.getElementById('add').onclick = () => ask('new');
+	document.getElementById('back').onclick = () => ask('catalog');
+	document.getElementById('rest').ondblclick = () => ask('new');
+	function render(state) {
+		document.getElementById('back').hidden = !state.back;
+		const list = document.getElementById('tabs');
+		list.replaceChildren();
+		const narrow = state.tabs.length > 8;
+		for (const tab of state.tabs) {
+			const item = document.createElement('div');
+			item.className = 'tab' + (tab.id === state.active ? ' on' : '') + (narrow ? ' narrow' : '');
+			item.title = tab.title;
+			item.onmousedown = (event) => {
+				if (event.button === 0) ask('select', tab.id);
+				if (event.button === 1) { event.preventDefault(); ask('close', tab.id); }
+			};
+			if (tab.icon && !tab.loading) {
+				const img = document.createElement('img');
+				img.src = tab.icon;
+				img.onerror = () => img.replaceWith(Object.assign(document.createElement('span'), { className: 'dot' }));
+				item.appendChild(img);
+			} else {
+				item.appendChild(Object.assign(document.createElement('span'), { className: 'dot' + (tab.loading ? ' loading' : '') }));
+			}
+			item.appendChild(Object.assign(document.createElement('span'), { className: 'name', textContent: tab.title }));
+			if (tab.audible) {
+				const sound = icon('M4 9v6h4l5 4V5L8 9H4zM16 8.5a5 5 0 0 1 0 7', 14);
+				sound.classList.add('sound');
+				item.appendChild(sound);
+			}
+			const close = document.createElement('button');
+			close.className = 'x';
+			close.title = 'Close tab (Ctrl+W)';
+			close.appendChild(icon('M7 7l10 10M17 7L7 17', 12));
+			close.onmousedown = (event) => event.stopPropagation();
+			close.onclick = () => ask('close', tab.id);
+			item.appendChild(close);
+			list.appendChild(item);
+		}
+	}
+</script>`);
+
+/**
+ * YouTube's tabs in `host` (its own window, or Catalog's window): the strip across the top and a
+ * page per tab under it. `insideCatalog` adds the way back to Catalog (`goBackToCatalog`);
+ * `onEmpty` is closing the last tab.
+ */
+function makeTabs(host, { insideCatalog = false, goBackToCatalog = null, onEmpty }) {
+	const strip = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+	strip.setBackgroundColor('#0f0f0f');
+	const group = { host, strip, tabs: [], active: null, attached: false, fullScreen: false, destroyed: false };
+	let nextId = 1;
+	let stripReady = false;
+	let drawTimer = null;
+
+	const draw = () => {
+		if (!stripReady || strip.webContents.isDestroyed()) return;
+		const state = {
+			back: insideCatalog,
+			active: group.active?.id ?? 0,
+			tabs: group.tabs.map(({ id, title, icon, audible, loading }) => ({ id, title, icon, audible, loading }))
+		};
+		strip.webContents.executeJavaScript(`render(${JSON.stringify(state)})`).catch(() => {});
+		// Its own window is named after the tab showing (the taskbar shows it).
+		if (!insideCatalog && !host.isDestroyed() && group.active) host.setTitle(`${group.active.title} - YouTube`);
+	};
+	const drawSoon = () => {
+		clearTimeout(drawTimer);
+		drawTimer = setTimeout(draw, 30);
+	};
+
+	const shown = () => group.attached && !host.isDestroyed() && host.isVisible() && !host.isMinimized();
+
+	/** Only the tab showing (and any playing sound) runs at full speed. */
+	const pace = () => {
+		for (const tab of group.tabs) {
+			if (!tab.page.isDestroyed()) tab.page.setBackgroundThrottling(!(shown() && (tab === group.active || tab.audible)));
+		}
+	};
+
+	const layout = () => {
+		if (!group.attached || host.isDestroyed()) return;
+		const [width, height] = host.getContentSize();
+		const top = group.fullScreen ? 0 : STRIP;
+		strip.setVisible(!group.fullScreen);
+		strip.setBounds({ x: 0, y: 0, width, height: STRIP });
+		for (const tab of group.tabs) {
+			tab.view.setBounds({ x: 0, y: top, width, height: Math.max(0, height - top) });
+			tab.view.setVisible(tab === group.active);
+		}
+	};
+
+	const select = (tab) => {
+		if (!tab || tab.page.isDestroyed()) return;
+		group.active = tab;
+		group.fullScreen = false;
+		layout();
+		pace();
+		if (shown()) tab.page.focus();
+		drawSoon();
+	};
+
+	const api = {
+		open: (url, activate) => open(url, activate),
+		key: (input) => key(input)
+	};
+
+	/** A new tab on `url`; `activate` shows it (otherwise it opens behind, after the one showing). */
+	function open(url = WEBSITE, activate = true, last = false) {
+		const view = new WebContentsView({ webPreferences: WEB_PREFERENCES });
+		view.setBackgroundColor('#0f0f0f');
+		const page = view.webContents;
+		const tab = { id: nextId++, view, page, title: 'YouTube', icon: '', audible: false, loading: true, controls: null };
+		tab.controls = setUpPage(page, () => (host.isDestroyed() ? null : host), goBackToCatalog, api);
+		tab.controls.whenShowing(() => group.active === tab && shown());
+
+		page.on('page-title-updated', (_event, title) => {
+			tab.title = title.replace(/ - YouTube$/, '') || 'YouTube';
+			drawSoon();
+		});
+		page.on('page-favicon-updated', (_event, icons) => {
+			tab.icon = icons[0] || '';
+			drawSoon();
+		});
+		page.on('audio-state-changed', (event) => {
+			tab.audible = Boolean(event.audible);
+			pace();
+			drawSoon();
+		});
+		page.on('did-start-loading', () => {
+			tab.loading = true;
+			drawSoon();
+		});
+		page.on('did-stop-loading', () => {
+			tab.loading = false;
+			drawSoon();
+		});
+		// YouTube's own full screen: the tab covers everything, strip too (Electron fills the screen
+		// with the window by itself).
+		page.on('enter-html-full-screen', () => {
+			if (group.active !== tab) return;
+			group.fullScreen = true;
+			layout();
+		});
+		page.on('leave-html-full-screen', () => {
+			group.fullScreen = false;
+			layout();
+		});
+		if (insideCatalog) page.on('dom-ready', () => page.executeJavaScript(BACK_BUTTON).catch(() => {}));
+
+		// Opened from a link: right after the tab showing (and any opened from it before), as in Chrome.
+		const at = group.active && !last ? group.tabs.indexOf(group.active) + 1 : group.tabs.length;
+		let spot = at;
+		while (!last && spot < group.tabs.length && group.tabs[spot].openedFrom === group.active?.id) spot++;
+		tab.openedFrom = last ? 0 : (group.active?.id ?? 0);
+		group.tabs.splice(spot, 0, tab);
+		if (group.attached) host.contentView.addChildView(view);
+		page.setBackgroundThrottling(true);
+		page.loadURL(url).catch(() => {});
+		if (activate || !group.active) select(tab);
+		else {
+			layout();
+			drawSoon();
+		}
+		return tab;
+	}
+
+	/** Closes a tab; the last one closes YouTube instead. */
+	function close(tab) {
+		if (!tab) return;
+		if (group.tabs.length <= 1) {
+			onEmpty();
+			return;
+		}
+		const index = group.tabs.indexOf(tab);
+		if (index === -1) return;
+		group.tabs.splice(index, 1);
+		if (group.attached && !host.isDestroyed()) host.contentView.removeChildView(tab.view);
+		if (!tab.page.isDestroyed()) tab.page.close();
+		if (group.active === tab) select(group.tabs[Math.min(index, group.tabs.length - 1)]);
+		else drawSoon();
+	}
+
+	const step = (by) => {
+		if (group.tabs.length < 2) return;
+		const index = group.tabs.indexOf(group.active);
+		select(group.tabs[(index + by + group.tabs.length) % group.tabs.length]);
+	};
+
+	/** The tab keys, as in Chrome. True when the key was one of them. */
+	function key(input) {
+		if (input.type !== 'keyDown' || !(input.control || input.meta) || input.alt) return false;
+		const k = input.key.toLowerCase();
+		if (k === 't' && !input.shift) open(WEBSITE, true, true);
+		else if ((k === 'w' && !input.shift) || k === 'f4') close(group.active);
+		else if (k === 'tab') step(input.shift ? -1 : 1);
+		else if (k === 'pagedown') step(1);
+		else if (k === 'pageup') step(-1);
+		else if (/^[1-8]$/.test(k)) select(group.tabs[Number(k) - 1]);
+		else if (k === '9') select(group.tabs[group.tabs.length - 1]);
+		else return false;
+		return true;
+	}
+
+	strip.webContents.setWindowOpenHandler(({ url }) => {
+		const asked = /#tabs:(\w+):(\d+)/.exec(url);
+		if (asked) {
+			const tab = group.tabs.find((t) => t.id === Number(asked[2]));
+			if (asked[1] === 'new') open(WEBSITE, true, true);
+			else if (asked[1] === 'select') select(tab);
+			else if (asked[1] === 'close') close(tab);
+			else if (asked[1] === 'catalog') goBackToCatalog?.();
+		}
+		return { action: 'deny' };
+	});
+	strip.webContents.on('before-input-event', (event, input) => {
+		if (key(input)) event.preventDefault();
+	});
+	strip.webContents.on('did-finish-load', () => {
+		stripReady = true;
+		draw();
+	});
+	strip.webContents.loadURL(STRIP_PAGE).catch(() => {});
+
+	// The window changing size (or filling the screen): the tabs follow.
+	const onResize = () => layout();
+	host.on('resize', onResize);
+	host.on('enter-full-screen', onResize);
+	host.on('leave-full-screen', onResize);
+	// The mouse's side buttons, while YouTube is showing.
+	const onCommand = (_event, command) => {
+		if (!group.attached || !group.active) return;
+		if (command === 'browser-backward') group.active.controls.back();
+		if (command === 'browser-forward') group.active.controls.forward();
+	};
+	host.on('app-command', onCommand);
+	const onShowChange = () => pace();
+	host.on('show', onShowChange);
+	host.on('hide', onShowChange);
+	host.on('minimize', onShowChange);
+	host.on('restore', onShowChange);
+
+	open(WEBSITE, true, true);
+
+	return Object.assign(group, {
+		open,
+		focus: () => group.active && !group.active.page.isDestroyed() && group.active.page.focus(),
+		/** Put on the window (the strip, then every tab). */
+		attach() {
+			if (group.attached || host.isDestroyed()) return;
+			host.contentView.addChildView(strip);
+			for (const tab of group.tabs) host.contentView.addChildView(tab.view);
+			group.attached = true;
+			layout();
+			pace();
+		},
+		/** Taken off the window (inside Catalog: back to Catalog's own page). */
+		detach() {
+			if (!group.attached) return;
+			group.attached = false;
+			if (!host.isDestroyed()) {
+				host.contentView.removeChildView(strip);
+				for (const tab of group.tabs) host.contentView.removeChildView(tab.view);
+			}
+			pace();
+		},
+		/** Ready for next time: every tab but the first closed, and that one on the home page (the video stops). */
+		reset() {
+			for (const tab of group.tabs.slice(1)) {
+				if (group.attached && !host.isDestroyed()) host.contentView.removeChildView(tab.view);
+				if (!tab.page.isDestroyed()) tab.page.close();
+			}
+			group.tabs.length = Math.min(group.tabs.length, 1);
+			group.fullScreen = false;
+			const first = group.tabs[0];
+			if (first && !first.page.isDestroyed()) {
+				first.title = 'YouTube';
+				first.page.loadURL(WEBSITE).catch(() => {});
+			}
+			select(first);
+		},
+		/** Gone for good (Catalog quitting, or switching between the two ways of showing YouTube). */
+		destroy() {
+			if (group.destroyed) return;
+			group.detach();
+			group.destroyed = true;
+			clearTimeout(drawTimer);
+			host.removeListener('resize', onResize);
+			host.removeListener('enter-full-screen', onResize);
+			host.removeListener('leave-full-screen', onResize);
+			host.removeListener('app-command', onCommand);
+			for (const name of ['show', 'hide', 'minimize', 'restore']) host.removeListener(name, onShowChange);
+			for (const tab of group.tabs) if (!tab.page.isDestroyed()) tab.page.close();
+			group.tabs.length = 0;
+			if (!strip.webContents.isDestroyed()) strip.webContents.close();
+		}
+	});
+}
+
 /* ------------------------------------------------------------ its own window */
 
-/** The window, made hidden and loading YouTube's home page. */
+/** The window, made hidden and loading YouTube's home page in its first tab. */
 function makeWindow(icon) {
 	win = new BrowserWindow({
 		width: 1280,
@@ -247,43 +619,35 @@ function makeWindow(icon) {
 		icon,
 		backgroundColor: '#0f0f0f',
 		autoHideMenuBar: true,
-		webPreferences: WEB_PREFERENCES
+		// Its own page is only the background behind the tabs.
+		webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false }
 	});
 	const shown = win;
-	const page = shown.webContents;
 	shown.setMenuBarVisibility(false);
-	const controls = setUpPage(page, () => (shown.isDestroyed() ? null : shown), null);
-	controls.whenShowing(() => !shown.isDestroyed() && shown.isVisible());
+	const tabs = makeTabs(shown, { onEmpty: () => shown.close() });
+	shown.tabs = tabs;
+	tabs.attach();
 
-	// The mouse's side buttons.
-	shown.on('app-command', (_event, command) => {
-		if (command === 'browser-backward') controls.back();
-		if (command === 'browser-forward') controls.forward();
-	});
-
-	// Closing hides it, back on the home page (the video stops, and it's ready for next time).
-	// Catalog quitting closes it for real.
+	// Closing hides it, back to one tab on the home page (the video stops, and it's ready for next
+	// time). Catalog quitting closes it for real.
 	shown.on('close', (event) => {
 		if (quitting) return;
 		event.preventDefault();
 		if (shown.isFullScreen()) shown.setFullScreen(false);
 		shown.hide();
-		page.loadURL(WEBSITE).catch(() => {});
+		tabs.reset();
 	});
 	shown.on('show', () => {
-		page.setBackgroundThrottling(false);
+		tabs.focus();
 		tell(true);
 	});
-	shown.on('hide', () => {
-		page.setBackgroundThrottling(true);
-		tell(false);
-	});
+	shown.on('hide', () => tell(false));
 	shown.on('closed', () => {
+		tabs.destroy();
 		if (win === shown) win = null;
 		tell(false);
 	});
-	page.setBackgroundThrottling(true);
-	shown.loadURL(WEBSITE).catch(() => {});
+	shown.loadURL('about:blank').catch(() => {});
 	return shown;
 }
 
@@ -292,93 +656,51 @@ function dropWindow() {
 	const closing = win;
 	win = null;
 	closing.removeAllListeners('close');
+	closing.tabs?.destroy();
 	closing.destroy();
 }
 
 /* ------------------------------------------------------------ inside Catalog's window */
 
-/** YouTube's page for Catalog's window, made hidden (not on the window yet) and loading. */
+/** YouTube's tabs for Catalog's window, made hidden (not on the window yet) and loading. */
 function makeInside(host) {
-	const view = new WebContentsView({ webPreferences: WEB_PREFERENCES });
-	view.setBackgroundColor('#0f0f0f');
-	const page = view.webContents;
-	const here = { view, host, attached: false, wentFullScreen: false };
+	const here = { host, tabs: null, attached: false };
 	inside = here;
-
-	const fit = () => {
-		if (!here.attached || host.isDestroyed()) return;
-		const [width, height] = host.getContentSize();
-		view.setBounds({ x: 0, y: 0, width, height });
-	};
-	here.fit = fit;
-	const controls = setUpPage(page, () => (host.isDestroyed() ? null : host), () => hideInside());
-	controls.whenShowing(() => here.attached && !host.isDestroyed() && host.isVisible() && !host.isMinimized());
-
-	// Catalog's window changing size (or filling the screen): YouTube still covers all of it.
-	host.on('resize', fit);
-	host.on('enter-full-screen', fit);
-	host.on('leave-full-screen', fit);
-	// The mouse's side buttons, while YouTube is showing.
-	host.on('app-command', (_event, command) => {
-		if (!here.attached) return;
-		if (command === 'browser-backward') controls.back();
-		if (command === 'browser-forward') controls.forward();
-	});
-
-	// YouTube's own full screen (its player's button, or f): Electron fills the screen with Catalog's
-	// window by itself and back (checked 2026-11-06), and `fit` follows. Noted, so going back to
-	// Catalog from full screen leaves it too.
-	page.on('enter-html-full-screen', () => (here.wentFullScreen = true));
-	page.on('leave-html-full-screen', () => (here.wentFullScreen = false));
-
-	page.on('dom-ready', () => page.executeJavaScript(BACK_BUTTON).catch(() => {}));
-	page.once('destroyed', () => {
+	here.tabs = makeTabs(host, { insideCatalog: true, goBackToCatalog: () => hideInside(), onEmpty: () => hideInside() });
+	host.once('closed', () => {
+		here.tabs.destroy();
 		if (inside === here) inside = null;
 	});
-	host.once('closed', () => {
-		if (!page.isDestroyed()) page.close();
-	});
-
-	page.setBackgroundThrottling(true);
-	page.loadURL(WEBSITE).catch(() => {});
 	return here;
 }
 
 function showInside(host) {
-	if (!inside || inside.host !== host || inside.view.webContents.isDestroyed()) {
+	if (!inside || inside.host !== host || inside.tabs.destroyed) {
 		dropInside();
 		makeInside(host);
 	}
 	const here = inside;
 	if (host.isMinimized()) host.restore();
-	if (!here.attached) {
-		host.contentView.addChildView(here.view);
-		here.attached = true;
-	}
-	here.fit();
-	here.view.webContents.setBackgroundThrottling(false);
+	here.tabs.attach();
+	here.attached = true;
 	host.show();
 	host.focus();
-	here.view.webContents.focus();
+	here.tabs.focus();
 	tell(true);
 }
 
-/** Back to Catalog: YouTube goes back to its home page (the video stops), ready for next time. */
+/** Back to Catalog: one tab on YouTube's home page again (the video stops), ready for next time. */
 function hideInside() {
 	const here = inside;
 	if (!here || !here.attached) return;
-	const page = here.view.webContents;
 	if (!here.host.isDestroyed()) {
-		if (here.wentFullScreen && here.host.isFullScreen()) here.host.setFullScreen(false);
-		here.wentFullScreen = false;
-		here.host.contentView.removeChildView(here.view);
+		// YouTube's own full screen fills Catalog's window: leaving YouTube leaves it too.
+		if (here.tabs.fullScreen && here.host.isFullScreen()) here.host.setFullScreen(false);
+		here.tabs.detach();
 		here.host.webContents.focus();
 	}
 	here.attached = false;
-	if (!page.isDestroyed()) {
-		page.setBackgroundThrottling(true);
-		page.loadURL(WEBSITE).catch(() => {});
-	}
+	here.tabs.reset();
 	tell(false);
 }
 
@@ -387,7 +709,7 @@ function dropInside() {
 	const here = inside;
 	hideInside();
 	inside = null;
-	if (!here.view.webContents.isDestroyed()) here.view.webContents.close();
+	here.tabs.destroy();
 }
 
 /* ------------------------------------------------------------ what main.cjs calls */

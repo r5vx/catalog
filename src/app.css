@@ -36,6 +36,11 @@
 	--rating-meh: #ec9a45;
 	--rating-bad: #d9574a;
 	--rating-ink: #101512;
+	/* Find in a note (Ctrl+F, src/lib/FindBar.svelte): every match, and the one you're on; the
+	   same in every theme, with dark text on them. */
+	--find: #ffe36e;
+	--find-current: #ff9a3d;
+	--find-ink: #101512;
 	--shadow: 0 1px 2px rgb(20 32 29 / 6%), 0 6px 20px -12px rgb(20 32 29 / 25%);
 
 	/* --- type --- */
@@ -120,6 +125,26 @@
 
 * {
 	box-sizing: border-box;
+}
+
+/* Find in a note: drawn over the text, never part of it. */
+::highlight(find) {
+	background-color: var(--find);
+	color: var(--find-ink);
+}
+
+::highlight(find-current) {
+	background-color: var(--find-current);
+	color: var(--find-ink);
+}
+
+/* "← Notes", "← Settings" and the other back links: big enough for a thumb on a phone. */
+@media (max-width: 700px) {
+	html a.back.faint {
+		display: inline-block;
+		padding: 8px 0;
+		font-size: 0.98rem;
+	}
 }
 
 html,

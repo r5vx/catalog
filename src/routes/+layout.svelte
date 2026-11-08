@@ -6,10 +6,13 @@
 	import ConfirmDialog from '$lib/ConfirmDialog.svelte';
 	import RatePrompt from '$lib/RatePrompt.svelte';
 	import SideNav from '$lib/SideNav.svelte';
+	import WatchPlayer from '$lib/WatchPlayer.svelte';
+	import NowPlaying from '$lib/NowPlaying.svelte';
+	import { keptPlayer, followRoute } from '$lib/keptPlayer.svelte';
 	import { navigating, page } from '$app/state';
 	import { beforeNavigate } from '$app/navigation';
 	import { rememberBeforeSettings } from '$lib/nav';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { startTv } from '$lib/tv';
 	import { startGamepad } from '$lib/gamepad';
 	import { inkFor, DEFAULT_ACCENT } from '$lib/accent';
@@ -22,6 +25,16 @@
 	let { children, data }: { children: Snippet; data: LayoutData } = $props();
 
 	const accent = $derived(data?.accent ?? DEFAULT_ACCENT);
+
+	// The player is drawn here, not by /watch, so it can stay loaded (hidden, paused) while another
+	// page is open: src/lib/keptPlayer.svelte.ts. Before the first address is followed (the page
+	// drawn on the server, and its first moment in the browser) it's the first player, id 0.
+	const onWatch = $derived(page.url.pathname === '/watch');
+	$effect.pre(() => {
+		const url = page.url;
+		untrack(() => followRoute(url));
+	});
+	const hostedId = $derived(keptPlayer.current?.id ?? (onWatch ? 0 : null));
 
 	// The sidebar, when turned on: not over the player, the TV's own layout, or the pages before
 	// signing in.
@@ -132,6 +145,14 @@
 	<TvUpdated />
 	<SigninBanner signin={data?.showboxSignin} />
 	{@render children()}
+	{#if hostedId !== null}
+		{#key hostedId}
+			<div class="kept-player" class:away={!onWatch} inert={!onWatch}>
+				<WatchPlayer away={!onWatch} />
+			</div>
+		{/key}
+	{/if}
+	{#if !onWatch}<NowPlaying floating besideNav={sideNav} />{/if}
 	<ConfirmDialog />
 	<!-- "Rate it" after leaving the player (not over it, nor on a TV's screens). -->
 	{#if !/^\/(watch|tv)(\/|$)/.test(page.url.pathname)}<RatePrompt />{/if}
@@ -191,6 +212,21 @@
 		:global(html.tv) .app.beside-nav {
 			margin-left: auto;
 		}
+	}
+
+	/* On /watch the player is part of the page as before; elsewhere it's kept, out of sight. */
+	.kept-player {
+		display: contents;
+	}
+
+	.kept-player.away {
+		display: block;
+		position: fixed;
+		inset: 0;
+		z-index: -2;
+		overflow: hidden;
+		visibility: hidden;
+		pointer-events: none;
 	}
 
 	.nav-progress {

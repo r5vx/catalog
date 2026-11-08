@@ -1548,25 +1548,31 @@ function createWindow() {
 	// Febbox login needs its own window — Google OAuth blocks iframes.
 	// The child window shares the default session, so cookies carry over.
 	// Signing in another account (Settings → Services, "#catalog-more"): a window of its own
-	// cookie store, so the main account stays signed in.
+	// cookie store, so the main account stays signed in. That one is opened here, not by the page:
+	// Electron gives a window the page opens the page's own cookie store whatever it's told, so the
+	// "other" account signed in over the main one and was saved as it (2026-11-08).
 	window.webContents.setWindowOpenHandler(({ url }) => {
-		if (url.includes('febbox.com')) {
-			return {
-				action: 'allow',
-				overrideBrowserWindowOptions: {
-					width: 500,
-					height: 700,
-					autoHideMenuBar: true,
-					icon: path.join(__dirname, '..', 'build', 'client', 'icon.ico'),
-					...(url.includes('#catalog-more') ? { webPreferences: { partition: 'febbox-signin' } } : {})
-				}
-			};
+		const signIn = { width: 500, height: 700, autoHideMenuBar: true, icon: path.join(__dirname, '..', 'build', 'client', 'icon.ico') };
+		if (url.includes('febbox.com') && url.includes('#catalog-more')) {
+			const own = new BrowserWindow({ ...signIn, parent: window, webPreferences: { partition: 'febbox-signin' } });
+			watchSignIn(own, url);
+			return { action: 'deny' };
 		}
+		if (url.includes('febbox.com')) return { action: 'allow', overrideBrowserWindowOptions: signIn };
 		if (!url.startsWith(ORIGIN)) shell.openExternal(url);
 		return { action: 'deny' };
 	});
 
-	window.webContents.on('did-create-window', async (childWindow) => {
+	window.webContents.on('did-create-window', (childWindow) => watchSignIn(childWindow));
+}
+
+/**
+ * A Febbox sign-in window, watched until someone is signed in (then closed, and the sign-in sent
+ * to the server). `startAt`: a window made here for another account, loaded once its cookie store
+ * is clear.
+ */
+async function watchSignIn(childWindow, startAt = '') {
+	{
 		addTextMenu(childWindow.webContents);
 		const loginSession = childWindow.webContents.session;
 		const another = loginSession !== session.defaultSession;
@@ -1614,28 +1620,38 @@ function createWindow() {
 		};
 		loginSession.cookies.on('changed', cookieListener);
 
+		/** Tells the server (and so Settings, which asks it) about this window: its sign-in, or how it stands. */
+		function tellServer(fields) {
+			const body = JSON.stringify({ more: another, ...fields });
+			const req = http.request(`${ORIGIN}/api/watch/save-token`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+			});
+			req.on('error', () => {});
+			req.write(body);
+			req.end();
+		}
+		// Settings waits on this, not on its own view of the window: Google's sign-in pages cut the
+		// window off from Settings, which then saw it as closed while it was still open (2026-11-08).
+		tellServer({ stage: 'open' });
+
 		// `confirmed`: Febbox's own page said signed in (the server needn't ask again, which its
-		// Cloudflare check can turn away); `name`: the account's name or email there.
+		// Cloudflare check can turn away); `name`: the account's name or email there. False when
+		// there was nothing to send (no Febbox cookies: nobody signed in).
 		async function captureCookies(confirmed = false, name = '') {
 			try {
 				const allCookies = await loginSession.cookies.get({});
 				const cookies = allCookies.filter(
 					(c) => c.domain && c.domain.includes('febbox')
 				);
-				if (!cookies.length) return;
+				if (!cookies.length) return false;
 
 				const cookieStr = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
-				const body = JSON.stringify({ token: cookieStr, more: another, confirmed, name });
-
-				const req = http.request(`${ORIGIN}/api/watch/save-token`, {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
-				});
-				req.on('error', () => {});
-				req.write(body);
-				req.end();
+				tellServer({ token: cookieStr, confirmed, name });
+				return true;
 			} catch (e) {
 				console.error('[app] cookie capture failed:', e?.message || e);
+				return false;
 			}
 		}
 
@@ -1692,9 +1708,10 @@ function createWindow() {
 		childWindow.on('closed', () => {
 			clearInterval(loginPoll);
 			loginSession.cookies.removeListener('changed', cookieListener);
-			if (!captured) captureCookies();
+			if (!captured) captureCookies().then((sent) => sent || tellServer({ stage: 'closed' }));
 		});
-	});
+		if (startAt && !childWindow.isDestroyed()) childWindow.loadURL(startAt).catch(() => {});
+	}
 }
 
 // One window only — launching again focuses the one already open.
