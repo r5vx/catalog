@@ -12,6 +12,17 @@ without both.
 
 ## Unreleased
 
+## 4.1.1 — 2026-11-09 — Roku installs fixed, and Live TV picks the game's own channel
+
+### Fixed
+
+**Live TV**
+- Games open on the league's own channel, like NFL Sunday Ticket, not a city's station showing other programs
+
+**Roku**
+- Install on Roku no longer stops with "ECONNRESET" every time
+- A wrong Roku developer password now says so
+
 ## 4.1.0 — 2026-11-08 — YouTube tabs, the player kept loaded, sharper copies, and Live TV working again
 
 ### New

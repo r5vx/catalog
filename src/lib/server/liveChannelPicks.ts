@@ -15,6 +15,15 @@ type Picks = Record<string, Record<string, Tally>>;
 
 const ENGLISH = new Set(['USA', 'UK', 'Canada', 'Ireland', 'Australia', 'New Zealand']);
 
+/**
+ * The league's own game feeds: when the schedule lists one for a game, it shows that game, start
+ * to end. A network channel like "CBS USA" is one city's station: it shows the game only if that
+ * city gets it, and its own programs after (the Chargers–Texans game ran past 7 pm on the East
+ * Coast; CBS USA was showing ads and 60 Minutes while Sunday Ticket had the 4th quarter,
+ * 2026-11-08). These have no country, so the country rule used to put CBS USA first.
+ */
+const GAME_FEED = /sunday ticket|league pass|nhl gamecenter/i;
+
 function picks(): Picks {
 	return (getOrderCache(KEY)?.value as Picks | undefined) ?? {};
 }
@@ -50,9 +59,15 @@ export function withBestChannels(games: LiveGame[], channels: LiveChannel[], hom
 			else if (from) s -= 1;
 			return s;
 		};
-		let best = game.channels[0].id;
+		// The game's own feeds come first, unless they've failed here more often than they've played.
+		const feeds = game.channels.filter((c) => {
+			const here = league[String(c.id)];
+			return GAME_FEED.test(c.name) && (!here || here.ok >= here.bad);
+		});
+		const choices = feeds.length ? feeds : game.channels;
+		let best = choices[0].id;
 		let bestScore = score(best);
-		for (const channel of game.channels.slice(1)) {
+		for (const channel of choices.slice(1)) {
 			const s = score(channel.id);
 			if (s > bestScore) {
 				best = channel.id;

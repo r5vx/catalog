@@ -132,20 +132,29 @@ function installForm(zip: Buffer): { body: Buffer; type: string } {
 type RokuReply = { status: number; headers: IncomingHttpHeaders; text: string };
 
 /**
- * One request to the Roku's developer page. Node's plain http, told to accept loosely written
- * replies (`insecureHTTPParser`): fetch turns away any reply a small built-in web server gets
- * slightly wrong, and every such refusal used to come out as "Couldn't reach the Roku".
+ * One request to the Roku's developer page, on a connection of its own.
+ *
+ * - A new connection every time (`agent: false`, "Connection: close"). Node reuses connections by
+ *   default, so the upload went down the connection the sign-in question had used; the Roku had
+ *   already finished with that one and hung up: "stopped answering partway (ECONNRESET)" on every
+ *   try (owner, 2026-11-08).
+ * - Loosely written replies are accepted (`insecureHTTPParser`): fetch turns away any reply a small
+ *   built-in web server gets slightly wrong.
+ * - If the Roku answers and then hangs up before the upload is all sent, its answer still counts.
  */
 function rokuRequest(url: string, method: 'GET' | 'POST', headers: Record<string, string | number>, body: Buffer | null, timeout: number): Promise<RokuReply> {
 	return new Promise((resolve, reject) => {
-		const req = httpRequest(url, { method, headers, insecureHTTPParser: true, timeout }, (res) => {
+		let reply: RokuReply | null = null;
+		const req = httpRequest(url, { method, headers: { ...headers, Connection: 'close' }, agent: false, insecureHTTPParser: true, timeout }, (res) => {
 			const parts: Buffer[] = [];
+			reply = { status: res.statusCode ?? 0, headers: res.headers, text: '' };
+			const finish = () => resolve({ ...reply!, text: Buffer.concat(parts).toString('utf8') });
 			res.on('data', (part: Buffer) => parts.push(part));
-			res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, text: Buffer.concat(parts).toString('utf8') }));
-			res.on('error', reject);
+			res.on('end', finish);
+			res.on('error', finish);
 		});
 		req.on('timeout', () => req.destroy(Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' })));
-		req.on('error', reject);
+		req.on('error', (error) => (reply ? resolve(reply) : reject(error)));
 		req.end(body ?? undefined);
 	});
 }
@@ -161,11 +170,12 @@ function whyUnreachable(error: unknown): string {
 /**
  * Installs Catalog on the Roku at `address` with its developer password, then opens it.
  *
- * The sign-in challenge is asked for first with an empty request, then the app is sent once,
- * signed in, with a known length. It used to send the whole app straight away (the Roku answers
- * "sign in first" and can hang up mid-upload) through fetch (strict about replies), and any failure
- * at all said "Couldn't reach the Roku" (owner, 2026-11-08, developer mode on, the Roku found). Now
- * a failure says what happened.
+ * Steps, each on a new connection: ask the sign-in question with an empty request; check the
+ * password with a small signed request (so a wrong one is said plainly, not lost in a hang-up
+ * mid-upload); ask a fresh question; send the app once, signed in, with a known length. A hang-up
+ * during the upload is tried once more. It used to say "Couldn't reach the Roku" for everything,
+ * then "stopped answering partway (ECONNRESET)" every time (both owner, 2026-11-08; see
+ * rokuRequest).
  */
 export async function installOnRoku(address: string, password: string): Promise<InstallAnswer> {
 	const port = testPort || 80;
@@ -175,23 +185,38 @@ export async function installOnRoku(address: string, password: string): Promise<
 	const uri = '/plugin_install';
 	const url = `http://${address}${port === 80 ? '' : `:${port}`}${uri}`;
 	const form = installForm(zip);
-	const send = (authorization?: string) =>
-		rokuRequest(url, 'POST', { 'Content-Type': form.type, 'Content-Length': form.body.length, ...(authorization ? { Authorization: authorization } : {}) }, form.body, 90_000);
 	const challengeOf = (reply: RokuReply) => {
 		const value = reply.headers['www-authenticate'];
 		return reply.status === 401 ? String(Array.isArray(value) ? value[0] : (value ?? '')) : '';
 	};
+	/** The Roku's sign-in question (empty when it asks none). */
+	const askChallenge = async () => challengeOf(await rokuRequest(url, 'GET', {}, null, 10_000));
+	const signed = (challenge: string, method: 'GET' | 'POST'): Record<string, string> =>
+		/digest/i.test(challenge) ? { Authorization: digestHeader(challenge, method, uri, 'rokudev', password) } : {};
+	const send = (challenge: string) =>
+		rokuRequest(url, 'POST', { 'Content-Type': form.type, 'Content-Length': form.body.length, ...signed(challenge, 'POST') }, form.body, 90_000);
 	try {
 		let challenge = '';
 		try {
-			challenge = challengeOf(await rokuRequest(url, 'GET', {}, null, 10_000));
+			challenge = await askChallenge();
 		} catch (error) {
 			return { ok: false, message: whyUnreachable(error) };
 		}
-		let resp = await send(/digest/i.test(challenge) ? digestHeader(challenge, 'POST', uri, 'rokudev', password) : undefined);
+		if (challenge) {
+			const check = await rokuRequest(url, 'GET', signed(challenge, 'GET'), null, 10_000);
+			if (check.status === 401) return { ok: false, message: "The Roku didn't accept that password." };
+			challenge = await askChallenge();
+		}
+		let resp: RokuReply;
+		try {
+			resp = await send(challenge);
+		} catch (error) {
+			if ((error as { code?: string })?.code !== 'ECONNRESET') throw error;
+			resp = await send(await askChallenge());
+		}
 		// (A Roku that wanted a fresh challenge for the upload itself: answered once more.)
 		const again = challengeOf(resp);
-		if (/digest/i.test(again)) resp = await send(digestHeader(again, 'POST', uri, 'rokudev', password));
+		if (/digest/i.test(again)) resp = await send(again);
 		if (resp.status === 401) return { ok: false, message: "The Roku didn't accept that password." };
 		const said = rokuSaid(resp.text);
 		if (resp.status < 200 || resp.status >= 300) return { ok: false, message: said || `The Roku answered ${resp.status}.` };
