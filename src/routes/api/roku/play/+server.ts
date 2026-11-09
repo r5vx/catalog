@@ -100,7 +100,12 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	// Only the copy's top quality: the Roku's player would otherwise start lower and change quality
 	// by itself, which Catalog never does (the player's holdLevel). In kbps, for MinBandwidth.
 	const format = /\.mp4(\?|$)/i.test(chosen.url) ? 'mp4' : 'hls';
-	const minBandwidth = format === 'hls' ? await topBandwidth(chosen.url, fromShowbox ? { Referer: 'https://www.febbox.com/' } : forward) : 0;
+	// Showbox's own playlist goes through /api/roku/hls: its top quality with AAC sound only (the
+	// ec-3 one it was held to played on no Roku: every title "finished" at once). One quality, so
+	// no MinBandwidth for it.
+	const plainShowbox = fromShowbox && format === 'hls';
+	const address = plainShowbox ? new URL(`/api/roku/hls?${new URLSearchParams({ u: chosen.url })}`, url.origin).href : chosen.url;
+	const minBandwidth = format === 'hls' && !plainShowbox ? await topBandwidth(chosen.url, forward) : 0;
 	// English subtitles (/api/roku/subtitles), unless they're part of the picture.
 	const subtitles = new URLSearchParams({ title: found.title, type, year, share: chosen.file.source ? shareKey : '' });
 	if (episode) {
@@ -121,7 +126,7 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	}
 
 	return json({
-		url: chosen.url,
+		url: address,
 		format,
 		minBandwidth,
 		bif,
@@ -153,7 +158,8 @@ async function topBandwidth(playlist: string, headers: Record<string, string>): 
 		if (!r.ok) return 0;
 		const qualities = (await r.text()).match(/#EXT-X-STREAM-INF:[^\n]*/g) ?? [];
 		const bandwidths = qualities
-			.filter((line) => !/hvc1|hev1/.test(line))
+			// (Not HEVC, nor Dolby sound a Roku may not play: the top would be the only one allowed.)
+			.filter((line) => !/hvc1|hev1|ec-3|ac-3/i.test(line))
 			.map((line) => Number(line.match(/[:,]BANDWIDTH=(\d+)/)?.[1] ?? 0));
 		return bandwidths.length > 1 ? Math.floor(Math.max(...bandwidths) / 1000) : 0;
 	} catch {

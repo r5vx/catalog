@@ -1,5 +1,9 @@
 sub init()
     m.video = m.top.findNode("video")
+    ' Secure (https) video addresses, as Showbox's are: checked against the Roku's own list of
+    ' certificates.
+    m.video.setCertificatesFile("common:/certs/ca-bundle.crt")
+    m.video.initClientCertificates()
     m.waiting = m.top.findNode("waiting")
     m.message = m.top.findNode("message")
     m.spinner = m.top.findNode("spinner")
@@ -97,6 +101,7 @@ sub onPlan(event as Object)
         content.subtitleTracks = [{ language: "eng", trackName: plan.subtitles, description: "English" }]
     end if
     m.japanese = plan.anime = true
+    m.played = false
     m.audioPicked = false
     m.skipsAsked = false
     m.video.content = content
@@ -133,6 +138,7 @@ sub onYouTube(event as Object)
     content.streamFormat = "hls"
     content.httpHeaders = videoHeaders([])
     content.title = text(m.youtube.label)
+    m.played = false
     m.video.content = content
     m.video.control = "play"
     m.video.setFocus(true)
@@ -163,6 +169,7 @@ sub onReplay(event as Object)
     ' Where this profile left it, and its place kept as it plays (Continue Watching, Recently watched).
     if answer.data.resumeAt <> invalid and answer.data.resumeAt > 0 then content.playStart = answer.data.resumeAt
     replay = answer.data.replay
+    m.played = false
     m.replayPlan = { title: text(replay.title), type: "replay", season: 0, episode: 0, poster: text(replay.poster), shareKey: "", fid: 0 }
     api("/api/live/watched", {}, "ignore", "POST", { replay: text(m.replayParams.replay), title: text(replay.title), poster: text(replay.poster), sport: text(replay.sport) })
     m.video.content = content
@@ -186,11 +193,16 @@ sub playLive(params as Object)
     m.video.control = "play"
     m.video.setFocus(true)
     m.liveNoted = false
+    m.played = false
 end sub
 
 sub onState()
     state = m.video.state
-    if state = "playing" then
+    if state = "buffering" then
+        ' The Roku's player shows its own loading circle: ours goes, so there aren't two.
+        m.waiting.visible = false
+    else if state = "playing" then
+        m.played = true
         m.waiting.visible = false
         m.retried = false
         if m.japanese = true and not m.audioPicked then pickJapanese()
@@ -214,6 +226,12 @@ sub onState()
             showWaiting("The video stopped working (" + m.video.errorMsg + "). Press Back, and try again.")
         end if
     else if state = "finished" then
+        ' "Finished" without ever playing is a video the Roku couldn't play: it used to go on to the
+        ' next episode, or back out of a film, without a word (2026-11-08).
+        if m.played <> true then
+            showWaiting("This video wouldn't play on the Roku (" + text(m.video.errorMsg) + "). Press Back, and try again.")
+            return
+        end if
         finished()
     end if
 end sub

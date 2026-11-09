@@ -12,6 +12,20 @@ without both.
 
 ## Unreleased
 
+## 4.1.3 — 2026-11-09 — Roku films and shows play, and Live TV search on the Roku
+
+### Fixed
+
+**Roku**
+- Films and episodes play instead of backing out or skipping to the next episode
+- A video the Roku can't play says so instead of moving on
+- One loading circle instead of two
+
+### New
+
+**Roku**
+- Search in Live TV: teams, leagues and channels
+
 ## 4.1.2 — 2026-11-09 — Roku plays again, a tidier Roku menu, and Extended Edition subtitles
 
 ### Fixed

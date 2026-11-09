@@ -8,6 +8,9 @@ sub init()
     m.top.observeField("focusedChild", "onFocus")
     m.rows = []
     m.view = 0
+    ' A search (the first chip): what was typed, and what it found. m.view is -1 while it shows.
+    m.searched = ""
+    m.found = invalid
 end sub
 
 sub onFocus()
@@ -26,12 +29,16 @@ sub onLive(event as Object)
     end if
     ' The view picked stays picked when it's loaded again (after a game, or saving one).
     picked = ""
-    if m.view < m.rows.Count() then picked = m.rows[m.view].label
+    if m.view >= 0 and m.view < m.rows.Count() then picked = m.rows[m.view].label
     m.rows = answer.data.rows
-    m.view = 0
-    for i = 0 to m.rows.Count() - 1
-        if m.rows[i].label = picked then m.view = i
-    end for
+    if m.view >= 0 then
+        m.view = 0
+        for i = 0 to m.rows.Count() - 1
+            if m.rows[i].label = picked then m.view = i
+        end for
+    else
+        m.found = searchRows(m.searched)
+    end if
     m.saved = {}
     for each row in m.rows
         if row.label = "Saved" then
@@ -50,6 +57,11 @@ end sub
 
 sub showChips()
     content = CreateObject("roSGNode", "ContentNode")
+    ' First: Search (what was searched for, once there is something).
+    find = contentItem({ kind: "chip", selected: m.view = -1 })
+    find.title = "Search"
+    if m.searched <> "" then find.title = Chr(34) + m.searched + Chr(34)
+    content.appendChild(find)
     for i = 0 to m.rows.Count() - 1
         item = contentItem({ kind: "chip", selected: i = m.view })
         item.title = m.rows[i].label
@@ -57,12 +69,24 @@ sub showChips()
     end for
     at = m.chips.itemFocused
     m.chips.content = content
-    if at > 0 and at < m.rows.Count() then m.chips.jumpToItem = at
+    if at > 0 and at <= m.rows.Count() then m.chips.jumpToItem = at
 end sub
 
+' The view showing: one of the rows, or what a search found.
+function currentRow() as Object
+    if m.view = -1 and m.found <> invalid then return m.found
+    return m.rows[m.view]
+end function
+
 sub showView()
-    row = m.rows[m.view]
+    row = currentRow()
     m.heading.text = row.label
+    if row.items.Count() = 0 then
+        m.grid.visible = false
+        m.status.visible = true
+        m.status.text = "Nothing on Live TV matches " + Chr(34) + m.searched + Chr(34) + "."
+        return
+    end if
     content = CreateObject("roSGNode", "ContentNode")
     ' Games carry a picture across the top (taller cards, two rows); channels are words only.
     if row.label = "Channels" then
@@ -94,15 +118,90 @@ sub showView()
 end sub
 
 sub onChip()
-    m.view = m.chips.itemSelected
+    if m.chips.itemSelected = 0 then
+        askSearch()
+        return
+    end if
+    m.view = m.chips.itemSelected - 1
     showChips()
     showView()
 end sub
 
+' Search: the Roku's keyboard, then every game, channel and replay whose name has those words
+' (a team, a league, a channel), from every view at once.
+sub askSearch()
+    dialog = CreateObject("roSGNode", "StandardKeyboardDialog")
+    dialog.title = "Search Live TV"
+    dialog.message = ["A team, a league or a channel"]
+    dialog.text = m.searched
+    dialog.buttons = ["Search", "Cancel"]
+    dialog.observeField("buttonSelected", "onSearch")
+    m.keyboard = dialog
+    m.top.getScene().dialog = dialog
+end sub
+
+sub onSearch()
+    words = m.keyboard.text.Trim()
+    picked = m.keyboard.buttonSelected
+    m.keyboard.close = true
+    if picked <> 0 then return
+    m.searched = words
+    if words = "" then
+        m.found = invalid
+        if m.view = -1 then m.view = 0
+    else
+        m.found = searchRows(words)
+        m.view = -1
+    end if
+    showChips()
+    showView()
+    if m.grid.visible then m.grid.setFocus(true)
+end sub
+
+' A view of everything matching `words` (each word somewhere in its name, its line under, or its
+' channels' names), each game once.
+function searchRows(words as String) as Object
+    wanted = []
+    for each word in LCase(words).Split(" ")
+        if word <> "" then wanted.Push(word)
+    end for
+    items = []
+    seen = {}
+    for each row in m.rows
+        if row.label <> "Recently watched" then
+            for each item in row.items
+                about = LCase(text(item.label) + " " + text(item.sub))
+                if item.channels <> invalid then
+                    for each channel in item.channels
+                        about = about + " " + LCase(text(channel.name))
+                    end for
+                end if
+                matches = true
+                for each word in wanted
+                    if Instr(1, about, word) = 0 then matches = false
+                end for
+                key = text(item.label) + "|" + text(item.sub)
+                if matches and not seen.DoesExist(key) then
+                    seen[key] = true
+                    ' A channel from the Channels view stays a channel (OK plays it straight away).
+                    if row.label = "Channels" then
+                        copy = {}
+                        copy.Append(item)
+                        copy.isChannel = true
+                        item = copy
+                    end if
+                    items.Push(item)
+                end if
+            end for
+        end if
+    end for
+    return { label: "Search: " + words, items: items }
+end function
+
 ' OK plays: a channel, a replay, or a game on its best channel (one click, as on the Fire TV;
 ' the computer lists that one first). The * button on a game opens its other channels and Save.
 sub onPick()
-    row = m.rows[m.view]
+    row = currentRow()
     m.game = row.items[m.grid.itemSelected]
     if m.game.replay <> invalid and m.game.replay <> "" then
         m.top.action = { go: "play", replay: m.game.replay, label: m.game.label }
@@ -121,7 +220,7 @@ sub onPick()
 end sub
 
 sub openBox()
-    row = m.rows[m.view]
+    row = currentRow()
     if row.label = "Recently watched" then
         openForgetBox()
         return
@@ -129,6 +228,8 @@ sub openBox()
     if row.label = "Replays" or row.label = "Channels" then return
     m.game = row.items[m.grid.itemFocused]
     if m.game = invalid then return
+    ' (A channel or a replay among a search's finds has no box either.)
+    if m.game.isChannel = true or text(m.game.replay) <> "" or m.game.channels = invalid then return
     names = []
     m.channels = []
     for each channel in m.game.channels
@@ -164,7 +265,7 @@ end sub
 
 ' * on Recently watched: take that channel or replay off it, or clear it all (as the Fire TV).
 sub openForgetBox()
-    row = m.rows[m.view]
+    row = currentRow()
     m.game = row.items[m.grid.itemFocused]
     if m.game = invalid then return
     dialog = CreateObject("roSGNode", "StandardMessageDialog")
