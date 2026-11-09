@@ -12,7 +12,7 @@
     <script type="text/brightscript" uri="pkg:/components/common.brs" />
     <children>
         <Label text="Settings" translation="[20, 64]" font="font:LargeBoldSystemFont" color="0xE7EDE9FF" />
-        <LabelList id="options" translation="[20, 180]" itemSize="[900, 76]" itemSpacing="[0, 12]" numRows="8" color="0xE7EDE9FF" focusedColor="0x111614FF" font="font:MediumSystemFont" focusedFont="font:MediumBoldSystemFont" />
-        <Label id="about" translation="[20, 900]" width="1500" font="font:SmallSystemFont" color="0x75837BFF" />
+        <LabelList id="options" translation="[20, 180]" itemSize="[1200, 76]" itemSpacing="[0, 12]" numRows="8" color="0xE7EDE9FF" focusedColor="0x111614FF" font="font:MediumSystemFont" focusedFont="font:MediumBoldSystemFont" />
+        <Label id="about" translation="[20, 900]" width="1600" wrap="true" font="font:SmallSystemFont" color="0x75837BFF" />
     </children>
 </component>

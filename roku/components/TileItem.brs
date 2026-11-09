@@ -43,11 +43,15 @@ sub show()
 end sub
 
 sub layout()
-    width = m.top.width
-    height = m.top.height
-    if width = 0 or height = 0 then return
     item = m.top.itemContent
     if item = invalid then return
+    ' A margin inside the tile's space (`pad`, in grids): a grid cuts off whatever reaches past its
+    ' edges, and the highlight (a ring, a little bigger) does (the Library's top row, 2026-11-08).
+    pad = 0
+    if item.pad <> invalid then pad = item.pad
+    width = m.top.width - pad * 2
+    height = m.top.height - pad * 2
+    if width <= 0 or height <= 0 then return
     c = colors()
     k = kind()
     hasPicture = item.hdPosterUrl <> invalid and item.hdPosterUrl <> ""
@@ -72,7 +76,7 @@ sub layout()
     m.name.vertAlign = "top"
     m.name.color = c.ink
     m.body.scaleRotateCenter = [width / 2, height / 2]
-    m.body.translation = [0, 0]
+    m.body.translation = [pad, pad]
     boxHeight = height
     m.ring.translation = [-6, -6]
 
@@ -217,20 +221,25 @@ sub showFocus()
         if focused then
             m.back.blendColor = c.ink
             m.name.color = c.paper
+        ' Solid colors: a picture's tint ignores see-through (white at 10% came out plain white,
+        ' with light words on it: Live TV's chips couldn't be read, 2026-11-08). These are what the
+        ' see-through ones looked like over the dark background.
         else if item.selected = true then
-            m.back.blendColor = "0xE994C233"
+            m.back.blendColor = "0x3C2F37FF"
             m.name.color = c.accent
         else if k = "button" and item.primary = true then
-            m.back.blendColor = "0xFFFFFF33"
+            m.back.blendColor = "0x3F4542FF"
             m.name.color = c.ink
         else
-            m.back.blendColor = "0xFFFFFF1A"
+            m.back.blendColor = "0x283029FF"
             m.name.color = c.soft
         end if
         return
     end if
     m.ring.visible = focused
-    if focused then
+    if focused and (k = "game" or k = "channel") then
+        m.body.scale = [1.03, 1.03]
+    else if focused then
         m.body.scale = [1.06, 1.06]
     else
         m.body.scale = [1, 1]

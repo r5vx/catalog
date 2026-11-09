@@ -12,6 +12,50 @@ without both.
 
 ## Unreleased
 
+## 4.1.4 — 2026-11-09 — The Roku player's menu, captions in Catalog's style, and everyone's own library on phones
+
+### New
+
+**Roku**
+- Down (or *) while watching opens the player's menu: captions, auto-timing, caption delay, size, source, sound, next episode
+- Captions drawn in Catalog's own style, timed by the computer like on the Fire TV
+- Settings: caption size, caption look, auto-timing
+- The Roku says when the computer has a newer version of its app
+
+### Improved
+
+**Roku**
+- Episodes show straight away on a show's page
+- Live TV comes back to the game you were on
+- Replays stay in their top quality
+
+**Live TV**
+- The next pieces of a game are fetched ahead, so there's less buffering
+
+**Fire TV**
+- Live TV comes back to the game you were on
+
+**Browse**
+- A slow shelf no longer holds up the whole page
+
+### Fixed
+
+**Roku**
+- Live TV's buttons can be read
+- Highlights in the Library, Search and Live TV are no longer cut off
+- Only one loading circle
+- An episode copy that's really another video is turned down
+
+**Subtitles**
+- Films that share a name with an anime no longer get that anime's subtitles
+
+**Phones**
+- Each person's phone shows their own list, not the whole household's library
+
+**Settings**
+- Install on Roku finds the Roku on computers with Tailscale
+- Updates says why it couldn't check
+
 ## 4.1.3 — 2026-11-09 — Roku films and shows play, and Live TV search on the Roku
 
 ### Fixed

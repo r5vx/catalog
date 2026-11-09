@@ -85,6 +85,7 @@
 		window.addEventListener('catalog:tv-menu-close', closeSports);
 		window.addEventListener('catalog:tv-menu', menuOnGame);
 		window.addEventListener('catalog:live-forgot', forgot);
+		document.addEventListener('click', rememberCard, true);
 		scorer = setInterval(() => {
 			if (guide && !document.hidden) freshScores(guide.games);
 		}, 60_000);
@@ -102,17 +103,50 @@
 			await openSports();
 			return;
 		}
-		// The chip that was picked, highlighted again (it moved once the sports were known).
+		// Back from a game: the card it was played from, highlighted again; else the chip that was
+		// picked (it moved once the sports were known). Coming back used to start at the chips
+		// (2026-11-08: "it should bring them back to the position they were at").
 		await tick();
+		const card = cardPlayed();
 		const chip = document.querySelector<HTMLElement>(`[data-view="${view}"]`);
-		if (chip && !document.activeElement?.closest('.content')) tvFocus(chip);
+		if (card) tvFocus(card);
+		else if (chip && !document.activeElement?.closest('.content')) tvFocus(chip);
 	});
+
+	/** The card played from last (kept with the view), when it's still on the page. */
+	function cardPlayed(): HTMLElement | null {
+		try {
+			const kept = JSON.parse(sessionStorage.getItem(KEPT) ?? '{}') as { card?: { game?: string; href?: string; at?: number } };
+			const card = kept.card;
+			if (!card) return null;
+			const all = [...document.querySelectorAll<HTMLElement>('.content [data-tv-item]')];
+			return (
+				all.find((el) => (card.game && el.dataset.game === card.game) || (card.href && el.getAttribute('href') === card.href)) ??
+				(card.at !== undefined ? (all[card.at] ?? null) : null)
+			);
+		} catch {
+			return null;
+		}
+	}
+
+	/** A card picked to play: remembered, to come back to it. */
+	function rememberCard(event: Event) {
+		const el = (event.target as HTMLElement | null)?.closest<HTMLElement>('.content [data-tv-item]');
+		if (!el) return;
+		const all = [...document.querySelectorAll<HTMLElement>('.content [data-tv-item]')];
+		try {
+			const kept = JSON.parse(sessionStorage.getItem(KEPT) ?? '{}');
+			kept.card = { game: el.dataset.game, href: el.getAttribute('href') ?? undefined, at: all.indexOf(el) };
+			sessionStorage.setItem(KEPT, JSON.stringify(kept));
+		} catch {}
+	}
 	onDestroy(() => {
 		clearInterval(ticker);
 		if (typeof window !== 'undefined') window.removeEventListener('catalog:tv-menu-close', closeGame);
 		if (typeof window !== 'undefined') window.removeEventListener('catalog:tv-menu-close', closeSports);
 		if (typeof window !== 'undefined') window.removeEventListener('catalog:tv-menu', menuOnGame);
 		if (typeof window !== 'undefined') window.removeEventListener('catalog:live-forgot', forgot);
+		if (typeof document !== 'undefined') document.removeEventListener('click', rememberCard, true);
 		clearInterval(scorer);
 	});
 
@@ -128,7 +162,10 @@
 		const keep = { view, query };
 		if (!restored) return;
 		try {
-			sessionStorage.setItem(KEPT, JSON.stringify(keep));
+			const before = JSON.parse(sessionStorage.getItem(KEPT) ?? '{}');
+			// Another view picked: the card played from there isn't looked for any more.
+			const card = before.view === view ? before.card : undefined;
+			sessionStorage.setItem(KEPT, JSON.stringify({ ...keep, card }));
 		} catch {}
 	});
 

@@ -305,11 +305,15 @@ export async function browseShelves(only?: string, mode: BrowseMode = 'trending'
 	const hasNarrowingFilter = filters && (filters.yearFrom || filters.yearTo || filters.genre);
 	const pageCount = hasNarrowingFilter ? 1 : INITIAL_PAGES;
 
+	// A shelf whose site is slow (AniList locks out for a minute when asked too often) is left off
+	// after 8 s rather than holding the whole page: Browse "loaded forever" on a phone, 2026-11-08.
+	// Its pages carry on and are kept (browseCache), so it's there the next time.
+	const SHELF_WAIT_MS = 8000;
 	const filled = await Promise.all(
 		wanted.map(async (key) => {
-			const pages = await Promise.all(
-				Array.from({ length: pageCount }, (_, i) => browsePage(key, mode, i + 1, region, filters))
-			);
+			const asked = Promise.all(Array.from({ length: pageCount }, (_, i) => browsePage(key, mode, i + 1, region, filters)));
+			asked.catch(() => {});
+			const pages = await Promise.race([asked, new Promise<SearchResult[][]>((resolve) => setTimeout(() => resolve([]), SHELF_WAIT_MS))]);
 			const seen = new Set<string>();
 			const results = pages.flat().filter((r) => {
 				if (seen.has(r.key)) return false;

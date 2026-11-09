@@ -2,6 +2,7 @@ import { error, json } from '@sveltejs/kit';
 import { getWatchProgress } from '$lib/server/db/queries';
 import { PREFERRED_QUALITY, pickFile } from '$lib/watch';
 import { readSettings } from '$lib/server/settings';
+import { seasonEpisodes } from '$lib/server/tvEpisodes';
 import type { RequestHandler } from './$types';
 
 /**
@@ -68,19 +69,37 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	// The copy Catalog's player would pick first, then the rest.
 	// This profile's audio language first, when there's a dubbed copy in it (the original next).
 	// (Never a 4K file for its 1080p: the Roku picks its quality itself and would play the 4K.)
-	const first = files.find((f) => found.audioLanguage && f.audio === found.audioLanguage) ?? pickFile(files, PREFERRED_QUALITY, audio, () => false);
+	// A copy picked in the player's menu (?fid=&copy=) comes first; the rest only if it won't play.
+	const pickedFid = url.searchParams.get('fid');
+	const pickedCopy = url.searchParams.get('copy') ?? '';
+	const byHand = pickedFid !== null ? files.find((f) => String(f.fid) === pickedFid && (!pickedCopy || (f.shareKey ?? '') === pickedCopy || !f.source)) : undefined;
+	const first = byHand ?? files.find((f) => found.audioLanguage && f.audio === found.audioLanguage) ?? pickFile(files, PREFERRED_QUALITY, audio, () => false);
 	const order = first ? [first, ...files.filter((f) => f !== first)] : files;
+	// How long the episode is (TMDB), to turn down another source's copy that's some other video:
+	// Movy answered The Odyssey (1968)'s 50-minute first episode with a 2-hour film (2026-11-08).
+	const tmdbShow = Number(/:tv:(\d+):/.exec(listed.find((f) => /:tv:\d+:/.test(f.shareKey ?? ''))?.shareKey ?? '')?.[1] ?? 0);
+	const runtime = type === 'tv' && episode && tmdbShow ? ((await seasonEpisodes(tmdbShow, episode.season).catch(() => [])).find((e) => e.episode === episode.episode)?.runtime ?? 0) : 0;
 	let chosen: { file: FileOption; url: string } | null = null;
+	let wrongVideo = false;
 	for (const file of order.slice(0, 4)) {
 		const share = file.shareKey || episode?.shareKey || found.shareKey || '';
 		if (!share) continue;
 		const stream = await ask<{ url?: string }>(`/api/watch/stream?share_key=${encodeURIComponent(share)}&fid=${file.fid}${fresh && file === first ? '&refresh=1' : ''}`);
 		if (stream?.url) {
-			chosen = { file, url: new URL(stream.url, url.origin).href };
+			const address = new URL(stream.url, url.origin).href;
+			// Far longer than the episode (more than double, and 10 minutes over): another video.
+			if (runtime > 0 && file.source) {
+				const length = await playlistLength(address, forward);
+				if (length > runtime * 60 * 2 + 600) {
+					wrongVideo = true;
+					continue;
+				}
+			}
+			chosen = { file, url: address };
 			break;
 		}
 	}
-	if (!chosen) return json({ error: "That can't be played right now." });
+	if (!chosen) return json({ error: wrongVideo ? "The only copy found of this episode is a different video." : "That can't be played right now." });
 
 	const season = episode?.season ?? 0;
 	const number = episode?.episode ?? 0;
@@ -125,8 +144,16 @@ export const GET: RequestHandler = async ({ url, request }) => {
 		}).catch(() => {});
 	}
 
+	// Every copy, for the player menu's Source (as the Fire TV's lists them).
+	const copies = files.map((f) => ({
+		fid: f.fid,
+		copy: f.shareKey ?? '',
+		label: [f.source ?? 'Showbox', f.quality, f.audio, f.size].filter(Boolean).join(' · ')
+	}));
+
 	return json({
 		url: address,
+		copies,
 		format,
 		minBandwidth,
 		bif,
@@ -162,6 +189,24 @@ async function topBandwidth(playlist: string, headers: Record<string, string>): 
 			.filter((line) => !/hvc1|hev1|ec-3|ac-3/i.test(line))
 			.map((line) => Number(line.match(/[:,]BANDWIDTH=(\d+)/)?.[1] ?? 0));
 		return bandwidths.length > 1 ? Math.floor(Math.max(...bandwidths) / 1000) : 0;
+	} catch {
+		return 0;
+	}
+}
+
+/** A playlist's length in seconds (its first quality's pieces added up); 0 when it can't be read. */
+async function playlistLength(address: string, headers: Record<string, string>): Promise<number> {
+	try {
+		const read = async (at: string) => {
+			const r = await fetch(at, { headers, signal: AbortSignal.timeout(15_000) });
+			return r.ok ? r.text() : '';
+		};
+		let text = await read(address);
+		if (/#EXT-X-STREAM-INF/.test(text)) {
+			const next = text.split('\n').find((l) => l.trim() && !l.startsWith('#'));
+			text = next ? await read(new URL(next.trim(), address).href) : '';
+		}
+		return [...text.matchAll(/#EXTINF:([\d.]+)/g)].reduce((sum, m) => sum + Number(m[1]), 0);
 	} catch {
 		return 0;
 	}

@@ -41,7 +41,7 @@ sub onResults(event as Object)
     content = CreateObject("roSGNode", "ContentNode")
     for each found in answer.data.results
         if content.getChildCount() >= 20 then exit for
-        item = contentItem({ kind: "poster", source: found.source, sourceId: found.sourceId, progress: 0.0 })
+        item = contentItem({ kind: "poster", source: found.source, sourceId: found.sourceId, progress: 0.0, pad: 15 })
         item.title = found.title
         if found.year <> invalid then item.shortDescriptionLine1 = text(found.year)
         if found.posterUrl <> invalid then item.hdPosterUrl = found.posterUrl

@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <!-- Plays an episode, a film or a live channel, full screen, with the Roku's own controls, and
-     the Fire TV player's habits on a TV: captions on, intros and credits skipped by themselves
-     (or a Skip button), the next episode following on, and a fresh link when it stops working.
+     the Fire TV player's habits on a TV: captions on (drawn here, in Catalog's style, and timed by
+     the computer), intros and credits skipped by themselves (or a Skip button), the next episode
+     following on, and a fresh link when it stops working. Down (or *) opens the player's menu:
+     captions, their timing and size, the source, the sound track, the next episode.
      Where it's got to is saved as it plays. -->
 <component name="PlayerScreen" extends="Group">
     <interface>
@@ -15,14 +17,47 @@
     <children>
         <Rectangle width="1920" height="1080" color="0x000000FF" />
         <Video id="video" width="1920" height="1080" enableUI="true" notificationInterval="1" />
+        <!-- Captions: the words twice, a dark copy just behind for a shadow (or a dark box behind). -->
+        <Group id="captions" visible="false">
+            <Rectangle id="capBox" color="0x000000B3" visible="false" />
+            <Label id="capShadow" width="1640" height="320" translation="[143, 683]" horizAlign="center" vertAlign="bottom" wrap="true" maxLines="3" color="0x000000E6" />
+            <Label id="capText" width="1640" height="320" translation="[140, 680]" horizAlign="center" vertAlign="bottom" wrap="true" maxLines="3" color="0xFFFFFFFF" />
+        </Group>
+        <!-- A word about the captions at the top ("Timing captions to the video…"), as the Fire TV says it. -->
+        <Group id="note" visible="false">
+            <Rectangle id="noteBack" color="0x000000B3" height="64" translation="[0, 48]" />
+            <Label id="noteText" height="64" translation="[0, 48]" vertAlign="center" font="font:SmallBoldSystemFont" color="0xFFFFFFFF" />
+        </Group>
         <Group id="skip" translation="[1490, 880]" visible="false">
             <Poster uri="pkg:/images/pill.9.png" width="330" height="84" blendColor="0xE7EDE9FF" />
             <Label id="skipLabel" width="330" height="84" horizAlign="center" vertAlign="center" font="font:MediumBoldSystemFont" color="0x111614FF" />
+        </Group>
+        <!-- The player's menu, down the right over the video. -->
+        <Group id="menu" visible="false">
+            <Rectangle translation="[1160, 0]" width="760" height="1080" color="0x0E1211EE" />
+            <Label id="menuTitle" translation="[1210, 70]" width="660" font="font:MediumBoldSystemFont" color="0xE7EDE9FF" />
+            <LabelList
+                id="menuList"
+                translation="[1200, 150]"
+                itemSize="[680, 72]"
+                itemSpacing="[0, 6]"
+                numRows="11"
+                vertFocusAnimationStyle="floatingFocus"
+                color="0xE7EDE9FF"
+                focusedColor="0x111614FF"
+                font="font:SmallSystemFont"
+                focusedFont="font:SmallBoldSystemFont" />
+            <Label id="menuHint" translation="[1210, 990]" width="660" wrap="true" font="font:SmallestSystemFont" color="0xA3B0A8FF" />
         </Group>
         <Group id="waiting">
             <BusySpinner id="spinner" translation="[912, 452]" />
             <Label id="message" translation="[160, 620]" width="1600" horizAlign="center" wrap="true" font="font:MediumSystemFont" color="0xE7EDE9FF" />
         </Group>
         <Timer id="saver" repeat="true" duration="10" />
+        <!-- Which caption shows, ten times a second. -->
+        <Timer id="cueTimer" repeat="true" duration="0.1" />
+        <!-- While the computer is still hearing the sound track: the captions asked for again. -->
+        <Timer id="capPoll" duration="40" />
+        <Timer id="noteTimer" duration="5" />
     </children>
 </component>

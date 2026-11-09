@@ -11,10 +11,14 @@ sub init()
     ' A search (the first chip): what was typed, and what it found. m.view is -1 while it shows.
     m.searched = ""
     m.found = invalid
+    ' The card a game was played from: back from the player, the highlight is on it again (-1: none).
+    m.restore = -1
+    m.restoreView = 0
 end sub
 
 sub onFocus()
-    if m.top.hasFocus() then m.chips.setFocus(true)
+    if not m.top.hasFocus() then return
+    if m.restore >= 0 and m.grid.visible then m.grid.setFocus(true) else m.chips.setFocus(true)
 end sub
 
 sub start()
@@ -90,16 +94,16 @@ sub showView()
     content = CreateObject("roSGNode", "ContentNode")
     ' Games carry a picture across the top (taller cards, two rows); channels are words only.
     if row.label = "Channels" then
-        m.grid.itemSize = [540, 200]
+        m.grid.itemSize = [568, 228]
         m.grid.numRows = 3
     else
-        m.grid.itemSize = [540, 380]
+        m.grid.itemSize = [568, 408]
         m.grid.numRows = 2
     end if
     for each game in row.items
         kind = "game"
         if row.label = "Channels" or game.isChannel = true then kind = "channel"
-        fields = { kind: kind, onNow: game.on = true, progress: 0.0, sportName: text(game.sport), sportColor: text(game.sportColor), sportPicture: text(game.sportPicture), logoA: "", logoB: "", colorA: "", colorB: "" }
+        fields = { pad: 14, kind: kind, onNow: game.on = true, progress: 0.0, sportName: text(game.sport), sportColor: text(game.sportColor), sportPicture: text(game.sportPicture), logoA: "", logoB: "", colorA: "", colorB: "" }
         if game.logos <> invalid and game.logos.Count() = 2 then
             fields.logoA = game.logos[0].logo
             fields.colorA = game.logos[0].color
@@ -115,6 +119,11 @@ sub showView()
     m.grid.content = content
     m.grid.visible = true
     m.status.visible = false
+    ' Come back from a game: the same card highlighted, in the same view.
+    if m.restore >= 0 and m.view = m.restoreView and m.restore < row.items.Count() then
+        m.grid.jumpToItem = m.restore
+        if m.top.isInFocusChain() then m.grid.setFocus(true)
+    end if
 end sub
 
 sub onChip()
@@ -202,6 +211,8 @@ end function
 ' the computer lists that one first). The * button on a game opens its other channels and Save.
 sub onPick()
     row = currentRow()
+    m.restore = m.grid.itemSelected
+    m.restoreView = m.view
     m.game = row.items[m.grid.itemSelected]
     if m.game.replay <> invalid and m.game.replay <> "" then
         m.top.action = { go: "play", replay: m.game.replay, label: m.game.label }
@@ -300,6 +311,7 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
         m.grid.setFocus(true)
         return true
     else if key = "up" and m.grid.isInFocusChain() then
+        m.restore = -1
         m.chips.setFocus(true)
         return true
     end if

@@ -103,3 +103,28 @@ end sub
 sub onTileCallDone()
     nextTileCall()
 end sub
+
+' A setting kept on this Roku (registry): on/off as "1"/"0", anything else as it is.
+sub keepSetting(name as String, value as Dynamic)
+    saved = CreateObject("roRegistrySection", "catalog")
+    if type(value) = "Boolean" or type(value) = "roBoolean" then
+        if value then saved.Write(name, "1") else saved.Write(name, "0")
+    else
+        saved.Write(name, text(value))
+    end if
+    saved.Flush()
+end sub
+
+' This Roku app's version as one number (major, minor, build: 1.2.3 is 10203), from its manifest,
+' to tell whether the computer has a newer one (/api/roku/hello `rokuApp`).
+function appVersion() as Integer
+    manifest = ReadAsciiFile("pkg:/manifest")
+    parts = { major: 0, minor: 0, build: 0 }
+    for each line in manifest.Split(Chr(10))
+        line = line.Trim()
+        if Left(line, 14) = "major_version=" then parts.major = Mid(line, 15).ToInt()
+        if Left(line, 14) = "minor_version=" then parts.minor = Mid(line, 15).ToInt()
+        if Left(line, 14) = "build_version=" then parts.build = Mid(line, 15).ToInt()
+    end for
+    return parts.major * 10000 + parts.minor * 100 + parts.build
+end function

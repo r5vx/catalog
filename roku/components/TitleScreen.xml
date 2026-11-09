@@ -40,5 +40,7 @@
             vertFocusAnimationStyle="floatingFocus"
             visible="false" />
         <Timer id="warm" duration="1.2" />
+        <!-- The episodes again, with the player's own numbering, once it has it (/api/roku/season `again`). -->
+        <Timer id="again" duration="4" />
     </children>
 </component>

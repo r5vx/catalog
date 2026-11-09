@@ -396,19 +396,25 @@
 	{:else}
 		<ul class="grid">
 			{#each data.entries as entry (entry.id)}
-				<li class="has-more" oncontextmenu={(e) => onEntryContext(e, entry)}>
-					<a href="/entry/{entry.id}" class="card">
+				<!-- A profile's own list (a phone, someone other than the owner): its cards open the title's
+				     page, and the owner's edit and remove aren't offered. -->
+				<li class="has-more" oncontextmenu={(e) => (data.ownList ? undefined : onEntryContext(e, entry))}>
+					<a href={'link' in entry ? String(entry.link) : `/entry/${entry.id}`} class="card">
 						<div class="poster">
 							{#if entry.posterUrl}
 								<img src={entry.posterUrl} srcset={posterSrcset(entry.posterUrl)} sizes={POSTER_SIZES} alt="" loading="lazy" />
 							{:else}
 								<span class="poster-fallback" aria-hidden="true">{entry.categoryEmoji}</span>
 							{/if}
-							<MoreButton onopen={(e) => onEntryContext(e, entry)} top={entry.favorite ? 30 : 6} />
+							{#if !data.ownList}
+								<MoreButton onopen={(e) => onEntryContext(e, entry)} top={entry.favorite ? 30 : 6} />
+							{/if}
 							{#if entry.favorite}
 								<span class="fav" title="Favourite" aria-label="Favourite">★</span>
 							{/if}
-							<button type="button" class="hover-remove" title="Remove from library" onclick={(e) => { e.preventDefault(); e.stopPropagation(); removeEntry(entry.id); }}>&times;</button>
+							{#if !data.ownList}
+								<button type="button" class="hover-remove" title="Remove from library" onclick={(e) => { e.preventDefault(); e.stopPropagation(); removeEntry(entry.id); }}>&times;</button>
+							{/if}
 						</div>
 
 						<div class="meta">

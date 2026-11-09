@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { createSocket } from 'node:dgram';
+import { networkInterfaces } from 'node:os';
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -33,11 +34,25 @@ export function isHomeAddress(address: string): boolean {
 const tag = (xml: string, name: string) => new RegExp(`<${name}>([^<]*)</${name}>`).exec(xml)?.[1]?.trim() ?? '';
 
 /** One Roku's name, model and developer mode, from its device-info. Null when it isn't a Roku. */
-export async function rokuInfo(address: string): Promise<FoundRoku | null> {
+export async function rokuInfo(address: string, wait = 3000): Promise<FoundRoku | null> {
 	try {
-		const resp = await fetch(`http://${address}:8060/query/device-info`, { signal: AbortSignal.timeout(3000) });
-		if (!resp.ok) return null;
-		const xml = await resp.text();
+		// Node's own http, not fetch: a scan asks hundreds of addresses, and fetch's every failure
+		// went into the diagnostics' list of slow sites (slowRequests.ts).
+		const xml = await new Promise<string>((resolve) => {
+			const req = httpRequest(`http://${address}:8060/query/device-info`, { timeout: wait, agent: false }, (res) => {
+				if (res.statusCode !== 200) {
+					res.resume();
+					return resolve('');
+				}
+				const parts: Buffer[] = [];
+				res.on('data', (part: Buffer) => parts.push(part));
+				res.on('end', () => resolve(Buffer.concat(parts).toString('utf8')));
+				res.on('error', () => resolve(''));
+			});
+			req.on('timeout', () => req.destroy());
+			req.on('error', () => resolve(''));
+			req.end();
+		});
 		if (!xml.includes('<device-info')) return null;
 		return {
 			address,
@@ -50,23 +65,33 @@ export async function rokuInfo(address: string): Promise<FoundRoku | null> {
 	}
 }
 
-/** The Rokus on the home network (asks for 2.5 s). */
-export async function findRokus(): Promise<FoundRoku[]> {
-	const addresses = await new Promise<Set<string>>((resolve) => {
-		const found = new Set<string>();
+/** This computer's own home-network addresses (Wi-Fi, cable; not Tailscale's or a virtual adapter's). */
+function homeAddresses(): string[] {
+	return Object.values(networkInterfaces())
+		.flat()
+		.filter((a): a is NonNullable<typeof a> => !!a && a.family === 'IPv4' && !a.internal && isHomeAddress(a.address))
+		.map((a) => a.address);
+}
+
+/** SSDP's question asked out of one of this computer's addresses (`from`), for 2.5 s. */
+function askFrom(from: string, found: Set<string>): Promise<void> {
+	return new Promise((resolve) => {
 		const socket = createSocket({ type: 'udp4', reuseAddr: true });
 		const done = () => {
 			try {
 				socket.close();
 			} catch {}
-			resolve(found);
+			resolve();
 		};
 		socket.on('message', (message) => {
 			const location = /^location:\s*http:\/\/([\d.]+):8060/im.exec(message.toString())?.[1];
 			if (location && isHomeAddress(location)) found.add(location);
 		});
 		socket.on('error', done);
-		socket.bind(0, () => {
+		socket.bind(0, from, () => {
+			try {
+				socket.setMulticastInterface(from);
+			} catch {}
 			const ask = Buffer.from(`M-SEARCH * HTTP/1.1\r\nHost: ${SSDP.host}:${SSDP.port}\r\nMan: "ssdp:discover"\r\nST: roku:ecp\r\nMX: 2\r\n\r\n`);
 			// Asked twice: one UDP packet can be lost on Wi-Fi.
 			socket.send(ask, SSDP.port, SSDP.host);
@@ -74,8 +99,38 @@ export async function findRokus(): Promise<FoundRoku[]> {
 		});
 		setTimeout(done, SEARCH_MS);
 	});
-	const rokus = await Promise.all([...addresses].map(rokuInfo));
-	return rokus.filter((r): r is FoundRoku => r !== null).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * The Rokus on the home network. SSDP's question goes out of each of this computer's home-network
+ * addresses: asked once, Windows sent it out of whichever network it liked, and with Tailscale
+ * (or a virtual adapter) on the computer that was the wrong one and no Roku heard it ("can't find
+ * Rokus", 2026-11-08). None answering, every address on those networks is asked for its
+ * device-info directly (a Roku answers that on port 8060), a few dozen at a time.
+ */
+export async function findRokus(): Promise<FoundRoku[]> {
+	const found = new Set<string>();
+	const mine = homeAddresses();
+	await Promise.all((mine.length ? mine : ['0.0.0.0']).map((from) => askFrom(from, found)));
+	let rokus = (await Promise.all([...found].map(rokuInfo))).filter((r): r is FoundRoku => r !== null);
+	if (!rokus.length) rokus = await scanFor(mine);
+	return rokus.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Every address on this computer's home networks (the /24 around each) asked for a Roku's device-info. */
+async function scanFor(mine: string[]): Promise<FoundRoku[]> {
+	const candidates = new Set<string>();
+	for (const own of mine) {
+		const base = own.split('.').slice(0, 3).join('.');
+		for (let last = 1; last < 255; last++) if (`${base}.${last}` !== own) candidates.add(`${base}.${last}`);
+	}
+	const list = [...candidates];
+	const rokus: FoundRoku[] = [];
+	for (let i = 0; i < list.length; i += 64) {
+		const batch = await Promise.all(list.slice(i, i + 64).map((address) => rokuInfo(address, 1200)));
+		rokus.push(...batch.filter((r): r is FoundRoku => r !== null));
+	}
+	return rokus;
 }
 
 /** The Roku app's zip, as built by `npm run roku`: in the build's client folder, or the project's static/. */

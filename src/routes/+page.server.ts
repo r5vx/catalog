@@ -1,4 +1,4 @@
-import { listCategories, listEntries, countsByCategory, completedCount, completedByCategory, sharedCatalogCount, existingSourceKeys, existingSourceKeysWithIds } from '$lib/server/db/queries';
+import { tvLibrary, listCategories, listEntries, countsByCategory, completedCount, completedByCategory, sharedCatalogCount, existingSourceKeys, existingSourceKeysWithIds } from '$lib/server/db/queries';
 import { countNotes } from '$lib/server/db/notes';
 import { withNextAir } from '$lib/server/nextAirs';
 import { listTags } from '$lib/server/db/tags';
@@ -6,6 +6,9 @@ import { SORTS, KEPT_FILTERS } from '$lib/constants';
 import { readSettings } from '$lib/server/settings';
 import { continueWatchingWithPosters } from '$lib/server/continueWatching';
 import { redirect } from '@sveltejs/kit';
+import { currentProfile, MAIN_PROFILE } from '$lib/server/profile';
+import { isWatched } from '$lib/constants';
+import type { EntryCard } from '$lib/server/db/types';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -53,6 +56,11 @@ export const load: PageServerLoad = async ({ url, request }) => {
 	const categories = listCategories();
 	const activeCategory = categories.find((c) => c.slug === cat);
 
+	// On a phone, someone other than the library's owner: their own list, as the TV shows them.
+	if (currentProfile() !== MAIN_PROFILE) {
+		return { ...ownList({ q, category: activeCategory, status }, categories), filters: { q, cat, status, sort: sort.value, tags: [] as number[], yearFrom: null, yearTo: null }, rememberView: null, continueWatching: await continueWatchingWithPosters(), friendCount: 0, ownedKeys: [] as string[], ownedMap: {} as ReturnType<typeof existingSourceKeysWithIds> };
+	}
+
 	// Caught-up shows carry their next episode's air date (their card's countdown).
 	const entries = withNextAir(listEntries({
 		search: q,
@@ -83,6 +91,49 @@ export const load: PageServerLoad = async ({ url, request }) => {
 		continueWatching: await continueWatchingWithPosters(),
 		friendCount: sharedCatalogCount(),
 		ownedKeys: [...existingSourceKeys()],
-		ownedMap: existingSourceKeysWithIds()
+		ownedMap: existingSourceKeysWithIds(),
+		ownList: false
 	};
 };
+
+/**
+ * A profile's own list (profile_titles) as the library grid shows it, for a phone where someone
+ * other than the library's owner was picked. The grid used to stay the owner's on phones: the
+ * owner's library showed under every profile (2026-11-08). Cards open the
+ * title's page; the owner-only parts (editing, tags, notes, shared catalogs) aren't offered.
+ */
+function ownList(filter: { q: string; category: { id: number; slug: string } | undefined; status: string }, categories: ReturnType<typeof listCategories>) {
+	const bySlug = new Map(categories.map((c) => [c.slug, c]));
+	const all = withNextAir(tvLibrary()).map((item) => {
+		const category = bySlug.get(item.category ?? '');
+		return {
+			...item,
+			categoryId: category?.id ?? 0,
+			categoryName: item.categoryName ?? category?.name ?? '',
+			categoryEmoji: category?.emoji ?? '',
+			favorite: false,
+			link: item.source && item.sourceId ? `/title/${item.source}/${encodeURIComponent(item.sourceId)}` : `/watch?title=${encodeURIComponent(item.title)}`
+		} as unknown as EntryCard & { link: string };
+	});
+	const words = filter.q.toLowerCase();
+	const entries = all.filter(
+		(e) =>
+			(!words || e.title.toLowerCase().includes(words)) &&
+			(!filter.category || e.categoryId === filter.category.id) &&
+			(!filter.status || (filter.status === 'completed' ? isWatched(e.status) : e.status === filter.status))
+	);
+	const count = (list: typeof all) => list.reduce<Record<number, number>>((n, e) => ((n[e.categoryId] = (n[e.categoryId] ?? 0) + 1), n), {});
+	const watched = all.filter((e) => isWatched(e.status));
+	return {
+		entries,
+		categories,
+		countByCategory: count(all),
+		total: all.length,
+		completed: watched.length,
+		completedByCategory: count(watched),
+		noteCount: 0,
+		tags: [] as ReturnType<typeof listTags>,
+		/** This profile's own list: no editing, tags or notes here. */
+		ownList: true
+	};
+}

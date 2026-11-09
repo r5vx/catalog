@@ -13,7 +13,7 @@
         <Label text="Search" translation="[20, 64]" font="font:LargeBoldSystemFont" color="0xE7EDE9FF" />
         <MiniKeyboard id="keyboard" translation="[20, 170]" />
         <Label id="status" translation="[660, 180]" width="1060" font="font:SmallSystemFont" color="0xA3B0A8FF" text="Type a film, show or anime." />
-        <MarkupGrid id="results" translation="[660, 170]" itemComponentName="TileItem" numColumns="5" numRows="2" itemSize="[190, 285]" itemSpacing="[26, 40]" drawFocusFeedback="false" vertFocusAnimationStyle="floatingFocus" visible="false" />
+        <MarkupGrid id="results" translation="[660, 170]" itemComponentName="TileItem" numColumns="5" numRows="2" itemSize="[220, 315]" itemSpacing="[0, 10]" drawFocusFeedback="false" vertFocusAnimationStyle="floatingFocus" visible="false" />
         <Timer id="pause" duration="0.7" />
     </children>
 </component>

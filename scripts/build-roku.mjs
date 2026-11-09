@@ -17,6 +17,19 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const app = join(root, 'roku');
 const out = join(root, 'dist-roku');
 
+// The manifest's version and src/lib/rokuApp.ts must say the same (the Roku compares them to say
+// when the computer has a newer app).
+{
+	const manifest = readFileSync(join(app, 'manifest'), 'utf8');
+	const part = (name) => Number(new RegExp(`^${name}=(\\d+)`, 'm').exec(manifest)?.[1] ?? 0);
+	const version = part('major_version') * 10000 + part('minor_version') * 100 + part('build_version');
+	const said = Number(/ROKU_APP_VERSION = (\d+)/.exec(readFileSync(join(root, 'src', 'lib', 'rokuApp.ts'), 'utf8'))?.[1]);
+	if (version !== said) {
+		console.error(`roku/manifest is ${version}, src/lib/rokuApp.ts says ${said}: make them the same.`);
+		process.exit(1);
+	}
+}
+
 /** Every file under `dir`, as paths inside the zip ("components/HomeScreen.xml"). */
 function filesIn(dir) {
 	return readdirSync(dir).flatMap((name) => {

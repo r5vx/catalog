@@ -26,8 +26,16 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	const title = get('title');
 	let wanted = Number(get('season'));
 
+	// The player's own list can take up to 12 s (Showbox's listings), and the episodes waited for it
+	// ("showed up super later", 2026-11-08). Asked alongside TMDB's; not there in 2.5 s, TMDB's go
+	// first and `again` has the Roku ask once more (by then the player's is usually known).
+	const asking = ask<PlayerList & { retryIn?: number }>(`/api/tv/player-episodes?${new URLSearchParams({ title, year: get('year') })}`, 12_000);
 	const show = await showSeasons(get('source'), get('id'), title).catch(() => null);
-	const list = await ask<PlayerList & { retryIn?: number }>(`/api/tv/player-episodes?${new URLSearchParams({ title, year: get('year') })}`, 12_000);
+	const late = Symbol('late');
+	const quick = url.searchParams.get('full') !== '1';
+	const got = await Promise.race([asking, new Promise<typeof late>((resolve) => setTimeout(() => resolve(late), quick && show ? 2500 : 12_000))]);
+	const again = got === late;
+	const list = got === late ? null : got;
 	const same =
 		!list?.seasons?.length ||
 		(!!show &&
@@ -69,6 +77,7 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	const watched = watchedEpisodesForTitle(title).filter((w) => w.season === wanted);
 	return json({
 		title,
+		again,
 		seasons: show.seasons.map((s) => ({ number: s.number, count: s.count })),
 		season: wanted,
 		episodes: episodes.map((e) => ({

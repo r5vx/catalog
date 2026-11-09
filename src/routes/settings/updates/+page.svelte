@@ -177,7 +177,10 @@
 			case 'error':
 				if (release.message?.includes('latest-mac.yml'))
 					return 'Auto-updates are not available on Mac. Download new versions from the GitHub release page.';
-				return `Could not check for updates.`;
+				// With the reason (its first line): "Could not check" alone left nothing to go on (2026-11-08).
+				return release.message
+					? `Could not check for updates: ${release.message.split('\n')[0].slice(0, 160)}`
+					: 'Could not check for updates.';
 			default:
 				return '';
 		}

@@ -13,6 +13,8 @@ sub init()
     m.rows.observeField("rowItemSelected", "onPick")
     m.rows.observeField("rowItemFocused", "onHighlight")
     m.warm.observeField("fire", "warmUp")
+    m.again = m.top.findNode("again")
+    m.again.observeField("fire", "askAgain")
     m.top.observeField("focusedChild", "onFocus")
     m.title = invalid
     m.seasonData = invalid
@@ -87,12 +89,31 @@ sub onTitle(event as Object)
 end sub
 
 sub loadSeason(season as Integer)
+    m.again.control = "stop"
+    m.askedSeason = season
+    if m.seasonData = invalid then m.status.text = "Loading episodes…"
     api("/api/roku/season", { source: m.title.source, id: m.title.id, title: m.title.playTitle, year: m.title.playYear, season: season }, "onSeason")
 end sub
 
 sub onSeason(event as Object)
     answer = event.getData()
     if not answer.ok then return
+    m.status.text = ""
+    m.seasonData = answer.data
+    build()
+    ' TMDB's episodes came first: asked again for the player's own numbering, once.
+    if answer.data.again = true then m.again.control = "start"
+end sub
+
+sub askAgain()
+    season = m.askedSeason
+    if m.seasonData <> invalid then season = m.seasonData.season
+    api("/api/roku/season", { source: m.title.source, id: m.title.id, title: m.title.playTitle, year: m.title.playYear, season: season, full: "1" }, "onSeasonAgain")
+end sub
+
+sub onSeasonAgain(event as Object)
+    answer = event.getData()
+    if not answer.ok or answer.data.episodes = invalid or answer.data.episodes.Count() = 0 then return
     m.seasonData = answer.data
     build()
 end sub

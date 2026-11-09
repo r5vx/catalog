@@ -9,7 +9,7 @@
 sub init()
     m.top.backgroundColor = "0x111614FF"
     m.top.backgroundURI = ""
-    m.global.addFields({ server: "", token: "", profile: 0, profileName: "", profileColor: "", captions: true, autoSkip: true, autoplay: true })
+    m.global.addFields({ server: "", token: "", profile: 0, profileName: "", profileColor: "", captions: true, autoSkip: true, autoplay: true, autoTiming: true, captionBox: false, captionSize: "medium", rokuOutdated: false })
     saved = CreateObject("roRegistrySection", "catalog")
     if saved.Exists("server") then m.global.server = saved.Read("server")
     if saved.Exists("token") then m.global.token = saved.Read("token")
@@ -17,9 +17,11 @@ sub init()
     if saved.Exists("profileName") then m.global.profileName = saved.Read("profileName")
     if saved.Exists("profileColor") then m.global.profileColor = saved.Read("profileColor")
     ' On a TV these start on, as on the Fire TV (each can be turned off in Settings).
-    for each name in ["captions", "autoSkip", "autoplay"]
+    for each name in ["captions", "autoSkip", "autoplay", "autoTiming", "captionBox"]
         if saved.Exists(name) then m.global.setField(name, saved.Read(name) = "1")
     end for
+    if saved.Exists("captionSize") then m.global.captionSize = saved.Read("captionSize")
+    m.checkedVersion = false
     m.menuScreenGroup = m.top.findNode("menuScreen")
     m.nav = m.top.findNode("nav")
     m.nav.observeField("chosen", "onMenu")
@@ -66,6 +68,31 @@ sub showMenuScreen(place as String)
     end if
     m.menuScreenGroup.visible = true
     m.menuScreen.setFocus(true)
+    ' Once, after connecting: is the computer's Roku app newer than this one?
+    if not m.checkedVersion then
+        m.checkedVersion = true
+        api("/api/roku/hello", {}, "onHello")
+    end if
+end sub
+
+' The computer has a newer Roku app: said once, and in Settings (it only reaches this Roku when
+' it's installed again from the computer).
+sub onHello(event as Object)
+    answer = event.getData()
+    if not answer.ok or answer.data.rokuApp = invalid then return
+    if answer.data.rokuApp <= appVersion() then return
+    m.global.rokuOutdated = true
+    dialog = CreateObject("roSGNode", "StandardMessageDialog")
+    dialog.title = "A newer Catalog for this Roku"
+    dialog.message = ["The computer has a newer version of this app. On the computer, open Settings, then Watch on TV, then Install on Roku."]
+    dialog.buttons = ["OK"]
+    dialog.observeField("buttonSelected", "onHelloClosed")
+    m.helloDialog = dialog
+    m.top.dialog = dialog
+end sub
+
+sub onHelloClosed()
+    m.helloDialog.close = true
 end sub
 
 ' A screen over everything (the menu and its screen hidden meanwhile).

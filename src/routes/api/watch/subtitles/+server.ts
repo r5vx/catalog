@@ -6,6 +6,7 @@ import { aniwaveStream, parseAniwaveShareKey } from '$lib/server/sources/aniwave
 import { hianimeStream, parseHianimeShareKey } from '$lib/server/sources/hianime';
 import { toshoSubtitles, toshoFilmSubtitles, keepSeasonSubtitles, type ToshoSubtitle } from '$lib/server/sources/animetosho';
 import { fetchRomajiTitle } from '$lib/server/metadata/anilist';
+import { isAnimeFilm } from '$lib/server/animeFilm';
 import { isCinemaRecording } from '$lib/watch';
 import type { RequestHandler } from './$types';
 
@@ -47,9 +48,11 @@ export const GET: RequestHandler = async ({ url }) => {
 	// A later season's year isn't when the show started, so without the year if that finds nothing.
 	let show = type === 'tv' ? await tmdbShow(title, year) : null;
 	if (type === 'tv' && year && !show?.anime) show = (await tmdbShow(title, '')) ?? show;
-	// An anime film: AniList knows it, or it plays from Aniwave (Re:Zero's Memory Snow).
+	// An anime film: it plays from Aniwave (Re:Zero's Memory Snow), or AniList knows it and TMDB
+	// agrees it's Japanese animation (AniList alone made The Odyssey, 2026, an anime). TMDB not
+	// answering leaves AniList's word.
 	const filmRomaji = type === 'movie' ? await fetchRomajiTitle(title).catch(() => null) : null;
-	const animeFilm = type === 'movie' && Boolean(share || filmRomaji);
+	const animeFilm = type === 'movie' && (Boolean(share) || (Boolean(filmRomaji) && (await isAnimeFilm(title, year)) !== false));
 	const anime = Boolean(show?.anime) || animeFilm;
 
 	// anime.nexus goes by TMDB's numbering; Showbox's can differ (Re:Zero), so the episode is

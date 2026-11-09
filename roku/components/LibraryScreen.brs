@@ -51,7 +51,7 @@ sub onRows(event as Object)
     content = CreateObject("roSGNode", "ContentNode")
     for each row in answer.data.rows
         for each tile in row.tiles
-            item = contentItem({ kind: "poster", note: text(tile.note), noteNew: tile.noteNew = true, progress: 0.0 })
+            item = contentItem({ kind: "poster", note: text(tile.note), noteNew: tile.noteNew = true, progress: 0.0, pad: 16 })
             item.title = tile.title
             if tile.poster <> invalid then item.hdPosterUrl = tile.poster
             content.appendChild(item)

@@ -1,6 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { liveLink, liveTrouble, noteLiveTry, openSealedPlaylist } from '$lib/server/sources/daddylive';
-import { trustLiveHost } from '$lib/server/relayHosts';
+import { liveHeadersFor, trustLiveHost } from '$lib/server/relayHosts';
+import { sharedLivePiece } from '$lib/server/liveShare';
 import type { RequestHandler } from './$types';
 
 /**
@@ -100,6 +101,14 @@ async function fromItsSource(id: number): Promise<Answer | null> {
 		})
 		.join('\n');
 	noteLiveTry(id, 'played');
+	// The newest pieces fetched now, before any screen asks (liveShare.ts keeps them a minute): a
+	// TV waited for each whole piece to come from the channel's server only once it asked, and a
+	// slow one stopped the picture for a few seconds (college football on the Roku, 2026-11-08).
+	const pieces = text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+	for (const piece of pieces.slice(-3)) {
+		const full = new URL(piece, base);
+		void sharedLivePiece(full.href, liveHeadersFor(full)).catch(() => {});
+	}
 	return { status: 200, text: out };
 }
 
