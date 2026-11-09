@@ -205,6 +205,13 @@ function mustPickProfile(event: RequestEvent): boolean {
  * PIN is set the lock does nothing at all — it's opt-in from Settings.
  */
 export const handle: Handle = async ({ event, resolve }) => {
+	// Catalog's server only speaks plain http, but the packed server guesses https for every
+	// request unless told otherwise. So url.origin said https://, and everything built from it
+	// broke: the Roku's pages ask this server for things at url.origin and hand the Roku addresses
+	// made from it ("Couldn't find that to play" for every title, 2026-11-08). The dev server
+	// guessed right, which is how it was missed. Kept as https only when something in front
+	// (Tailscale Serve, say) says the visit really was https.
+	event.url.protocol = event.request.headers.get('x-forwarded-proto') === 'https' ? 'https:' : 'http:';
 	checkSameOrigin(event);
 	noteOwnAddress(event.url);
 

@@ -12,7 +12,8 @@
     </interface>
     <script type="text/brightscript" uri="pkg:/components/NavMenu.brs" />
     <children>
-        <Rectangle id="dim" translation="[560, 0]" width="1360" height="1080" color="0x00000073" visible="false" />
+        <!-- Under the backing, over the whole screen: the backing fades out into it with no edge. -->
+        <Rectangle id="dim" width="1920" height="1080" color="0x00000073" visible="false" />
         <Poster id="backing" width="160" height="1080" uri="pkg:/images/nav_closed.png" />
         <!-- The logo: the pink dot while the menu is narrow, the whole name once it opens (as the Fire TV). -->
         <Poster id="logoDot" translation="[40, 52]" width="28" height="28" uri="pkg:/images/logo_dot.png" />

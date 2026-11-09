@@ -1,6 +1,8 @@
-' YouTube's own places (src/lib/server/youtubeTv.ts), in the order its TV app has them.
+' YouTube's own places (src/lib/server/youtubeTv.ts), in the order its TV app has them. Home (the
+' first rows of the others) comes first, so it opens on videos, not a search box.
 function placeList() as Object
     return [
+        { id: "home", label: "Home" },
         { id: "search", label: "Search" },
         { id: "music", label: "Music" },
         { id: "gaming", label: "Gaming" },

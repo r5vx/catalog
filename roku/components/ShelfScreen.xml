@@ -17,7 +17,8 @@
         <Label id="name" translation="[20, 70]" width="900" wrap="true" maxLines="2" font="font:LargeBoldSystemFont" color="0xE7EDE9FF" />
         <Label id="meta" translation="[20, 0]" width="900" font="font:SmallSystemFont" color="0xA3B0A8FF" />
         <Label id="about" translation="[20, 0]" width="880" wrap="true" maxLines="3" lineSpacing="4" font="font:SmallSystemFont" color="0xE7EDE9FF" />
-        <Label id="status" translation="[20, 620]" width="1700" font="font:MediumSystemFont" color="0x75837BFF" text="Loading…" />
+        <!-- In the middle of the screen (this screen starts 154 px in, beside the menu: 806 is the screen's middle). -->
+        <Label id="status" translation="[0, 510]" width="1612" horizAlign="center" font="font:MediumSystemFont" color="0x75837BFF" text="Loading…" />
         <RowList
             id="rows"
             translation="[20, 470]"

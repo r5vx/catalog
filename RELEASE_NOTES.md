@@ -12,6 +12,28 @@ without both.
 
 ## Unreleased
 
+## 4.1.2 — 2026-11-09 — Roku plays again, a tidier Roku menu, and Extended Edition subtitles
+
+### Fixed
+
+**Roku**
+- Films and shows play instead of saying "Couldn't find that to play"
+- The menu's names hide when you leave the menu
+- No dark strip at the edge of the open menu
+- Down from Live TV's sports reaches the games
+- Profile highlight no longer cut off at the top
+- Loading text sits in the middle of the screen
+- YouTube results no longer overlap their text
+
+**Subtitles**
+- Subtitles made in parts (old CD and DVD rips) are offered joined as one
+- Subtitles made for the cut that's playing come first, even with long end credits
+
+### New
+
+**Roku**
+- YouTube opens on a Home of videos from each of its places
+
 ## 4.1.1 — 2026-11-09 — Roku installs fixed, and Live TV picks the game's own channel
 
 ### Fixed

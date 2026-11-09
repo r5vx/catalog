@@ -101,6 +101,7 @@ function rowsOf(answer: unknown): Row[] {
 
 /** A place's rows (`place` from PLACES), a channel's page (`UC…`) or a playlist's videos (its id). */
 export async function youtubeRows(place: string, id = ''): Promise<Row[]> {
+	if (place === 'home') return homeRows();
 	let browseId = PLACES[place] ?? '';
 	if (place === 'channel' && /^UC[\w-]{10,}$/.test(id)) browseId = id;
 	if (place === 'playlist' && /^[\w-]{10,}$/.test(id)) browseId = 'VL' + id;
@@ -118,4 +119,28 @@ export async function youtubeRows(place: string, id = ''): Promise<Row[]> {
 	});
 	if (!resp.ok) throw new Error(`YouTube answered ${resp.status}`);
 	return rowsOf(await resp.json());
+}
+
+/**
+ * Home: signed out, YouTube's own Home is empty ("Make YouTube your own"), so the Roku's YouTube
+ * opened on a search box and looked like little else. This is the first two rows of each place
+ * instead, named with their place, so it opens on videos. Kept 10 minutes.
+ */
+const HOME_FROM = ['gaming', 'music', 'sports', 'news', 'live', 'podcasts', 'movies'] as const;
+const HOME_NAMES: Record<string, string> = { gaming: 'Gaming', music: 'Music', sports: 'Sports', news: 'News', live: 'Live', podcasts: 'Podcasts', movies: 'Movies' };
+let homeKept: { at: number; rows: Row[] } | null = null;
+
+async function homeRows(): Promise<Row[]> {
+	if (homeKept && Date.now() - homeKept.at < 10 * 60_000) return homeKept.rows;
+	const each = await Promise.all(HOME_FROM.map((place) => youtubeRows(place).catch(() => [] as Row[])));
+	const rows: Row[] = [];
+	// Round by round: each place's first row, then each place's second.
+	for (const round of [0, 1]) {
+		HOME_FROM.forEach((place, i) => {
+			const row = each[i][round];
+			if (row?.items.length) rows.push({ title: `${HOME_NAMES[place]}: ${row.title}`, items: row.items });
+		});
+	}
+	if (rows.length) homeKept = { at: Date.now(), rows };
+	return rows;
 }

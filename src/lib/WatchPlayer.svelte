@@ -831,12 +831,19 @@
 	 * Deadpool 2 is 1:59 on Showbox's 1080p file but 2:14 on its 4K one and on 7Movies (the Super
 	 * Duper Cut), and the other cut's subtitles can't be lined up (a friend: "they wouldn't sync at
 	 * all"). A file whose last line comes after the end of the video (allowing for a film-speed
-	 * difference), or more than 16 minutes before it (credits are shorter), was made for another
-	 * cut. Only files that say when they end are moved, among themselves; the rest keep their place.
+	 * difference) was made for a longer cut. Ending up to 16 minutes before the end is the usual
+	 * credits; up to 35 is a long roll (The Fellowship of the Ring's Extended Edition has 20 minutes
+	 * of fan-club names: its own subtitles end 28 minutes early, the cinema cut's 58, and the cinema
+	 * ones went first, "20 minutes ahead", 2026-11-08). Only files that say when they end are moved,
+	 * among themselves; the rest keep their place.
 	 */
 	function byCut(list: SubOption[], length: number): SubOption[] {
 		if (!(length > 600)) return list;
-		const fits = (s: SubOption) => (s.lastAt! > length * 1.05 + 60 || length - s.lastAt! > 16 * 60 ? 1 : 0);
+		const fits = (s: SubOption) => {
+			const early = length - s.lastAt!;
+			if (s.lastAt! > length * 1.05 + 60) return 3;
+			return early <= 16 * 60 ? 0 : early <= 35 * 60 ? 1 : 2;
+		};
 		const timed = list.filter((s) => s.lastAt);
 		const ordered = [...timed].sort((a, b) => fits(a) - fits(b));
 		let next = 0;

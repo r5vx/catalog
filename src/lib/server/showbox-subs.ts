@@ -53,6 +53,11 @@ interface OSResult {
 	SeriesSeason?: string;
 	SeriesEpisode?: string;
 	SubLastTS?: string;
+	/** The subtitle a file belongs to: a set split in parts (one per CD or DVD) shares it. */
+	IDSubtitle?: string;
+	/** Which part this file is, and of how many ("1" of "2"). */
+	SubActualCD?: string;
+	SubSumCD?: string;
 }
 
 async function queryOS(path: string): Promise<OSResult[]> {
@@ -148,6 +153,41 @@ async function fromOpenSubtitles(
 		});
 	};
 
+	/*
+	 * Subtitles split in parts, one per CD or DVD (old rips: often the only ones for an extended
+	 * cut, like The Fellowship of the Ring's 3h48 Extended Edition), are offered as one, joined
+	 * (`joinedSubtitle`). A part alone covers only some of the film, so loose parts aren't offered.
+	 * Only sets in .srt with every part there.
+	 */
+	const parts = new Map<string, OSResult[]>();
+	const addResult = (s: OSResult) => {
+		const of = Number(s.SubSumCD ?? 1);
+		if (!(of > 1)) return addSub(s);
+		if (!s.IDSubtitle || !s.SubDownloadLink || String(s.SubFormat).toLowerCase() !== 'srt') return;
+		const set = parts.get(s.IDSubtitle) ?? [];
+		if (!set.some((p) => p.SubActualCD === s.SubActualCD)) set.push(s);
+		parts.set(s.IDSubtitle, set);
+	};
+	const addJoined = () => {
+		for (const [id, set] of parts) {
+			const of = Number(set[0].SubSumCD);
+			if (set.length !== of || seen.has(`joined-${id}`)) continue;
+			set.sort((a, b) => Number(a.SubActualCD) - Number(b.SubActualCD));
+			if (set.some((p, i) => Number(p.SubActualCD) !== i + 1)) continue;
+			seen.add(`joined-${id}`);
+			const lastAt = set.reduce((sum, p) => sum + (lastLine(p.SubLastTS).lastAt ?? 0), 0);
+			subs.push({
+				id: `joined-${id}`,
+				url: JOINED + set.map((p) => p.SubDownloadLink).join('|'),
+				lang: set[0].SubLanguageID!,
+				language: langName(set[0].SubLanguageID!),
+				fileName: `${set[0].SubFileName ?? 'Subtitles'} (${of} parts joined)`,
+				source: 'OpenSubtitles',
+				...(lastAt > 0 && set.every((p) => lastLine(p.SubLastTS).lastAt) ? { lastAt } : {})
+			});
+		}
+	};
+
 	const collectResults = (results: OSResult[]) => {
 		const matched = results.filter(matchesEpisode);
 		if (matched.length > 0) return matched;
@@ -168,8 +208,10 @@ async function fromOpenSubtitles(
 			queryOS(`${ep}imdbid-${numericId}${se}/sublanguageid-eng`),
 			queryOS(`${ep}imdbid-${numericId}${se}`)
 		]);
-		for (const s of collectResults(engResults)) addSub(s);
-		for (const s of collectResults(allResults)) addSub(s);
+		for (const s of collectResults(engResults)) addResult(s);
+		addJoined();
+		for (const s of collectResults(allResults)) addResult(s);
+		addJoined();
 	}
 
 	if (subs.length === 0) {
@@ -189,8 +231,10 @@ async function fromOpenSubtitles(
 					queryOS(`${ep}query-${terms}${se}/sublanguageid-eng`),
 					queryOS(`${ep}query-${terms}${se}`)
 				]);
-				for (const s of collectResults(engText)) addSub(s);
-				for (const s of collectResults(allText)) addSub(s);
+				for (const s of collectResults(engText)) addResult(s);
+				addJoined();
+				for (const s of collectResults(allText)) addResult(s);
+				addJoined();
 			}
 			if (subs.length > 0) break;
 		}
@@ -393,7 +437,55 @@ async function throughStremio(url: string, season?: number, episode?: number, la
 	return fromBytes(Buffer.from(await resp.arrayBuffer()), season, episode, lang);
 }
 
+/** A joined subtitle's address: `joined:` and its parts' addresses, in order, between `|`. */
+const JOINED = 'joined:';
+
+type SrtLine = { start: number; end: number; text: string };
+
+/** OpenSubtitles' own adverts, put into its files (a line at the start, a minute-long one at the end). */
+const OPENSUBTITLES_AD = /opensubtitles|osdb\.link|advertise your product|become vip member|subtitles for any video|watch online movies and series/i;
+
+function srtLines(text: string): SrtLine[] {
+	const time = (h: string, m: string, s: string, ms: string) => +h * 3600 + +m * 60 + +s + +ms.padEnd(3, '0') / 1000;
+	const lines: SrtLine[] = [];
+	for (const block of text.replace(/\r/g, '').split(/\n\s*\n/)) {
+		const m = /(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)/.exec(block);
+		if (!m) continue;
+		const words = block.slice(m.index + m[0].length).trim();
+		if (!words || OPENSUBTITLES_AD.test(words)) continue;
+		lines.push({ start: time(m[1], m[2], m[3], m[4]), end: time(m[5], m[6], m[7], m[8]), text: words });
+	}
+	return lines;
+}
+
+function srtTime(seconds: number): string {
+	const ms = Math.max(0, Math.round(seconds * 1000));
+	const pad = (n: number, w = 2) => String(n).padStart(w, '0');
+	return `${pad(Math.floor(ms / 3600000))}:${pad(Math.floor(ms / 60000) % 60)}:${pad(Math.floor(ms / 1000) % 60)},${pad(ms % 1000, 3)}`;
+}
+
+/**
+ * A set in parts as one file: each part starts where the one before it last spoke. Measured on
+ * The Fellowship of the Ring's Extended Edition (2026-11-08): its DVD 2 part, put on after DVD 1's
+ * last line, matched a one-file Extended subtitle line for line, 0.5 s out; auto-timing mends a
+ * join that far out (it follows jumps of up to 20 s). '' when any part can't be had.
+ */
+async function joinedSubtitle(url: string, lang?: string): Promise<string> {
+	const texts = await Promise.all(url.slice(JOINED.length).split('|').map((part) => downloadSubtitleText(part, undefined, undefined, lang)));
+	if (texts.some((t) => !t)) return '';
+	const all: SrtLine[] = [];
+	let offset = 0;
+	for (const text of texts) {
+		const lines = srtLines(text);
+		if (!lines.length) return '';
+		for (const line of lines) all.push({ start: line.start + offset, end: line.end + offset, text: line.text });
+		offset += lines[lines.length - 1].end + 0.5;
+	}
+	return all.map((line, i) => `${i + 1}\n${srtTime(line.start)} --> ${srtTime(line.end)}\n${line.text}\n`).join('\n');
+}
+
 async function downloadSubtitleText(url: string, season?: number, episode?: number, lang?: string): Promise<string> {
+	if (url.startsWith(JOINED)) return joinedSubtitle(url, lang);
 	try {
 		if (isOpenSubtitlesFile(url) && Date.now() < openSubtitlesRestUntil) return await throughStremio(url, season, episode, lang);
 		// A video source's own caption file (HiAnime's) only answers that source's player.

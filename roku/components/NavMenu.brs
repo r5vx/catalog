@@ -39,6 +39,10 @@ end function
 
 sub build()
     m.items.removeChildrenIndex(m.items.getChildCount(), 0)
+    ' Each row's own name and icon, kept here: findNode searches the whole menu, not just one row,
+    ' so it always found the first row's, and the other names never hid when the menu narrowed.
+    m.labels = []
+    m.icons = []
     y = 0
     for each one in places()
         row = m.items.createChild("Group")
@@ -66,19 +70,20 @@ sub build()
             name = one.label
             if name = "" then name = "Me"
             initial.text = UCase(Left(name, 1))
+            icon = invalid
         else
             icon = row.createChild("Poster")
             icon.uri = "pkg:/images/nav_" + one.icon + ".png"
             icon.width = 48
             icon.height = 48
-            icon.id = "icon"
         end if
         label = row.createChild("Label")
         label.text = one.label
         if one.icon = "" and one.label = "" then label.text = "Who's watching"
         label.translation = [76, 4]
         label.font = "font:MediumBoldSystemFont"
-        label.id = "label"
+        m.labels.Push(label)
+        m.icons.Push(icon)
         y = y + 92
     end for
     paint()
@@ -101,8 +106,8 @@ sub paint()
     for i = 0 to m.items.getChildCount() - 1
         row = m.items.getChild(i)
         back = row.getChild(0)
-        label = row.findNode("label")
-        icon = row.findNode("icon")
+        label = m.labels[i]
+        icon = m.icons[i]
         highlighted = open and i = m.at
         color = "0xA3B0A8FF"
         if list[i].place = m.top.current then color = "0xE994C2FF"

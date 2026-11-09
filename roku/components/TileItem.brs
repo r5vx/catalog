@@ -54,6 +54,7 @@ sub layout()
     m.picture.visible = false
     m.name.visible = false
     m.sub.visible = false
+    m.sub.maxLines = 2
     m.dot.visible = false
     m.note.visible = false
     m.noteBack.visible = false
@@ -71,6 +72,7 @@ sub layout()
     m.name.vertAlign = "top"
     m.name.color = c.ink
     m.body.scaleRotateCenter = [width / 2, height / 2]
+    m.body.translation = [0, 0]
     boxHeight = height
     m.ring.translation = [-6, -6]
 
@@ -99,7 +101,10 @@ sub layout()
         m.under.translation = [0, boxHeight + 12]
         m.sub.visible = true
         m.sub.width = width
-        m.sub.translation = [0, boxHeight + 70]
+        m.sub.maxLines = 1
+        ' Just under the name, however many lines it took (a fixed spot overlapped a two-line
+        ' name: YouTube's results).
+        m.sub.translation = [0, boxHeight + 16 + m.under.boundingRect().height]
         m.sub.color = c.faint
     else if k = "profile" then
         boxHeight = width
@@ -116,7 +121,11 @@ sub layout()
         m.under.visible = true
         m.under.horizAlign = "center"
         m.under.width = width
-        m.under.translation = [0, boxHeight + 14]
+        ' Lowered inside its space: the grid cuts off anything above its top edge, and the
+        ' highlighted ring (6 px out, then 6% bigger) reached 15 px above it.
+        m.body.translation = [0, 20]
+        m.body.scaleRotateCenter = [width / 2, boxHeight / 2]
+        m.under.translation = [0, boxHeight + 34]
     else if k = "game" or k = "channel" then
         ' A card: a red dot when it's on now, the name, then when and the league at the bottom.
         m.name.visible = true

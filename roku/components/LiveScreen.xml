@@ -12,9 +12,11 @@
     <script type="text/brightscript" uri="pkg:/components/LiveScreen.brs" />
     <script type="text/brightscript" uri="pkg:/components/common.brs" />
     <children>
-        <MarkupGrid id="chips" translation="[20, 56]" itemComponentName="TileItem" numColumns="7" numRows="2" itemSize="[220, 60]" itemSpacing="[16, 16]" drawFocusFeedback="false" />
+        <!-- Grids wrap round by default (down on the last row went back to the first, forever, and never
+             reached the games); floatingFocus stops at the edge, so down goes on to the games. -->
+        <MarkupGrid id="chips" translation="[20, 56]" itemComponentName="TileItem" numColumns="7" numRows="2" itemSize="[220, 60]" itemSpacing="[16, 16]" drawFocusFeedback="false" vertFocusAnimationStyle="floatingFocus" />
         <Label id="heading" translation="[20, 220]" font="font:MediumBoldSystemFont" color="0xE7EDE9FF" />
-        <Label id="status" translation="[20, 400]" width="1700" font="font:MediumSystemFont" color="0x75837BFF" text="Loading the schedule…" />
-        <MarkupGrid id="grid" translation="[20, 280]" itemComponentName="TileItem" numColumns="3" numRows="3" itemSize="[540, 200]" itemSpacing="[30, 30]" drawFocusFeedback="false" vertFocusAnimationStyle="fixedFocusWrap" visible="false" />
+        <Label id="status" translation="[0, 510]" width="1612" horizAlign="center" font="font:MediumSystemFont" color="0x75837BFF" text="Loading the schedule…" />
+        <MarkupGrid id="grid" translation="[20, 280]" itemComponentName="TileItem" numColumns="3" numRows="3" itemSize="[540, 200]" itemSpacing="[30, 30]" drawFocusFeedback="false" vertFocusAnimationStyle="floatingFocus" visible="false" />
     </children>
 </component>
