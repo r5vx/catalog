@@ -1,12 +1,15 @@
 #!/bin/bash
 #
 # Runs the app in the Mac builder's pretend iPhone and takes pictures of it, since there's no
-# iPhone to try it on there. Four pictures land in build-ios/shots:
+# iPhone to try it on there. The pictures land in build-ios/shots:
 #
 #   1-setup.png         the first-time screen (no computer picked yet)
-#   2-catalog.png       a stand-in "Catalog" page: shows what the app tells Catalog's pages about itself
+#   2-catalog.png       a stand-in "Catalog" page: shows what the app tells Catalog's pages about itself,
+#                       and writes a note into the page's private files (where Keep on this phone goes)
 #   3-youtube.png       YouTube opened inside the app (the pink circle should be beside its logo)
 #   4-handed-over.png   a Catalog page going to YouTube: handed to the app's YouTube (pink circle again)
+#   5-saved.png         a Catalog page saving a file: the "Saved" line, and the file listed in the log
+#   6-offline.png       the stand-in Catalog switched off: the kept no-connection page, reading the note back
 #
 # Run after: bash ios/build.sh simulator
 set -uo pipefail
@@ -28,58 +31,56 @@ xcrun simctl boot "$DEVICE" || true
 xcrun simctl bootstatus "$DEVICE" -b
 xcrun simctl install "$DEVICE" "$APP"
 
+shot() {
+	xcrun simctl io "$DEVICE" screenshot "$SHOTS/$1"
+	xcrun simctl terminate "$DEVICE" "$ID" || true
+}
+address() {
+	xcrun simctl spawn "$DEVICE" defaults write "$ID" catalogAddress "$1"
+}
+
 # 1. First start.
 xcrun simctl launch "$DEVICE" "$ID"
 sleep 8
-xcrun simctl io "$DEVICE" screenshot "$SHOTS/1-setup.png"
-xcrun simctl terminate "$DEVICE" "$ID" || true
+shot 1-setup.png
 
-# 2. A stand-in for Catalog on this Mac: answers /api/diagnostics, and a page that prints what
-#    the app says it is.
-python3 - <<'EOF' &
-from http.server import BaseHTTPRequestHandler, HTTPServer
-PAGE = b"""<!doctype html><meta name=viewport content="width=device-width, initial-scale=1">
-<body style="background:#181f1c;color:#eee;font:17px -apple-system;padding:20px;word-break:break-word">
-<h2>Stand-in Catalog page</h2><p id=a></p><p id=b></p>
-<script>
-a.textContent = navigator.userAgent;
-b.textContent = 'Message channel to the app: ' + (window.webkit && webkit.messageHandlers && webkit.messageHandlers.catalog ? 'yes' : 'no');
-</script>"""
-LEAVE = b"""<!doctype html><body style="background:#181f1c;color:#eee">Going to YouTube
-<script>setTimeout(function () { location.href = 'https://m.youtube.com/'; }, 1500);</script>"""
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        body = b'{"ok":true}' if self.path.startswith('/api/diagnostics') else LEAVE if self.path.startswith('/leave') else PAGE
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json' if self.path.startswith('/api/') else 'text/html; charset=utf-8')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-    def log_message(self, *args):
-        pass
-HTTPServer(('127.0.0.1', 8765), Handler).serve_forever()
-EOF
+# A stand-in for Catalog on this Mac (ios/stand-in-catalog.py says what each page does).
+python3 ios/stand-in-catalog.py &
 SERVER=$!
 sleep 2
-xcrun simctl spawn "$DEVICE" defaults write "$ID" catalogAddress "http://127.0.0.1:8765"
+
+# 2. The stand-in Catalog page.
+address "http://127.0.0.1:8765"
 xcrun simctl launch "$DEVICE" "$ID"
-sleep 10
-xcrun simctl io "$DEVICE" screenshot "$SHOTS/2-catalog.png"
-xcrun simctl terminate "$DEVICE" "$ID" || true
+sleep 12
+shot 2-catalog.png
 
 # 3. YouTube inside the app (the app opens it at once when started with this switch).
 xcrun simctl launch "$DEVICE" "$ID" -openYouTubeAtStart YES
 sleep 25
-xcrun simctl io "$DEVICE" screenshot "$SHOTS/3-youtube.png"
-xcrun simctl terminate "$DEVICE" "$ID" || true
+shot 3-youtube.png
 
 # 4. A Catalog page that goes to a YouTube address by itself (what Catalog's YouTube button does):
 #    the app should hand it to its own YouTube, so the pink circle should be there here too.
-xcrun simctl spawn "$DEVICE" defaults write "$ID" catalogAddress "http://127.0.0.1:8765/leave"
+address "http://127.0.0.1:8765/leave"
 xcrun simctl launch "$DEVICE" "$ID"
 sleep 25
-xcrun simctl io "$DEVICE" screenshot "$SHOTS/4-handed-over.png"
-xcrun simctl terminate "$DEVICE" "$ID" || true
+shot 4-handed-over.png
 
+# 5. A Catalog page that saves a file ("Save to this device" on the Downloads page).
+address "http://127.0.0.1:8765/save"
+xcrun simctl launch "$DEVICE" "$ID"
+sleep 10
+shot 5-saved.png
+echo "Files the app saved:"
+ls -l "$(xcrun simctl get_app_container "$DEVICE" "$ID" data)/Documents" || true
+
+# 6. Catalog switched off: the app shows the no-connection page it kept in step 2.
 kill "$SERVER" 2>/dev/null || true
+sleep 1
+address "http://127.0.0.1:8765"
+xcrun simctl launch "$DEVICE" "$ID"
+sleep 12
+shot 6-offline.png
+
 ls -l "$SHOTS"

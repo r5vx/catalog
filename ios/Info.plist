@@ -97,6 +97,12 @@
 	<key>NSCameraUsageDescription</key>
 	<string>To read the code on the computer's Settings, Phones page.</string>
 
+	<!-- Files saved from Catalog's Downloads page show in the Files app, under On My iPhone, Catalog. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+
 	<!-- Lets sound from a video carry on with the screen off. -->
 	<key>UIBackgroundModes</key>
 	<array>

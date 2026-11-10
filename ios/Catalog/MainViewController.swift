@@ -7,7 +7,7 @@ import WebKit
 /// does, so it's the real thing (accounts, subscriptions, Shorts, comments). Catalog only adds its
 /// no-ads script at the top of each page (WebViews.youtube). Closing YouTube hides it; it's still
 /// where it was left the next time.
-final class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+final class MainViewController: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKDownloadDelegate {
 	private let holder = UIView()
 	private var catalog: WKWebView!
 	private var youtube: WKWebView?
@@ -15,6 +15,9 @@ final class MainViewController: UIViewController, WKNavigationDelegate, WKUIDele
 	private var askedForAddress = false
 	/// Catalog failed to load while YouTube was over it: loaded again when YouTube closes.
 	private var catalogFailed = false
+	/// Catalog couldn't be reached, so its no-connection page (kept on the phone) is showing.
+	private var showingOffline = false
+	private var keptOfflinePage = false
 
 	private var catalogColor: UIColor = Look.surface
 	private var youtubeColor: UIColor = .systemBackground
@@ -158,6 +161,15 @@ final class MainViewController: UIViewController, WKNavigationDelegate, WKUIDele
 	@objc private func cameBack() {
 		matchColor(of: catalog)
 		if let youtube = youtube { matchColor(of: youtube) }
+		guard showingOffline, let address = Store.address else { return }
+		// (Not while a kept video is open: going back to Catalog would stop it.)
+		catalog.evaluateJavaScript("document.querySelector('.player.open') ? 1 : 0") { [weak self] value, _ in
+			if (value as? Int) == 1 { return }
+			Store.check(address) { reachable in
+				guard let self = self, reachable, self.showingOffline else { return }
+				self.loadCatalog()
+			}
+		}
 	}
 
 	/* ------------------------------------------------------------------ a page that won't load */
@@ -212,6 +224,14 @@ final class MainViewController: UIViewController, WKNavigationDelegate, WKUIDele
 		if web === catalog {
 			if youtubeShowing {
 				catalogFailed = true
+				return
+			}
+			if let page = Store.offlinePage, let address = Store.address, let home = Store.home(of: address) {
+				showingOffline = true
+				hideNotice()
+				// Shown as if it came from Catalog's own address, so it finds what Catalog's pages
+				// kept on this phone (Downloads, Keep on this phone).
+				catalog.loadSimulatedRequest(URLRequest(url: home.appendingPathComponent("offline.html")), responseHTML: page)
 				return
 			}
 			let place = Store.address?.absoluteString ?? "the computer"
@@ -287,9 +307,128 @@ final class MainViewController: UIViewController, WKNavigationDelegate, WKUIDele
 			}
 			return .cancel
 		}
+		if webView === catalog && navigationAction.shouldPerformDownload { return .download }
 		let wholePage = navigationAction.targetFrame?.isMainFrame ?? true
 		if !wholePage { return .allow }
 		return staysHere(url, in: webView) ? .allow : .cancel
+	}
+
+	func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse) async -> WKNavigationResponsePolicy {
+		guard webView === catalog, navigationResponse.isForMainFrame else { return .allow }
+		let answer = navigationResponse.response as? HTTPURLResponse
+		let kind = (answer?.value(forHTTPHeaderField: "Content-Disposition") ?? "").lowercased()
+		if kind.hasPrefix("attachment") || !navigationResponse.canShowMIMEType { return .download }
+		return .allow
+	}
+
+	func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+		download.delegate = self
+	}
+
+	func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+		download.delegate = self
+	}
+
+	/* ------------------------------------------------------------------ saving a file */
+	// "Save to this device" on Catalog's Downloads page. The file goes into the app's own folder,
+	// which the Files app shows under On My iPhone, Catalog (Info.plist turns that on).
+
+	private var savingFiles: [ObjectIdentifier: URL] = [:]
+	private var savingWatches: [ObjectIdentifier: NSKeyValueObservation] = [:]
+
+	func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String) async -> URL? {
+		guard let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return nil }
+		let clean = suggestedFilename.replacingOccurrences(of: "/", with: "-")
+		let name = clean.isEmpty ? "Download" : clean
+		let base = (name as NSString).deletingPathExtension
+		let ending = (name as NSString).pathExtension
+		var file = folder.appendingPathComponent(name)
+		var count = 2
+		while FileManager.default.fileExists(atPath: file.path) {
+			file = folder.appendingPathComponent(ending.isEmpty ? "\(base) \(count)" : "\(base) \(count).\(ending)")
+			count += 1
+		}
+		let key = ObjectIdentifier(download)
+		let shown = file.lastPathComponent
+		savingFiles[key] = file
+		say("Saving \(shown)…", for: nil)
+		savingWatches[key] = download.progress.observe(\.fractionCompleted) { [weak self] progress, _ in
+			let percent = Int(progress.fractionCompleted * 100)
+			DispatchQueue.main.async {
+				guard let self = self, self.savingFiles[key] != nil else { return }
+				self.say("Saving \(shown)… \(percent)%", for: nil)
+			}
+		}
+		// The screen stays on while it saves (iOS stops a download when the app is put away).
+		UIApplication.shared.isIdleTimerDisabled = true
+		return file
+	}
+
+	func downloadDidFinish(_ download: WKDownload) {
+		doneSaving(download, failed: false)
+	}
+
+	func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+		doneSaving(download, failed: true)
+	}
+
+	private func doneSaving(_ download: WKDownload, failed: Bool) {
+		let key = ObjectIdentifier(download)
+		let file = savingFiles.removeValue(forKey: key)
+		savingWatches.removeValue(forKey: key)?.invalidate()
+		if savingFiles.isEmpty { UIApplication.shared.isIdleTimerDisabled = false }
+		let name = file?.lastPathComponent ?? "the file"
+		if failed {
+			if let file = file { try? FileManager.default.removeItem(at: file) }
+			say("Couldn't save \(name). Keep Catalog open on the screen while it saves, then try again.", for: 7)
+		} else {
+			say("Saved \(name). It's in the Files app: On My iPhone, Catalog.", for: 7)
+		}
+	}
+
+	/* ------------------------------------------------------------------ a line of news at the bottom */
+
+	private var newsBox: UIView?
+	private var newsLabel: UILabel?
+	private var newsCount = 0
+
+	/// Shows a line over the bottom of the page; gone after `seconds`, or stays when nil.
+	private func say(_ text: String, for seconds: TimeInterval?) {
+		if newsBox == nil {
+			let box = UIView()
+			box.backgroundColor = UIColor(white: 0.08, alpha: 0.95)
+			box.layer.cornerRadius = 12
+			box.isUserInteractionEnabled = false
+			box.translatesAutoresizingMaskIntoConstraints = false
+			let label = UILabel()
+			label.textColor = .white
+			label.numberOfLines = 0
+			label.font = .preferredFont(forTextStyle: .subheadline)
+			label.translatesAutoresizingMaskIntoConstraints = false
+			box.addSubview(label)
+			view.addSubview(box)
+			NSLayoutConstraint.activate([
+				label.topAnchor.constraint(equalTo: box.topAnchor, constant: 11),
+				label.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -11),
+				label.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 14),
+				label.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -14),
+				box.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: 12),
+				box.trailingAnchor.constraint(equalTo: holder.trailingAnchor, constant: -12),
+				box.bottomAnchor.constraint(equalTo: holder.bottomAnchor, constant: -12)
+			])
+			newsBox = box
+			newsLabel = label
+		}
+		newsLabel?.text = text
+		newsBox?.isHidden = false
+		if let box = newsBox { view.bringSubviewToFront(box) }
+		newsCount += 1
+		let mine = newsCount
+		guard let seconds = seconds else { return }
+		DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+			guard let self = self, self.newsCount == mine else { return }
+			self.newsBox?.isHidden = true
+		}
 	}
 
 	/// A link that asks for a new tab: there are no tabs, so it opens in place (or where it belongs).
@@ -306,6 +445,14 @@ final class MainViewController: UIViewController, WKNavigationDelegate, WKUIDele
 	func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
 		if webView === catalog || youtubeShowing { hideNotice() }
 		matchColor(of: webView)
+		if webView === catalog && webView.url?.path != "/offline.html" {
+			// Catalog itself answered: a fresh copy of its no-connection page, once each time the app opens.
+			showingOffline = false
+			if !keptOfflinePage, let address = Store.address {
+				keptOfflinePage = true
+				Store.keepOfflinePage(from: address)
+			}
+		}
 	}
 
 	func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {

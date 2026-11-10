@@ -37,9 +37,45 @@ enum Store {
 		return parts.url
 	}
 
+	/// The address without any page on the end: http://192.168.1.20:4173
+	static func home(of address: URL) -> URL? {
+		guard var parts = URLComponents(url: address, resolvingAgainstBaseURL: false) else { return nil }
+		parts.path = ""
+		parts.query = nil
+		parts.fragment = nil
+		return parts.url
+	}
+
+	/* Catalog's no-connection page (static/offline.html: it lists and plays what's kept on this
+	   phone). A copy is saved whenever Catalog is reached, so the app can show it when it isn't. */
+
+	private static var offlineFile: URL? {
+		guard let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+		try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+		return folder.appendingPathComponent("offline.html")
+	}
+
+	static var offlinePage: String? {
+		guard let file = offlineFile else { return nil }
+		return try? String(contentsOf: file, encoding: .utf8)
+	}
+
+	static func keepOfflinePage(from address: URL) {
+		guard let home = home(of: address), let file = offlineFile else { return }
+		var request = URLRequest(url: home.appendingPathComponent("offline.html"))
+		request.timeoutInterval = 15
+		request.cachePolicy = .reloadIgnoringLocalCacheData
+		URLSession.shared.dataTask(with: request) { data, response, _ in
+			// Only the real page (a sign-in page or an error would be no use with no connection).
+			guard (response as? HTTPURLResponse)?.statusCode == 200, let data = data,
+				let text = String(data: data, encoding: .utf8), text.contains("catalog:keptPlaces") else { return }
+			try? data.write(to: file, options: .atomic)
+		}.resume()
+	}
+
 	/// Whether Catalog answers at this address (its diagnostics page answers even behind the PIN).
 	static func check(_ address: URL, done: @escaping (Bool) -> Void) {
-		var request = URLRequest(url: address.appendingPathComponent("api/diagnostics"))
+		var request = URLRequest(url: (home(of: address) ?? address).appendingPathComponent("api/diagnostics"))
 		request.timeoutInterval = 6
 		request.cachePolicy = .reloadIgnoringLocalCacheData
 		URLSession.shared.dataTask(with: request) { _, response, _ in
