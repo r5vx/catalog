@@ -70,7 +70,7 @@ shot 4-handed-over.png
 # 5. A Catalog page that saves a file ("Save to this device" on the Downloads page).
 address "http://127.0.0.1:8765/save"
 xcrun simctl launch "$DEVICE" "$ID"
-sleep 7
+sleep 9
 shot 5-saved.png
 DATA="$(xcrun simctl get_app_container "$DEVICE" "$ID" data)"
 echo "Files the app saved:"

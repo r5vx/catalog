@@ -8,7 +8,7 @@
 #   /leave             goes to YouTube by itself, as Catalog's YouTube button does
 #   /save              saves a file, as "Save to this device" does
 #   /file              the file it saves
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 STYLE = '<meta name=viewport content="width=device-width, initial-scale=1"><body style="background:#181f1c;color:#eee;font:17px -apple-system;padding:20px;word-break:break-word">'
 
@@ -81,4 +81,6 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-HTTPServer(('127.0.0.1', 8765), Handler).serve_forever()
+# (Answers several connections at once: one at a time got stuck behind a spare connection the
+# phone opens and never uses, and the file was never sent.)
+ThreadingHTTPServer(('127.0.0.1', 8765), Handler).serve_forever()
