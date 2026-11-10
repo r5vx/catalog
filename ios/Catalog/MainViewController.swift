@@ -307,7 +307,10 @@ final class MainViewController: UIViewController, WKNavigationDelegate, WKUIDele
 			}
 			return .cancel
 		}
-		if webView === catalog && navigationAction.shouldPerformDownload { return .download }
+		if webView === catalog && navigationAction.shouldPerformDownload {
+			Store.note("download asked by a link: \(url.path)")
+			return .download
+		}
 		let wholePage = navigationAction.targetFrame?.isMainFrame ?? true
 		if !wholePage { return .allow }
 		return staysHere(url, in: webView) ? .allow : .cancel
@@ -317,15 +320,22 @@ final class MainViewController: UIViewController, WKNavigationDelegate, WKUIDele
 		guard webView === catalog, navigationResponse.isForMainFrame else { return .allow }
 		let answer = navigationResponse.response as? HTTPURLResponse
 		let kind = (answer?.value(forHTTPHeaderField: "Content-Disposition") ?? "").lowercased()
-		if kind.hasPrefix("attachment") || !navigationResponse.canShowMIMEType { return .download }
+		if kind.hasPrefix("attachment") || !navigationResponse.canShowMIMEType {
+			Store.note("download asked by an answer: \(navigationResponse.response.url?.path ?? "?")")
+			return .download
+		}
 		return .allow
 	}
 
 	func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+		Store.note("download started (from a link)")
+		downloads.append(download)
 		download.delegate = self
 	}
 
 	func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+		Store.note("download started (from an answer)")
+		downloads.append(download)
 		download.delegate = self
 	}
 
@@ -333,6 +343,7 @@ final class MainViewController: UIViewController, WKNavigationDelegate, WKUIDele
 	// "Save to this device" on Catalog's Downloads page. The file goes into the app's own folder,
 	// which the Files app shows under On My iPhone, Catalog (Info.plist turns that on).
 
+	private var downloads: [WKDownload] = []
 	private var savingFiles: [ObjectIdentifier: URL] = [:]
 	private var savingWatches: [ObjectIdentifier: NSKeyValueObservation] = [:]
 
@@ -350,6 +361,7 @@ final class MainViewController: UIViewController, WKNavigationDelegate, WKUIDele
 		}
 		let key = ObjectIdentifier(download)
 		let shown = file.lastPathComponent
+		Store.note("saving to \(file.path)")
 		savingFiles[key] = file
 		say("Saving \(shown)…", for: nil)
 		savingWatches[key] = download.progress.observe(\.fractionCompleted) { [weak self] progress, _ in
@@ -369,11 +381,14 @@ final class MainViewController: UIViewController, WKNavigationDelegate, WKUIDele
 	}
 
 	func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+		Store.note("download failed: \(error)")
 		doneSaving(download, failed: true)
 	}
 
 	private func doneSaving(_ download: WKDownload, failed: Bool) {
 		let key = ObjectIdentifier(download)
+		downloads.removeAll { $0 === download }
+		if !failed { Store.note("download finished") }
 		let file = savingFiles.removeValue(forKey: key)
 		savingWatches.removeValue(forKey: key)?.invalidate()
 		if savingFiles.isEmpty { UIApplication.shared.isIdleTimerDisabled = false }

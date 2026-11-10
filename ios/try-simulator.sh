@@ -70,10 +70,13 @@ shot 4-handed-over.png
 # 5. A Catalog page that saves a file ("Save to this device" on the Downloads page).
 address "http://127.0.0.1:8765/save"
 xcrun simctl launch "$DEVICE" "$ID"
-sleep 10
+sleep 7
 shot 5-saved.png
+DATA="$(xcrun simctl get_app_container "$DEVICE" "$ID" data)"
 echo "Files the app saved:"
-ls -l "$(xcrun simctl get_app_container "$DEVICE" "$ID" data)/Documents" || true
+ls -l "$DATA/Documents" || true
+echo "The app's diary:"
+cat "$DATA/Library/Caches/catalog-app.log" || true
 
 # 6. Catalog switched off: the app shows the no-connection page it kept in step 2.
 kill "$SERVER" 2>/dev/null || true

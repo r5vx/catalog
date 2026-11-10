@@ -73,6 +73,21 @@ enum Store {
 		}.resume()
 	}
 
+	/* The app's diary: one line per thing worth knowing later (a download starting, failing…).
+	   Kept small, in the app's own throwaway folder; ios/try-simulator.sh prints it. */
+
+	private static var diaryFile: URL? {
+		return FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?.appendingPathComponent("catalog-app.log")
+	}
+
+	static func note(_ line: String) {
+		guard let file = diaryFile else { return }
+		var text = (try? String(contentsOf: file, encoding: .utf8)) ?? ""
+		if text.count > 40000 { text = String(text.suffix(20000)) }
+		text += "\(Date()) \(line)\n"
+		try? text.write(to: file, atomically: true, encoding: .utf8)
+	}
+
 	/// Whether Catalog answers at this address (its diagnostics page answers even behind the PIN).
 	static func check(_ address: URL, done: @escaping (Bool) -> Void) {
 		var request = URLRequest(url: (home(of: address) ?? address).appendingPathComponent("api/diagnostics"))
