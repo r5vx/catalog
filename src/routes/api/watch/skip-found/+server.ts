@@ -1,5 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { getOrderCache, saveOrderCache } from '$lib/server/db/queries';
+import { sharedGet, sharedPut } from '$lib/server/online';
 import type { RequestHandler } from './$types';
 
 /**
@@ -19,7 +20,16 @@ const keyFor = (key: string) => `skip-found|${key}`;
 export const GET: RequestHandler = async ({ url }) => {
 	const key = url.searchParams.get('key') ?? url.searchParams.get('fid') ?? '';
 	if (!isKey(key) || key === '0') return error(400, 'Missing key');
-	return json({ segments: (getOrderCache(keyFor(key))?.value as Found[] | undefined) ?? null });
+	const here = (getOrderCache(keyFor(key))?.value as Found[] | undefined) ?? null;
+	if (here !== null) return json({ segments: here });
+	// Not looked for here yet: another house may have worked it out (Catalog online).
+	const theirs = await sharedGet<Found[]>('skips', key).catch(() => null);
+	const clean = Array.isArray(theirs) ? theirs.filter((s) => (s?.type === 'intro' || s?.type === 'credits') && Number.isFinite(s.start) && Number.isFinite(s.end) && s.end > s.start).slice(0, 6) : [];
+	if (clean.length) {
+		saveOrderCache(keyFor(key), clean, Date.now());
+		return json({ segments: clean });
+	}
+	return json({ segments: null });
 };
 
 /** Body: { found: [{ key (or fid), segments }] }. */
@@ -32,6 +42,8 @@ export const POST: RequestHandler = async ({ request }) => {
 			.filter((s) => (s.type === 'intro' || s.type === 'credits') && Number.isFinite(s.start) && Number.isFinite(s.end) && s.end > s.start)
 			.map((s) => ({ type: s.type, start: Math.round(s.start * 10) / 10, end: Math.round(s.end * 10) / 10 }));
 		saveOrderCache(keyFor(key), clean, Date.now());
+		// Found something: the other houses needn't work it out again.
+		if (clean.length) sharedPut('skips', key, clean);
 	}
 	return json({ ok: true });
 };

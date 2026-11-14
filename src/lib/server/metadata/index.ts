@@ -2,6 +2,7 @@ import { searchTmdb, trendingTmdb, trendingAnimeTmdb, trendingPeopleTmdb, hasTmd
 export { trendingPeopleTmdb };
 import { normalizeTitle, withoutQualifier, type SearchResult } from './types';
 import { watchRegion as getWatchRegion } from './providers';
+import { hasNumberToSwap, numbersAsDigits } from '../../numberWords';
 
 export { hasTmdbKey };
 export type { SearchResult, BrowseFilters };
@@ -81,6 +82,8 @@ function matchScore(result: SearchResult, query: string, fuzzy = false): number 
 	const candidates = [result.title, result.altTitle].filter(Boolean).map((t) => normalizeTitle(t!));
 
 	let best = scoreQuery(q, candidates);
+	// Numbers one to ten written either way: "Fantastic Four" finds "The Fantastic 4" (numberWords.ts).
+	if (hasNumberToSwap(q)) best = Math.max(best, scoreQuery(numbersAsDigits(q), candidates.map(numbersAsDigits)));
 	if (fuzzy && best < 1) {
 		for (const variant of phoneticVariants(q)) {
 			best = Math.max(best, Math.min(scoreQuery(variant, candidates), 1));
@@ -110,11 +113,17 @@ function scoreOf(result: SearchResult, query: string, year: number | null, fuzzy
 	const kindPenalty = DEPRIORITIZED_KINDS.has(result.kind) ? 0.15 : 1;
 	// "Saiki K." should open on the show itself, not its season 2 — unless you asked for a season.
 	const laterSeason = LATER_SEASON.test(result.title) && !/\d/.test(query) ? 3 : 0;
+	// A film or show out this year or last hasn't gathered the ratings its fame is measured by yet:
+	// a well-known new one gets up to 8 more, so "Fantastic Four" shows First Steps (2025) near the
+	// top, above the 1994 and 1967 ones. Little-known new things get next to nothing from it.
+	const thisYear = new Date().getFullYear();
+	const newAndKnown = match > 0 && result.year != null && result.year >= thisYear - 1 ? result.popularity * 8 : 0;
 
 	return (
 		match * 10 * quality * kindPenalty + //  music/specials sink to the bottom
 		(yearMatches ? 4 : 0) + //               a nudge, never enough to jump a tier
-		result.popularity * 20 - //              0 to 20, separates blockbusters from obscurities within a tier
+		result.popularity * 20 + //              0 to 20, separates blockbusters from obscurities within a tier
+		newAndKnown -
 		laterSeason
 	);
 }
@@ -173,10 +182,14 @@ export async function searchAll(
 	// at once. AniList, asked as well, made searches wait up to six seconds (and used up the
 	// thirty questions a minute it allows, which opening a title needed).
 	const found = await searchTmdb(trimmed, fuzzy);
+	return rankResults(found, trimmed, { year, limit, fuzzy });
+}
 
+/** Search results in the order they're shown: best match first, then the better known (scoreOf). */
+export function rankResults(found: SearchResult[], query: string, { year = null, limit = 12, fuzzy = false }: SearchOptions = {}): SearchResult[] {
 	const scored = found.map((result) => ({
 		result,
-		score: scoreOf(result, trimmed, year, fuzzy)
+		score: scoreOf(result, query, year, fuzzy)
 	}));
 
 	const ranked = dedupe(scored)

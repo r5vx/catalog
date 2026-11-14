@@ -1,3 +1,4 @@
+import { digitsAsWords, hasNumberToSwap, numbersAsDigits } from '../../numberWords';
 import { db, plain, plainAll, toInt } from './index';
 import type { Category, Entry, EntryCard } from './types';
 import { titleKey } from '../../titleKey';
@@ -125,10 +126,16 @@ export function listEntries(options: ListOptions = {}): EntryCard[] {
 		const stripped = options.search.replace(/[^a-zA-Z0-9\s]/g, '');
 		const strippedNeedle = stripped ? `%${stripped.toLowerCase()}%` : null;
 		const spacelessNeedle = stripped ? `%${stripped.replace(/\s+/g, '').toLowerCase()}%` : null;
+		// The same with numbers written the other way: "fantastic four" finds "The Fantastic 4: First Steps".
+		const lower = stripped.toLowerCase();
+		const swapped = hasNumberToSwap(lower) ? [numbersAsDigits(lower), digitsAsWords(lower)].filter((v) => v !== lower) : [];
+		const swappedNeedles = swapped.map((v) => `%${v.replace(/\s+/g, '')}%`);
+		const spacelessTitle = "lower(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(e.title, '-', ''), ':', ''), '.', ''), '''', ''), ' ', ''))";
 
 		where.push(`(
 			e.title LIKE ? OR e.notes LIKE ? OR e.other_titles LIKE ?
-			${strippedNeedle ? "OR lower(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(e.title, '-', ''), ':', ''), '.', ''), '''', ''), ' ', '')) LIKE ?" : ''}
+			${strippedNeedle ? `OR ${spacelessTitle} LIKE ?` : ''}
+			${swappedNeedles.map(() => `OR ${spacelessTitle} LIKE ?`).join(' ')}
 			OR e.id IN (
 				SELECT ec.entry_id FROM entry_cast ec
 				JOIN people p ON p.id = ec.person_id
@@ -137,6 +144,7 @@ export function listEntries(options: ListOptions = {}): EntryCard[] {
 		)`);
 		params.push(needle, needle, needle);
 		if (spacelessNeedle) params.push(spacelessNeedle);
+		params.push(...swappedNeedles);
 		params.push(...words.map((w) => `%${w}%`));
 	}
 
@@ -294,6 +302,9 @@ export function existingSourceKeys(): Set<string> {
 }
 
 export function existingSourceKeysWithIds(): Record<string, number> {
+	// Someone else's profile (a family phone): the library's titles aren't theirs. Browse marked
+	// the owner's as "In your library", linking to the owner's entry pages (2026-11-09).
+	if (currentProfile() !== MAIN_PROFILE) return {};
 	const rows = db
 		.prepare('SELECT id, source, source_id AS sourceId FROM entries WHERE source_id IS NOT NULL')
 		.all() as { id: number; source: string; sourceId: string }[];
@@ -883,6 +894,8 @@ interface WatchProgress {
 	subFileName: string;
 	/** How fast the subtitles run against the video (auto-timing's rate; 1 for most). */
 	subRate: number;
+	/** The copy it was saved on (0: not known). */
+	fid?: number;
 }
 
 export function saveWatchProgress(
@@ -927,7 +940,7 @@ export function getWatchProgress(
 	episode: number
 ): WatchProgress | null {
 	const row = db
-		.prepare('SELECT title, type, season, episode, "current_time" AS currentTime, duration, sub_url AS subUrl, sub_delay AS subDelay, sub_file_name AS subFileName, sub_rate AS subRate FROM watch_progress WHERE profile = ? AND title = ? AND type = ? AND season = ? AND episode = ?')
+		.prepare('SELECT title, type, season, episode, "current_time" AS currentTime, duration, sub_url AS subUrl, sub_delay AS subDelay, sub_file_name AS subFileName, sub_rate AS subRate, fid FROM watch_progress WHERE profile = ? AND title = ? AND type = ? AND season = ? AND episode = ?')
 		.get(currentProfile(), title, type, season, episode) as WatchProgress | undefined;
 	return row ? { ...row } : null;
 }
@@ -1155,6 +1168,19 @@ export function caughtUpWaiting(): CaughtUp[] {
 		`)
 		.all()
 		.map((row) => ({ ...(row as CaughtUp) }));
+}
+
+/** New episodes found in the last `days` days (one row per show and episode, whoever it's new for). */
+export function newEpisodesFound(days: number): { title: string; year: string; season: number; episode: number }[] {
+	return db
+		.prepare(`
+			SELECT title, year, new_season AS season, new_episode AS episode
+			FROM caught_up
+			WHERE new_season IS NOT NULL AND found_at >= datetime('now', ?)
+			GROUP BY lower(title), year, new_season, new_episode
+		`)
+		.all(`-${Math.max(1, Math.round(days))} days`)
+		.map((row) => ({ ...(row as { title: string; year: string; season: number; episode: number }) }));
 }
 
 /** A look at a caught-up show: the last episode that can be played now, and the new one if any. */

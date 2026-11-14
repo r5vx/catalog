@@ -31,6 +31,8 @@ import { vidfastCopy } from '$lib/server/sources/vidfast';
 import { movyDubCopy, parseMovyShareKey } from '$lib/server/sources/movy';
 import { audioLanguage, audioLanguageName } from '$lib/server/audioLanguage';
 import type { FileOption } from '$lib/server/showbox';
+import { measureFilmAhead } from '$lib/server/copySharpness';
+import { downloadLikelyAhead } from '$lib/server/downloadAheadAsk';
 import type { RequestHandler } from './$types';
 
 /**
@@ -151,6 +153,10 @@ function warmLikelyEpisode(list: EpisodeList, share: string, title: string, star
 			if (copy.source === '7Movies') vidriftStream(copy.shareKey).catch(() => null);
 			else if (copy.source === 'Movy') movyStream(copy.shareKey, false, { start: stillWanted, keep: stillWanted }).catch(() => null);
 		}
+		// 7Movies' copy the player will pick: its first minutes fetched onto this computer now, so
+		// Play starts on pieces already here (its server is slow over ones nobody has asked for yet).
+		const pick = pickFile(target.files, PREFERRED_QUALITY);
+		if (pick?.source === '7Movies' && pick.shareKey) downloadLikelyAhead(pick.shareKey, pick.fid);
 		return;
 	}
 	const { febboxToken } = readSettings();
@@ -467,6 +473,9 @@ async function lookUp(url: URL): Promise<Response> {
 
 	let streamUrl = '';
 	let streamDebug: string | undefined;
+	// About to be watched: how sharp its copies are, found out ahead (the player starts on a clearly
+	// sharper one when Showbox's is weak).
+	if (warm && shareKey) measureFilmAhead(shareKey, defaultFile, files);
 	const aniwave = parseAniwaveShareKey(defaultFile.shareKey ?? '');
 	if (aniwave) {
 		// Another source's film plays through Catalog's relay, like its episodes.

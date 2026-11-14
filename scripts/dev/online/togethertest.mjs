@@ -1,0 +1,96 @@
+// Watching together's step-keeping (src/lib/watchTogether.svelte.ts), tried with two pretend houses
+// and a pretend room: house B's video takes 3 s to land every move, as a slow source does.
+//   node scripts/dev/online/togethertest.mjs        (from the project folder; takes about 40 s)
+import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import ts from 'typescript';
+import { compileModule } from 'svelte/compiler';
+
+const source = readFileSync('src/lib/watchTogether.svelte.ts', 'utf8');
+const plain = ts.transpileModule(source, { compilerOptions: { target: 'esnext', module: 'esnext', verbatimModuleSyntax: true } }).outputText;
+const code = compileModule(plain, { generate: 'server', filename: 'watchTogether.svelte.js' }).js.code;
+// Inside the project, so the module finds svelte.
+const dir = mkdtempSync(join(process.cwd(), 'node_modules', '.together-'));
+const load = async (who) => {
+	const file = join(dir, `${who}.mjs`);
+	writeFileSync(file, code.replaceAll('fetch(', `globalThis.fetch${who}(`).replaceAll('localStorage', `globalThis.store${who}`));
+	return import(pathToFileURL(file).href);
+};
+
+// The pretend room, answering as cloud/src/worker.js does.
+const room = { code: 'ABC234', host: 'A', state: null, rev: 0, members: new Set(), puts: [] };
+const answer = (who) => ({ code: room.code, host: room.host === who, state: room.state, rev: room.rev, now: Date.now(), people: [...room.members].map((m) => ({ id: m, name: m, avatar: 0, me: m === who })) });
+const server = (who) => async (path, options = {}) => {
+	const body = options.body ? JSON.parse(options.body) : null;
+	let data;
+	if (path.endsWith('/rooms') || path.endsWith('/join')) { room.members.add(who); if (path.endsWith('/rooms')) { room.state = { ...body, at: Date.now(), by: who }; room.rev++; } data = answer(who); }
+	else if (path.endsWith('/state')) { room.state = { ...body, at: Date.now(), by: who }; room.rev++; room.puts.push({ who, position: body.position, playing: body.playing, episode: body.episode, at: Date.now() }); data = answer(who); }
+	else if (path.endsWith('/leave')) data = { ok: true };
+	else data = Number(new URL('http://x' + path).searchParams.get('rev')) === room.rev ? { same: true, rev: room.rev, now: Date.now() } : answer(who);
+	return { ok: true, json: async () => data };
+};
+const store = () => { const kept = {}; return { getItem: (k) => kept[k] ?? null, setItem: (k, v) => (kept[k] = v), removeItem: (k) => delete kept[k] }; };
+
+/** A pretend video: plays on with the clock; a move lands `seekTakes` ms after it's asked. */
+class Video extends EventTarget {
+	constructor(seekTakes) { super(); this.seekTakes = seekTakes; this.base = 0; this.since = 0; this.paused = true; this.ended = false; this.seeking = false; this.duration = 3000; this.readyState = 4; this.seeks = 0; }
+	get currentTime() { return this.paused || this.seeking ? this.base : this.base + (Date.now() - this.since) / 1000; }
+	set currentTime(to) { this.seeks++; this.base = to; this.seeking = true; const mine = this.seeks; setTimeout(() => { if (mine !== this.seeks) return; this.seeking = false; this.since = Date.now(); this.dispatchEvent(new Event('seeked')); }, this.seekTakes); }
+	async play() { if (!this.paused) return; this.base = this.currentTime; this.paused = false; this.since = Date.now(); this.dispatchEvent(new Event('play')); }
+	pause() { if (this.paused) return; this.base = this.currentTime; this.paused = true; this.dispatchEvent(new Event('pause')); }
+}
+
+let failed = 0;
+const check = (name, ok, extra = '') => { if (!ok) failed++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${extra ? ' — ' + extra : ''}`); };
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+for (const who of ['A', 'B']) { globalThis[`fetch${who}`] = server(who); globalThis[`store${who}`] = store(); }
+const A = await load('A');
+const B = await load('B');
+const a = new Video(200);
+const b = new Video(3000);
+let aEpisode = 2, bEpisode = 2;
+const followed = [];
+const notes = [];
+const playing = (episode) => () => ({ title: 'Test Show', type: 'tv', year: '2020', season: 1, episode: episode() });
+
+// A is watching at 100 s and starts a room; B joins with the same episode open at the start.
+a.base = 100; await a.play();
+let detachA = A.attachTogether(a, playing(() => aEpisode), () => {});
+await A.startRoom();
+await B.joinRoom('abc234');
+B.attachTogether(b, playing(() => bEpisode), (text) => notes.push(text), (state) => followed.push(`${state.season}x${state.episode}`));
+check('B starts playing with the room', !b.paused);
+await wait(12000);
+const apart = () => Math.abs(a.currentTime - b.currentTime);
+check("B's slow move was not told to the room as news", room.puts.every((p) => p.who !== 'B'), JSON.stringify(room.puts));
+check('A was never moved', a.seeks === 0, `${a.seeks} moves`);
+check('B is in step after its slow moves (aimed ahead)', apart() < 1.5, `${apart().toFixed(2)} s apart, ${b.seeks} moves`);
+const movesSoFar = b.seeks;
+await wait(11000);
+check('and stays there without moving again', b.seeks === movesSoFar && apart() < 1.5, `${apart().toFixed(2)} s apart`);
+
+// A pauses, then skips ahead and plays.
+a.pause(); await wait(2500);
+check("A's pause reached B", b.paused && notes.includes('A paused'), notes.join(' | '));
+a.currentTime = 500; await wait(600); await a.play(); await wait(9000);
+check("A's skip and play reached B", !b.paused && apart() < 1.5 && b.currentTime > 495, `A ${a.currentTime.toFixed(1)}, B ${b.currentTime.toFixed(1)}`);
+check('B still told the room nothing', room.puts.every((p) => p.who !== 'B'));
+
+// B pauses itself: that is news, and A pauses.
+b.pause(); await wait(2500);
+check("B's own pause reached A", a.paused && room.puts.some((p) => p.who === 'B' && p.playing === false));
+await b.play(); await wait(2500);
+check("B's own play reached A", !a.paused);
+
+// A goes on to the next episode: B is asked to follow.
+detachA(); aEpisode = 3; a.base = 0; a.since = Date.now();
+detachA = A.attachTogether(a, playing(() => aEpisode), () => {});
+await wait(2500);
+check('B was asked to follow to the next episode', followed.join() === '1x3', followed.join());
+check('B was not moved inside the old episode meanwhile', room.state.episode === 3);
+
+console.log(failed ? `\n${failed} FAILED` : '\nall passed');
+process.exit(failed ? 1 : 0);

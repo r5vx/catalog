@@ -52,6 +52,8 @@ import java.util.Set;
 public class MainActivity extends Activity {
 	private static final String PREFS = "catalog";
 	private static final String KEY_SERVER = "server";
+	/** The computer's name as it answered the search ("Living room laptop"): how it's known again at a new address. */
+	private static final String KEY_NAME = "serverName";
 	private static final int DISCOVERY_PORT = 41734;
 	private static final String SETUP_PAGE = "file:///android_asset/setup.html";
 
@@ -374,12 +376,29 @@ public class MainActivity extends Activity {
 
 		@JavascriptInterface
 		public void connect(final String url) {
-			prefs().edit().putString(KEY_SERVER, url).apply();
+			// (An address typed by hand: which computer that is isn't known.)
+			prefs().edit().putString(KEY_SERVER, url).remove(KEY_NAME).apply();
 			runOnUiThread(new Runnable() {
 				public void run() {
 					open(url);
 				}
 			});
+		}
+
+		/** A computer the search found: its name is kept too, so it's known again if the router gives it another address. */
+		@JavascriptInterface
+		public void connectNamed(final String url, String name) {
+			prefs().edit().putString(KEY_SERVER, url).putString(KEY_NAME, name != null ? name : "").apply();
+			runOnUiThread(new Runnable() {
+				public void run() {
+					open(url);
+				}
+			});
+		}
+
+		@JavascriptInterface
+		public String savedName() {
+			return prefs().getString(KEY_NAME, "");
 		}
 
 		/** Back to choosing a computer (from Catalog's settings on the TV). */
@@ -443,6 +462,12 @@ public class MainActivity extends Activity {
 		@JavascriptInterface
 		public void setFrameRateMatching(boolean on) {
 			frameRate.setEnabled(on);
+		}
+
+		/** Whether Fire TV already lets Catalog install its own update (Install unknown apps → Catalog → On). */
+		@JavascriptInterface
+		public boolean canInstall() {
+			return android.os.Build.VERSION.SDK_INT < 26 || getPackageManager().canRequestPackageInstalls();
 		}
 
 		/** Installs the TV app from `url` over this one (SelfUpdate.java). */

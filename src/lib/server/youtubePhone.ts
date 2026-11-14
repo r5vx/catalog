@@ -35,6 +35,7 @@ import { pinIsSet, sessionToken } from './settings';
 import pageScript from './youtubePhonePage.js?raw';
 import adsScript from '../../../android/assets/youtube-tv.js?raw';
 
+
 const YOUTUBE = 'm.youtube.com';
 /** Hosts the phone's page may reach through here (and no others: this is not an open door). */
 const THROUGH = /(^|\.)(googlevideo\.com|youtube\.com|youtube-nocookie\.com|googleapis\.com|google\.com|doubleclick\.net|gstatic\.com)$/;
@@ -42,6 +43,9 @@ const THROUGH = /(^|\.)(googlevideo\.com|youtube\.com|youtube-nocookie\.com|goog
 const OURS = /^(catalog_|SAPISID$)/;
 /** Secure address port for this (Tailscale serve: `--https=8443`). */
 export const SECURE_PORT = 8443;
+/** Desktop user-agent, matching the computer's YouTube window (Electron's Chrome). */
+const DESKTOP_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36';
+const WEB_CLIENT_VERSION = '2.20261107.11.00';
 
 const catalogPort = () => Number(process.env.PORT) || 4173;
 /** This server's port, or 0 when it isn't run (the dev server without CATALOG_YT_PORT). */
@@ -195,6 +199,7 @@ function authorization(cookies: Map<string, string>): string | null {
 /* ------------------------------------------------------------------ pages */
 
 const stats = { pages: 0, requests: 0, failed: 0, lastError: '' };
+
 export const youtubePhoneStatus = () => ({
 	port: youtubePhonePort(),
 	signedIn: listProfiles().filter((p) => signedIn(p.id)).map((p) => p.id),
@@ -221,15 +226,28 @@ function decode(raw: Buffer, encoding: string): Buffer {
 	return raw;
 }
 
+/** The whole of a request's body (for the video request, which has to be changed before it goes on). */
+function readBody(req: http.IncomingMessage): Promise<Buffer> {
+	return new Promise((resolve, reject) => {
+		const chunks: Buffer[] = [];
+		req.on('data', (c: Buffer) => chunks.push(c));
+		req.on('end', () => resolve(Buffer.concat(chunks)));
+		req.on('error', reject);
+	});
+}
+
 const escapeHtml = (t: string) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-function note(res: http.ServerResponse, title: string, words: string, back: string) {
+function note(res: http.ServerResponse, title: string, words: string, back: string, signInButton = '') {
 	res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
 	res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title}</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0f0f0f;color:#f1f1f1;
 font:16px/1.5 -apple-system,system-ui,sans-serif}main{max-width:22rem;padding:24px;text-align:center}h1{font-size:20px;margin:0 0 8px}
 p{margin:0 0 20px;color:#aaa}a{display:inline-block;padding:10px 18px;border-radius:99px;background:#e994c2;color:#141414;
-text-decoration:none;font-weight:600}</style></head><body><main><h1>${title}</h1><p>${words}</p><a href="${back}">Back to YouTube</a></main></body></html>`);
+text-decoration:none;font-weight:600}button{display:block;margin:0 auto 14px;padding:10px 18px;border:0;border-radius:99px;
+background:#f1f1f1;color:#141414;font:600 16px -apple-system,system-ui,sans-serif}</style></head><body><main><h1>${title}</h1><p>${words}</p>${
+	signInButton ? `<form method="post" action="/__catalog/signin"><button>${escapeHtml(signInButton)}</button></form>` : ''
+}<a href="${back}">Back to YouTube</a></main></body></html>`);
 }
 
 const SIGN_IN = /^\/(signin|logout)\b|^\/__h\/accounts\.google\.com\/(ServiceLogin|signin|AccountChooser|AddSession|Logout|SignOutOptions|v3\/signin)/i;
@@ -262,7 +280,19 @@ async function answer(req: http.IncomingMessage, res: http.ServerResponse) {
 		res.writeHead(204);
 		return res.end();
 	}
-	if (SIGN_IN.test(path)) {
+	// Signing in on the computer for this phone's person, asked from the note below.
+	if (req.method === 'POST' && path === '/__catalog/signin') {
+		if (!signedIn(profile)) youtubePhoneAccount(profile, 'signin');
+		res.writeHead(303, { location: '/__catalog/signing-in' });
+		return res.end();
+	}
+	if (path === '/__catalog/signing-in') {
+		return note(res, 'Finish on the computer', "Google's sign-in has opened on the computer Catalog runs on. Sign in there and close that window; this phone is then signed in too.", '/');
+	}
+	// Any page of Google's sign-in host opened as a page (Add account, Switch account's sign-in):
+	// it never works through here, and it showed as a black screen (2026-11-09).
+	const navigating = req.headers['sec-fetch-mode'] === 'navigate' || /text\/html/.test(String(req.headers.accept ?? ''));
+	if (SIGN_IN.test(path) || (navigating && /^\/__h\/accounts\.google\.com\//i.test(path))) {
 		const out = signedIn(profile) || /logout|Logout|SignOut/.test(path);
 		const who = listProfiles().find((p) => p.id === profile)?.name ?? '';
 		const beside = who ? ` beside ${escapeHtml(who)}` : '';
@@ -271,8 +301,9 @@ async function answer(req: http.IncomingMessage, res: http.ServerResponse) {
 			out ? 'Change account on the computer' : 'Sign in on the computer',
 			out
 				? `On the computer, open YouTube in Catalog and press Sign out${beside} under Phones, then Sign in.`
-				: `On the computer, open YouTube in Catalog and press Sign in${beside} under Phones.`,
-			'/'
+				: `Google only lets you sign in on the computer Catalog runs on. This opens the sign-in there${beside ? ` for ${escapeHtml(who)}` : ''}.`,
+			'/',
+			out ? '' : 'Open sign-in on the computer'
 		);
 	}
 
@@ -337,6 +368,51 @@ async function answer(req: http.IncomingMessage, res: http.ServerResponse) {
 		} catch {
 			headers.referer = `https://${YOUTUBE}/`;
 		}
+	}
+
+	// Video requests to googlevideo go as the computer's desktop browser, not the phone's mobile
+	// one, to match the WEB client in the player request.
+	if (/(^|\.)googlevideo\.com$/.test(target.hostname)) {
+		headers['user-agent'] = DESKTOP_AGENT;
+	}
+
+	// The video request (POST /youtubei/v1/player): asked as YouTube's desktop website instead of the
+	// phone one. Its body has to be read whole and changed, so it isn't piped like other requests.
+	let playerBody: Buffer | null = null;
+	if (req.method === 'POST' && /\/youtubei\/v1\/player$/.test(target.pathname)) {
+		const raw = await readBody(req);
+		let json: Record<string, unknown> | null = null;
+		try {
+			json = JSON.parse(decode(raw, String(req.headers['content-encoding'] ?? '')).toString('utf8'));
+		} catch {}
+		if (json && typeof json === 'object') {
+			const client = (json.context as { client?: { visitorData?: unknown } } | undefined)?.client;
+			// Send this as a WEB (desktop) request, not MWEB (mobile). The computer's WEB session is
+			// unchecked (videos play in the YouTube window), while MWEB is checked more aggressively
+			// and Electron can't pass the robot check — so the phone's MWEB stops at 60 s.
+			if (client) {
+				const c = client as Record<string, unknown>;
+				c.clientName = 'WEB';
+				c.clientVersion = WEB_CLIENT_VERSION;
+				c.userAgent = DESKTOP_AGENT + ',gzip(gfe)';
+				c.platform = 'DESKTOP';
+				c.osName = 'Windows';
+				c.osVersion = '10.0';
+				c.browserName = 'Chrome';
+				c.browserVersion = '134.0.0.0';
+				c.clientFormFactor = 'NORMAL_FORM_FACTOR';
+				delete c.deviceMake;
+				delete c.deviceModel;
+			}
+			playerBody = Buffer.from(JSON.stringify(json), 'utf8');
+			delete headers['content-encoding'];
+			headers['user-agent'] = DESKTOP_AGENT;
+			headers['x-youtube-client-name'] = '1';
+			headers['x-youtube-client-version'] = WEB_CLIENT_VERSION;
+		} else {
+			playerBody = raw;
+		}
+		headers['content-length'] = String(playerBody.length);
 	}
 
 	const upstream = https.request(target, {
@@ -430,7 +506,8 @@ async function answer(req: http.IncomingMessage, res: http.ServerResponse) {
 		up.on('error', () => res.end());
 	});
 
-	if (req.method === 'GET' || req.method === 'HEAD') upstream.end();
+	if (playerBody) upstream.end(playerBody);
+	else if (req.method === 'GET' || req.method === 'HEAD') upstream.end();
 	else req.pipe(upstream);
 }
 

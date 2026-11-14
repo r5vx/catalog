@@ -38,10 +38,15 @@ export function noteSharpness(key: string, mbps: number, height: number, from: S
 	return value;
 }
 
-/** One of a playlist's addresses: this server's relay ones through itself, the rest directly. */
+/**
+ * One of a playlist's addresses: this server's relay ones through itself, the rest directly.
+ * The relay is asked as the progress-bar pictures ask (`whole=1`): as a player asks, a 7Movies or
+ * Movy copy started downloading whole, 10 pieces at once, and the film playing (Showbox's) waited
+ * 20 s for a piece (Diary of a Wimpy Kid: Dog Days, 2026-11-09).
+ */
 async function get(url: string, timeout = 20_000): Promise<Response> {
 	const signal = AbortSignal.timeout(timeout);
-	if (url.startsWith('/')) return ownFetch(url, { signal });
+	if (url.startsWith('/')) return ownFetch(/[?&]whole=1/.test(url) ? url : `${url}${url.includes('?') ? '&' : '?'}whole=1`, { signal });
 	const host = new URL(url).host;
 	const own = /(^|\.)(shegu\.net|febbox\.com)$/.test(host) ? FEBBOX_HEADERS : {};
 	return fetch(url, { headers: own, signal });
@@ -141,4 +146,28 @@ export function measureCopy(key: string, shareKey: string, fid: number): Promise
 	})().finally(() => measuring.delete(key));
 	measuring.set(key, work);
 	return work;
+}
+
+/** A Showbox copy under this many Mbps is weak (a normal Febbox 1080p is about 3.4). */
+export const WEAK_MBPS = 2.8;
+
+type Copy = { fid: number; shareKey?: string; source?: string; audio?: string; burnedIn?: boolean };
+const filmsMeasured = new Set<string>();
+
+/**
+ * A film about to be watched (its Watch button rested on, its Continue Watching card, a TV's
+ * highlight): its Showbox copy measured, and when that's weak, the other sources' copies with
+ * the same sound too, so the player can start on a clearly sharper one instead of switching
+ * partway (Diary of a Wimpy Kid: Dog Days, 2026-11-09). Once per film per run; what's measured
+ * is kept for good.
+ */
+export function measureFilmAhead(filmShareKey: string, showbox: Copy | undefined, files: Copy[]): void {
+	if (!showbox || showbox.source || !filmShareKey || filmsMeasured.has(filmShareKey)) return;
+	filmsMeasured.add(filmShareKey);
+	void (async () => {
+		const own = await measureCopy(showbox.shareKey ?? `fid:${showbox.fid}`, filmShareKey, showbox.fid);
+		if (!own || own.mbps >= WEAK_MBPS) return;
+		const others = files.filter((f) => f.source && f.shareKey && !f.burnedIn && (f.audio ?? '') === (showbox.audio ?? '')).slice(0, 6);
+		for (const f of others) await measureCopy(f.shareKey!, f.shareKey!, f.fid);
+	})().catch(() => {});
 }

@@ -26,6 +26,15 @@
 		tvLayout = data.tvLayout;
 	});
 
+	/** A six-digit code the TV can type instead of the address (when this Catalog is online: Settings → Online). */
+	let pairCode = $state('');
+	onMount(() => {
+		fetch('/api/online/pair')
+			.then((r) => (r.ok ? r.json() : null))
+			.then((answer) => (pairCode = answer?.code ?? ''))
+			.catch(() => {});
+	});
+
 	async function setTvLayout(on: boolean) {
 		tvLayout = on;
 		await fetch('/api/tv-layout', {
@@ -79,6 +88,12 @@
 				<strong class="tabular">{where}</strong>
 				<span class="faint">{data.name}</span>
 			</div>
+			{#if pairCode}
+				<p class="muted">
+					Or type this code on the TV instead: <strong class="tabular pair">{pairCode.slice(0, 3)} {pairCode.slice(3)}</strong>
+					<span class="faint">(for 15 minutes; the TV needs the internet)</span>
+				</p>
+			{/if}
 		{:else}
 			<p class="msg bad">This computer doesn't seem to be on a network right now.</p>
 		{/if}
@@ -165,6 +180,11 @@
 		border-radius: var(--radius);
 		background: var(--surface);
 		max-width: 420px;
+	}
+
+	.pair {
+		font-size: 1.2rem;
+		letter-spacing: 0.06em;
 	}
 
 	.address strong {

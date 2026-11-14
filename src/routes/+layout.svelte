@@ -15,6 +15,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { startTv } from '$lib/tv';
 	import { startGamepad } from '$lib/gamepad';
+	import { startPhoneApp } from '$lib/phoneApp';
 	import { inkFor, DEFAULT_ACCENT } from '$lib/accent';
 	import { applyCustomTheme } from '$lib/customTheme';
 	import { backgroundPreview } from '$lib/backgroundPreview.svelte';
@@ -56,6 +57,8 @@
 	// On a TV (the Fire TV app), the remote's arrows move around the page.
 	onMount(startTv);
 	onMount(startGamepad);
+	// In the iPhone app, YouTube links open the app's own YouTube (src/lib/phoneApp.ts).
+	onMount(startPhoneApp);
 
 	// The phone app (the secure Tailscale address, Settings → Phones): its offline page is made
 	// ready (static/sw.js), and places from watching with no connection are handed back. Never

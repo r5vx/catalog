@@ -12,6 +12,7 @@
 	import { confirmAction } from '$lib/confirm.svelte';
 	import { downloadName } from '$lib/downloadName';
 	import { canKeep, kept, keepOnPhone, refreshKept, removeFromPhone, stopKeeping } from '$lib/phoneKeep.svelte';
+	import { inPhoneApp } from '$lib/phoneApp';
 
 	type Download = {
 		id: number;
@@ -49,10 +50,79 @@
 		} catch {
 			failed = true;
 		}
+		loadAhead();
+	}
+
+	/*
+	 * On this computer for now: 7Movies' and Movy's episodes the computer downloaded ahead so they
+	 * play without waiting (src/lib/server/episodeDownloads.ts). They go by themselves; Keep makes
+	 * one a download like the rest.
+	 */
+	type Ahead = {
+		share: string;
+		source: string;
+		type: 'tv' | 'movie';
+		season: number;
+		episode: number;
+		title: string;
+		year: string;
+		poster: string | null;
+		here: number;
+		total: number;
+		bytes: number;
+		until: number;
+		busy: boolean;
+	};
+	let ahead = $state<Ahead[]>([]);
+	/** Ones Keep was pressed on (until they show in the list above). */
+	let keeping = $state<string[]>([]);
+
+	async function loadAhead() {
+		const answer = await fetch('/api/downloads/ahead')
+			.then((r) => (r.ok ? r.json() : null))
+			.catch(() => null);
+		if (answer) ahead = answer.ahead;
+	}
+
+	const aheadName = (a: Ahead) => (a.type === 'tv' ? `${a.title || 'A show'} S${a.season}E${a.episode}` : a.title || 'A film');
+	const aheadAll = (a: Ahead) => a.total > 0 && a.here >= a.total;
+	const aheadHref = (a: Ahead) => {
+		const params = new URLSearchParams({ title: a.title, type: a.type, year: a.year, auto: '1' });
+		if (a.type === 'tv') {
+			params.set('resume_s', String(a.season));
+			params.set('resume_e', String(a.episode));
+		}
+		return `/watch?${params}`;
+	};
+	/** "until tonight", "for 6 more days". */
+	function goesIn(a: Ahead): string {
+		const hours = Math.max(0, (a.until - Date.now()) / 3_600_000);
+		if (hours < 1) return 'goes within the hour';
+		if (hours < 36) return `goes in about ${Math.round(hours)} hours`;
+		return `goes in ${Math.round(hours / 24)} days`;
+	}
+	function aheadStatus(a: Ahead): string {
+		const part = aheadAll(a) ? 'All of it' : a.total ? `${Math.floor((a.here / a.total) * 100)}% of it` : 'Part of it';
+		return [part, size(a.bytes), a.source, a.busy ? 'in use' : goesIn(a)].join(' · ');
+	}
+
+	async function keepAhead(a: Ahead) {
+		keeping = [...keeping, a.share];
+		await fetch('/api/downloads/ahead', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ share: a.share }) }).catch(() => null);
+		await load();
+	}
+
+	async function removeAhead(a: Ahead) {
+		const yes = await confirmAction({ title: `Remove "${aheadName(a)}"?`, message: "It's fetched again if it's played.", confirmLabel: 'Remove' });
+		if (!yes) return;
+		await fetch(`/api/downloads/ahead?share=${encodeURIComponent(a.share)}`, { method: 'DELETE' }).catch(() => null);
+		await loadAhead();
 	}
 
 	/** In the phone app: downloads can be kept on the phone. */
 	let phoneApp = $state(false);
+	// Inside the iPhone app (ios/): there's no Home Screen step, the app itself is the app.
+	let inApp = $state(false);
 	/**
 	 * A phone on Catalog's plain address (http://100.x…): it can't keep anything or open with no
 	 * connection (browsers only allow that on a secure address), so in airplane mode Catalog just
@@ -97,6 +167,7 @@
 	let timer: ReturnType<typeof setInterval> | undefined;
 	onMount(() => {
 		phoneApp = canKeep() && location.protocol === 'https:';
+		inApp = inPhoneApp();
 		if (phoneApp) refreshKept();
 		plainPhone =
 			location.protocol !== 'https:' &&
@@ -168,7 +239,12 @@
 	{#if plainPhone}
 		<div class="offline-how">
 			<strong>Watching with no connection</strong>
-			{#if secureAddress}
+			{#if secureAddress && inApp}
+				<p>
+					Connect the app to {secureAddress.replace('https://', '')} (Settings → Phones → Connect to another computer),
+					then press Keep on this phone on a download while still connected. Kept ones play in airplane mode.
+				</p>
+			{:else if secureAddress}
 				<p>
 					Open Catalog at <a href={`${secureAddress}/downloads`}>{secureAddress.replace('https://', '')}</a>, add it to
 					the Home Screen, then press Keep on this phone on a download while still connected. Kept ones play in airplane
@@ -212,8 +288,9 @@
 					<div class="actions">
 						{#if d.state === 'done'}
 							{#if phoneApp && kept.ids.includes(d.id)}
-								<!-- the copy on the phone: no data used, and it plays anywhere -->
-								<a class="btn btn-primary" href="/offline.html?play={d.id}">Play</a>
+								<!-- the copy on the phone: Catalog's own player plays from it (no data used) -->
+								<a class="btn btn-primary" href="/watch?download={d.id}">Play</a>
+								<span class="on-phone">On this phone</span>
 								<button type="button" class="btn" onclick={() => unkeep(d)}>Remove from phone</button>
 							{:else if phoneApp}
 								<a class="btn btn-primary" href="/watch?download={d.id}">Play</a>
@@ -224,8 +301,20 @@
 								{/if}
 							{:else}
 								<a class="btn btn-primary" href="/watch?download={d.id}">Play</a>
-								<a class="btn" href="/api/downloads/{d.id}/file?save=1" download>Save to this device</a>
-								{#if d.hasSubtitles}<a class="btn" href="/api/downloads/{d.id}/subtitles?save=1" download>Subtitles</a>{/if}
+								{#if !inApp}
+									<a class="btn" href="/api/downloads/{d.id}/file?save=1" download>Save to this device</a>
+									{#if d.hasSubtitles}<a class="btn" href="/api/downloads/{d.id}/subtitles?save=1" download>Subtitles</a>{/if}
+								{/if}
+							{/if}
+							{#if inApp}
+								<!-- The iPhone app: a copy in the phone's Files app is there for whoever wants it, never the main way. -->
+								<details class="files">
+									<summary class="btn">More</summary>
+									<div>
+										<a class="btn" href="/api/downloads/{d.id}/file?save=1" download>Save a copy to Files</a>
+										{#if d.hasSubtitles}<a class="btn" href="/api/downloads/{d.id}/subtitles?save=1" download>Save its subtitles to Files</a>{/if}
+									</div>
+								</details>
 							{/if}
 						{:else if d.state === 'failed'}
 							<button type="button" class="btn" onclick={() => retry(d)}>Try again</button>
@@ -235,15 +324,69 @@
 				</li>
 			{/each}
 		</ul>
-		{#if phoneApp}
+		{#if phoneApp && inApp}
+			<p class="faint small">Kept on this phone, a download plays here with no data used, and with no connection at all: open Catalog and it's listed. Keep Catalog open while one saves.</p>
+		{:else if inApp}
+			<p class="faint small">To keep downloads on this phone, the app has to be connected to the computer's secure address (Settings → Phones).</p>
+		{:else if phoneApp}
 			<p class="faint small">Kept on this phone, a download plays with no connection: open Catalog from the Home Screen and it's listed there. Keep Catalog open while one saves.</p>
 		{:else}
 			<p class="faint small">On an iPhone, a video saved to this device is in the Files app, under Downloads.</p>
 		{/if}
 	{/if}
+
+	{#if ahead.length}
+		<section class="ahead">
+			<h2>On this computer for now</h2>
+			<p class="faint small">
+				Fetched ahead so they play without waiting. With all of one here it keeps playing if the internet drops
+				partway. They go by themselves; Keep makes one a download.
+			</p>
+			<ul>
+				{#each ahead as a (a.share)}
+					<li>
+						<a class="poster" href={aheadHref(a)} aria-label="Play {aheadName(a)}">
+							{#if a.poster}<img src={a.poster} alt="" loading="lazy" />{/if}
+						</a>
+						<div class="about">
+							<span class="name">{aheadName(a)}</span>
+							<span class="status">{aheadStatus(a)}</span>
+							{#if !aheadAll(a) && a.total}
+								<span class="bar"><span style:width="{Math.floor((a.here / a.total) * 100)}%"></span></span>
+							{/if}
+						</div>
+						<div class="actions">
+							{#if a.title}<a class="btn btn-primary" href={aheadHref(a)}>Play</a>{/if}
+							{#if a.title && aheadAll(a)}
+								<button type="button" class="btn" disabled={keeping.includes(a.share)} onclick={() => keepAhead(a)}>{keeping.includes(a.share) ? 'Keeping…' : 'Keep'}</button>
+							{/if}
+							<button type="button" class="btn" disabled={a.busy} onclick={() => removeAhead(a)}>Remove</button>
+						</div>
+					</li>
+				{/each}
+			</ul>
+		</section>
+	{/if}
 </div>
 
 <style>
+	.ahead {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		margin-top: 10px;
+	}
+
+	.ahead h2 {
+		margin: 0;
+		font-size: 1.05rem;
+	}
+
+	.ahead p {
+		margin: 0;
+		max-width: 62ch;
+	}
+
 	.downloads {
 		display: flex;
 		flex-direction: column;
@@ -368,6 +511,34 @@
 		flex-wrap: wrap;
 		justify-content: flex-end;
 		gap: 6px;
+	}
+
+	/* A download that's also on this phone. */
+	.on-phone {
+		align-self: center;
+		font-size: 0.8rem;
+		color: var(--ink-soft);
+	}
+
+	/* The iPhone app's "More": saving a copy into the phone's Files app. */
+	.files {
+		position: relative;
+	}
+
+	.files summary {
+		list-style: none;
+		cursor: pointer;
+	}
+
+	.files summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.files > div {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		margin-top: 6px;
 	}
 
 	@media (max-width: 640px) {

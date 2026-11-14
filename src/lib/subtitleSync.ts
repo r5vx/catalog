@@ -794,7 +794,8 @@ export class SubtitleSync {
 
 /** Only the spoken lines, and only their times (all the worker needs). */
 function spokenLines(cues: TimedCue[]): TimedCue[] {
-	return spoken(cues).map(({ start, end }) => ({ start, end }));
+	// (`sung` marks a musical's lines: subtitleAlign.ts `spoken`.)
+	return spoken(cues).map(({ start, end, sung }) => (sung ? { start, end, sung } : { start, end }));
 }
 
 /** Enough of a list of lines to tell it from another. */

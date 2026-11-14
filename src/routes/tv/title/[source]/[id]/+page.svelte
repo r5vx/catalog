@@ -5,6 +5,7 @@
 	import { tvFocus } from '$lib/tvNav';
 	import TvRow from '$lib/tv/TvRow.svelte';
 	import TvCard from '$lib/tv/TvCard.svelte';
+	import FriendsSeen from '$lib/FriendsSeen.svelte';
 	import type { PageData } from './$types';
 	import { warmWhenResting } from '$lib/watch';
 
@@ -256,6 +257,7 @@
 	<div class="about" onfocusin={() => { down = false; lift = null; }}>
 		<h1>{d.title}</h1>
 		{#if facts.length}<p class="facts">{facts.join(' · ')}</p>{/if}
+		<FriendsSeen source={data.source} sourceId={data.id} title={d.title ?? ''} year={d.year} tv />
 		{#if data.continuing?.progress}
 			<p class="progress">
 				<span class="bar"><span class="fill" style:width="{Math.max(3, data.continuing.progress * 100)}%"></span></span>

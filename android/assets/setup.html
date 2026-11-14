@@ -104,10 +104,11 @@
 		<main>
 			<h1>Catalog</h1>
 			<p id="problem" class="problem" hidden></p>
+			<p id="auto" class="small" hidden>Catalog keeps trying by itself and opens when the computer answers. Nothing to press.</p>
 			<p id="status">Looking for Catalog on this Wi-Fi…</p>
 			<ul id="found"></ul>
 			<button id="again" type="button" hidden>Look again</button>
-			<p class="small">Or type the address shown in Catalog on the computer, under Settings → Watch on TV:</p>
+			<p class="small">Or type the address, or the six-digit code, shown in Catalog on the computer under Settings → Watch on TV:</p>
 			<div class="row">
 				<input id="address" type="text" inputmode="url" placeholder="192.168.1.20:4173" />
 				<button id="go" type="button">Connect</button>
@@ -122,6 +123,75 @@
 			function connect(url) {
 				status.textContent = 'Connecting…';
 				bridge.connect(url);
+			}
+
+			// A computer the search found: its name is kept with its address.
+			function connectTo(computer) {
+				status.textContent = 'Connecting…';
+				if (bridge.connectNamed) bridge.connectNamed(computer.url, computer.name || '');
+				else bridge.connect(computer.url);
+			}
+
+			// Whether Catalog answers at an address: one of its pictures loads when it does.
+			function reachable(url, done) {
+				var img = new Image();
+				var answered = false;
+				var finish = function (up) {
+					if (answered) return;
+					answered = true;
+					done(up);
+				};
+				img.onload = function () { finish(true); };
+				img.onerror = function () { finish(false); };
+				setTimeout(function () { finish(false); }, 4000);
+				img.src = url.replace(/\/$/, '') + '/icon-192.png?' + Date.now();
+			}
+
+			/*
+			 * The computer was there before and didn't answer just now: tried again every few seconds,
+			 * with nothing to press. Two things this mends (a family TV, 2026-11-12: the TV said it
+			 * couldn't reach the laptop, which was on, until the address was typed in again):
+			 *  - the TV woke before its Wi-Fi did, or the laptop was still waking: the same address
+			 *    answers a moment later;
+			 *  - the router gave the laptop another address: the search finds a computer with the
+			 *    same name somewhere else, and the TV goes there and remembers it. (With no name kept
+			 *    yet, the only Catalog on the Wi-Fi is taken to be it.)
+			 */
+			function keepTrying(saved) {
+				var name = bridge.savedName ? bridge.savedName() : '';
+				var tries = 0;
+				document.getElementById('auto').hidden = false;
+				var round = function () {
+					tries++;
+					reachable(saved, function (up) {
+						if (up) {
+							connect(saved);
+							return;
+						}
+						var computers = [];
+						try {
+							computers = JSON.parse(bridge.discover());
+						} catch (e) {}
+						// By name when it's known (another computer may have been given the old address);
+						// else the one at the old address, else the only one there is.
+						var pick = null;
+						if (name) {
+							var known = computers.filter(function (c) { return c.name === name; });
+							if (known.length === 1) pick = known[0];
+						} else {
+							var same = computers.filter(function (c) { return c.url.replace(/\/$/, '') === saved.replace(/\/$/, ''); });
+							pick = same[0] || (computers.length === 1 ? computers[0] : null);
+						}
+						if (pick) {
+							connectTo(pick);
+							return;
+						}
+						// (Ten minutes of trying; after that it's a press of "Try that computer again".)
+						if (tries < 75) setTimeout(round, 8000);
+						else document.getElementById('auto').hidden = true;
+					});
+				};
+				setTimeout(round, 2000);
 			}
 
 			function look() {
@@ -151,7 +221,7 @@
 						small.textContent = c.url.replace('http://', '');
 						b.appendChild(small);
 						b.onclick = function () {
-							connect(c.url);
+							connectTo(c);
 						};
 						li.appendChild(b);
 						foundList.appendChild(li);
@@ -161,9 +231,50 @@
 				}, 50);
 			}
 
+			/*
+			 * A six-digit code instead of an address (Catalog online: the computer shows one under
+			 * Settings → Watch on TV when it has joined). The meeting point answers with the
+			 * computer's addresses on the home network; the first that answers is the one.
+			 */
+			var MEETING_POINT = 'https://catalog-meeting.catalog-meet-f5725.workers.dev';
+			function connectByCode(code) {
+				status.textContent = 'Looking up that code…';
+				var ask = new XMLHttpRequest();
+				ask.open('GET', MEETING_POINT + '/v1/pair/' + code);
+				ask.timeout = 12000;
+				var failed = function (why) { status.textContent = why; };
+				ask.onerror = ask.ontimeout = function () { failed("The code couldn't be looked up. Is this TV on the internet?"); };
+				ask.onload = function () {
+					var found = null;
+					try { found = JSON.parse(ask.responseText); } catch (e) {}
+					if (ask.status !== 200 || !found || !found.addresses || !found.addresses.length) {
+						failed(ask.status === 404 ? 'No computer is showing that code right now. Codes last 15 minutes.' : "The code couldn't be looked up.");
+						return;
+					}
+					var at = 0;
+					var next = function () {
+						if (at >= found.addresses.length) {
+							failed("That computer didn't answer. Is it on this Wi-Fi, with Catalog open?");
+							return;
+						}
+						var address = found.addresses[at++];
+						reachable(address, function (up) {
+							if (up) connectTo({ url: address, name: found.name || '' });
+							else next();
+						});
+					};
+					next();
+				};
+				ask.send();
+			}
+
 			document.getElementById('go').onclick = function () {
 				var typed = document.getElementById('address').value.trim();
 				if (!typed) return;
+				if (/^\d{3}\s?\d{3}$/.test(typed)) {
+					connectByCode(typed.replace(/\s/g, ''));
+					return;
+				}
 				if (!/^https?:\/\//.test(typed)) typed = 'http://' + typed;
 				if (!/:\d+/.test(typed.replace(/^https?:\/\//, ''))) typed += ':4173';
 				connect(typed);
@@ -200,6 +311,7 @@
 				b.focus();
 				status.textContent = 'Or pick another:';
 				again.hidden = false;
+				keepTrying(unreachable);
 			} else {
 				look();
 			}

@@ -10,7 +10,9 @@ import { playbackStops } from '$lib/server/playbackLog';
 import { speechJobs } from '$lib/server/heardSpeech';
 import { storageReports } from '$lib/server/storageHealth';
 import { caughtUpSummary } from '$lib/server/db/queries';
+import { newEpisodeFetches } from '$lib/server/newEpisodes';
 import { youtubePhoneStatus } from '$lib/server/youtubePhone';
+import { lastLibrarySync, libraryProfiles } from '$lib/server/librarySync';
 
 const describe = (path: string) => {
 	if (!existsSync(path)) return { path, exists: false };
@@ -45,8 +47,12 @@ export const GET: RequestHandler = async () => {
 		storage: storageReports(),
 		// Shows watched to their last episode, and new episodes found for them (newEpisodes.ts).
 		caughtUp: caughtUpSummary(),
+		// New episodes fetched onto this computer before anyone plays them (newEpisodes.ts).
+		newEpisodeFetches: newEpisodeFetches(),
 		// YouTube's mobile website for phones (youtubePhone.ts): its port, whether the computer's account is in use, counts.
 		youtubePhone: youtubePhoneStatus(),
+		// Libraries kept in step between one person's computers (librarySync.ts): which profiles, and each one's last round.
+		librarySync: { profiles: libraryProfiles(), last: Object.fromEntries(lastLibrarySync) },
 		settingsStoredIn: 'settings table inside library.db',
 		cwd: process.cwd(),
 		appdata: process.env.APPDATA ?? null,

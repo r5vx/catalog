@@ -35,9 +35,14 @@ end sub
 
 sub onResults(event as Object)
     answer = event.getData()
-    if not answer.ok then return
     ' (A slower answer to something typed before.)
     if m.keyboard.text.Trim() <> m.asked then return
+    if not answer.ok then
+        m.results.visible = false
+        m.status.visible = true
+        m.status.text = "Catalog didn't answer. Try again."
+        return
+    end if
     content = CreateObject("roSGNode", "ContentNode")
     for each found in answer.data.results
         if content.getChildCount() >= 20 then exit for

@@ -1,0 +1,15 @@
+# Catalog's meeting point (see README.md in this folder). Put online with:
+#   npx wrangler deploy          (from this folder)
+name = "catalog-meeting"
+main = "src/worker.js"
+compatibility_date = "2026-05-01"
+workers_dev = true
+preview_urls = false
+
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "catalog-meeting"
+database_id = "77311a67-78fa-4833-86a9-b7ead3cb74a9"

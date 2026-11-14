@@ -8,7 +8,14 @@
 		onTvApp = typeof (window as unknown as { CatalogTV?: unknown }).CatalogTV !== 'undefined';
 	});
 
+	// Asked twice: one stray OK here changed every TV in the house to the computer's screens.
+	let sureAboutNormal = $state(false);
+
 	async function normalLayout() {
+		if (!sureAboutNormal) {
+			sureAboutNormal = true;
+			return;
+		}
 		await fetch('/api/tv-layout', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -84,8 +91,13 @@
 			</button>
 		{/if}
 		<button type="button" class="option" data-tv-item onclick={normalLayout}>
-			<strong>Use the normal layout</strong>
-			<span>The same screens as on the computer. Settings → Watch on TV brings this one back.</span>
+			{#if sureAboutNormal}
+				<strong>Press OK again to switch</strong>
+				<span>Every TV changes to the computer's screens, which are small and hard to use with a remote.</span>
+			{:else}
+				<strong>Use the normal layout</strong>
+				<span>The same screens as on the computer, on every TV. Not made for the remote.</span>
+			{/if}
 		</button>
 		{#if onTvApp}
 			<button type="button" class="option" data-tv-item onclick={changeComputer}>

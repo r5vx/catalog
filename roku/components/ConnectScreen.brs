@@ -92,10 +92,20 @@ sub onProfiles(event as Object)
     saved.Write("server", m.global.server)
     saved.Write("token", m.global.token)
     saved.Flush()
-    ' More than one person watches and nobody's been picked on this Roku yet: who's watching.
-    if answer.data.profiles.Count() > 1 and not saved.Exists("profile") then
+    ' More than one person watches: who's watching, every time the app opens (as on the Fire TV).
+    ' Only the first time, a Roku set up as one person stayed them: a new profile was never asked
+    ' about, and its person saw someone else's library (2026-11-08).
+    if answer.data.profiles.Count() > 1 then
         m.top.action = { go: "profiles" }
     else
+        if answer.data.profiles.Count() = 1 then
+            only = answer.data.profiles[0]
+            m.global.profile = only.id
+            m.global.profileName = only.name
+            saved.Write("profile", only.id.ToStr())
+            saved.Write("profileName", only.name)
+            saved.Flush()
+        end if
         m.top.action = { go: "home" }
     end if
 end sub

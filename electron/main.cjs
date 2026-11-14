@@ -1417,9 +1417,23 @@ function autoUpdater() {
 		} catch {}
 	};
 
-	updater.on('checking-for-update', () => send({ status: 'checking' }));
-	updater.on('update-not-available', () => send({ status: 'none', version: app.getVersion() }));
+	// A check that GitHub fails is tried again twice, 15 s apart, before it says so: GitHub answered
+	// the release's latest.yml with "504" two times in three for an evening, and every check said
+	// "Could not check for updates" (2026-11-08).
+	let checking = false;
+	let retries = 0;
+	updater.on('checking-for-update', () => {
+		checking = true;
+		send({ status: 'checking' });
+	});
+	updater.on('update-not-available', () => {
+		checking = false;
+		retries = 0;
+		send({ status: 'none', version: app.getVersion() });
+	});
 	updater.on('update-available', (info) => {
+		checking = false;
+		retries = 0;
 		downloadVersion = info?.version;
 		send({ status: 'downloading', version: info?.version, percent: 0 });
 	});
@@ -1430,9 +1444,17 @@ function autoUpdater() {
 		readyVersion = info?.version ?? null;
 		send({ status: 'ready', version: info?.version });
 	});
-	updater.on('error', (error) =>
-		send({ status: 'error', message: String(error?.message || error) })
-	);
+	updater.on('error', (error) => {
+		if (checking && retries < 2) {
+			retries++;
+			updateLog(`check failed (${String(error?.message || error).split('\n')[0]}); trying again in 15 s`);
+			setTimeout(() => updater.checkForUpdates().catch(() => {}), 15_000);
+			return;
+		}
+		checking = false;
+		retries = 0;
+		send({ status: 'error', message: String(error?.message || error) });
+	});
 
 	return updater;
 }

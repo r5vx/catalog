@@ -41,6 +41,7 @@
 	<h1>Catalog</h1>
 	<p class="note" id="note">Catalog's computer can't be reached right now. What's kept on this phone still plays.</p>
 	<button class="again" type="button" id="again">Try Catalog again</button>
+	<button class="again" type="button" id="youtube" hidden>YouTube</button>
 	<ul id="list"></ul>
 	<p class="empty" id="empty" hidden>Nothing is kept on this phone yet. When Catalog can be reached, open Downloads and tap Keep on this phone.</p>
 
@@ -64,6 +65,15 @@
 	let urls = [];
 
 	document.getElementById('again').onclick = () => { location.href = '/'; };
+
+	// In the iPhone app (ios/), YouTube comes straight from YouTube, so it works without the computer.
+	const app = /CatalogPhone\//.test(navigator.userAgent) && window.webkit?.messageHandlers?.catalog;
+	if (app) {
+		const youtube = document.getElementById('youtube');
+		youtube.hidden = false;
+		youtube.style.marginLeft = '8px';
+		youtube.onclick = () => app.postMessage('youtube');
+	}
 
 	const pad = (n) => String(n).padStart(2, '0');
 	const minutes = (s) => { const m = Math.max(1, Math.round(s / 60)); return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`; };

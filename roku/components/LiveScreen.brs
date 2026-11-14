@@ -88,7 +88,11 @@ sub showView()
     if row.items.Count() = 0 then
         m.grid.visible = false
         m.status.visible = true
-        m.status.text = "Nothing on Live TV matches " + Chr(34) + m.searched + Chr(34) + "."
+        if m.view = -1 then
+            m.status.text = "Nothing on Live TV matches " + Chr(34) + m.searched + Chr(34) + "."
+        else
+            m.status.text = "Nothing here right now."
+        end if
         return
     end if
     content = CreateObject("roSGNode", "ContentNode")
@@ -223,8 +227,8 @@ sub onPick()
         openBox()
         return
     end if
+    if m.game.channels = invalid or m.game.channels.Count() = 0 then return
     channel = m.game.channels[0]
-    if channel = invalid then return
     label = m.game.label
     if row.label = "Channels" or m.game.isChannel = true then label = channel.name
     m.top.action = { go: "play", live: true, channel: channel.id, channelName: channel.name, game: m.game.game, label: label }
@@ -295,8 +299,10 @@ sub onForget()
         body = { remove: "all" }
     else if m.game.replay <> invalid and m.game.replay <> "" then
         body = { remove: true, replay: m.game.replay }
-    else
+    else if m.game.channels <> invalid and m.game.channels.Count() > 0 then
         body = { remove: true, id: m.game.channels[0].id }
+    else
+        return
     end if
     api("/api/live/watched", {}, "onSaved", "POST", body)
 end sub

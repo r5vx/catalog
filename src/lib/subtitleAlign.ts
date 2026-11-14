@@ -10,16 +10,31 @@
 
 export const FRAME = 0.032; // seconds per slice (512 samples at 16 kHz)
 
-export type TimedCue = { start: number; end: number; text?: string };
+/** `sung`: set on every line when the subtitles are mostly songs (a musical): see `spoken`. */
+export type TimedCue = { start: number; end: number; text?: string; sung?: boolean };
 
-/** Lines that aren't someone talking: songs, "(MUSIC)", "[DOOR OPENS]", signs. */
+const plainText = (cue: TimedCue) => (cue.text ?? 'x').replace(/<[^>]*>/g, '').trim();
+const isSong = (cue: TimedCue) => /♪|♫/.test(plainText(cue));
+
+/**
+ * The lines to time by. Lines that aren't someone talking are left out: songs, "(MUSIC)",
+ * "[DOOR OPENS]", signs.
+ *
+ * Except in a musical, where nearly every line is a song: Hamilton's subtitles have 2,709 sung
+ * lines of 3,069, and the 359 left fitted nothing, so right subtitles were called "don't match"
+ * (owner, 2026-11-12). When most lines are songs they are all kept, each marked `sung`, and
+ * `fitDelays` is careful with them (singing over music is a weaker thing to go by than talking).
+ */
 export function spoken(cues: TimedCue[]): TimedCue[] {
-	return cues.filter((cue) => {
-		const text = (cue.text ?? 'x').replace(/<[^>]*>/g, '').trim();
-		if (!text || /♪|♫/.test(text)) return false;
+	const said = cues.filter((cue) => {
+		const text = plainText(cue);
+		if (!text) return false;
 		if (/^[([][^)\]]*[)\]]$/s.test(text)) return false;
 		return cue.end - cue.start < 15;
 	});
+	const talking = said.filter((cue) => !isSong(cue));
+	if (said.length >= 40 && talking.length < said.length / 2) return said.map((cue) => ({ ...cue, sung: true }));
+	return talking;
 }
 
 /**
@@ -178,6 +193,11 @@ const NEAR = 20; // how far each stretch may differ from that (a longer or short
 export function fitDelays(speech: Float32Array, cues: TimedCue[]): DelayPlan | null {
 	const plan = fitAtRate(speech, cues, 1);
 	if (plan?.fits && plan.clear >= 0.5) return plan;
+	// A musical (`spoken` kept its sung lines): only a clear answer at normal speed counts, and
+	// anything less is "can't tell", never "doesn't fit". Measured on Hamilton, 2026-11-13: two
+	// subtitle files fitted clearly (0.1 s and −0.9 s, right both times), while a third with the
+	// very same times came out unclear, and trying other speeds then "fitted" it 6.9 s early.
+	if (cues[0]?.sung) return null;
 	// (No answer yet: other speeds are worth trying once four minutes have been heard — a
 	// player that only has five minutes ahead never hears enough to rule the normal speed out.)
 	let heard = 0;

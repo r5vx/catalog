@@ -63,6 +63,10 @@ type Job = {
 	failures: Map<number, number>;
 	/** Watched to the end (finishedWith): its pieces go once nobody's asked for one for a while. */
 	finishedAt?: number;
+	/** A new episode fetched before anyone plays it: not deleted for being unused until then. */
+	keepUntil?: number;
+	/** Only this many pieces from the start, while nobody's playing it (a show's page was opened). */
+	most?: number;
 };
 
 const jobs = new Map<string, Job>();
@@ -72,6 +76,15 @@ const running: Record<DownloadKind, number> = { vidrift: 0, movy: 0 };
 
 const root = () => join(dataDir, 'downloads-ahead');
 const dirOf = (copy: string) => join(root(), createHash('sha1').update(copy).digest('hex').slice(0, 16));
+
+/** Until when a folder's pieces are kept though unused (the file "keep-until" in it), or 0. */
+function keptUntil(dir: string): number {
+	try {
+		return Number(readFileSync(join(dir, 'keep-until'), 'utf8')) || 0;
+	} catch {
+		return 0;
+	}
+}
 
 /** The source a copy name belongs to, if it's one downloaded ahead. */
 export function downloadKindOf(copy: string): DownloadKind | null {
@@ -94,7 +107,7 @@ export function noteEpisode(copy: string, urls: string[], headers: Record<string
 		if (existsSync(dir)) {
 			for (const name of readdirSync(dir)) if (/^\d+$/.test(name)) done.add(Number(name));
 		}
-		job = { copy, kind, dir, urls, headers, from: 0, askedAt: 0, later: false, done, going: new Map(), failures: new Map() };
+		job = { copy, kind, dir, urls, headers, from: 0, askedAt: 0, later: false, done, going: new Map(), failures: new Map(), keepUntil: keptUntil(dir) || undefined };
 		jobs.set(copy, job);
 		try {
 			mkdirSync(dir, { recursive: true });
@@ -103,8 +116,76 @@ export function noteEpisode(copy: string, urls: string[], headers: Record<string
 	}
 	job.urls = urls;
 	job.headers = headers;
+	// (How many pieces it has in all, for Downloads' list after a restart.)
+	if (totals.get(job.dir) !== urls.length) {
+		totals.set(job.dir, urls.length);
+		try {
+			writeFileSync(join(job.dir, 'total'), String(urls.length));
+		} catch {}
+	}
 	urls.forEach((url, n) => addresses.set(url, { copy, n }));
 	if (addresses.size > 20_000) for (const key of [...addresses.keys()].slice(0, 5_000)) addresses.delete(key);
+}
+
+/** Each folder's piece count as last written to its "total" file. */
+const totals = new Map<string, number>();
+
+export type AheadCopy = {
+	/** The copy's name, as the relay names it ("vidrift:tv:2734:28:5:avc", "…~v0" for one quality of several). */
+	copy: string;
+	here: number;
+	/** How many pieces it has in all; 0 when not known. */
+	total: number;
+	bytes: number;
+	/** When it goes if nobody plays it again. */
+	until: number;
+	/** Being played, or downloaded, right now. */
+	busy: boolean;
+};
+
+/** Every copy downloaded ahead that's on the disk now (for Downloads: "on this computer for now"). */
+export function downloadsAheadList(): AheadCopy[] {
+	if (!existsSync(root())) return [];
+	const now = Date.now();
+	const list: AheadCopy[] = [];
+	for (const name of readdirSync(root())) {
+		const dir = join(root(), name);
+		try {
+			const copy = readFileSync(join(dir, 'copy.txt'), 'utf8').trim();
+			let here = 0;
+			let bytes = 0;
+			for (const piece of readdirSync(dir)) {
+				if (!/^\d+$/.test(piece)) continue;
+				here++;
+				bytes += statSync(join(dir, piece)).size;
+			}
+			if (!here) continue;
+			const job = jobs.get(copy);
+			let total = job?.urls.length ?? 0;
+			if (!total) {
+				try {
+					total = Number(readFileSync(join(dir, 'total'), 'utf8')) || 0;
+				} catch {}
+			}
+			const busy = Boolean(job && (job.going.size > 0 || (job.askedAt && !job.later && now - job.askedAt < WATCHED_MS)));
+			list.push({ copy, here, total, bytes, until: Math.max(statSync(dir).mtimeMs + KEEP_MS, keptUntil(dir)), busy });
+		} catch {}
+	}
+	return list;
+}
+
+/** A copy downloaded ahead, deleted from Downloads. False while it's being played. */
+export function removeAhead(copy: string): boolean {
+	const job = jobs.get(copy);
+	const now = Date.now();
+	if (job && job.askedAt && !job.later && now - job.askedAt < WATCHED_MS) return false;
+	if (job) {
+		for (const going of job.going.values()) going.stop();
+		job.going.clear();
+		jobs.delete(copy);
+	}
+	forget(dirOf(copy));
+	return true;
 }
 
 /** The copy and number of a piece address noted with `noteEpisode`. */
@@ -178,16 +259,45 @@ export function keepPiece(copy: string, n: number, bytes: Buffer): void {
 	} catch {}
 }
 
-/** The next episode, downloaded while this one plays (after what's being watched). */
-export function downloadAhead(copy: string): void {
+/**
+ * An episode nobody is playing yet, downloaded after what's being watched: the next episode while
+ * this one plays, or a new episode the moment it's out (`keepUntil`: kept until then if nobody
+ * plays it, where the others go after six hours unused). `most`: only that many pieces from the
+ * start (a show's page was opened: enough that Play starts at once, the rest comes as it plays).
+ */
+export function downloadAhead(copy: string, keepUntil = 0, most = 0): void {
 	const job = jobs.get(copy);
 	if (!job) return;
-	if (!job.askedAt) {
+	// (All of it once asked for whole; only its start when that's all anyone has asked for.)
+	if (!most) job.most = undefined;
+	else if (!job.askedAt) job.most = most;
+	// (Asked again while still waiting to be played: downloading carries on for another while.)
+	if (!job.askedAt || job.later) {
 		job.later = true;
 		job.askedAt = Date.now();
+		// (Pieces that failed before get another go: the addresses are fresh ones.)
+		job.failures.clear();
+	}
+	if (keepUntil > (job.keepUntil ?? 0)) {
+		job.keepUntil = keepUntil;
+		try {
+			writeFileSync(join(job.dir, 'keep-until'), String(keepUntil));
+		} catch {}
 	}
 	touch(job);
 	pump();
+}
+
+/**
+ * An episode started on because its show was being looked at, and then another was: its
+ * downloading stops (what it has stays the usual while). Not one being watched, nor a new episode
+ * being kept.
+ */
+export function stopAhead(copy: string): void {
+	const job = jobs.get(copy);
+	if (!job || !job.later || (job.keepUntil ?? 0) > Date.now()) return;
+	job.askedAt = 0;
+	for (const going of job.going.values()) going.stop();
 }
 
 /** How much is downloaded ahead, for Settings → Storage. */
@@ -225,7 +335,8 @@ function nextPiece(kind: DownloadKind): { job: Job; n: number } | null {
 	const watched = candidates.filter((j) => !j.later).length;
 	const share = Math.max(1, Math.ceil(AT_ONCE[kind] / Math.max(1, watched)));
 	const missing = (job: Job) => {
-		for (let n = job.from; n < job.urls.length; n++) {
+		const end = job.later && job.most ? Math.min(job.urls.length, job.most) : job.urls.length;
+		for (let n = job.from; n < end; n++) {
 			if (job.done.has(n) || job.going.has(n) || (job.failures.get(n) ?? 0) >= 3) continue;
 			return n;
 		}
@@ -388,7 +499,7 @@ function cleanUp(): void {
 	for (const name of readdirSync(root())) {
 		const dir = join(root(), name);
 		try {
-			if (now - statSync(dir).mtimeMs > KEEP_MS) forget(dir);
+			if (now - statSync(dir).mtimeMs > KEEP_MS && keptUntil(dir) < now) forget(dir);
 		} catch {}
 	}
 }

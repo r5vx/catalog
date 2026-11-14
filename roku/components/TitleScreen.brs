@@ -92,12 +92,21 @@ sub loadSeason(season as Integer)
     m.again.control = "stop"
     m.askedSeason = season
     if m.seasonData = invalid then m.status.text = "Loading episodes…"
-    api("/api/roku/season", { source: m.title.source, id: m.title.id, title: m.title.playTitle, year: m.title.playYear, season: season }, "onSeason")
+    m.seasonAsk = api("/api/roku/season", { source: m.title.source, id: m.title.id, title: m.title.playTitle, year: m.title.playYear, season: season }, "onSeason")
 end sub
+
+' Whether an answer is to the latest season asked for (Catalog may answer another season than
+' the one asked, so it's told by its request).
+function isLatest(event as Object) as Boolean
+    if m.seasonAsk = invalid then return true
+    return event.getRoSGNode().isSameNode(m.seasonAsk)
+end function
 
 sub onSeason(event as Object)
     answer = event.getData()
     if not answer.ok then return
+    ' (A slower answer for a season picked before this one.)
+    if not isLatest(event) then return
     m.status.text = ""
     m.seasonData = answer.data
     build()
@@ -107,13 +116,15 @@ end sub
 
 sub askAgain()
     season = m.askedSeason
+    ' (The season Catalog answered with, which may not be the one asked for.)
     if m.seasonData <> invalid then season = m.seasonData.season
-    api("/api/roku/season", { source: m.title.source, id: m.title.id, title: m.title.playTitle, year: m.title.playYear, season: season, full: "1" }, "onSeasonAgain")
+    m.seasonAsk = api("/api/roku/season", { source: m.title.source, id: m.title.id, title: m.title.playTitle, year: m.title.playYear, season: season, full: "1" }, "onSeasonAgain")
 end sub
 
 sub onSeasonAgain(event as Object)
     answer = event.getData()
     if not answer.ok or answer.data.episodes = invalid or answer.data.episodes.Count() = 0 then return
+    if not isLatest(event) then return
     m.seasonData = answer.data
     build()
 end sub

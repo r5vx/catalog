@@ -14,6 +14,7 @@ import { clearOldStrips } from '$lib/server/previewStrips';
 import { keepWithinLimit, tellAppItsShare } from '$lib/server/storage';
 import { moveOffAniList } from '$lib/server/offAniList';
 import { scheduleNewEpisodeChecks } from '$lib/server/newEpisodes';
+import { startOnline } from '$lib/server/online';
 import { scheduleNextAirs } from '$lib/server/nextAirs';
 import { installSecureDns } from '$lib/server/secureDns';
 import { noteOwnAddress } from '$lib/server/ownFetch';
@@ -60,6 +61,7 @@ setInterval(forgetFinishedSubtitles, 60 * 60 * 1000).unref?.();
 
 // Shows watched to their last episode come back to Continue Watching when a new one is out.
 scheduleNewEpisodeChecks();
+startOnline();
 scheduleNextAirs();
 // Names looked up over HTTPS (Cloudflare, Google), so a provider's DNS blocks don't hide the sources.
 installSecureDns();
@@ -178,7 +180,10 @@ function profileFor(event: RequestEvent): number {
 		}
 	}
 	if (fromTv || previewing) {
-		if (readSettings().tvLayout === 'full') return MAIN_PROFILE;
+		// Whoever was picked on this TV, in either layout. The normal layout used to always be the
+		// owner's: it shows the same profile picture and "Who's watching?" as a phone, so picking
+		// someone there did nothing (a family TV, 2026-11-13), and every Roku profile saw the
+		// owner's library (2026-11-08).
 		return chosenProfile(event) ?? MAIN_PROFILE;
 	}
 	// A phone (or another computer): whoever was picked on it.

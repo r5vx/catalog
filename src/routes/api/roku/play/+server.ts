@@ -3,6 +3,7 @@ import { getWatchProgress } from '$lib/server/db/queries';
 import { PREFERRED_QUALITY, pickFile } from '$lib/watch';
 import { readSettings } from '$lib/server/settings';
 import { seasonEpisodes } from '$lib/server/tvEpisodes';
+import { qualitiesAt, rokuScreen } from '$lib/server/rokuQualities';
 import type { RequestHandler } from './$types';
 
 /**
@@ -124,7 +125,10 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	// no MinBandwidth for it.
 	const plainShowbox = fromShowbox && format === 'hls';
 	const address = plainShowbox ? new URL(`/api/roku/hls?${new URLSearchParams({ u: chosen.url })}`, url.origin).href : chosen.url;
-	const minBandwidth = format === 'hls' && !plainShowbox ? await topBandwidth(chosen.url, forward) : 0;
+	// The qualities it can show, best first (server/rokuQualities.ts): held at the first, the rest to
+	// step down to if that won't start.
+	const qualities = format === 'hls' && !plainShowbox ? await qualitiesAt(chosen.url, forward, rokuScreen(request)) : [];
+	const minBandwidth = qualities.length > 1 ? qualities[0] : 0;
 	// English subtitles (/api/roku/subtitles), unless they're part of the picture.
 	const subtitles = new URLSearchParams({ title: found.title, type, year, share: chosen.file.source ? shareKey : '' });
 	if (episode) {
@@ -151,11 +155,17 @@ export const GET: RequestHandler = async ({ url, request }) => {
 		label: [f.source ?? 'Showbox', f.quality, f.audio, f.size].filter(Boolean).join(' · ')
 	}));
 
+	// What the Roku falls back to when it can't play Showbox's one quality: its playlist with all
+	// its AAC qualities. (Other sources step down `qualities` instead.)
+	const fallback = plainShowbox ? `${address}&all=1` : null;
+
 	return json({
 		url: address,
+		fallback,
 		copies,
 		format,
 		minBandwidth,
+		qualities,
 		bif,
 		headers: fromShowbox ? ['Referer: https://www.febbox.com/'] : [],
 		title: found.title,
@@ -177,22 +187,6 @@ export const GET: RequestHandler = async ({ url, request }) => {
 		next: next ? { season: next.season, episode: next.episode } : null
 	});
 };
-
-/** The highest H.264 quality a playlist lists, in kbps; 0 for a single-quality one or no answer. */
-async function topBandwidth(playlist: string, headers: Record<string, string>): Promise<number> {
-	try {
-		const r = await fetch(playlist, { headers, signal: AbortSignal.timeout(5000) });
-		if (!r.ok) return 0;
-		const qualities = (await r.text()).match(/#EXT-X-STREAM-INF:[^\n]*/g) ?? [];
-		const bandwidths = qualities
-			// (Not HEVC, nor Dolby sound a Roku may not play: the top would be the only one allowed.)
-			.filter((line) => !/hvc1|hev1|ec-3|ac-3/i.test(line))
-			.map((line) => Number(line.match(/[:,]BANDWIDTH=(\d+)/)?.[1] ?? 0));
-		return bandwidths.length > 1 ? Math.floor(Math.max(...bandwidths) / 1000) : 0;
-	} catch {
-		return 0;
-	}
-}
 
 /** A playlist's length in seconds (its first quality's pieces added up); 0 when it can't be read. */
 async function playlistLength(address: string, headers: Record<string, string>): Promise<number> {

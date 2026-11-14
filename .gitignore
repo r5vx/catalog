@@ -48,3 +48,10 @@ android/*.keystore
 # The alternate wording's readable copy (scripts/dev/alt-text.mjs encodes it into the app)
 *.local.json
 
+
+# iPhone app build output
+build-ios/
+
+# The meeting point's keys
+cloud/secrets.local.json
+cloud/.wrangler/

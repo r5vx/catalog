@@ -5,6 +5,7 @@ import { parseHianimeShareKey } from '$lib/server/sources/hianime';
 import { parseVidriftShareKey } from '$lib/server/sources/vidrift';
 import { parseMovyShareKey } from '$lib/server/sources/movy';
 import { parseVidfastShareKey } from '$lib/server/sources/vidfast';
+import { noteShowboxDownload, showboxDownloadRoom } from '$lib/server/showboxDownloadRoom';
 import type { RequestHandler } from './$types';
 
 /** Every download, with how far the one under way has got, and the space left on the disk. */
@@ -23,10 +24,15 @@ export const POST: RequestHandler = async ({ request }) => {
 	if (!body || typeof body.title !== 'string' || !body.title.trim()) return error(400, 'What to download?');
 	const kind = body.kind === 'replay' ? 'replay' : body.kind === 'episode' ? 'episode' : 'film';
 	if (kind === 'replay' ? !body.replayId : !body.shareKey || !body.fid) return error(400, 'Which copy?');
-	// Never Showbox's copy: it would use up Febbox's daily allowance (another source's, or a replay).
+	// Showbox's copy: only while it can't use up Febbox's daily allowance (showboxDownloadRoom.ts).
 	const key = String(body.shareKey ?? '');
-	if (kind !== 'replay' && !parseAniwaveShareKey(key) && !parseHianimeShareKey(key) && !parseVidriftShareKey(key) && !parseMovyShareKey(key) && !parseVidfastShareKey(key)) {
-		return error(400, "Showbox's copies aren't downloaded (they'd use up Febbox's daily allowance)");
+	const showbox = kind !== 'replay' && !parseAniwaveShareKey(key) && !parseHianimeShareKey(key) && !parseVidriftShareKey(key) && !parseMovyShareKey(key) && !parseVidfastShareKey(key);
+	if (showbox) {
+		const size = Number(body.estimate) || 0;
+		const room = await showboxDownloadRoom();
+		if (!room.known) return error(400, "Febbox didn't say how much of today's allowance is left, so Showbox's copy isn't downloaded");
+		if (!size || size > room.bytes) return error(400, "Not enough of today's Febbox allowance is left to download Showbox's copy");
+		noteShowboxDownload(size);
 	}
 	const text = (v: unknown) => (typeof v === 'string' && v ? v : null);
 	const ask: DownloadAsk = {

@@ -42,6 +42,23 @@ async function folder(): Promise<FileSystemDirectoryHandle | null> {
 	}
 }
 
+/**
+ * The copy of a download kept whole on this phone (its video file), or null. Catalog's own player
+ * plays from it when there is one, so a kept download uses no data and no computer for the video.
+ */
+export async function keptVideo(id: number): Promise<File | null> {
+	if (!canKeep()) return null;
+	const dir = await folder();
+	if (!dir) return null;
+	try {
+		// (The .json is written last: with it there, the video is whole.)
+		await dir.getFileHandle(`${id}.json`);
+		return await (await dir.getFileHandle(`${id}.mp4`)).getFile();
+	} catch {
+		return null;
+	}
+}
+
 /** Which downloads are whole on this phone. */
 export async function refreshKept(): Promise<void> {
 	if (!canKeep()) return;

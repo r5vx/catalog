@@ -33,6 +33,8 @@
 		{ href: '/settings/privacy', label: 'Privacy', hint: 'PIN lock' },
 		{ href: '/settings/tv', label: 'Watch on TV', hint: 'Catalog on a Fire TV' },
 		{ href: '/settings/phones', label: 'Phones', hint: 'Catalog as an app on a phone' },
+		{ href: '/settings/profile', label: 'Profile', hint: 'Your name and picture online' },
+		{ href: '/settings/online', label: 'Online', hint: 'Friends, watching together, sync' },
 		{ href: '/settings/updates', label: 'Updates', hint: 'Keep Catalog current', flag: 'updates' }
 	];
 

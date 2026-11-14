@@ -30,6 +30,7 @@ sub onRows(event as Object)
             return
         end if
         m.status.text = "Catalog didn't answer. Is it open on the computer?"
+        m.status.visible = true
         return
     end if
     focused = m.rows.rowItemFocused
@@ -52,6 +53,7 @@ sub onRows(event as Object)
     end for
     if m.tiles.Count() = 0 then
         m.status.text = "Nothing here yet."
+        m.status.visible = true
         m.rows.visible = false
         return
     end if

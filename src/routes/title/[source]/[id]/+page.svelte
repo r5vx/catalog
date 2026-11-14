@@ -12,6 +12,7 @@
 	import EpisodePicker from '$lib/EpisodePicker.svelte';
 	import EpisodeRatings from '$lib/EpisodeRatings.svelte';
 	import Fold from '$lib/Fold.svelte';
+	import FriendsSeen from '$lib/FriendsSeen.svelte';
 	import { STATUSES } from '$lib/constants';
 	import BackBar from '$lib/BackBar.svelte';
 	import { money } from '$lib/format';
@@ -42,7 +43,9 @@
 			});
 			if (!resp.ok) { addError = 'Could not add. Try again.'; return; }
 			const result = await resp.json();
-			addedId = result.id;
+			// Someone else's profile: on their own list (it has no entry page).
+			if (data.ownList) listStatus = status;
+			else addedId = result.id;
 		} catch {
 			addError = 'No connection.';
 		} finally {
@@ -51,7 +54,10 @@
 	}
 
 	// Something not out yet can only be wanted.
-	let selectedStatus = $state(untrack(() => (data.details.unreleased || data.details.inCinemas ? 'planned' : 'completed')));
+	let selectedStatus = $state(untrack(() => data.listStatus ?? (data.details.unreleased || data.details.inCinemas ? 'planned' : 'completed')));
+	/** Someone else's profile: what it is on their own list (null: not on it). */
+	let listStatus = $state(untrack(() => data.listStatus));
+	const listLabel = $derived(STATUSES.find((s) => s.value === listStatus)?.label ?? '');
 
 	let watchAvailable = $state<boolean | null>(null);
 	let watchSources = $state<SourceCheck[]>([]);
@@ -111,7 +117,9 @@
 		</div>
 
 		<div class="meta">
-			{#if data.ownedEntryId}
+			{#if data.ownList}
+				<p class="eyebrow" class:faint={!listStatus}>{listStatus ? `On your list · ${listLabel}` : 'Not on your list'}</p>
+			{:else if data.ownedEntryId}
 				<p class="eyebrow"><a href="/entry/{data.ownedEntryId}">In your library →</a></p>
 			{:else}
 				<p class="eyebrow faint">Not in your library</p>
@@ -133,6 +141,7 @@
 				metascore={data.scores?.metascore ?? null}
 				contentRating={data.scores?.contentRating ?? null}
 			/>
+			<FriendsSeen source={data.source} sourceId={data.sourceId} title={details.title ?? ''} year={details.year} />
 
 			<div class="title-actions">
 				{#if details.inCinemas && watchAvailable === false}
@@ -179,7 +188,7 @@
 							class="btn btn-primary"
 							disabled={addBusy}
 							onclick={() => addToLibrary(selectedStatus)}
-						>{addBusy ? 'Adding...' : 'Add to library'}</button>
+						>{addBusy ? 'Saving...' : data.ownList ? (listStatus ? 'Save' : 'Add to my list') : 'Add to library'}</button>
 					</div>
 				{/if}
 				{#if addError}<p class="add-error">{addError}</p>{/if}

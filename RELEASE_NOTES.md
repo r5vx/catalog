@@ -12,6 +12,80 @@ without both.
 
 ## Unreleased
 
+## 4.2.0 — 2026-11-14 — Catalog online: friends, watching together, and your library on every computer
+
+### New
+
+**Roku**
+- Add profile on Who's watching
+- Who's watching every time the Roku app opens, as on the Fire TV
+
+**Online** (Settings → Online, with the join code)
+- Friends: add one with a code, and see what each is watching now (the library's Friends)
+- Watch along: turn on "Let friends watch along with me" and friends get a button that puts them in step with what you're watching
+- A title's page says which friends have watched it (on TVs too); click it for everyone and what they rated it
+- That works for friends who shared their library as a file too, with nothing online needed
+- Settings → Profile: your name and picture online, one for each profile
+- Watch together: start a room, give out its code, and play, pause and skips happen in every house
+- Watch together: when whoever started the room goes to another episode, everyone goes with them
+- Your watch progress in step between your computers (join them with a code)
+- Your library in step between your computers too (statuses, ratings, reviews); it shows what will change first, and never removes a title
+- Problems send themselves: a video that stopped to load, subtitles that wouldn't match
+- Intro and credit times one Catalog works out are used by the others
+- A TV can be connected with a six-digit code instead of the computer's address (TV app 1.10)
+
+**Downloads**
+- Showbox's copies can be downloaded while enough of the day's Febbox allowance is left (some is always kept for watching)
+- Episodes fetched ahead to stop buffering are listed under "On this computer for now", with Play, Keep and Remove
+
+**Phones**
+- A download kept on the phone plays in Catalog's own player
+
+### Fixed
+
+**Roku**
+- Each profile sees their own library and Continue Watching
+- Replays that wouldn't play on some Rokus play again, in the best quality that Roku can show
+- A video that won't start in its best quality starts one quality lower, not the blurriest
+- Captions keep trying the next subtitles until one matches the video (they stopped after the first check)
+- The next episode starts with its own best captions, not the ones picked for the one before
+- Skip recap shows when a recap comes straight after the intro (it said Skip intro)
+- Switching seasons quickly no longer shows the episodes of the season picked before
+- Back on Who's watching when the app opens leaves the app
+- Home says "Nothing here yet" for a new profile instead of staying blank
+- A failed search says so instead of "Searching…" forever
+
+**Player**
+- A film whose Showbox copy is blurry starts on a clearly sharper copy from another source, from the start or where it was left
+- Looking for a sharper copy no longer slows the film playing (it buffered for about 20 s)
+- Captions re-time themselves after switching to another source's copy
+- Resuming on another copy starts a few seconds before where it was left, with captions timed to that copy
+- A musical's captions are no longer called "don't match" (Hamilton: nearly every line is sung)
+- A show's newest episode is fetched onto the computer as soon as it's out and plays from there (7Movies and Movy: it was the episode that buffered, on TVs most of all)
+- Opening a show's page, or resting on it on a TV, fetches its first minutes ahead (7Movies)
+
+**Search**
+- Searching "Fantastic Four" shows "The Fantastic 4: First Steps" near the top (numbers count written either way, in Browse and the library)
+- A well-known new film or show comes before older, little-known ones with the same name
+
+**Fire TV**
+- A TV that couldn't reach the computer keeps trying by itself, and finds it again when the router gave it a new address
+- Updating the TV app shows the steps for Fire TV's "Install unknown apps" switch, and carries on by itself once it's on
+- Later puts the TV app update off for a day
+- A TV on the computer's layout offers the TV layout back on the library
+- Picking a profile works on a TV that's on the computer's layout (it always stayed on the owner's)
+- Use the normal layout in the TV's Settings asks twice
+
+**Phones**
+- YouTube on an iPhone says it isn't available there yet (videos stopped after a minute)
+- YouTube opens straight away
+- Add account and other Google sign-in pages in phone YouTube say to sign in on the computer, with a button that opens the sign-in there (they were a black screen)
+- A title's page shows that profile's own list, and adds to it
+- Browse no longer marks the owner's titles as in another profile's library
+
+**Updates**
+- A check GitHub fails is tried again by itself before saying it couldn't check
+
 ## 4.1.4 — 2026-11-09 — The Roku player's menu, captions in Catalog's style, and everyone's own library on phones
 
 ### New

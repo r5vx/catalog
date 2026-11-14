@@ -25,7 +25,9 @@ export const GET: RequestHandler = async ({ url }) => {
 	const resp = await fetch(target, { headers: { Referer: 'https://www.febbox.com/' }, signal: AbortSignal.timeout(15_000) }).catch(() => null);
 	if (!resp?.ok) return error(502, "Showbox's video server didn't answer");
 	const text = await resp.text();
-	return new Response(plainPlaylist(text, target), { headers: { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' } });
+	// &all=1: every quality with AAC sound (the Roku chooses): the fallback when it can't play the top one.
+	const all = url.searchParams.get('all') === '1';
+	return new Response(all ? aacOnly(text, target) : plainPlaylist(text, target), { headers: { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' } });
 };
 
 /** The playlist with one quality (the top with AAC sound) and its sound track; unchanged when it has no qualities to choose. */
@@ -55,4 +57,31 @@ function plainPlaylist(text: string, base: URL): string {
 	}
 	out.push(top.info, top.address);
 	return out.join('\n') + '\n';
+}
+
+/** The playlist with every H.264 quality that has AAC sound (and only their sound tracks); unchanged when there are none. */
+function aacOnly(text: string, base: URL): string {
+	const lines = text.replace(/\r/g, '').split('\n');
+	const out = ['#EXTM3U'];
+	const groups = new Set<string>();
+	const kept: string[] = [];
+	for (let i = 0; i < lines.length; i++) {
+		if (!lines[i].startsWith('#EXT-X-STREAM-INF:')) continue;
+		const codecs = /CODECS="([^"]*)"/.exec(lines[i])?.[1] ?? '';
+		if (/ec-3|ac-3|hvc1|hev1/i.test(codecs) || (codecs && !/mp4a/i.test(codecs))) continue;
+		const address = lines.slice(i + 1).find((l) => l.trim() && !l.startsWith('#'));
+		if (!address) continue;
+		const group = /AUDIO="([^"]*)"/.exec(lines[i])?.[1];
+		if (group) groups.add(group);
+		kept.push(lines[i], new URL(address.trim(), base).href);
+	}
+	if (!kept.length) return text;
+	for (const line of lines) {
+		if (/^#EXT-X-(VERSION|INDEPENDENT-SEGMENTS)/.test(line)) out.push(line);
+		const group = /GROUP-ID="([^"]*)"/.exec(line)?.[1];
+		if (line.startsWith('#EXT-X-MEDIA:') && /TYPE=AUDIO/.test(line) && group && groups.has(group)) {
+			out.push(line.replace(/URI="([^"]*)"/, (_, uri: string) => `URI="${new URL(uri, base).href}"`));
+		}
+	}
+	return [...out, ...kept].join('\n') + '\n';
 }

@@ -93,6 +93,30 @@ export type Settings = {
 	nightUpdateHour?: string;
 	/** The day (YYYY-MM-DD) it last tried, so it tries once a night at most. */
 	nightUpdateTried?: string;
+	/*
+	 * Catalog online (src/lib/server/online.ts): this computer's place at the meeting point and its
+	 * key there, the server's address when it isn't the built-in one, the name this computer goes
+	 * by, and the owner's key for reading problem reports.
+	 */
+	onlineHouse?: string;
+	onlineKey?: string;
+	onlineUrl?: string;
+	onlineName?: string;
+	onlineAdminKey?: string;
+	/** '0' turns each off: problem reports, sharing what's watched with friends, timings shared between houses. */
+	onlineReports?: string;
+	onlineShare?: string;
+	onlineShared?: string;
+	/** '1': friends may watch along with what's playing here (off unless turned on). */
+	onlineAlong?: string;
+	/** '1': taken offline for now. The computer's place and key are kept, so it's the same people when it comes back. */
+	onlineOff?: string;
+	/** The profiles whose progress is synced (a JSON list), and where each one's sync has got to. */
+	onlineSync?: string;
+	onlineSyncState?: string;
+	/** The profiles whose library is kept in step (a JSON list; librarySync.ts), and where each one's has got to. */
+	onlineLibrary?: string;
+	onlineLibraryState?: string;
 };
 
 export function readSettings(): Settings {

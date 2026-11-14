@@ -42,6 +42,9 @@ sub init()
     m.cueAt = 0
     m.capOptions = []
     m.capPicked = -1
+    ' The one picked in the menu (-1: Catalog's choice). Only that one is asked for by name: asking
+    ' for the one shown kept auto-timing from trying the next ones once it had heard the copy.
+    m.capByHand = -1
     m.capOff = not m.global.captions
     m.capTiming = { state: "off" }
     m.capHand = 0.0
@@ -96,6 +99,8 @@ sub load(title as String, kind as String, year as String, season as Integer, epi
         showWaiting("Loading…")
     end if
     m.asking = { title: title, type: kind, year: year, season: season, episode: episode }
+    m.capByHand = -1
+    m.capPicked = -1
     ' A source picked in the menu, for this episode or film only.
     if m.wantCopy <> invalid then
         m.asking.fid = text(m.wantCopy.fid)
@@ -146,6 +151,7 @@ sub onPlan(event as Object)
     m.audioPicked = false
     m.skipsAsked = false
     m.video.content = content
+    keepFallback(content, text(plan.fallback), plan.qualities)
     ' Captions are drawn here, not by the Roku (its own were in capitals, in its own style).
     if m.captionsBefore = invalid then m.captionsBefore = m.video.globalCaptionMode
     m.video.globalCaptionMode = "Off"
@@ -197,7 +203,7 @@ sub loadCaptions()
         query.share = text(plan.shareKey)
     end if
     if m.global.autoTiming then query.auto = "1" else query.auto = "0"
-    if m.capPicked >= 0 then query.pick = m.capPicked.ToStr()
+    if m.capByHand >= 0 then query.pick = m.capByHand.ToStr()
     m.capWaitingBefore = text(m.capTiming.state) = "waiting"
     api("/api/roku/captions", query, "onCaptions")
 end sub
@@ -473,6 +479,7 @@ sub onMenuPick()
     else if Left(act, 3) = "cap" then
         m.capOff = false
         m.capPicked = Mid(act, 4).ToInt()
+        m.capByHand = m.capPicked
         m.capHand = 0.0
         loadCaptions()
         showMenu("main")
@@ -552,6 +559,7 @@ sub onReplay(event as Object)
     if answer.data.resumeAt <> invalid and answer.data.resumeAt > 0 then content.playStart = answer.data.resumeAt
     ' Held at its top quality (it dropped to a blurry one now and then by itself).
     if answer.data.minBandwidth <> invalid and answer.data.minBandwidth > 0 then content.MinBandwidth = answer.data.minBandwidth
+    keepFallback(content, "", answer.data.qualities)
     replay = answer.data.replay
     m.played = false
     m.replayPlan = { title: text(replay.title), type: "replay", season: 0, episode: 0, poster: text(replay.poster), shareKey: "", fid: 0 }
@@ -565,6 +573,7 @@ end sub
 ' A live channel: its playlist is always at the same address (/api/live/playlist).
 sub playLive(params as Object)
     m.plan = invalid
+    m.steps = invalid
     m.live = params
     showWaiting("Loading " + text(params.channelName) + "…")
     content = CreateObject("roSGNode", "ContentNode")
@@ -596,6 +605,7 @@ sub onState()
         end if
         if m.plan <> invalid and not m.skipsAsked and m.plan.type = "tv" and m.video.duration > 60 then askSkips()
     else if state = "error" then
+        if m.played <> true and fallBack() then return
         if m.live <> invalid then
             showWaiting("This channel can't be played right now. Press * for the game's other channels.")
         else if m.youtube <> invalid then
@@ -613,6 +623,7 @@ sub onState()
         ' "Finished" without ever playing is a video the Roku couldn't play: it used to go on to the
         ' next episode, or back out of a film, without a word (2026-11-08).
         if m.played <> true then
+            if fallBack() then return
             showWaiting("This video wouldn't play on the Roku (" + text(m.video.errorMsg) + "). Press Back, and try again.")
             return
         end if
@@ -669,7 +680,8 @@ sub onPosition()
         skipPast(segment)
         return
     end if
-    if m.showing = invalid then showSkip(segment)
+    ' (Another part straight after the one shown: its own button.)
+    if m.showing = invalid or m.showing.start <> segment.start then showSkip(segment)
 end sub
 
 sub skipPast(segment as Object)
@@ -828,3 +840,53 @@ sub onChannel()
     m.video.control = "stop"
     playLive({ channel: channel.id, channelName: channel.name, game: m.live.game, label: m.live.label })
 end sub
+
+' ---------------------------------------------------------------- a quality it can play
+
+' Held at its best quality (MinBandwidth), or Showbox's one quality: if it won't start there (a
+' 1080p 60-frame replay: "an unexpected problem (but not server timeout or HTTP error)",
+' 2026-11-08), it's started again where it was, a quality lower each time (`qualities`, best first,
+' from Catalog), then left to choose for itself; Showbox's, at its playlist with all its qualities.
+sub keepFallback(content as Object, url as String, qualities as Dynamic)
+    m.steps = []
+    held = content.MinBandwidth <> invalid and content.MinBandwidth > 0
+    if url <> "" then
+        m.steps.Push({ url: url, min: 0 })
+    else if held then
+        if qualities <> invalid then
+            for i = 1 to qualities.Count() - 1
+                m.steps.Push({ url: content.url, min: qualities[i] })
+            end for
+        end if
+        m.steps.Push({ url: content.url, min: 0 })
+    end if
+    m.stepFrom = { format: content.streamFormat, headers: content.httpHeaders, title: content.title, live: content.live = true, bif: content.HDBifUrl }
+end sub
+
+function fallBack() as Boolean
+    if m.steps = invalid or m.steps.Count() = 0 then return false
+    lower = m.steps.Shift()
+    one = m.stepFrom
+    content = CreateObject("roSGNode", "ContentNode")
+    content.url = lower.url
+    content.streamFormat = one.format
+    content.httpHeaders = one.headers
+    content.title = one.title
+    ' Just that quality (MaxBandwidth too, or it could go back up to the one that wouldn't play).
+    if lower.min > 0 then
+        content.MinBandwidth = lower.min
+        content.MaxBandwidth = lower.min + 1
+    end if
+    if one.live then content.live = true
+    if one.bif <> invalid and one.bif <> "" then
+        content.HDBifUrl = one.bif
+        content.SDBifUrl = one.bif
+        content.FHDBifUrl = one.bif
+    end if
+    at = Int(m.video.position)
+    if at > 0 then content.playStart = at
+    m.played = false
+    m.video.content = content
+    m.video.control = "play"
+    return true
+end function

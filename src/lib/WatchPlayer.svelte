@@ -5,10 +5,12 @@
 	import { onMount, onDestroy, tick, untrack } from 'svelte';
 	import Hls from 'hls.js';
 	import { fetchAheadLoader, recentPieces } from '$lib/fetchAhead';
+	import { keptVideo } from '$lib/phoneKeep.svelte';
 	import BackBar from '$lib/BackBar.svelte';
 	import { p, pRandom } from '$lib/altText';
 	import { bothLanguages, bytesOf, isCinemaRecording, isFourK, pickFile, playableHere, PREFERRED_QUALITY } from '$lib/watch';
 	import { isTv, tvPlayer } from '$lib/tv';
+	import { together, attachTogether, rejoinKeptRoom, nowPlaying } from '$lib/watchTogether.svelte';
 	import { matchTvFrameRate } from '$lib/tvFrameRate';
 	import { StyledSubs, isStyledLine, onlyStyledLines } from '$lib/styledSubs';
 	import { padActive } from '$lib/gamepad';
@@ -524,11 +526,7 @@
 		if (!others.length) return;
 		await measureCopies(others);
 		if (activeFile !== file) return;
-		const need = Math.max(3.5, now.mbps * 1.4);
-		const best = others
-			.map((f) => ({ f, s: copySharp[copyKey(f)] }))
-			.filter((c) => c.s && c.s.mbps >= need && (c.s.height === 0 || c.s.height >= 700))
-			.sort((a, b) => b.s.mbps - a.s.mbps)[0];
+		const best = sharperKnown(file, currentFiles);
 		if (!best) return;
 		debugInfo = (debugInfo ? debugInfo + ' | ' : '') + `Showbox copy ${now.mbps} Mbps: ${best.f.source} ${best.s.mbps} Mbps`;
 		if ((videoEl?.currentTime ?? 0) < 120) {
@@ -538,6 +536,27 @@
 			showQualityToast(`${best.f.source} has a sharper copy (${best.s.mbps} Mbps) in Files`);
 		}
 	}
+
+	/**
+	 * Another source's copy with the same sound that's clearly sharper than a weak Showbox `file`
+	 * (at least 3.5 Mbps and two fifths more), by what's measured of both; null when there's none
+	 * or it isn't known yet.
+	 */
+	function sharperKnown(file: FileOption, files: FileOption[]): { f: FileOption; s: CopySharpness } | null {
+		if (file.source) return null;
+		const now = copySharp[copyKey(file)];
+		if (!now || now.mbps >= WEAK_MBPS) return null;
+		const need = Math.max(3.5, now.mbps * 1.4);
+		return (
+			files
+				.filter((f) => f.source && playableHere(f) && !f.burnedIn && (f.audio ?? '') === (file.audio ?? ''))
+				.map((f) => ({ f, s: copySharp[copyKey(f)] }))
+				.filter((c): c is { f: FileOption; s: CopySharpness } => Boolean(c.s) && c.s.mbps >= need && (c.s.height === 0 || c.s.height >= 700))
+				.sort((a, b) => b.s.mbps - a.s.mbps)[0] ?? null
+		);
+	}
+	/** The copy a film started on for being sharper (said once it plays). */
+	let startedSharper: { f: FileOption; s: CopySharpness } | null = null;
 
 	/** The best copy from another source, for a Showbox file that only comes in low quality. */
 	function betterThanShowbox(files: FileOption[]): FileOption | null {
@@ -625,6 +644,18 @@
 		// A Showbox file known to come only in 360p (or Febbox's daily limit is used up): another
 		// source's copy instead, if there is one.
 		if (showboxPick && !showboxPick.source && (lowOnly(showboxPick.fid) || febboxOut())) return betterThanShowbox(files) ?? showboxPick;
+		// A film whose Showbox copy is known to be weak (a small rip enlarged): a clearly sharper copy
+		// known from before plays from the start, rather than a switch partway (Wimpy Kid, 2026-11-09).
+		// Not when a source was picked by hand for it, nor below 1080p. (Its link is given 5 s, then
+		// Showbox's plays: linkFor.)
+		startedSharper = null;
+		if (showboxPick && !kept && showType === 'movie' && !sportsMode && (parseInt(preferredQuality) || 1080) >= 1080) {
+			const sharper = sharperKnown(showboxPick, files);
+			if (sharper) {
+				startedSharper = sharper;
+				return sharper.f;
+			}
+		}
 		return showboxPick;
 	};
 
@@ -1484,6 +1515,12 @@
 					syncedOnce = true;
 				};
 				subSync.onMismatch = () => {
+					// (Told to the owner, where this Catalog is online and reports are on.)
+					fetch('/api/online/report', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ kind: 'subtitles', title: videoTitle, details: { subtitles: activeSubFileName, source: activeFile?.source ?? 'Showbox', copy: activeFile?.name ?? '' } })
+					}).catch(() => {});
 					timingSubs = false;
 					switchToFittingSubs();
 				};
@@ -3685,7 +3722,8 @@
 		if (progressSaveTimer) { clearInterval(progressSaveTimer); progressSaveTimer = null; }
 	}
 
-	type SavedPlace = { at: number; subUrl?: string; subFileName?: string; subDelay?: number; subRate?: number };
+	/** `fid`: the copy it was saved on (its subtitles' delay and speed were for that copy). */
+	type SavedPlace = { at: number; subUrl?: string; subFileName?: string; subDelay?: number; subRate?: number; fid?: number };
 
 	/**
 	 * Where this video was left, in seconds (0: from the start), with the subtitles saved there.
@@ -3704,7 +3742,7 @@
 			const resp = await fetch(`/api/watch/progress?title=${encodeURIComponent(baseTitle)}&type=${showType}&season=${s}&episode=${e}`);
 			if (!resp.ok) return { at: 0 };
 			const data = await resp.json();
-			if (handedOver !== null) return { at: handedOver, subUrl: data?.subUrl, subFileName: data?.subFileName, subDelay: data?.subDelay, subRate: data?.subRate };
+			if (handedOver !== null) return { at: handedOver, subUrl: data?.subUrl, subFileName: data?.subFileName, subDelay: data?.subDelay, subRate: data?.subRate, fid: data?.fid };
 			if (!data) return { at: 0 };
 			let at = 0;
 			const pct = data.duration > 0 ? data.currentTime / data.duration : 0;
@@ -3719,7 +3757,10 @@
 			}
 			// Finished with nothing after it (the last episode, a film): from the start, not the end.
 			if (data.currentTime > 5 && pct < 0.95) at = data.currentTime;
-			return { at, subUrl: data.subUrl, subFileName: data.subFileName, subDelay: data.subDelay, subRate: data.subRate };
+			// Left on another copy (a sharper one started this time): copies run a few seconds apart
+			// (Wimpy Kid's Showbox and Movy, 7 s), so a little before, never after, where it was.
+			if (at > 0 && data.fid && activeFile && data.fid !== activeFile.fid) at = Math.max(0, at - 10);
+			return { at, subUrl: data.subUrl, subFileName: data.subFileName, subDelay: data.subDelay, subRate: data.subRate, fid: data.fid };
 		} catch {
 			return { at: handedOver ?? 0 };
 		}
@@ -3737,18 +3778,21 @@
 		await animeKnown;
 		if (place.subUrl && (!hearingDub() || forDub)) {
 			const sub = { id: '0', url: place.subUrl, lang: 'eng', language: 'English', fileName: place.subFileName || '' };
+			// Their delay and speed only on the copy they were saved on: another copy (a sharper one
+			// started instead, 2026-11-09) is timed afresh by auto-timing.
+			const sameCopy = !place.fid || !activeFile || place.fid === activeFile.fid;
 			// Kept for the show too, so its next episode opens with them on however it's opened.
 			loadSub(sub).then(async (ok) => {
 				if (ok && !keptShowSubs()) keepShowSubs(sub);
 				// Their speed with their delay, once they're in (new subtitles start auto-timing over at
 				// speed 1). One episode came back at −49 s and speed 1 instead of 0.959: 90 s out.
 				const rate = Number(place.subRate) || 1;
-				if (ok && subAutoSync && rate !== 1 && !subSync?.fits) {
+				if (ok && sameCopy && subAutoSync && rate !== 1 && !subSync?.fits) {
 					await tick();
 					subtitleRate = rate;
 				}
 			});
-			if (place.subDelay) subtitleDelay = place.subDelay;
+			if (place.subDelay && sameCopy) subtitleDelay = place.subDelay;
 		}
 	}
 
@@ -5450,6 +5494,12 @@
 		return { at: kept.currentTime };
 	}
 
+	/** The address made for a download's copy kept on this phone (let go of when the player closes). */
+	let keptUrl = '';
+	onDestroy(() => {
+		if (keptUrl) URL.revokeObjectURL(keptUrl);
+	});
+
 	/** A download: its file, its subtitles, and where it was left. */
 	async function playDownload() {
 		const id = startParams.get('download');
@@ -5465,7 +5515,13 @@
 		const pad = (n: number) => String(n).padStart(2, '0');
 		videoTitle = d.kind === 'episode' ? `${d.title} S${d.season}E${d.episode}` : d.title;
 		if (d.place > 5 && !(d.duration > 0 && d.place / d.duration >= 0.95)) seekAfterLoad = d.place;
-		streamUrl = `/api/downloads/${d.id}/file`;
+		// Kept on this phone (Downloads → Keep on this phone): played from the phone's own copy, in
+		// this player like anything else. The computer's copy otherwise.
+		const onPhone = await keptVideo(d.id);
+		if (onPhone) {
+			keptUrl = URL.createObjectURL(onPhone);
+			streamUrl = keptUrl;
+		} else streamUrl = `/api/downloads/${d.id}/file`;
 		if (d.hasSubtitles) {
 			const text = await fetch(`/api/downloads/${d.id}/subtitles`)
 				.then((r) => (r.ok ? r.text() : ''))
@@ -5475,6 +5531,50 @@
 			if (cues.length) showSub({ id: 'download', url: '', lang: '', language: 'Subtitles', fileName: name }, cues);
 		}
 	}
+
+	/*
+	 * Watching together (src/lib/watchTogether.svelte.ts): in a room, this video's play, pause and
+	 * skips are the room's, and the room's are this video's. Films and episodes only.
+	 */
+	onMount(rejoinKeptRoom);
+	// Friends are told what this is (and the room to watch along in), again when the room changes.
+	$effect(() => {
+		const ready = Boolean(streamUrl) && duration > 0;
+		void together.code;
+		void activeEpisode;
+		if (!ready || liveMode || replayMode || downloadMode || miniMode) return;
+		untrack(() => {
+			const title = videoTitle.replace(/ S\d+E\d+$/, '');
+			if (title) void nowPlaying({ title, type: showType === 'tv' ? 'tv' : 'movie', year: String(lastResolveArgs?.year ?? ''), season: activeEpisode?.season ?? 0, episode: activeEpisode?.episode ?? 0 });
+		});
+	});
+	$effect(() => {
+		const video = videoEl;
+		const inRoom = together.code;
+		const ready = Boolean(streamUrl) && duration > 0;
+		void activeEpisode;
+		if (!video || !inRoom || !ready || liveMode || replayMode || downloadMode || miniMode) return;
+		return untrack(() =>
+			attachTogether(
+				video,
+				() => ({
+					title: videoTitle.replace(/ S\d+E\d+$/, ''),
+					type: showType === 'tv' ? 'tv' : 'movie',
+					year: String(lastResolveArgs?.year ?? ''),
+					season: showType === 'tv' ? (activeEpisode?.season ?? 0) : 0,
+					episode: showType === 'tv' ? (activeEpisode?.episode ?? 0) : 0
+				}),
+				(text) => showQualityToast(text),
+				// The room went on to another episode of this show: this house goes with it.
+				(room) => {
+					const there = episodes.find((ep) => ep.season === room.season && ep.episode === room.episode);
+					if (!there || !playable(there)) return;
+					showQualityToast(`${room.by} went to S${room.season}E${room.episode}`);
+					void playEpisode(there);
+				}
+			)
+		);
+	});
 
 	/*
 	 * Downloading what's playing (Downloads, src/lib/server/downloads.ts), with the sound track and
@@ -5491,8 +5591,13 @@
 	let downloadBusy = $state(false);
 	const DOWNLOAD_AT_LEAST = 720;
 	const playingOther = $derived(replayMode || Boolean(activeFile?.source));
+	/**
+	 * How much of Showbox's video may be downloaded right now (bytes; asked when the dialog opens):
+	 * what's left of Febbox's daily allowance, less a share kept back for watching
+	 * (src/lib/server/showboxDownloadRoom.ts). Null until known.
+	 */
+	let showboxRoom = $state<number | null>(null);
 	const downloadChoices = $derived.by(() => {
-		if (!playingOther) return [];
 		const heights = [...new Set(hlsLevels.map((l) => l.height).filter(Boolean))].sort((a, b) => b - a);
 		const good = heights.filter((h) => h >= DOWNLOAD_AT_LEAST);
 		return (good.length ? good : heights.slice(0, 1)).map((height) => {
@@ -5518,9 +5623,24 @@
 			? downloadChoices.length
 				? downloadChoices.map((c) => ({ label: `${c.height}p`, height: c.height, bytes: c.bytes }))
 				: [{ label: 'Best quality', height: 0, bytes: 0 }]
-			: otherCopies.map((copy) => ({ label: `${copy.source}, best quality${copy.burnedIn ? ' (subtitles in picture)' : ''}`, height: 0, bytes: 0, copy }))
+			: [
+					// Showbox's own copy, in the qualities that fit what's left of today's allowance.
+					...downloadChoices
+						.filter((c) => c.bytes > 0 && showboxRoom !== null && c.bytes <= showboxRoom)
+						.map((c) => ({ label: `Showbox, ${c.height}p`, height: c.height, bytes: c.bytes })),
+					...otherCopies.map((copy) => ({ label: `${copy.source}, best quality${copy.burnedIn ? ' (subtitles in picture)' : ''}`, height: 0, bytes: 0, copy }))
+				]
 	);
+	/** Playing Showbox's copy and none of its qualities fits today's allowance: the dialog says so. */
+	const showboxTooBig = $derived(!playingOther && showboxRoom !== null && downloadChoices.length > 0 && !downloadChoices.some((c) => c.bytes > 0 && c.bytes <= (showboxRoom ?? 0)));
 	function openDownload() {
+		if (!playingOther) {
+			showboxRoom = null;
+			fetch('/api/downloads/showbox-room')
+				.then((r) => (r.ok ? (r.json() as Promise<{ bytes: number }>) : null))
+				.catch(() => null)
+				.then((room) => (showboxRoom = room?.bytes ?? 0));
+		}
 		downloadPick = 0;
 		downloadCaptions = subtitlesOn && subtitleCues.length ? 'showing' : 'none';
 		showDownloadMenu = true;
@@ -5536,7 +5656,7 @@
 
 	// (Not on a TV or in the mini player: Downloads is a page of the computer's and phone's Catalog.)
 	const canDownload = $derived(
-		!liveMode && !downloadMode && !tvMode && !miniMode && duration > 0 && (replayMode ? true : playingOther || otherCopies.length > 0)
+		!liveMode && !downloadMode && !tvMode && !miniMode && duration > 0 && (replayMode ? true : playingOther || otherCopies.length > 0 || Boolean(activeFile && !activeFile.source))
 	);
 	const sizeText = (bytes: number) => (bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1024 ** 2))} MB`);
 
@@ -6509,6 +6629,9 @@
 				return;
 			}
 
+			// What's known of how sharp each copy is (measured before, or ahead while its Watch button
+			// was rested on): a weak Showbox copy's sharper alternative starts instead.
+			await askKeptSharpness(currentFiles);
 			// A film from another source (Aniwave): the version in the audio picked last, no sign-in.
 			const film = pickFor(currentFiles);
 			if (film?.source) {
@@ -6519,6 +6642,10 @@
 					activeQuality = got.file.quality;
 					activeFileFid = got.file.fid;
 					streamUrl = got.url;
+					if (startedSharper && got.file === startedSharper.f) {
+						showQualityToast(`Playing ${got.file.source}'s copy: sharper than Showbox's (${startedSharper.s.mbps} Mbps)`);
+						debugInfo = (debugInfo ? debugInfo + ' | ' : '') + `started on the sharper copy (${startedSharper.s.mbps} Mbps)`;
+					}
 				} else problem = cantPlay(film.source, got.debug, 'this');
 				return;
 			}
@@ -6583,6 +6710,25 @@
 	}
 
 	/** `byItself`: Catalog switched (Showbox held to low quality), not you: nothing is remembered. */
+	/**
+	 * Another copy of the same video: the subtitles' timing was for the copy before (Showbox's rip
+	 * of Diary of a Wimpy Kid: Dog Days and Movy's were far apart, 2026-11-09; the owner had to
+	 * press Retime). Back to no delay, and auto-timing starts on this copy, as Retime does. What was
+	 * heard of the copy before is kept for it. Not for the same release in another quality (or
+	 * another source's alike copy picked for a missing piece's sake: same name): those line up.
+	 */
+	function timeNewCopy(before: FileOption | null, next: FileOption) {
+		if (!subAutoSync || liveMode) return;
+		if (before && (before.source ?? '') === (next.source ?? '') && before.name && before.name === next.name) return;
+		subSync?.reset();
+		subtitleDelay = 0;
+		syncedOnce = false;
+		if (!subtitlesOn || subtitleCues.length === 0) return;
+		clearTimeout(timingSubsTimer);
+		timingSubs = true;
+		timingSubsTimer = setTimeout(() => (timingSubs = false), 120_000);
+	}
+
 	async function changeToFile(file: FileOption, byItself = false) {
 		// (Other sources' copies share one fid across episodes: the episode before's isn't this one's.)
 		if (!file || (file.fid === activeFileFid && !oldPicture)) return;
@@ -6634,6 +6780,7 @@
 			if (data.url) {
 				oldPicture = false;
 				seekAfterLoad = savedTime;
+				if (!fresh) timeNewCopy(activeFile ?? null, file);
 				streamUrl = data.url;
 				streamNonce++;
 				activeQuality = file.quality;
@@ -7455,6 +7602,11 @@
 									</label>
 								{/each}
 							</div>
+							{#if !playingOther && showboxRoom === null}
+								<p class="download-label">Checking today's Febbox allowance…</p>
+							{:else if showboxTooBig}
+								<p class="download-label">Showbox's copy isn't offered now: it would use up today's Febbox allowance.</p>
+							{/if}
 							<p class="download-label">Captions</p>
 							<select class="download-captions" bind:value={downloadCaptions} aria-label="Captions">
 								<option value="none">None</option>

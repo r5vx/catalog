@@ -4,4 +4,4 @@
  * a new app when it's installed again from the computer (Settings → Watch on TV → Install on Roku).
  * `npm run roku` refuses to pack when this and the manifest disagree, so bump both together.
  */
-export const ROKU_APP_VERSION = 10100;
+export const ROKU_APP_VERSION = 10101;

@@ -18,6 +18,7 @@
 	import EpisodePicker from '$lib/EpisodePicker.svelte';
 	import EpisodeRatings from '$lib/EpisodeRatings.svelte';
 	import Fold from '$lib/Fold.svelte';
+	import FriendsSeen from '$lib/FriendsSeen.svelte';
 	import { progressSummary } from '$lib/progress';
 	import { money } from '$lib/format';
 	import { p } from '$lib/altText';
@@ -295,6 +296,10 @@
 				<p class="faint hint why-none">Not matched to a title on TMDB, so there are no ratings or details. Pick it under More details → Wrong match?</p>
 			{:else if scoresSettled && !looking && entry.externalRating == null && entry.rating == null && scores?.imdbRating == null && scores?.rtScore == null && scores?.metascore == null}
 				<p class="faint hint why-none">No ratings yet: TMDB, IMDb, Rotten Tomatoes and Metacritic have none for it.</p>
+			{/if}
+
+			{#if entry.sourceId && entry.source !== 'manual'}
+				<FriendsSeen source={entry.source} sourceId={entry.sourceId} title={entry.title} year={entry.year} />
 			{/if}
 
 			<!-- Where a title's page from Browse has them, so they're in the same place everywhere. -->

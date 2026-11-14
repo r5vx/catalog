@@ -181,8 +181,13 @@
 				/>
 				<path d="M27 34.3 45 24 27 13.7z" fill="#fff" />
 			</svg>
-			<span class="no-ads"><NoAdsMark />No ads</span>
-			<p class="elsewhere">YouTube without ads opens in Catalog on the computer, on phones and on the Fire TV.</p>
+			{#if data.iphone}
+				<p class="elsewhere"><strong>Not on the iPhone yet.</strong></p>
+				<p class="elsewhere">YouTube without ads is planned for the iPhone. For now it opens in Catalog on the computer and on the Fire TV.</p>
+			{:else}
+				<span class="no-ads"><NoAdsMark />No ads</span>
+				<p class="elsewhere">YouTube without ads opens in Catalog on the computer, on Android phones and on the Fire TV.</p>
+			{/if}
 		{/if}
 	</div>
 </section>

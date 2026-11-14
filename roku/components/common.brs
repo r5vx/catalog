@@ -21,13 +21,30 @@ end function
 function catalogHeaders() as Object
     cookie = "catalog_profile=" + m.global.profile.ToStr()
     if m.global.token <> "" then cookie = cookie + "; catalog_auth=" + m.global.token
-    return { "User-Agent": "CatalogTV/1.0 (Roku)", "Cookie": cookie }
+    if m.rokuVideo = invalid then m.rokuVideo = rokuVideo()
+    return { "User-Agent": "CatalogTV/1.0 (Roku)", "Cookie": cookie, "X-Roku-Video": m.rokuVideo }
+end function
+
+' What this Roku can show, for Catalog to give it only qualities it plays ("1080,60": the screen's
+' height, and the most frames a second at 1080p). Held at one it couldn't, a replay wouldn't start.
+function rokuVideo() as String
+    info = CreateObject("roDeviceInfo")
+    mode = info.GetVideoMode()
+    height = 0
+    digits = CreateObject("roRegex", "^(\d+)", "")
+    found = digits.Match(mode)
+    if found.Count() > 1 then height = found[1].ToInt()
+    if height <= 0 then height = 1080
+    fps = 30
+    answer = info.CanDecodeVideo({ Codec: "mpeg4 avc", Profile: "high", Level: "4.2" })
+    if answer <> invalid and answer.result = true then fps = 60
+    return height.ToStr() + "," + fps.ToStr()
 end function
 
 ' The same, as a video asks with them ("Name:Value"), plus any of its own.
 function videoHeaders(extra as Object) as Object
     headers = catalogHeaders()
-    list = ["Cookie:" + headers["Cookie"], "User-Agent:" + headers["User-Agent"]]
+    list = ["Cookie:" + headers["Cookie"], "User-Agent:" + headers["User-Agent"], "X-Roku-Video:" + headers["X-Roku-Video"]]
     if extra <> invalid then
         for each line in extra
             list.Push(line)

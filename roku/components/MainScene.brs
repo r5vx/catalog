@@ -173,7 +173,8 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
     if key = "back" then
         if m.stack.Count() > 0 then
             ' The first screen (finding the computer) can't be backed out of into nothing.
-            if m.menuScreen = invalid and m.stack.Count() = 1 then return false
+            ' Nor can Who's watching as the app opens: Back leaves the app.
+            if m.menuScreen = invalid then return false
             pop()
             return true
         end if

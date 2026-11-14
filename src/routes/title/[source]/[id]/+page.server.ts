@@ -2,7 +2,8 @@ import { fetchDetails } from '$lib/server/metadata/details';
 import { anilistResting } from '$lib/server/metadata/anilistNodes';
 import { isAvailable } from '$lib/server/availability';
 import { quickScores, omdbConfigured } from '$lib/server/metadata/omdb';
-import { entryIdForSource, entryIdForShow, entryIdByTitle } from '$lib/server/db/queries';
+import { entryIdForSource, entryIdForShow, entryIdByTitle, profileTitleFor } from '$lib/server/db/queries';
+import { currentProfile, MAIN_PROFILE } from '$lib/server/profile';
 import { showRoots } from '$lib/server/metadata/franchise';
 import { knownPeople } from '$lib/server/db/people';
 import { addFromSource } from '$lib/server/entries';
@@ -41,6 +42,11 @@ export const load: PageServerLoad = async ({ params, url }) => {
 	if (!details.title) error(404, 'Nothing found for that.');
 	// The same show added from the other site (AniList's Re:Zero, TMDB's in the library).
 	ownedEntryId ??= entryIdByTitle(details.title, details.year) ?? (details.altTitle ? entryIdByTitle(details.altTitle, details.year) : null);
+	// Someone else's profile (a family phone): their own list, not the library. The library's
+	// "In your library" and its entry page showed under every profile (2026-11-09).
+	const ownList = currentProfile() !== MAIN_PROFILE;
+	const onList = ownList ? profileTitleFor(source, id, details.title, details.year) : null;
+	if (ownList) ownedEntryId = null;
 
 	// A film plays as a film, wherever it's listed: an anime film is under Anime (Re:Zero's
 	// Memory Snow), and played as a series it opened the show instead.
@@ -75,6 +81,9 @@ export const load: PageServerLoad = async ({ params, url }) => {
 		cast,
 		scores,
 		ownedEntryId: ownedEntryId ?? null,
+		/** Someone else's profile: whether it's on their own list, and as what. */
+		ownList,
+		listStatus: onList?.status ?? null,
 		watchType,
 		// Set when you arrived from somewhere in the app, so "back" returns there.
 		back: safeBack(url.searchParams.get('back'))

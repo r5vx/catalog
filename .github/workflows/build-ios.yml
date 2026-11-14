@@ -1,0 +1,43 @@
+name: Build iPhone app
+
+# Catalog's iPhone app (ios/). Built on a Mac here because it can't be built on Windows.
+# The result is an unsigned Catalog.ipa (SideStore signs it on the phone), kept with the run
+# under "Artifacts", plus pictures of the app running in a pretend iPhone.
+on:
+  workflow_dispatch:
+  push:
+    branches: [ios-build]
+
+permissions:
+  contents: read
+
+jobs:
+  iphone:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Catalog.ipa
+        run: bash ios/build.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Catalog-ipa
+          path: build-ios/Catalog.ipa
+          if-no-files-found: error
+
+      - name: Build for the pretend iPhone
+        continue-on-error: true
+        run: bash ios/build.sh simulator
+
+      - name: Run it there and take pictures
+        continue-on-error: true
+        timeout-minutes: 15
+        run: bash ios/try-simulator.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pictures
+          path: build-ios/shots
+          if-no-files-found: ignore
