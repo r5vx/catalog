@@ -68,9 +68,9 @@ export type Settings = {
 	ratingStars?: string;
 	/** '0' turns off the sidebar with the library's sections, Browse and Settings (on by default). */
 	sideNav?: string;
-	/** Settings → Storage: how many MB Catalog may keep to load things faster (src/lib/server/storage.ts). */
+	/** Settings → Library: how many MB Catalog may keep to load things faster (src/lib/server/storage.ts). */
 	storageLimitMb?: string;
-	/** Settings → Storage: how many GB the episodes downloaded ahead may take (episodeDownloads.ts). */
+	/** Settings → Library: how many GB the episodes downloaded ahead may take (episodeDownloads.ts). */
 	downloadsAheadGb?: string;
 	/** When '1', the alternate wording is on (src/lib/altText.ts; Settings → Personalization → Code). */
 	altMode?: string;
@@ -85,7 +85,7 @@ export type Settings = {
 	subdlSeen?: string;
 	/** '1' when YouTube on the computer opens over all of Catalog's window instead of its own (the YouTube page's switch). */
 	youtubeInside?: string;
-	/** 'full' when the TV app shows the normal layout instead of the TV one (Settings → Watch on TV). */
+	/** 'full' when the TV app shows the normal layout instead of the TV one (Settings → TV and phones). */
 	tvLayout?: string;
 	/** '1' to install a downloaded update by itself at night (Settings → Updates). Off unless turned on. */
 	nightUpdate?: string;

@@ -48,7 +48,7 @@ setTimeout(() => {
 		.catch((error) => console.error('[off-anilist]', error));
 }, 60_000).unref?.();
 
-// What's kept to load faster stays within the limit in Settings → Storage: now, and every hour.
+// What's kept to load faster stays within the limit in Settings → Library: now, and every hour.
 tellAppItsShare();
 keepWithinLimit();
 setInterval(keepWithinLimit, 60 * 60 * 1000).unref?.();

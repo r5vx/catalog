@@ -20,21 +20,16 @@
 
 	const SECTIONS: Section[] = [
 		{ href: '/settings/personalization', label: 'Personalization', hint: 'Theme, colors and layout' },
-		{ href: '/settings/library', label: 'Library', hint: 'Export, where your files live' },
-		{ href: '/settings/storage', label: 'Storage', hint: 'Space kept to load faster' },
-		{ href: '/settings/playback', label: 'Playback', hint: 'Times a video stopped to load' },
+		{ href: '/settings/library', label: 'Library', hint: 'Export, your files, storage' },
+		{ href: '/settings/playback', label: 'Playback', hint: 'Audio, stops, watch progress' },
 		{
 			href: '/settings/services',
 			label: 'Services',
 			hint: 'Where titles and scores come from',
 			flag: 'services'
 		},
-		{ href: '/settings/watch-progress', label: 'Watch Progress', hint: 'Saved positions and history' },
-		{ href: '/settings/privacy', label: 'Privacy', hint: 'PIN lock' },
-		{ href: '/settings/tv', label: 'Watch on TV', hint: 'Catalog on a Fire TV' },
-		{ href: '/settings/phones', label: 'Phones', hint: 'Catalog as an app on a phone' },
-		{ href: '/settings/profile', label: 'Profile', hint: 'Your name and picture online' },
-		{ href: '/settings/online', label: 'Online', hint: 'Friends, watching together, sync' },
+		{ href: '/settings/devices', label: 'TV and phones', hint: 'Fire TV, Roku, phones, PIN lock' },
+		{ href: '/settings/online', label: 'Online', hint: 'Your profile, friends, sync' },
 		{ href: '/settings/updates', label: 'Updates', hint: 'Keep Catalog current', flag: 'updates' }
 	];
 
@@ -50,6 +45,20 @@
 	const atIndex = $derived(page.url.pathname === '/settings');
 
 	const current = $derived(sections.find((one) => page.url.pathname.startsWith(one.href)));
+
+	/**
+	 * With the menu beside the page, picking a section keeps the scroll where it is (the menu is
+	 * still where you clicked it). On a phone the section replaces the list, so it starts at the top.
+	 * Same width as the phone layout in the styles below.
+	 */
+	let menuBeside = $state(true);
+	$effect(() => {
+		const wide = window.matchMedia('(min-width: 721px)');
+		menuBeside = wide.matches;
+		const changed = () => (menuBeside = wide.matches);
+		wide.addEventListener('change', changed);
+		return () => wide.removeEventListener('change', changed);
+	});
 
 	/** Back to the page Settings was opened from, at the same scroll position. */
 	let backTo = $state({ url: '/', scrollY: 0 });
@@ -91,6 +100,7 @@
 				<li>
 					<a
 						href={section.href}
+						data-sveltekit-noscroll={menuBeside ? '' : 'off'}
 						onclick={() => pressedSection(section.href)}
 						class:active={page.url.pathname.startsWith(section.href)}
 						aria-current={page.url.pathname.startsWith(section.href) ? 'page' : undefined}

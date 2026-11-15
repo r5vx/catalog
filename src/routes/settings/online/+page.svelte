@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { confirmAction } from '$lib/confirm.svelte';
+	import Profile from './Profile.svelte';
 
 	/**
 	 * Settings → Online (src/lib/server/online.ts): this computer joining the meeting point, who the
@@ -32,7 +33,6 @@
 	let linkCode = $state('');
 	let otherCode = $state('');
 	let linkProblem = $state('');
-	let ownerKey = $state('');
 	let reports = $state<Report[]>([]);
 	let reportsProblem = $state('');
 	let open = $state<number | null>(null);
@@ -208,13 +208,6 @@
 		await load();
 	}
 
-	async function saveOwnerKey(event: SubmitEvent) {
-		event.preventDefault();
-		await post({ action: 'owner', key: ownerKey });
-		ownerKey = '';
-		await load();
-	}
-
 	async function forgetOwnerKey() {
 		await post({ action: 'owner', key: '' });
 		reports = [];
@@ -289,14 +282,16 @@
 	<section>
 		<h2>You</h2>
 		<p class="muted">
-			Each profile is its own person online. This one is <strong>{status.account?.name ?? ''}</strong>:
-			<a href="/settings/profile">name and picture</a>.
+			Each profile is its own person online. This one is <strong>{status.account?.name ?? ''}</strong>.
 		</p>
 		{#if status.account?.google}
 			<p class="muted">Signed in with Google as <strong>{status.account.email}</strong>.</p>
 		{/if}
 		{#if status.computers > 1}<p class="muted">On {status.computers} computers.</p>{/if}
 	</section>
+
+	<!-- Name and picture (was its own page, Profile, until 2026-11-14). -->
+	<Profile />
 
 	<section>
 		<h2>Your other computers</h2>
@@ -390,9 +385,10 @@
 		<p class="faint small">Times one Catalog works out are used by the others.</p>
 	</section>
 
-	<section>
-		<h2>Problem reports</h2>
-		{#if status.owner}
+	<!-- Only where the owner's key is kept. It's typed in the Friends panel's friend's-code box: no box here, so nobody else sees there's a key. -->
+	{#if status.owner}
+		<section>
+			<h2>Problem reports</h2>
 			{#if reportsProblem}<p class="msg bad">{reportsProblem}</p>{/if}
 			{#if !reports.length && !reportsProblem}<p class="muted">None.</p>{/if}
 			<ul class="reports">
@@ -411,17 +407,8 @@
 				<button type="button" class="btn" onclick={loadReports}>Look again</button>
 				<button type="button" class="btn" onclick={forgetOwnerKey}>Forget the owner's key</button>
 			</div>
-		{:else}
-			<p class="muted">Read on the computer of whoever looks after Catalog, with the owner's key.</p>
-			<form onsubmit={saveOwnerKey}>
-				<label for="owner">Owner's key</label>
-				<div class="row">
-					<input id="owner" type="password" bind:value={ownerKey} autocomplete="off" />
-					<button type="submit" class="btn" disabled={!ownerKey.trim()}>Save</button>
-				</div>
-			</form>
-		{/if}
-	</section>
+		</section>
+	{/if}
 
 	<section>
 		<div><button type="button" class="btn" onclick={leave}>Take this computer offline</button></div>

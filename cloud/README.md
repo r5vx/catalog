@@ -20,8 +20,9 @@ It lives at `https://catalog-meeting.catalog-meet-f5725.workers.dev` (the addres
 
 - **Join code** (`JOIN_CODE`): what a Catalog types under Settings → Online to join. Give it to
   family and friends. Without it nobody can join.
-- **Owner's key** (`ADMIN_KEY`): typed once under Settings → Online → Problem reports, on the
-  owner's own computer, to read the reports Catalogs send.
+- **Owner's key** (`ADMIN_KEY`): typed once on the owner's own computer, to read the reports
+  Catalogs send (Settings → Online → Problem reports, shown only once the key is kept). The
+  server counts wrong tries per address: after 10 in a day that address is refused until tomorrow.
 
 Both are in `secrets.local.json`. To change one: edit the file, then run
 `npx wrangler secret bulk secrets.local.json` from this folder.

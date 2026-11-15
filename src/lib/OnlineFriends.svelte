@@ -23,6 +23,8 @@
 	let myCode = $state('');
 	let copied = $state(false);
 	let theirCode = $state('');
+	/** The owner's key was typed in the friend's-code box and was right. */
+	let ownerSaved = $state(false);
 	let roomCode = $state('');
 	let problem = $state('');
 	let busy = $state(false);
@@ -79,6 +81,21 @@
 	async function addFriend(event: SubmitEvent) {
 		event.preventDefault();
 		problem = '';
+		// Longer than any friend's code: the owner's key, which has no box of its own. A wrong one
+		// gets the same answer as a wrong friend's code.
+		if (theirCode.trim().length > 12) {
+			const owner = await fetch('/api/online', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'owner', key: theirCode }) })
+				.then((r) => r.json())
+				.catch(() => null);
+			if (!owner?.ok) {
+				problem = "That code isn't right, or it ran out";
+				return;
+			}
+			theirCode = '';
+			adding = false;
+			ownerSaved = true;
+			return;
+		}
 		const answer = await cloud('friends/add', 'POST', { code: theirCode });
 		if (!answer.ok) {
 			problem = answer.data?.error ?? "That code didn't work";
@@ -160,12 +177,13 @@
 						{/if}
 					</div>
 					<form class="row" onsubmit={addFriend}>
-						<input type="text" bind:value={theirCode} placeholder="A friend's code" autocomplete="off" spellcheck="false" maxlength="12" aria-label="A friend's code" />
+						<input type="text" bind:value={theirCode} placeholder="A friend's code" autocomplete="off" spellcheck="false" maxlength="200" aria-label="A friend's code" />
 						<button type="submit" class="btn btn-primary" disabled={!theirCode.trim()}>Add</button>
 					</form>
 				</div>
 			{/if}
 			{#if problem}<p class="msg bad">{problem}</p>{/if}
+			{#if ownerSaved}<p class="msg">Problem reports are in <a href="/settings/online">Settings → Online</a>.</p>{/if}
 
 			{#if watchingNow.length}
 				<h3 class="label">Watching now</h3>

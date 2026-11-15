@@ -1,5 +1,5 @@
 /**
- * Settings → Storage: how much Catalog keeps on this computer to load things faster, and a
+ * Settings → Library: how much Catalog keeps on this computer to load things faster, and a
  * limit on it.
  *
  * What counts towards the limit is only what can be had again: preview pictures for the
@@ -160,7 +160,7 @@ export function keepWithinLimit(): void {
 	}
 }
 
-/** Everything that can be had again, gone now (Settings → Storage → Clear). */
+/** Everything that can be had again, gone now (Settings → Library → Clear). */
 export function clearKept(): void {
 	const dir = previewsDir();
 	if (existsSync(dir)) for (const name of readdirSync(dir)) {

@@ -60,7 +60,7 @@
 	// In the iPhone app, YouTube links open the app's own YouTube (src/lib/phoneApp.ts).
 	onMount(startPhoneApp);
 
-	// The phone app (the secure Tailscale address, Settings → Phones): its offline page is made
+	// The phone app (the secure Tailscale address, Settings → TV and phones): its offline page is made
 	// ready (static/sw.js), and places from watching with no connection are handed back. Never
 	// on the computer Catalog runs on, nor on a plain http:// address.
 	onMount(() => {

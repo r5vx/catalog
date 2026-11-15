@@ -1,5 +1,5 @@
 import { error, json } from '@sveltejs/kit';
-import { cloud, connectOnline, disconnectOnline, lastSync, noteWatchingMore, onlineConnected, onlineJoined, onlineSwitches, setSyncProfile, syncNow, syncProfiles } from '$lib/server/online';
+import { cloud, connectOnline, disconnectOnline, lastSync, noteWatchingMore, onlineConnected, onlineJoined, onlineSwitches, setSyncProfile, syncNow, syncProfiles, tryOwnerKey } from '$lib/server/online';
 import { readSettings, updateSettings } from '$lib/server/settings';
 import { currentProfile } from '$lib/server/profile';
 import { lastLibrarySync, libraryPreview, libraryProfiles, nameOnlyCount, setLibraryProfile, syncLibrary } from '$lib/server/librarySync';
@@ -52,7 +52,7 @@ export const GET: RequestHandler = async ({ url }) => {
  *   sync { on }            this profile's progress kept in step (or not); syncNow does a round at once
  *   libraryPreview         what keeping this profile's library in step would do (changes nothing)
  *   library { on }         this profile's library kept in step (or not); on does the first round. libraryNow: a round at once
- *   owner { key }          the owner's key, to read problem reports here ('' forgets it)
+ *   owner { key }          the owner's key, to read problem reports here, kept when right ('' forgets it)
  */
 export const POST: RequestHandler = async ({ request }) => {
 	const body = await request.json().catch(() => ({}));
@@ -86,8 +86,13 @@ export const POST: RequestHandler = async ({ request }) => {
 	if (body.action === 'library') return json({ ok: true, round: await setLibraryProfile(profile, body.on === true) });
 	if (body.action === 'libraryNow') return json(await syncLibrary(profile));
 	if (body.action === 'owner') {
-		updateSettings({ onlineAdminKey: String(body.key ?? '').trim() || undefined });
-		return json({ ok: true });
+		const key = String(body.key ?? '').trim();
+		if (!key) {
+			updateSettings({ onlineAdminKey: undefined });
+			return json({ ok: true });
+		}
+		// Kept only when the server says it's the owner's key (wrong tries are counted there).
+		return json({ ok: await tryOwnerKey(key) });
 	}
 	return error(400, 'Unknown action');
 };

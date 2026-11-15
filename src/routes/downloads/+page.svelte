@@ -3,7 +3,7 @@
 	 * Downloads (src/lib/server/downloads.ts): films, episodes and replays kept on the computer,
 	 * started from Download in the player. Each plays here with no internet, or can be saved onto
 	 * this device (a phone: an iPhone keeps it in the Files app) with its subtitles beside it.
-	 * In the phone app (the secure address, Settings → Phones) each can be kept on the phone
+	 * In the phone app (the secure address, Settings → TV and phones) each can be kept on the phone
 	 * instead, to play with no connection (phoneKeep.svelte.ts); Play then uses that copy.
 	 * Asks every two seconds while one is downloading.
 	 */
@@ -241,7 +241,7 @@
 			<strong>Watching with no connection</strong>
 			{#if secureAddress && inApp}
 				<p>
-					Connect the app to {secureAddress.replace('https://', '')} (Settings → Phones → Connect to another computer),
+					Connect the app to {secureAddress.replace('https://', '')} (Settings → TV and phones → Connect to another computer),
 					then press Keep on this phone on a download while still connected. Kept ones play in airplane mode.
 				</p>
 			{:else if secureAddress}
@@ -252,7 +252,7 @@
 				</p>
 			{:else}
 				<p>
-					On the computer, turn on Settings → Phones, then open Catalog on this phone from the address it shows and
+					On the computer, turn on Settings → TV and phones, then open Catalog on this phone from the address it shows and
 					press Keep on this phone on a download. This address only works while the phone can reach the computer.
 				</p>
 			{/if}
@@ -327,7 +327,7 @@
 		{#if phoneApp && inApp}
 			<p class="faint small">Kept on this phone, a download plays here with no data used, and with no connection at all: open Catalog and it's listed. Keep Catalog open while one saves.</p>
 		{:else if inApp}
-			<p class="faint small">To keep downloads on this phone, the app has to be connected to the computer's secure address (Settings → Phones).</p>
+			<p class="faint small">To keep downloads on this phone, the app has to be connected to the computer's secure address (Settings → TV and phones).</p>
 		{:else if phoneApp}
 			<p class="faint small">Kept on this phone, a download plays with no connection: open Catalog from the Home Screen and it's listed there. Keep Catalog open while one saves.</p>
 		{:else}

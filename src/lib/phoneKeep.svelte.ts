@@ -1,6 +1,6 @@
 /**
  * Downloads kept on this phone, to play with no connection (the phone app, opened from the
- * Home Screen on the secure Tailscale address: Settings → Phones). The files are written by
+ * Home Screen on the secure Tailscale address: Settings → TV and phones). The files are written by
  * phoneKeep.worker.ts; static/offline.html lists and plays them when Catalog can't be reached,
  * and keeps where each was left (`catalog:keptPlaces`), which `sendKeptPlaces` hands back to
  * Catalog once it can.

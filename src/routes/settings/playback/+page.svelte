@@ -1,4 +1,5 @@
 <script lang="ts">
+	import WatchProgress from './WatchProgress.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -201,11 +202,19 @@
 	</section>
 </div>
 
+<!-- Saved positions and history (was its own page, Watch Progress, until 2026-11-14). -->
+<div class="part"><WatchProgress /></div>
+
 <style>
 	.sections {
 		display: flex;
 		flex-direction: column;
 		gap: 38px;
+	}
+
+	/* Watch progress, under the playback sections: the same space as between any two. */
+	.part {
+		margin-top: 38px;
 	}
 
 	section {

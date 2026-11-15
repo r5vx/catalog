@@ -21,7 +21,7 @@ export function withProfile<T>(profile: number, run: () => T): T {
 /**
  * The computer Catalog runs on: its own window (Electron), or anything asking from this computer
  * (Catalog's own lookups of itself). Everything else, a phone or another computer, picks who's
- * watching on it. A phone on the secure address (Settings → Phones) comes through Tailscale on
+ * watching on it. A phone on the secure address (Settings → TV and phones) comes through Tailscale on
  * this computer too, but Tailscale says who it is for (Tailscale-User-Login, X-Forwarded-For).
  */
 export function onThisComputer(headers: Headers, clientAddress: string): boolean {

@@ -358,6 +358,22 @@ once('subtitles-slimmed', () => {
 
 // Subtitles kept with "unknown character" marks: files saved in an older character set were
 // read as UTF-8 before (subtitleText.ts). They go, so the next play fetches and reads them right.
+// Watch-list titles found only by a partial name: "The Fantastic Four: First Steps" had picked the
+// World Premiere special (TMDB calls the film "The Fantastic 4"). Those are looked up again, once,
+// with numbers counted either way and the most-voted partial match (watchOrders.ts).
+once('watch-orders-partial-names', () => {
+	const plain = (title: string) =>
+		title.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+	const rows = db.prepare("SELECT key, value FROM watch_order_cache WHERE key LIKE 'title|%'").all() as { key: string; value: string }[];
+	const remove = db.prepare('DELETE FROM watch_order_cache WHERE key = ?');
+	for (const row of rows) {
+		try {
+			const found = JSON.parse(row.value) as { title?: string } | null;
+			if (found?.title && plain(found.title) !== row.key.split('|')[2]) remove.run(row.key);
+		} catch {}
+	}
+});
+
 once('subtitles-character-sets', () => db.exec('DELETE FROM saved_subtitles WHERE instr(content, char(65533)) > 0'));
 
 // Sound heard from fragmented-MP4 pieces before 2026-11-04 could be 4% short and smeared

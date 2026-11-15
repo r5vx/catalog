@@ -1,6 +1,6 @@
 /*
  * The phone app's helper (registered by src/routes/+layout.svelte, only on the secure Tailscale
- * address: Settings → Phones). It does one thing: when a page can't be had (no connection, the
+ * address: Settings → TV and phones). It does one thing: when a page can't be had (no connection, the
  * computer off), the offline page answers instead, which plays what's kept on the phone
  * (offline.html). Online, everything comes from Catalog as usual; nothing else is kept.
  */

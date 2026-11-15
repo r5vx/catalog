@@ -40,6 +40,9 @@ export function isAdvert(line: string): boolean {
 		/([a-z])\1{7,}(\s{3,}|\t)/i.test(line) ||
 		/\b[a-z0-9-]{2,}\.(com|org|net|link|io|me|to|tv|cc|ws|info|xyz|site|club|mx|ag|ru|pt|ro|app)(\/\S*)?(?![a-z])/i.test(line) ||
 		// "Tired of searching for subtitles? Ray generates them instantly: getray.app"
+		// OpenSubtitles' own last subtitle: "Please rate this subtitle at %url% / Help other users to
+		// choose the best subtitles" (Dungeon Meshi, Secret Invasion, 2026-11-14)
+		/rate this subtitle|help other users to choose|%url%/i.test(line) ||
 		/subtitles for any video|tired of searching for subtitles|generates (them|subtitles) instantly|advertise your product|support us and become|become (a )?vip|downloaded from/i.test(line) ||
 		// A subtitle team's, not Madagascar's "The Central Park Zoo proudly presents..."
 		/\b(subs|subtitles?|team|group)\b.{0,30}proudly presents/i.test(line) ||

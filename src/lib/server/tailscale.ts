@@ -1,5 +1,5 @@
 /**
- * The phone app's secure address (Settings → Phones): https://<this computer>.<network>.ts.net,
+ * The phone app's secure address (Settings → TV and phones): https://<this computer>.<network>.ts.net,
  * from Tailscale's own `tailscale serve`, which hands the phone's requests to Catalog on this
  * computer. A phone only keeps files and opens a page with no connection on a secure (https)
  * address; the plain http://100.x… one stays for everything else.

@@ -9,7 +9,7 @@ import { dataDir } from './db';
  * a phone can time subtitles without hearing the whole sound track itself — the computer does
  * that once (/speech-maker) — and so a second watch doesn't fetch the sound again.
  *
- * Kept with the preview pictures (`previews/`), so Settings → Storage's limit and Clear, and
+ * Kept with the preview pictures (`previews/`), so Settings → Library's limit and Clear, and
  * the 60-day clear-out, cover them too. Per copy (a Showbox file's number, or another copy's share
  * key: 7Movies, Movy, Aniwave, heard from the player's own downloads) and audio language.
  *

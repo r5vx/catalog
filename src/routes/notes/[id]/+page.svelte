@@ -130,7 +130,7 @@
 				</form>
 			{:else}
 				<p class="faint hint">
-					<a href="/settings/privacy">Set a PIN</a> if you want to lock pages.
+					<a href="/settings/devices">Set a PIN</a> if you want to lock pages.
 				</p>
 			{/if}
 

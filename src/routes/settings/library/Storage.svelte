@@ -20,7 +20,6 @@
 	}
 </script>
 
-<svelte:head><title>Storage · Catalog</title></svelte:head>
 
 <div class="sections">
 	<section>

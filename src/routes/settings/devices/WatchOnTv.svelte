@@ -47,7 +47,6 @@
 	}
 </script>
 
-<svelte:head><title>Watch on TV · Catalog</title></svelte:head>
 
 {#await data.publicNetwork then network}<NetworkBanner {network} />{/await}
 

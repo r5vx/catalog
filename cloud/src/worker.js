@@ -78,6 +78,23 @@ async function allowed(env, who, most) {
 
 const addressOf = (request) => request.headers.get('CF-Connecting-IP') ?? 'unknown';
 
+const OWNER_WRONG_MOST = 10;
+
+/**
+ * The owner's key (X-Catalog-Admin) for reading problem reports. Only wrong tries are counted, per
+ * address: after 10 in a day that address gets no answer about the key until tomorrow, even
+ * with the right one. Null when it's the owner, else the answer to send.
+ */
+async function notOwner(request, env) {
+	const who = `admin:${addressOf(request)}`;
+	const day = new Date().toISOString().slice(0, 10);
+	const row = await env.DB.prepare('SELECT n FROM tries WHERE who = ? AND day = ?').bind(who, day).first();
+	if ((row?.n ?? 0) >= OWNER_WRONG_MOST) return bad(429, 'Too many tries today');
+	if (env.ADMIN_KEY && same(await sha256(request.headers.get('X-Catalog-Admin') ?? ''), await sha256(env.ADMIN_KEY))) return null;
+	await allowed(env, who, OWNER_WRONG_MOST);
+	return bad(403, 'Not the owner');
+}
+
 /** The house asking, from its key. Throws when it isn't one. */
 async function houseOf(request, env) {
 	const sent = (request.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '');
@@ -251,7 +268,8 @@ async function answer(request, env, ctx) {
 
 	// The owner reading what Catalogs reported.
 	if (path === '/v1/reports' && method === 'GET') {
-		if (!env.ADMIN_KEY || !same(await sha256(request.headers.get('X-Catalog-Admin') ?? ''), await sha256(env.ADMIN_KEY))) return bad(403, 'Not the owner');
+		const refused = await notOwner(request, env);
+		if (refused) return refused;
 		const before = Number(url.searchParams.get('before')) || Number.MAX_SAFE_INTEGER;
 		const brief = url.searchParams.get('full') !== '1';
 		const rows = await env.DB.prepare(`SELECT id, house, house_name AS houseName, kind, title, ${brief ? 'substr(body, 1, 400) AS body' : 'body'}, created FROM reports WHERE id < ? ORDER BY id DESC LIMIT ?`)
@@ -261,7 +279,8 @@ async function answer(request, env, ctx) {
 	}
 	const reportId = path.match(/^\/v1\/reports\/(\d+)$/);
 	if (reportId && (method === 'GET' || method === 'DELETE')) {
-		if (!env.ADMIN_KEY || !same(await sha256(request.headers.get('X-Catalog-Admin') ?? ''), await sha256(env.ADMIN_KEY))) return bad(403, 'Not the owner');
+		const refused = await notOwner(request, env);
+		if (refused) return refused;
 		if (method === 'DELETE') {
 			await env.DB.prepare('DELETE FROM reports WHERE id = ?').bind(Number(reportId[1])).run();
 			return json({ ok: true });

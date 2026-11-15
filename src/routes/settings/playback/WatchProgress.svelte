@@ -114,7 +114,6 @@
 	onMount(load);
 </script>
 
-<svelte:head><title>Watch Progress · Settings · Catalog</title></svelte:head>
 
 <section>
 	<h2 class="label">Watch progress</h2>

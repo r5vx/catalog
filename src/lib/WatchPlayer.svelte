@@ -4,7 +4,7 @@
 	import { afterNavigate, beforeNavigate, goto, replaceState } from '$app/navigation';
 	import { onMount, onDestroy, tick, untrack } from 'svelte';
 	import Hls from 'hls.js';
-	import { fetchAheadLoader, recentPieces } from '$lib/fetchAhead';
+	import { fetchAheadLoader, fetchNextStart, recentPieces, stopFetchingAhead } from '$lib/fetchAhead';
 	import { keptVideo } from '$lib/phoneKeep.svelte';
 	import BackBar from '$lib/BackBar.svelte';
 	import { p, pRandom } from '$lib/altText';
@@ -4048,6 +4048,49 @@
 	let downloadAheadKey = '';
 	/** The next episode the computer was asked to hear ahead (its file and language). */
 	let nextHearKey = '';
+	/** The next episode (Showbox) whose first pieces were fetched ahead. */
+	let nextStartKey = '';
+
+	/**
+	 * The next Showbox episode's first pieces (its picture in the quality it will start in, and its
+	 * sound), fetched a minute before this one ends and kept (fetchAhead `fetchNextStart`), so
+	 * autoplay into it starts from memory. Only its link was fetched ahead before, and its first
+	 * piece then took 3–7 s from Febbox's server (Dungeon Meshi, 2026-11-14). About 4 MB.
+	 */
+	async function keepNextStart(share: string, file: FileOption) {
+		try {
+			const link = await fetch(`/api/watch/stream?share_key=${encodeURIComponent(share)}&fid=${file.fid}`).then((r) => (r.ok ? r.json() : null));
+			const masterUrl: string = link?.url ?? '';
+			if (!masterUrl || !/^https?:/.test(masterUrl)) return;
+			const master = await fetch(masterUrl).then((r) => (r.ok ? r.text() : ''));
+			const lines = master.split(/\r?\n/);
+			// The quality it will start in: the best H.264 one, as MANIFEST_PARSED picks.
+			const levels: { bandwidth: number; h264: boolean; url: string }[] = [];
+			lines.forEach((line, i) => {
+				if (!line.startsWith('#EXT-X-STREAM-INF')) return;
+				const uri = lines.slice(i + 1).find((l) => l && !l.startsWith('#'));
+				if (uri) levels.push({ bandwidth: Number(/BANDWIDTH=(\d+)/.exec(line)?.[1]) || 0, h264: /avc[13]/.test(line), url: new URL(uri.trim(), masterUrl).href });
+			});
+			const usable = levels.some((l) => l.h264) ? levels.filter((l) => l.h264) : levels;
+			const video = usable.sort((a, b) => a.bandwidth - b.bandwidth).at(-1);
+			// Its sound: the language heard now, else the playlist's own pick.
+			const language = hlsInstance?.audioTracks[hlsActiveAudio]?.lang ?? '';
+			const sounds = lines.filter((l) => l.startsWith('#EXT-X-MEDIA') && l.includes('TYPE=AUDIO') && l.includes('URI="'));
+			const sound = sounds.find((l) => language && l.includes(`LANGUAGE="${language}"`)) ?? sounds.find((l) => l.includes('DEFAULT=YES')) ?? sounds[0];
+			const soundUrl = sound ? /URI="([^"]+)"/.exec(sound)?.[1] : undefined;
+			const firstPiece = async (playlistUrl: string, kind: 'video' | 'audio') => {
+				const rows = (await fetch(playlistUrl).then((r) => (r.ok ? r.text() : ''))).split(/\r?\n/);
+				const at = rows.findIndex((l) => l.startsWith('#EXTINF'));
+				const uri = at >= 0 ? rows.slice(at + 1).find((l) => l && !l.startsWith('#')) : undefined;
+				return uri ? { url: new URL(uri.trim(), playlistUrl).href, kind, seconds: Number(/#EXTINF:([\d.]+)/.exec(rows[at])?.[1]) || 0 } : null;
+			};
+			const pieces = await Promise.all([
+				video ? firstPiece(video.url, 'video') : null,
+				soundUrl ? firstPiece(new URL(soundUrl, masterUrl).href, 'audio') : null
+			]);
+			fetchNextStart(pieces.filter((p): p is NonNullable<typeof p> => p !== null));
+		} catch {}
+	}
 	function prefetchNextEpisode() {
 		// (Not only with a Showbox share: with Showbox down, 7Movies' and Movy's next links were
 		// never fetched ahead, and Next Episode waited ~30 s on their lookups.)
@@ -4110,6 +4153,14 @@
 		}
 		const share = file.source ? shareOf(file) : next.shareKey || mainShareKey;
 		if (!share) return;
+		// Showbox, a minute from the end and loaded to it: the next one's first pieces as well.
+		if (!file.source && !fourKStandIn(file) && nextStartKey !== `${share}:${file.fid}`) {
+			const storyEnd = creditsStart !== null && creditsStart < duration ? creditsStart : duration;
+			if (storyEnd - currentTime <= 75 && bufferedAhead() >= remaining - 2) {
+				nextStartKey = `${share}:${file.fid}`;
+				void keepNextStart(share, file);
+			}
+		}
 		const key = `${share}:${file.fid}${round}`;
 		if (key === nextPrefetchKey) return;
 		nextPrefetchKey = key;
@@ -5916,7 +5967,7 @@
 			let player: Hls | null = null;
 			const hls = new Hls({
 				// (Live: its pieces are fetched as they appear, not ahead.)
-				...(liveMode ? {} : { fLoader: fetchAheadLoader(() => player) }),
+				...(liveMode ? {} : { fLoader: fetchAheadLoader(() => player, markBytes) }),
 				autoStartLoad: false,
 				// Catalog draws its own subtitles: none of the browser's, from captions some videos
 				// carry inside them or a subtitle track their playlist lists. Live: the captions a
@@ -6844,6 +6895,8 @@
 		oldPicture = true;
 		videoEl?.pause();
 		hlsInstance?.stopLoad();
+		// Its pieces fetched ahead would only take the line from the next one's first piece.
+		stopFetchingAhead();
 		// The mini player stays open for the next episode (its next button is how it got here). Only
 		// the browser's own one, showing the video itself, closes.
 		if (inPiP && !pipVideo) cleanupPiP();

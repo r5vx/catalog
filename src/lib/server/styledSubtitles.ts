@@ -10,7 +10,7 @@ export { hasStyledLines };
  * Whole anime subtitle files (.ass with signs and songs), kept as made — fonts, drawings and
  * karaoke included — for drawing them over the video (src/lib/styledSubs.ts). The library keeps
  * only a slimmed copy (subtitleFonts.ts: Re:Zero's were 32 MB each), so these live beside the
- * preview pictures instead (`previews/`): Settings → Storage's limit, Clear and the 60-day
+ * preview pictures instead (`previews/`): Settings → Library's limit, Clear and the 60-day
  * clear-out cover them. Only files that have something to draw are kept.
  */
 

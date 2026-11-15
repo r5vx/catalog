@@ -3,7 +3,7 @@
 	import Avatar from '$lib/Avatar.svelte';
 
 	/**
-	 * Settings → Profile: the name and picture friends see online, for the profile using this page
+	 * Settings → Online's name and picture (its own page, Profile, until 2026-11-14): what friends see, for the profile using this page
 	 * (each profile is its own person online: src/lib/server/online.ts). The picture is cut to a
 	 * small square here, in the page, before it is sent; the meeting point keeps only that.
 	 */
@@ -12,7 +12,6 @@
 	let loaded = $state(false);
 	let connected = $state(false);
 	let account = $state<Account | null>(null);
-	let computers = $state(0);
 	let name = $state('');
 	let problem = $state('');
 	let saved = $state('');
@@ -28,7 +27,6 @@
 			.catch(() => null);
 		connected = Boolean(status?.connected);
 		account = status?.account ?? null;
-		computers = status?.computers ?? 0;
 		if (account && !name) name = account.name;
 		problem = status?.problem ?? '';
 		loaded = true;
@@ -82,7 +80,6 @@
 	}
 </script>
 
-<svelte:head><title>Profile · Catalog</title></svelte:head>
 
 {#if !loaded}
 	<p class="muted">Loading…</p>
@@ -120,9 +117,6 @@
 
 		{#if problem}<p class="msg bad">{problem}</p>{/if}
 		{#if saved}<p class="faint small">{saved}</p>{/if}
-		{#if account.google}<p class="muted">Signed in with Google as <strong>{account.email}</strong>.</p>{/if}
-		{#if computers > 1}<p class="muted">The same on your {computers} computers.</p>{/if}
-		<p class="faint small">Friends, your other computers and what's shared: <a href="/settings/online">Settings → Online</a>.</p>
 	</section>
 {/if}
 

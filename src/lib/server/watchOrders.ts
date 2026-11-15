@@ -10,6 +10,7 @@ import { db } from './db/index';
 import { watchedExtras, skippedTitles, getOrderCache, saveOrderCache, myWatchOrders } from './db/queries';
 import { tmdbGet } from './metadata/tmdb';
 import { normalizeTitle } from './metadata/types';
+import { numbersAsDigits } from '$lib/numberWords';
 import { WATCH_ORDERS, POPULAR_COLLECTIONS, orderBySlug, type OrderItem } from '$lib/watchOrders';
 
 export type OrderStatus = 'watched' | 'watching' | 'listed' | 'dropped' | 'none';
@@ -97,8 +98,11 @@ function lookUpAge(found: Found | null): number {
 	return found.date && found.date <= today ? 30 * DAY : DAY;
 }
 
-/** Marvel's Netflix shows are listed as "Marvel's Daredevil" in some places and "Daredevil" in others. */
-const comparable = (title: string) => normalizeTitle(title).replace(/^marvel s /, '');
+/**
+ * Marvel's Netflix shows are listed as "Marvel's Daredevil" in some places and "Daredevil" in others.
+ * Numbers count written either way: TMDB calls the 2025 film "The Fantastic 4: First Steps".
+ */
+const comparable = (title: string) => numbersAsDigits(normalizeTitle(title).replace(/^marvel s /, ''));
 
 function lookUp(item: OrderItem): Promise<Found | null> {
 	const key = `title|${item.type}|${normalizeTitle(item.title)}|${item.year}|${item.season ?? 1}`;
@@ -115,6 +119,7 @@ async function askTmdb(item: OrderItem): Promise<Found | null | undefined> {
 		poster_path?: string | null;
 		backdrop_path?: string | null;
 		overview?: string;
+		vote_count?: number;
 	};
 	const search = await tmdbGet<{ results: Hit[] }>(`/search/${item.type}`, {
 		query: item.title,
@@ -123,11 +128,15 @@ async function askTmdb(item: OrderItem): Promise<Found | null | undefined> {
 	if (!search) return undefined; // couldn't ask — try again next time
 
 	// Only a real name match. Falling back to "the first result" would quietly put the wrong film in.
+	// A name that only contains the one wanted ("DC's Stargirl", "Birds of Prey (and the …)") is
+	// the next best; of those, the most voted for, so a premiere special never stands in for the film.
 	const want = comparable(item.title);
 	const named = (r: Hit) => comparable(r.title ?? r.name ?? '');
 	const hit =
 		search.results.find((r) => named(r) === want) ??
-		search.results.find((r) => named(r).includes(want) || want.includes(named(r)));
+		search.results
+			.filter((r) => named(r).includes(want) || want.includes(named(r)))
+			.sort((a, b) => (b.vote_count ?? 0) - (a.vote_count ?? 0))[0];
 
 	let value: Found | null = null;
 	if (hit) {

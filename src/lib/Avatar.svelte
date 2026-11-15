@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * Someone's picture online: the one they chose in Settings → Profile, or the first letter of
+	 * Someone's picture online: the one they chose in Settings → Online, or the first letter of
 	 * their name on a color of their own. `rev` is the picture's number (0: they have none).
 	 * The size is in pixels. The colors are the profile colors from src/lib/constants.ts.
 	 */

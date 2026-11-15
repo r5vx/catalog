@@ -41,7 +41,7 @@ const houseName = () => (readSettings().onlineName || hostname() || 'A computer'
 /** One question to the meeting point, as this house and (when given) one of its profiles. */
 export async function cloud<T = unknown>(
 	path: string,
-	options: { method?: string; body?: unknown; profile?: number; admin?: boolean; open?: boolean; timeout?: number } = {}
+	options: { method?: string; body?: unknown; profile?: number; admin?: boolean | string; open?: boolean; timeout?: number } = {}
 ): Promise<OnlineAnswer<T>> {
 	const who = saved();
 	if (!who && !options.open && !options.admin) return { ok: false, status: 0, data: null, error: "This Catalog isn't online yet" };
@@ -53,7 +53,8 @@ export async function cloud<T = unknown>(
 		const name = profileName(options.profile ?? 0);
 		if (name) headers['X-Catalog-Name'] = encodeURIComponent(name);
 	}
-	if (options.admin) headers['X-Catalog-Admin'] = readSettings().onlineAdminKey ?? '';
+	// (A string is a key being tried before it's kept: `tryOwnerKey`.)
+	if (options.admin) headers['X-Catalog-Admin'] = typeof options.admin === 'string' ? options.admin : (readSettings().onlineAdminKey ?? '');
 	try {
 		const response = await fetch(serverUrl() + path, {
 			method: options.method ?? (options.body === undefined ? 'GET' : 'POST'),
@@ -79,7 +80,7 @@ function profileName(profile: number): string {
 }
 
 /**
- * Someone's picture from the meeting point (Settings → Profile), as the image itself.
+ * Someone's picture from the meeting point (Settings → Online), as the image itself.
  * Null when they have none or the server can't be reached.
  */
 export async function cloudPicture(account: string): Promise<{ bytes: ArrayBuffer; type: string } | null> {
@@ -150,6 +151,20 @@ export function setSyncProfile(profile: number, on: boolean): void {
 }
 
 /* ------------------------------------------------------------ problem reports */
+
+/**
+ * The owner's key, typed into the Friends panel's "A friend's code" box (there's no box of its own,
+ * so nobody else sees there's a key to try). Kept only when the server says it's right; the server
+ * counts wrong tries per address. Friend codes are 12 characters at most, the key 43.
+ */
+export async function tryOwnerKey(text: string): Promise<boolean> {
+	const key = text.trim();
+	if (key.length < 20 || key.length > 200) return false;
+	const answer = await cloud('/v1/reports?before=1', { admin: key });
+	if (!answer.ok) return false;
+	updateSettings({ onlineAdminKey: key });
+	return true;
+}
 
 const reported = new Map<string, number>();
 const REPORT_AGAIN_AFTER = 10 * 60 * 1000;

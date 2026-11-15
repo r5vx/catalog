@@ -31,7 +31,7 @@ export type RoomState = {
 	by: string;
 };
 
-/** Someone in the room: their name and picture (Settings → Profile; `avatar` 0 means none). */
+/** Someone in the room: their name and picture (Settings → Online; `avatar` 0 means none). */
 export type RoomPerson = { id: string; name: string; avatar: number; me: boolean };
 type RoomAnswer = { code: string; host: boolean; state: RoomState; rev: number; now: number; people: RoomPerson[]; same?: boolean; error?: string };
 export type Playing = { title: string; type: 'tv' | 'movie'; year: string; season: number; episode: number };

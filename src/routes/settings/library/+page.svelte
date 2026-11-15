@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { STATUSES, SORTS } from '$lib/constants';
-	import type { PageData } from './$types';
+	import Storage from './Storage.svelte';
+	import type { PageData, ActionData } from './$types';
 
-	let { data }: { data: PageData } = $props();
+	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	let exportCat = $state('');
 	let exportStatus = $state('');
@@ -215,11 +216,19 @@
 	</section>
 </div>
 
+<!-- Storage: what's kept to load faster, and the episodes downloaded ahead (was its own page until 2026-11-14). -->
+<div class="part"><Storage {data} {form} /></div>
+
 <style>
 	.sections {
 		display: flex;
 		flex-direction: column;
 		gap: 38px;
+	}
+
+	/* Storage, under the library's own sections: the same space as between any two. */
+	.part {
+		margin-top: 38px;
 	}
 
 	section {

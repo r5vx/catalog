@@ -4,7 +4,6 @@
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 </script>
 
-<svelte:head><title>Privacy · Catalog</title></svelte:head>
 
 <section>
 	<div class="head">

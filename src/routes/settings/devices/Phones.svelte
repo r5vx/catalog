@@ -39,7 +39,6 @@
 	}
 </script>
 
-<svelte:head><title>Phones · Catalog</title></svelte:head>
 
 <section>
 	<h2>Catalog on a phone</h2>
@@ -87,7 +86,7 @@
 			{/if}
 			{#if problem}<p class="problem">{problem}</p>{/if}
 		{:else}
-			<p class="muted">Not turned on yet: turn it on in Settings → Phones on the computer Catalog runs on.</p>
+			<p class="muted">Not turned on yet: turn it on in Settings → TV and phones on the computer Catalog runs on.</p>
 		{/if}
 		{#if data.phone.plain}
 			<p class="muted">Meanwhile phones can open <strong>{data.phone.plain}</strong> (no offline downloads there).</p>

@@ -12,6 +12,33 @@ without both.
 
 ## Unreleased
 
+## 4.2.1 — 2026-11-15 — Quicker starts and jumps, and a tidier Settings
+
+### Improved
+
+**Player**
+- Episodes start, and jumps land, much sooner when the video's server is slow: the piece needed now comes in parts, several at once
+- Going back a few seconds no longer waits on pieces fetched for the spot you left
+- Autoplay into the next episode starts almost at once (its first moments are fetched before this one ends)
+
+**Settings**
+- Seven pages instead of twelve: Storage is in Library, Watch Progress in Playback, your name and picture in Online, and Watch on TV, Phones and the PIN lock together in TV and phones
+
+### Fixed
+
+**Player**
+- A sound piece that the server was slow to answer was asked for again every 5 s and never came, holding a jump back for 10 s or more
+
+**Subtitles**
+- "Please rate this subtitle at %url% / Help other users to choose the best subtitles" is taken out
+
+**Settings**
+- Picking another page from Settings' list keeps you where you'd scrolled to, instead of jumping back to the top
+- Problem reports only show on the computer that reads them
+
+**Watch list**
+- The Fantastic 4: First Steps was the World Premiere special in the Marvel lists, so the film you watched didn't count
+
 ## 4.2.0 — 2026-11-14 — Catalog online: friends, watching together, and your library on every computer
 
 ### New

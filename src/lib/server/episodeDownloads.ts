@@ -18,7 +18,7 @@
  * addresses it hands the player (`copy=`, `n=`).
  *
  * Disk: in %APPDATA%\Catalog\downloads-ahead, an episode's pieces deleted 6 hours after they were
- * last used, at most what Settings → Storage allows (20 GB unless changed), and never leaving
+ * last used, at most what Settings → Library allows (20 GB unless changed), and never leaving
  * under 5 GB free on the disk.
  */
 import { createHash } from 'node:crypto';
@@ -34,7 +34,7 @@ export type DownloadKind = 'vidrift' | 'movy';
 /** Downloads at once, for all viewers together. Movy refuses a sixth; one is left for the rest. */
 const AT_ONCE: Record<DownloadKind, number> = { vidrift: 10, movy: 4 };
 const KEEP_MS = 6 * 60 * 60 * 1000;
-/** How much the episodes downloaded ahead may take (Settings → Storage), in GB. */
+/** How much the episodes downloaded ahead may take (Settings → Library), in GB. */
 export const DOWNLOAD_LIMITS_GB = [5, 10, 20, 50, 100] as const;
 const DEFAULT_GB = 20;
 export function downloadsAheadLimitGb(): number {
@@ -300,7 +300,7 @@ export function stopAhead(copy: string): void {
 	for (const going of job.going.values()) going.stop();
 }
 
-/** How much is downloaded ahead, for Settings → Storage. */
+/** How much is downloaded ahead, for Settings → Library. */
 export function downloadsAheadBytes(): number {
 	knownBytes ??= folderBytes(root());
 	return knownBytes;
