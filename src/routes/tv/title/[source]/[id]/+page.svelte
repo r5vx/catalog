@@ -143,7 +143,8 @@
 				list.seasons.every((s, i) => s.number === show.seasons[i].number && Math.abs(s.count - show.seasons[i].count) <= 2);
 			if (same) return;
 			playerList = list;
-			const resumeSeason = data.continuing?.season ?? 0;
+			// (-1, not 0, when nothing's being watched: 0 is Specials.)
+			const resumeSeason = data.continuing?.season ?? -1;
 			if (!list.seasons.some((s) => s.number === season)) {
 				season = list.seasons.some((s) => s.number === resumeSeason) ? resumeSeason : list.seasons[0].number;
 			}
@@ -304,7 +305,7 @@
 				<div class="seasons" data-tv-row data-tv-strip>
 					{#each seasonsShown as one (one.number)}
 						<button type="button" class="chip" class:on={season === one.number} data-tv-item onclick={() => (season = one.number)}>
-							Season {one.number}
+							{one.number === 0 ? 'Specials' : `Season ${one.number}`}
 						</button>
 					{/each}
 				</div>

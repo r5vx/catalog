@@ -12,6 +12,79 @@ without both.
 
 ## Unreleased
 
+## 4.3.0 — 2026-11-15 — What friends watched, Continue Watching on every computer, and Random
+
+### New
+
+**Friends**
+- What friends watched lately, with their ratings (a few from each, so one person adding a pile at once doesn't fill it)
+- People your friends know, to ask to be friends; and a friend's own friends, from their name
+- Watch along follows a friend's player without controlling it; a room is still for everyone controlling it together
+
+**Browse**
+- Random: a well-known film, show or anime you don't have yet, with Another one (it starts on the kind you're browsing)
+
+**People**
+- Video games someone voiced, and who they voiced in them, on their page (from Wikidata)
+
+**Catalog online**
+- A name of your own when going online, instead of the computer's name
+
+### Improved
+
+**Catalog online**
+- Keeping your library and Continue Watching in step between your computers is on from the start
+- Titles you remove on one computer are removed on your others too (can be turned off); a copy of the library is saved first each day
+- Continue Watching comes across too: an episode watched partly on each computer ends at the farther place on both
+
+**Friends**
+- The Friends page shows at once, and opening a friend's file takes one small line
+
+**Browse**
+- The anime lists go on about twice as long, and the best-known all-time titles are no longer skipped
+
+**Player**
+- A slimmer bar at the top that fades into the picture: Autoplay, Auto-skip, Autosync, Cast and Download are in the settings menu now
+- Subtitles, their timing and the audio track are one button and one menu
+- The picture fits the screen unless you pick Fill
+- The subtitles picked for a show are remembered for its next episodes on every screen, so a file timed for another release doesn't come back
+- A copy with subtitles in the picture comes after a clean one in the same language
+- Speed is one row of buttons in the settings menu
+- The Sharpest tag stays on one copy instead of swapping back and forth
+- While another source has the title already, a source that's still looking goes quiet
+
+**Episodes**
+- Episodes with no picture of their own show one of the show's pictures instead of a grey box
+- Specials (OVAs, films, extras) are listed on a show's page after its last season
+- A show's cast is on its page even when its own site has none, without opening an episode
+
+**Sources**
+- A source that said it hasn't got a title isn't listed for it (they failed straight away when picked); Vidfast is asked too now
+
+**Friends**
+- Friends' "Watching now" goes as soon as they stop, the page asks again every 15 s and when you come back to it, and there's a Refresh button
+
+**Live TV**
+- Channels say whether they played or didn't when last tried, and the ones that didn't go last
+- A channel that isn't on says so within a minute or so instead of loading forever
+
+### Fixed
+
+**Player**
+- Without a Showbox sign-in, "Only Showbox has this" came up though other sources had the film or episode
+- The Watch check left out HiAnime, so anime only it had seemed to be Showbox's alone
+
+**Browse**
+- TV shows by genre found nothing for Sci-Fi, Thriller, Action, Fantasy, History, Horror, Romance and War
+- A slow answer from TMDB could leave Browse loading for minutes, the bar at the top stuck
+
+**Friends**
+- Whoever started a room didn't see who joined it
+
+**Catalog**
+- Without a TMDB key, pages stayed empty or kept loading and nothing said why: now a note at the top says so
+- The old maroon color stayed after updating from before 4.0: it's the pink now
+
 ## 4.2.1 — 2026-11-15 — Quicker starts and jumps, and a tidier Settings
 
 ### Improved

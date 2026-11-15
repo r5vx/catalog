@@ -56,16 +56,18 @@ function playerList(data: any): PlayerList | { retryIn: number } | null {
 	const listed: Listed[] = data?.episodes?.episodes ?? [];
 	const retryIn = Number(data?.showboxBusy || (data?.error === 'busy' ? data.retryIn : 0) || (data?.episodes?.partial ? 5 : 0)) || 0;
 	if (!listed.length) return retryIn ? { retryIn } : null;
+	// Specials (season 0: OVAs, films, extras) too, after the last season: they were only to be had by
+	// opening the player and picking its Specials (owner, 2026-11-15).
 	const seasons = [...new Set(listed.map((e) => e.season))]
-		.filter((n) => n > 0)
-		.sort((a, b) => a - b)
+		.filter((n) => n >= 0)
+		.sort((a, b) => Number(a === 0) - Number(b === 0) || a - b)
 		.map((number) => ({ number, count: listed.filter((e) => e.season === number).length }));
 	return {
 		title: data.title as string,
 		...(retryIn ? { retryIn } : {}),
 		seasons,
 		episodes: listed
-			.filter((e) => e.season > 0)
+			.filter((e) => e.season >= 0)
 			.map((e) => ({
 				season: e.season,
 				episode: e.episode,

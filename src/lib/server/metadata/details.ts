@@ -124,7 +124,7 @@ export async function fetchKnownFor(sourceId: string) {
 				? { headers: { Authorization: `Bearer ${key}` } }
 				: (url.searchParams.set('api_key', key), {});
 
-			const response = await fetch(url, init);
+			const response = await fetch(url, { ...init, signal: AbortSignal.timeout(15_000) });
 			if (!response.ok) return [];
 
 			const data = await response.json();
@@ -176,7 +176,8 @@ export async function fetchKnownFor(sourceId: string) {
 					node{ id type title{ english romaji } startDate{ year } coverImage{ medium } averageScore popularity }
 				}}}}`,
 				variables: { id: Number(id) }
-			})
+			}),
+			signal: AbortSignal.timeout(15_000)
 		});
 		if (response.status === 429) anilistSaidWait(response);
 		if (!response.ok) return kept ? (kept.value as unknown[]) : [];
@@ -243,7 +244,7 @@ async function fromTmdb(sourceId: string): Promise<TitleDetails> {
 		? { headers: { Authorization: `Bearer ${key}` } }
 		: (url.searchParams.set('api_key', key), {});
 
-	const response = await fetch(url, init);
+	const response = await fetch(url, { ...init, signal: AbortSignal.timeout(15_000) });
 	if (!response.ok) return EMPTY;
 
 	const data = await response.json();
@@ -364,16 +365,16 @@ async function fromAniList(id: string): Promise<TitleDetails> {
 		}}`,
 		variables: { id: Number(id) }
 	});
-	const opts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body };
+	const opts = () => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body, signal: AbortSignal.timeout(15_000) });
 
-	let response = await fetch('https://graphql.anilist.co', opts);
+	let response = await fetch('https://graphql.anilist.co', opts());
 
 	// A title's own page is worth one short wait; the rest of the app is told to back off.
 	if (response.status === 429) {
 		anilistSaidWait(response);
 		const wait = Number(response.headers.get('Retry-After') ?? '2');
 		await new Promise((r) => setTimeout(r, Math.min(wait, 4) * 1000));
-		response = await fetch('https://graphql.anilist.co', opts);
+		response = await fetch('https://graphql.anilist.co', opts());
 	}
 
 	if (!response.ok) return EMPTY;
@@ -460,7 +461,7 @@ export async function fetchPerson(
 				? { headers: { Authorization: `Bearer ${key}` } }
 				: (url.searchParams.set('api_key', key), {});
 
-			const response = await fetch(url, init);
+			const response = await fetch(url, { ...init, signal: AbortSignal.timeout(15_000) });
 			if (!response.ok) return null;
 
 			const data = await response.json();
@@ -483,7 +484,8 @@ export async function fetchPerson(
 			body: JSON.stringify({
 				query: `query($id:Int){Staff(id:$id){ name{ full } image{ medium } }}`,
 				variables: { id: Number(id) }
-			})
+			}),
+			signal: AbortSignal.timeout(15_000)
 		});
 		if (response.status === 429) anilistSaidWait(response);
 		if (!response.ok) return (kept?.value as { name: string; photo: string | null } | undefined) ?? null;

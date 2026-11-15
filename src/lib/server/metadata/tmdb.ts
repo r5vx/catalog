@@ -40,13 +40,19 @@ export const hasTmdbKey = () => Boolean(tmdbKey());
  *
  * Paste whichever one you have and this figures it out.
  */
+/**
+ * The key, and at most 10 s to answer. Without a limit a stalled answer from TMDB was waited for
+ * up to five minutes (Node's own limit), and Browse, which waits for its shelves, stayed loading
+ * with the bar at the top stuck (a friend's Catalog, 2026-11-14). Every TMDB ask comes through here.
+ */
 function authorize(url: URL, key: string): RequestInit {
+	const signal = AbortSignal.timeout(10_000);
 	if (key.startsWith('eyJ')) {
-		return { headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' } };
+		return { headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' }, signal };
 	}
 
 	url.searchParams.set('api_key', key);
-	return { headers: { Accept: 'application/json' } };
+	return { headers: { Accept: 'application/json' }, signal };
 }
 
 /** A plain TMDB GET, or null without a key or on any failure. */
@@ -371,7 +377,13 @@ export async function trendingTmdb(
 			}
 
 			if (filters?.genre) {
-				url.searchParams.set('with_genres', String(filters.genre));
+				// Series are numbered differently: TV Sci-Fi is "Sci-Fi & Fantasy" (10765), and Thriller
+				// has no series genre at all. Asked with the film numbers, TMDB found no series (2026-11-14).
+				// The TVs' rows ask by the series numbers already (10759, 10765, 10764): those pass as they are.
+				const asSeries = kind === 'tv' ? SERIES_GENRE[filters.genre] : undefined;
+				if (asSeries?.genre) url.searchParams.set('with_genres', asSeries.genre);
+				else if (asSeries?.keyword) url.searchParams.set('with_keywords', asSeries.keyword);
+				else url.searchParams.set('with_genres', String(filters.genre));
 			}
 
 			if (filters?.yearFrom) {
@@ -432,13 +444,74 @@ export async function trendingTmdb(
 const NOT_FOR_BROWSING = [195669, 285672, 198385, 384581, 155477, 256466, 378816].join('|');
 const KIDS_SERIES = '10762';
 
-/** A film genre as TMDB numbers it for series (they differ), or a keyword where series have none. */
+/**
+ * A film genre as TMDB numbers it for series (they differ), or keywords where series have none.
+ * Thriller: "thriller" or "psychological thriller" (Breaking Bad, Squid Game, Dark, Mr. Robot);
+ * History: "historical" or "historical fiction" (Peaky Blinders, Vikings, Band of Brothers).
+ */
 const SERIES_GENRE: Record<number, { genre?: string; keyword?: string }> = {
 	28: { genre: '10759' }, 12: { genre: '10759' }, 878: { genre: '10765' }, 14: { genre: '10765' },
 	35: { genre: '35' }, 18: { genre: '18' }, 9648: { genre: '9648' }, 80: { genre: '80' },
 	10751: { genre: '10751' }, 99: { genre: '99' }, 37: { genre: '37' }, 10752: { genre: '10768' },
-	10749: { keyword: '9840' }, 27: { keyword: '315058' }
+	16: { genre: '16' },
+	10749: { keyword: '9840' }, 27: { keyword: '315058' }, 53: { keyword: '316362|12565' }, 36: { keyword: '15126|12995' }
 };
+
+/**
+ * A random well-known film, series or anime (Browse → Random). Only from what many people have
+ * rated, a random page of TMDB's most popular, so it's something the sources will have, not a
+ * 1920s film nobody streams. `skip` (keys already in the library) is left out when it can be.
+ */
+export async function randomPick(kind: 'movies' | 'tv' | 'anime', genre: number | undefined, skip: Set<string>): Promise<SearchResult | null> {
+	if (!tmdbKey()) return null;
+	const asMovie = kind === 'movies';
+	const params: Record<string, string> = {
+		sort_by: 'popularity.desc',
+		include_adult: 'false',
+		without_keywords: NOT_FOR_BROWSING
+	};
+	let pages = 10;
+	if (kind === 'movies') {
+		params['vote_count.gte'] = '1500';
+		pages = 15;
+		if (genre) params.with_genres = String(genre);
+	} else if (kind === 'tv') {
+		params['vote_count.gte'] = '400';
+		// Not cartoons, children's, news, reality or talk shows.
+		params.without_genres = '16,10762,10763,10764,10767';
+		const asSeries = genre ? SERIES_GENRE[genre] : undefined;
+		if (asSeries?.genre) params.with_genres = asSeries.genre;
+		else if (asSeries?.keyword) params.with_keywords = asSeries.keyword;
+		else if (genre) params.with_genres = String(genre);
+	} else {
+		params['vote_count.gte'] = '150';
+		params.with_original_language = 'ja';
+		params.without_genres = KIDS_SERIES;
+		const asSeries = genre ? SERIES_GENRE[genre] : undefined;
+		params.with_genres = asSeries?.genre ? `16,${asSeries.genre}` : '16';
+		if (!asSeries?.genre && asSeries?.keyword) params.with_keywords = asSeries.keyword;
+		pages = 8;
+	}
+	const path = asMovie ? '/discover/movie' : '/discover/tv';
+	let lastPages = pages;
+	for (let tries = 0; tries < 3; tries++) {
+		const page = 1 + Math.floor(Math.random() * Math.max(1, Math.min(pages, lastPages)));
+		const answer = await tmdbGet<{ results?: TmdbItem[]; total_pages?: number }>(path, { ...params, page: String(page) });
+		if (!answer?.results?.length) {
+			// A genre with only a few pages: ask the first one next.
+			lastPages = 1;
+			continue;
+		}
+		lastPages = answer.total_pages ?? pages;
+		const all = answer.results
+			.filter((item) => item.poster_path)
+			.map((item) => toResult({ ...item, media_type: asMovie ? 'movie' : 'tv' }));
+		const fresh = all.filter((one) => !skip.has(one.key) && !skip.has(`tmdb:${one.sourceId}`));
+		const from = fresh.length ? fresh : tries === 2 ? all : [];
+		if (from.length) return from[Math.floor(Math.random() * from.length)];
+	}
+	return null;
+}
 
 export async function trendingAnimeTmdb(page = 1, mode: BrowseMode = 'trending', filters?: BrowseFilters): Promise<SearchResult[]> {
 	if (!tmdbKey()) return [];
@@ -463,7 +536,9 @@ export async function trendingAnimeTmdb(page = 1, mode: BrowseMode = 'trending',
 			include_adult: 'false',
 			without_keywords: NOT_FOR_BROWSING,
 			sort_by: sortBy(kind),
-			'vote_count.gte': filters?.sort === 'vote_average' ? '200' : filters?.sort?.startsWith('release') ? '5' : '20'
+			// The all-time list goes by most votes, so a lower floor only adds to its end: 5 votes makes
+			// it ~5,400 titles instead of ~2,900 (a friend scrolled to its end, 2026-11-14).
+			'vote_count.gte': filters?.sort === 'vote_average' ? '200' : filters?.sort?.startsWith('release') ? '5' : mode === 'popular' && !filters?.sort ? '5' : '20'
 		};
 		if (filters?.yearFrom) params[`${date}.gte`] = `${filters.yearFrom}-01-01`;
 		params[`${date}.lte`] = filters?.yearTo ? `${filters.yearTo}-12-31` : today;
@@ -488,7 +563,7 @@ export async function trendingAnimeTmdb(page = 1, mode: BrowseMode = 'trending',
 		series['vote_count.gte'] = '100';
 		films['primary_release_date.gte'] = daysAgo(365);
 	}
-	// A genre series can't be asked for by (thriller, say): films only.
+	// A genre series can't be asked for by (no series genre or keyword for it): films only.
 	const askSeries = !filters?.genre || Boolean(SERIES_GENRE[filters.genre]);
 
 	const [shows, movies] = await Promise.all([

@@ -650,8 +650,28 @@ export function updateEntrySource(id: number, source: string, sourceId: string):
 		.run(source, sourceId, new Date().toISOString(), id);
 }
 
+/** Removed by hand (its page, or Remove from library): noted for library sync first (`noteRemoved`). */
 export function deleteEntry(id: number): void {
+	const row = db.prepare('SELECT source, source_id AS sourceId, title, year FROM entries WHERE id = ?').get(id) as RemovedTitle | undefined;
+	if (row) noteRemoved(MAIN_PROFILE, row, Date.now());
 	db.prepare('DELETE FROM entries WHERE id = ?').run(id);
+}
+
+type RemovedTitle = { source: string; sourceId: string | null; title: string; year: number | null };
+
+/**
+ * A TMDB or AniList title taken off by hand, kept so library sync takes it off this person's other
+ * computers too (src/lib/server/librarySync.ts). `at` is when, in ms: the other computer's time
+ * when the removal came from there, so it isn't sent back as news.
+ */
+export function noteRemoved(profile: number, row: RemovedTitle, at: number): void {
+	if ((row.source !== 'tmdb' && row.source !== 'anilist') || !row.sourceId) return;
+	db.prepare(
+		`INSERT INTO library_removed (profile, source, source_id, title, year, removed_at) VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT (profile, source, source_id) DO UPDATE SET title = excluded.title, year = excluded.year, removed_at = excluded.removed_at`
+	).run(profile, row.source, row.sourceId, row.title ?? '', row.year ?? null, at);
+	// Old ones go: after 90 days every computer that syncs has had it.
+	db.prepare('DELETE FROM library_removed WHERE removed_at < ?').run(Date.now() - 90 * 86_400_000);
 }
 
 /* --------------------------------------------------------------- exporting */
@@ -1441,9 +1461,12 @@ export function watchedLately(minutes: number): boolean {
 	return Boolean(db.prepare(`SELECT 1 FROM watch_progress WHERE updated_at > datetime('now', ?) LIMIT 1`).get(`-${minutes} minutes`));
 }
 
-/** Takes a title off the current profile's own list. */
+/** Takes a title off the current profile's own list (noted for library sync first, as `deleteEntry`). */
 export function deleteProfileTitle(id: number): void {
-	db.prepare('DELETE FROM profile_titles WHERE id = ? AND profile = ?').run(id, currentProfile());
+	const profile = currentProfile();
+	const row = db.prepare('SELECT source, source_id AS sourceId, title, year FROM profile_titles WHERE id = ? AND profile = ?').get(id, profile) as RemovedTitle | undefined;
+	if (row) noteRemoved(profile, row, Date.now());
+	db.prepare('DELETE FROM profile_titles WHERE id = ? AND profile = ?').run(id, profile);
 }
 
 /* ------------------------------------------------------------------ live TV */

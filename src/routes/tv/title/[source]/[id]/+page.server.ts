@@ -44,7 +44,8 @@ export const load: PageServerLoad = async ({ params }) => {
 	// A show's seasons, for picking an episode before playing. Opens on the season being
 	// watched; an anime season's own entry on the season that came out that year.
 	const show = type === 'tv' ? await showSeasons(source, id, entry?.title ?? details.title).catch(() => null) : null;
-	let season = continuing?.season ?? 0;
+	// (-1 when nothing's being watched: 0 is Specials now, and the page opened on them, 2026-11-15.)
+	let season = continuing?.season ?? -1;
 	if (show && !show.seasons.some((s) => s.number === season)) {
 		const sameYear = source === 'anilist' ? show.seasons.find((s) => s.year === details.year)?.number : 0;
 		season = sameYear || show.seasons[0]?.number || 0;

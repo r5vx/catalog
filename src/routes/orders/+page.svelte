@@ -1,6 +1,7 @@
 <script lang="ts">
 	import MoreButton from '$lib/MoreButton.svelte';
 	import { page } from '$app/state';
+	import { p } from '$lib/altText';
 	import { goto, invalidateAll } from '$app/navigation';
 	import CategoryTabs from '$lib/CategoryTabs.svelte';
 	import LibraryHeader from '$lib/LibraryHeader.svelte';
@@ -110,7 +111,10 @@
 	</button>
 </div>
 
-{#if adding}
+{#if data.tmdbMissing}
+	<!-- Every watch list is looked up on TMDB: without a key it only ever said "Loading…". -->
+	<p class="muted">{pm ? p('Watch lists are looked up on TMDB, so they need a TMDB key:') : 'Watch lists are looked up on TMDB, so they need a TMDB key:'} <a href="/settings/services">{pm ? p('Settings') : 'Settings'} → {pm ? p('Services') : 'Services'}</a>.</p>
+{:else if adding}
 	<section class="add-panel">
 		{#if searching && hits.length === 0}
 			<p class="muted small">{query ? 'Searching…' : 'Loading popular franchises…'}</p>
@@ -140,7 +144,9 @@
 	</section>
 {/if}
 
-{#if mineIds.size === 0}
+{#if data.tmdbMissing}
+	<!-- (Said above.) -->
+{:else if mineIds.size === 0}
 	{#if !adding}
 		<div class="empty">
 			<h2>No watch lists yet</h2>

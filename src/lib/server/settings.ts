@@ -25,6 +25,15 @@ db.exec(`
 // on, with no code to enter. (The old name is written encoded, like the wording itself.)
 db.prepare("UPDATE OR IGNORE settings SET key = 'altMode' WHERE key = ?").run(atob('cG9pc29uTW9kZQ=='));
 
+// The accent colour was maroon (#8c2f39) until 4.0.0, and pressing Reset (or saving it) wrote that
+// colour down, so a Catalog updated from then kept maroon instead of the pink (src/lib/accent.ts;
+// a friend's Catalog, 2026-11-14). Moved to the pink once; Maroon is still in the list for anyone
+// who wants it back. (Here, not with db/index.ts's fixes: this table is made here.)
+if (!db.prepare("SELECT 1 FROM one_time_fixes WHERE name = 'accent-old-maroon-to-pink'").get()) {
+	db.prepare("UPDATE settings SET value = '#e994c2' WHERE key = 'accentColor' AND lower(trim(value)) = '#8c2f39'").run();
+	db.prepare("INSERT INTO one_time_fixes (name, done_at) VALUES ('accent-old-maroon-to-pink', datetime('now'))").run();
+}
+
 export type Settings = {
 	/** Free key from themoviedb.org. Without it, only anime search works. */
 	tmdbApiKey?: string;
@@ -111,12 +120,21 @@ export type Settings = {
 	onlineAlong?: string;
 	/** '1': taken offline for now. The computer's place and key are kept, so it's the same people when it comes back. */
 	onlineOff?: string;
-	/** The profiles whose progress is synced (a JSON list), and where each one's sync has got to. */
+	/**
+	 * Before 2026-11-14 night: the profiles that had progress / library sync turned on (JSON lists).
+	 * Both are on for every profile now unless turned off (`onlineSyncOff`, `onlineLibraryOff`), so
+	 * these are no longer read.
+	 */
 	onlineSync?: string;
-	onlineSyncState?: string;
-	/** The profiles whose library is kept in step (a JSON list; librarySync.ts), and where each one's has got to. */
 	onlineLibrary?: string;
+	/** The profiles that turned progress sync off (a JSON list), and where each profile's sync has got to. */
+	onlineSyncOff?: string;
+	onlineSyncState?: string;
+	/** The profiles that turned library sync off (a JSON list; librarySync.ts), and where each one's has got to. */
+	onlineLibraryOff?: string;
 	onlineLibraryState?: string;
+	/** '0': titles removed on one computer are left alone on this one (on unless turned off). */
+	onlineRemovals?: string;
 };
 
 export function readSettings(): Settings {

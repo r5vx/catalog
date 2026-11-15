@@ -12,6 +12,7 @@
 import type { FileOption } from '../showbox';
 import { electronMovyFind } from '../electron-fetch';
 import { trustVideoHost } from '../relayHosts';
+import { noteSourceAnswer } from '../sourceAnswers';
 
 const SITE = 'https://vidfast.vc';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
@@ -60,8 +61,11 @@ export function vidfastStream(shareKey: string, fresh = false): Promise<string |
 			if (url) {
 				trustVideoHost(url, 'vidfast');
 				known.set(shareKey, { at: Date.now(), url });
+				noteSourceAnswer('Vidfast', what, true);
 				return url;
 			}
+			// Every server said no: its copy isn't listed for this a while (sourceAnswers.ts).
+			if (error === 'none') noteSourceAnswer('Vidfast', what, false);
 			// Nothing came: kept 6 hours. Too slow: asked again after 10 minutes. Otherwise not kept.
 			if (error === 'timeout') known.set(shareKey, { at: Date.now() - 6 * 60 * MINUTE + 10 * MINUTE, url: null });
 			return null;

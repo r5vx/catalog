@@ -3,13 +3,22 @@
 
 	/** Each source being looked through for the Watch button, and how it went. */
 	let { sources }: { sources: SourceCheck[] } = $props();
+
+	/**
+	 * Once a source has it, the ones still looking go quiet: Movy can take 30–75 s to answer (it
+	 * reads its pages in a hidden window), and its spinning pill looked like Catalog taking forever
+	 * though Watch already worked (a friend, 2026-11-14).
+	 */
+	const found = $derived(sources.some((source) => source.state === 'yes'));
 </script>
 
 {#if sources.length}
 	<ul class="source-checks" aria-label="Sources">
 		{#each sources as source (source.name)}
-			<li class={source.state}>
-				{#if source.state === 'checking'}
+			<li class={source.state} class:quiet={found && source.state === 'checking'}>
+				{#if source.state === 'checking' && found}
+					<span class="dot" aria-hidden="true"></span>
+				{:else if source.state === 'checking'}
 					<span class="spin" aria-hidden="true"></span>
 				{:else}
 					<span aria-hidden="true">{source.state === 'yes' ? '✓' : '✕'}</span>
@@ -54,6 +63,21 @@
 		border-color: var(--rule);
 		background: transparent;
 		text-decoration: line-through;
+	}
+
+	/* Still looking, but another source has it already. */
+	.source-checks .quiet {
+		color: var(--ink-faint);
+		border-style: dashed;
+		border-color: var(--rule);
+		background: transparent;
+	}
+
+	.dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--ink-faint);
 	}
 
 	.spin {

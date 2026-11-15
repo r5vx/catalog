@@ -72,7 +72,8 @@
 				list.seasons.every((s, i) => s.number === base.seasons[i].number && Math.abs(s.count - base.seasons[i].count) <= 2);
 			if (same) return;
 			playerList = list;
-			const resumeSeason = untrack(() => continuing?.season ?? 0);
+			// (-1, not 0, when nothing's being watched: 0 is Specials.)
+			const resumeSeason = untrack(() => continuing?.season ?? -1);
 			// The season being watched, as the player numbers it (Bleach's season 6 isn't on TMDB).
 			if (list.seasons.some((s) => s.number === resumeSeason)) season = resumeSeason;
 			else if (!list.seasons.some((s) => s.number === untrack(() => season))) season = list.seasons[0].number;
@@ -214,7 +215,7 @@
 			<div class="seasons">
 				{#each seasons as one (one.number)}
 					<button type="button" class="chip" class:on={season === one.number} onclick={() => (season = one.number)}>
-						Season {one.number}
+						{one.number === 0 ? 'Specials' : `Season ${one.number}`}
 					</button>
 				{/each}
 			</div>

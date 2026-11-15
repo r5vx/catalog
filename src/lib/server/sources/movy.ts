@@ -16,6 +16,7 @@
 import type { FileOption } from '../showbox';
 import { electronMovyFind } from '../electron-fetch';
 import { trustVideoHost } from '../relayHosts';
+import { noteSourceAnswer } from '../sourceAnswers';
 
 const SITE = 'https://www.movy.sx';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
@@ -171,11 +172,16 @@ function lookUp(shareKey: string, what: What, signal: AbortSignal): Promise<stri
 			// Its server (and those its playlists name) may now be fetched through the relay.
 			trustVideoHost(url, 'movy');
 			known.set(shareKey, { at: Date.now(), url });
+			if (!what.dub) noteSourceAnswer('Movy', what, true);
 			return url;
 		}
-		// Every one of its servers said no: kept 6 hours. Too slow to answer: tried again after
-		// 10 minutes. Anything else (called off, not in the desktop app): not kept.
-		if (error === 'none') known.set(shareKey, { at: Date.now(), url: null });
+		// Every one of its servers said no: kept 6 hours, and its copies aren't listed for it for a
+		// while (sourceAnswers.ts). Too slow to answer: tried again after 10 minutes. Anything else
+		// (called off, not in the desktop app): not kept.
+		if (error === 'none') {
+			known.set(shareKey, { at: Date.now(), url: null });
+			if (!what.dub) noteSourceAnswer('Movy', what, false);
+		}
 		if (error === 'timeout') known.set(shareKey, { at: Date.now() - 6 * 60 * MINUTE + 10 * MINUTE, url: null });
 		return null;
 	});

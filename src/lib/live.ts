@@ -46,7 +46,8 @@ export type GameScore = { a: string; b: string; state: 'pre' | 'in' | 'post'; de
 export type GameArt = { teams: [TeamArt, TeamArt]; /** ESPN's league the teams were found in ("football/nfl"). */ league?: string };
 export type TeamArt = { name: string; logo: string; color: string };
 
-export type LiveChannel = { id: number; name: string; sports: Sport[]; country: string };
+/** `tried`: whether it played the last time it was tried lately (null: not tried lately). */
+export type LiveChannel = { id: number; name: string; sports: Sport[]; country: string; tried?: { ok: boolean; minutesAgo: number } | null };
 
 /** Sports in the order they're shown, with how long one of their games usually lasts. */
 export const SPORTS: { key: Sport; label: string; hours: number }[] = [

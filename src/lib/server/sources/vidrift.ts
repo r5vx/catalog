@@ -14,6 +14,7 @@
  */
 import type { FileOption } from '../showbox';
 import { trustVideoHost } from '../relayHosts';
+import { noteSourceAnswer } from '../sourceAnswers';
 
 const BASE = 'https://embed.vidrift.net';
 const PLAYER = `${BASE}/embed2/play`;
@@ -154,7 +155,14 @@ export async function vidriftStream(shareKey: string, fresh = false): Promise<st
 export async function onVidrift(what: Omit<What, 'season' | 'episode'> & { season?: number; episode?: number }): Promise<boolean> {
 	const full = { season: 0, episode: 0, ...what };
 	const meta = (await boot(full))?.meta;
+	// (No answer at all, or not out yet: nothing noted. Its site answered: its copies are listed
+	// for this, or not, by what it said, sourceAnswers.ts.)
 	if (!meta || meta.unreleased) return false;
-	if (meta.orionStreams?.length) return true;
-	return Boolean(await vidriftStream(vidriftShareKey(full, 'avc')));
+	if (meta.orionStreams?.length) {
+		noteSourceAnswer('7Movies', full, true);
+		return true;
+	}
+	const found = Boolean(await vidriftStream(vidriftShareKey(full, 'avc')));
+	noteSourceAnswer('7Movies', full, found);
+	return found;
 }

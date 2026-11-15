@@ -1,8 +1,8 @@
 import { error, json } from '@sveltejs/kit';
-import { cloud, connectOnline, disconnectOnline, lastSync, noteWatchingMore, onlineConnected, onlineJoined, onlineSwitches, setSyncProfile, syncNow, syncProfiles, tryOwnerKey } from '$lib/server/online';
+import { cloud, computerName, connectOnline, disconnectOnline, noteStopped, lastSync, noteWatchingMore, onlineConnected, onlineJoined, onlineSwitches, setSyncProfile, syncNow, syncProfiles, tryOwnerKey } from '$lib/server/online';
 import { readSettings, updateSettings } from '$lib/server/settings';
 import { currentProfile } from '$lib/server/profile';
-import { lastLibrarySync, libraryPreview, libraryProfiles, nameOnlyCount, setLibraryProfile, syncLibrary } from '$lib/server/librarySync';
+import { lastLibrarySync, libraryPreview, libraryProfiles, nameOnlyCount, removalsOn, setLibraryProfile, syncLibrary } from '$lib/server/librarySync';
 import type { RequestHandler } from './$types';
 
 /**
@@ -39,17 +39,22 @@ export const GET: RequestHandler = async ({ url }) => {
 		sync: syncProfiles().includes(profile),
 		lastSync: lastSync.get(profile) ?? null,
 		library: { on: libraryProfiles().includes(profile), last: lastLibrarySync.get(profile) ?? null, nameOnly: nameOnlyCount(profile) },
+		removals: removalsOn(),
+		/** The computer's name: a person still called that hasn't picked a name (the page asks for one). */
+		computerName: computerName(),
 		owner: Boolean(readSettings().onlineAdminKey)
 	});
 };
 
 /**
  * Body { action, … }:
- *   connect { join }       this computer joins, with the join code
+ *   connect { join, name } this computer joins, with the join code and the name friends will see
  *   disconnect             and leaves
  *   switches { reports, share, shared, along }
  *   watching { title, year, room }   the player: which year's film is open, and its watch-together room
+ *   stopped                the player was left or closed: friends stop seeing this profile as watching
  *   sync { on }            this profile's progress kept in step (or not); syncNow does a round at once
+ *   removals { on }        titles removed on the person's other computers removed here too (or not; per computer)
  *   libraryPreview         what keeping this profile's library in step would do (changes nothing)
  *   library { on }         this profile's library kept in step (or not); on does the first round. libraryNow: a round at once
  *   owner { key }          the owner's key, to read problem reports here, kept when right ('' forgets it)
@@ -58,7 +63,10 @@ export const POST: RequestHandler = async ({ request }) => {
 	const body = await request.json().catch(() => ({}));
 	const profile = currentProfile();
 	if (body.action === 'connect') {
-		const answer = await connectOnline(String(body.join ?? ''));
+		// A first join needs the name friends will see (coming back from "offline for now" doesn't).
+		const name = String(body.name ?? '').trim();
+		if (!onlineJoined() && !name) return error(400, 'Type the name your friends will see');
+		const answer = await connectOnline(String(body.join ?? ''), name, profile);
 		if (!answer.ok) return error(answer.status === 403 ? 403 : 502, answer.error);
 		return json({ ok: true });
 	}
@@ -70,6 +78,10 @@ export const POST: RequestHandler = async ({ request }) => {
 		const flag = (value: unknown) => (value === false ? '0' : undefined);
 		updateSettings({ onlineReports: flag(body.reports), onlineShare: flag(body.share), onlineShared: flag(body.shared), onlineAlong: body.along === true ? '1' : undefined });
 		if (body.share === false) void cloud('/v1/presence', { method: 'DELETE', profile });
+		return json({ ok: true });
+	}
+	if (body.action === 'stopped') {
+		noteStopped(profile);
 		return json({ ok: true });
 	}
 	if (body.action === 'watching') {
@@ -85,6 +97,10 @@ export const POST: RequestHandler = async ({ request }) => {
 	if (body.action === 'libraryPreview') return json(await libraryPreview(profile));
 	if (body.action === 'library') return json({ ok: true, round: await setLibraryProfile(profile, body.on === true) });
 	if (body.action === 'libraryNow') return json(await syncLibrary(profile));
+	if (body.action === 'removals') {
+		updateSettings({ onlineRemovals: body.on === false ? '0' : undefined });
+		return json({ ok: true });
+	}
 	if (body.action === 'owner') {
 		const key = String(body.key ?? '').trim();
 		if (!key) {

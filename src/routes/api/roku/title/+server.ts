@@ -27,8 +27,10 @@ export const GET: RequestHandler = async ({ url }) => {
 	const type = film ? 'movie' : 'tv';
 	const names = [details.title, entry?.title, details.altTitle].filter(Boolean).map((n) => n!.toLowerCase());
 	const continuing = continueWatchingList().find((item) => item.type === type && names.includes(item.title.toLowerCase())) ?? null;
-	const show = type === 'tv' ? await showSeasons(source, id, entry?.title ?? details.title).catch(() => null) : null;
-	let season = continuing?.season ?? 0;
+	const all = type === 'tv' ? await showSeasons(source, id, entry?.title ?? details.title).catch(() => null) : null;
+	// Not Specials on the Roku yet: its app would call them "Season 0" (roku/components/TitleScreen.brs).
+	const show = all ? { ...all, seasons: all.seasons.filter((s) => s.number > 0) } : null;
+	let season = continuing?.season ?? -1;
 	if (show && !show.seasons.some((s) => s.number === season)) season = show.seasons[0]?.number ?? 0;
 
 	return json({

@@ -1,4 +1,5 @@
 import { fetchDetails } from '$lib/server/metadata/details';
+import { fetchCast } from '$lib/server/metadata/tmdb';
 import { anilistResting } from '$lib/server/metadata/anilistNodes';
 import { isAvailable } from '$lib/server/availability';
 import { quickScores, omdbConfigured } from '$lib/server/metadata/omdb';
@@ -56,6 +57,23 @@ export const load: PageServerLoad = async ({ params, url }) => {
 	// Started now, so the Watch button's own check (sent once the page shows) finds it under way.
 	if (!details.unreleased) {
 		isAvailable(details.title, watchType, details.year ? String(details.year) : '').catch(() => {});
+	}
+
+	// No cast from the title's own site (AniList's anime often come back with none when it's
+	// asked too often): TMDB's for the show, as the player's Cast shows it. Without it the page had
+	// no cast until an episode was opened (owner, 2026-11-15).
+	if (!details.cast.length && !details.unreleased) {
+		const names = [details.title, details.altTitle].filter((n): n is string => Boolean(n));
+		for (const name of names) {
+			const found = await fetchCast(name, watchType).catch(() => []);
+			if (found.length) {
+				details = {
+					...details,
+					cast: found.slice(0, 20).map((person) => ({ sourceId: `tmdb:${person.id}`, name: person.name, photo: person.photo, character: person.character || null }))
+				};
+				break;
+			}
+		}
 	}
 
 	// Anyone in the cast you've already seen elsewhere gets a link.

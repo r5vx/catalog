@@ -3,6 +3,7 @@
 	import UpdateBanner from '$lib/UpdateBanner.svelte';
 	import TvUpdated from '$lib/tv/TvUpdated.svelte';
 	import SigninBanner from '$lib/SigninBanner.svelte';
+	import TmdbBanner from '$lib/TmdbBanner.svelte';
 	import ConfirmDialog from '$lib/ConfirmDialog.svelte';
 	import RatePrompt from '$lib/RatePrompt.svelte';
 	import SideNav from '$lib/SideNav.svelte';
@@ -147,6 +148,7 @@
 	<UpdateBanner />
 	<TvUpdated />
 	<SigninBanner signin={data?.showboxSignin} />
+	<TmdbBanner missing={data?.tmdbMissing} />
 	{@render children()}
 	{#if hostedId !== null}
 		{#key hostedId}

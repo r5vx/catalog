@@ -123,9 +123,24 @@
 	 */
 	let overview = $state<string | null>(null);
 	let tags = $state<{ id?: number; name: string; kind: string }[]>([]);
-	let cast = $state<{ id: number; name: string; photo: string | null; character: string | null }[]>(
+	let cast = $state<{ id: number | null; sourceId?: string | null; name: string; photo: string | null; character: string | null }[]>(
 		[]
 	);
+
+	/**
+	 * No cast kept for it (an anime added while AniList wasn't answering, say): TMDB's, as the
+	 * player's Cast shows it, so it's on the page without opening an episode (owner, 2026-11-15).
+	 * Shown only; nothing is saved from here (Refresh keeps a cast).
+	 */
+	async function castFromTmdb(id: number, title: string, type: 'movie' | 'tv') {
+		const found: { id: number; name: string; character: string; photo: string | null }[] | null = await fetch(
+			`/api/watch/cast?${new URLSearchParams({ title, type })}`
+		)
+			.then((r) => (r.ok ? r.json() : null))
+			.catch(() => null);
+		if (!Array.isArray(found) || !found.length || data.entry.id !== id || cast.length) return;
+		cast = found.slice(0, 20).map((person) => ({ id: null, sourceId: `tmdb:${person.id}`, name: person.name, photo: person.photo, character: person.character || null }));
+	}
 	let scores = $state<{
 		imdbRating: number | null;
 		imdbVotes: number | null;
@@ -170,6 +185,8 @@
 			awards: current.awards,
 			boxOffice: current.boxOffice
 		};
+
+		if (!data.cast.length) void castFromTmdb(current.id, current.title, category?.slug === 'movies' ? 'movie' : 'tv');
 
 		const wantScores = data.scoresAvailable && !current.scoresCheckedAt;
 		const wantDetails = !current.overview;

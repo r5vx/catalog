@@ -1,5 +1,5 @@
 import { error, json } from '@sveltejs/kit';
-import { cloud } from '$lib/server/online';
+import { cloud, keepFriendsAnswer } from '$lib/server/online';
 import { currentProfile } from '$lib/server/profile';
 import type { RequestHandler } from './$types';
 
@@ -14,8 +14,10 @@ const ALLOWED: [string, RegExp][] = [
 	['POST', /^link\/(code|join)$/],
 	['POST', /^google\/start$/],
 	['GET', /^friends$/],
-	['POST', /^friends\/(code|add)$/],
+	['POST', /^friends\/(code|add|request|unrequest|answer)$/],
 	['DELETE', /^friends\/[A-Z0-9]{16}$/],
+	['GET', /^friends\/[A-Z0-9]{16}\/friends$/],
+	['GET', /^activity$/],
 	['GET', /^seen$/],
 	['POST', /^rooms$/],
 	['GET', /^rooms\/[A-Z0-9]{6}$/],
@@ -27,8 +29,11 @@ const pass: RequestHandler = async ({ request, params, url }) => {
 	const path = params.path ?? '';
 	if (!ALLOWED.some(([method, shape]) => method === request.method && shape.test(path))) return error(404, 'No such address');
 	const body = request.method === 'GET' || request.method === 'DELETE' ? undefined : await request.json().catch(() => ({}));
-	const answer = await cloud(`/v1/${path}${url.search}`, { method: request.method, body, profile: currentProfile() });
+	const profile = currentProfile();
+	const answer = await cloud(`/v1/${path}${url.search}`, { method: request.method, body, profile });
 	if (!answer.ok) return json({ error: answer.error }, { status: answer.status || 502 });
+	// Kept, so the Friends page can show them at once next time it opens.
+	if (request.method === 'GET' && (path === 'friends' || path === 'activity')) keepFriendsAnswer(profile, path, answer.data);
 	return json(answer.data);
 };
 

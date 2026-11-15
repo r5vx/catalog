@@ -6,6 +6,14 @@ import { watchRegion } from '$lib/server/metadata/providers';
 import type { PageServerLoad } from './$types';
 
 const CATEGORIES = ['movies', 'tv', 'anime'];
+
+/**
+ * At most `ms` for what Browse waits on, then `fallback`: the page loads either way. Several slow
+ * answers one after another once kept Browse loading, with every click stuck behind it.
+ */
+function withinTime<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
+	return Promise.race([work, new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms).unref?.())]);
+}
 const VALID_SORTS = ['vote_count', 'vote_average', 'popularity', 'release_date_desc', 'release_date_asc'];
 
 export const load: PageServerLoad = async ({ url }) => {
@@ -29,7 +37,7 @@ export const load: PageServerLoad = async ({ url }) => {
 
 	if (isActors) {
 		const people = q.length >= 2 ? searchPeople(q) : [];
-		const trending = !q && hasTmdbKey() ? await trendingPeopleTmdb() : [];
+		const trending = !q && hasTmdbKey() ? await withinTime(trendingPeopleTmdb(), 15_000, []) : [];
 		return {
 			q,
 			cat: 'actors',
@@ -50,11 +58,11 @@ export const load: PageServerLoad = async ({ url }) => {
 
 	const { title, year } = parseTitle(q);
 
-	const found = q ? await searchAll(title, { year, limit: 60, fuzzy: true }) : [];
+	const found = q ? await withinTime(searchAll(title, { year, limit: 60, fuzzy: true }), 15_000, []) : [];
 
 	const results = category ? found.filter((one) => one.categorySlug === category) : found;
 
-	const shelves = q ? [] : await browseShelves(category || undefined, mode, region, filters);
+	const shelves = q ? [] : await withinTime(browseShelves(category || undefined, mode, region, filters), 15_000, []);
 
 	return {
 		q,

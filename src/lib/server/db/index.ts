@@ -375,7 +375,6 @@ once('watch-orders-partial-names', () => {
 });
 
 once('subtitles-character-sets', () => db.exec('DELETE FROM saved_subtitles WHERE instr(content, char(65533)) > 0'));
-
 // Sound heard from fragmented-MP4 pieces before 2026-11-04 could be 4% short and smeared
 // (soundTrack.ts says why), so the talking kept for auto-timing and the intros and credits found
 // by sound are worked out again, once. (The skip databases' times aren't touched.)
@@ -620,6 +619,23 @@ db.exec(`
 		duration REAL NOT NULL DEFAULT 0,
 		added_at TEXT NOT NULL DEFAULT (datetime('now')),
 		finished_at TEXT
+	)
+`);
+
+/*
+ * Titles taken off a library or a profile's list by hand (Remove), so library sync can take them
+ * off the person's other computers too (librarySync.ts). Only TMDB and AniList titles: the others
+ * have nothing to match on. Kept 90 days; a title added again later simply wins (it's newer).
+ */
+db.exec(`
+	CREATE TABLE IF NOT EXISTS library_removed (
+		profile INTEGER NOT NULL,
+		source TEXT NOT NULL,
+		source_id TEXT NOT NULL,
+		title TEXT NOT NULL DEFAULT '',
+		year INTEGER,
+		removed_at INTEGER NOT NULL,
+		PRIMARY KEY (profile, source, source_id)
 	)
 `);
 

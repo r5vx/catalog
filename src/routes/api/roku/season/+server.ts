@@ -30,12 +30,15 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	// ("showed up super later", 2026-11-08). Asked alongside TMDB's; not there in 2.5 s, TMDB's go
 	// first and `again` has the Roku ask once more (by then the player's is usually known).
 	const asking = ask<PlayerList & { retryIn?: number }>(`/api/tv/player-episodes?${new URLSearchParams({ title, year: get('year') })}`, 12_000);
-	const show = await showSeasons(get('source'), get('id'), title).catch(() => null);
+	// Not Specials on the Roku yet (both lists have them since 2026-11-15): its app would call them "Season 0".
+	const allSeasons = await showSeasons(get('source'), get('id'), title).catch(() => null);
+	const show = allSeasons ? { ...allSeasons, seasons: allSeasons.seasons.filter((s) => s.number > 0) } : null;
 	const late = Symbol('late');
 	const quick = url.searchParams.get('full') !== '1';
 	const got = await Promise.race([asking, new Promise<typeof late>((resolve) => setTimeout(() => resolve(late), quick && show ? 2500 : 12_000))]);
 	const again = got === late;
-	const list = got === late ? null : got;
+	const fetched = got === late ? null : got;
+	const list = fetched && fetched.seasons ? { ...fetched, seasons: fetched.seasons.filter((s) => s.number > 0), episodes: (fetched.episodes ?? []).filter((e) => e.season > 0) } : fetched;
 	const same =
 		!list?.seasons?.length ||
 		(!!show &&

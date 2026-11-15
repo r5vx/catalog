@@ -247,7 +247,8 @@ export async function fetchRomajiTitle(title: string): Promise<string | null> {
 		const response = await fetch(ENDPOINT, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-			body: JSON.stringify({ query: QUERY, variables: { search: title, perPage: 1 } })
+			body: JSON.stringify({ query: QUERY, variables: { search: title, perPage: 1 } }),
+			signal: AbortSignal.timeout(8000)
 		});
 		if (response.status === 429) anilistSaidWait(response);
 		if (!response.ok) return null;

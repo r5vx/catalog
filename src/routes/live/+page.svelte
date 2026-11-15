@@ -206,7 +206,11 @@
 	const gamesFound = $derived(
 		(guide?.games ?? []).filter((g) => isMine(g.sport) && (g.local !== false || allCountries || Boolean(searched)) && (!searched || matches(gameText(g), searched)))
 	);
-	const channelsFound = $derived((guide?.channels ?? []).filter((c) => !searched || matches(`${c.name} ${c.country}`, searched)));
+	// Channels that didn't play when last tried go last (in their order otherwise).
+	const offAir = (c: LiveChannel) => (c.tried && !c.tried.ok ? 1 : 0);
+	const channelsFound = $derived(
+		(guide?.channels ?? []).filter((c) => !searched || matches(`${c.name} ${c.country}`, searched)).sort((a, b) => offAir(a) - offAir(b))
+	);
 	const savedFound = $derived({
 		games: (guide?.savedGames ?? []).filter((g) => !searched || matches(gameText(g), searched)),
 		channels: (guide?.savedChannels ?? [])
@@ -390,6 +394,11 @@
 			<span class="name">{channel.name}</span>
 			{#if showing}
 				<span class="now"><span class="dot"></span>{showing.title}</span>
+			{:else if 'tried' in channel && channel.tried && !channel.tried.ok}
+				<!-- Didn't play when last tried: said before it's picked (it loaded forever, 2026-11-15). -->
+				<span class="off-air">Off · {channel.tried.minutesAgo < 1 ? 'just now' : `${channel.tried.minutesAgo} min ago`}</span>
+			{:else if 'tried' in channel && channel.tried?.ok}
+				<span class="on-air"><span class="dot"></span>On{channel.country ? ` · ${channel.country}` : ''}</span>
 			{:else if channel.country}
 				<span class="country">{channel.country}</span>
 			{/if}
@@ -1114,6 +1123,21 @@
 	.country {
 		font-size: 0.78rem;
 		color: var(--ink-faint);
+	}
+
+	/* Played when last tried (the dot as for a game on now), or didn't: said before it's picked. */
+	.on-air {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 0.78rem;
+		color: var(--ink-faint);
+	}
+
+	.off-air {
+		font-size: 0.78rem;
+		color: var(--ink-faint);
+		font-style: italic;
 	}
 
 	.show-all {

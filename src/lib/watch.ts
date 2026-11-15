@@ -1,7 +1,7 @@
 /** The quality the player reaches for first. */
 export const PREFERRED_QUALITY = '1080p';
 
-type Pickable = { quality: string; size: string; name?: string; source?: string; audio?: string; hevc?: boolean };
+type Pickable = { quality: string; size: string; name?: string; source?: string; audio?: string; hevc?: boolean; burnedIn?: boolean };
 
 let hevcAnswer: boolean | null = null;
 
@@ -40,8 +40,13 @@ export function pickFile<T extends Pickable>(files: T[], wanted: string, audio =
 	const showbox = files.filter((f) => !f.source);
 	// No Showbox copy: the language asked for; failing that, never the English dub unless it was
 	// asked for (someone watching in Japanese isn't switched to it just because it's listed first).
+	// Of those, one without subtitles in the picture first: Aniwave's burned-in copy came before
+	// HiAnime's clean one just by being listed first (owner, 2026-11-15).
 	if (!showbox.length) {
-		return files.find((f) => audio && f.audio === audio) ?? files.find((f) => audio === 'English' || f.audio !== 'English') ?? files[0];
+		// (Only among copies known to be in that audio: a 7Movies or Movy copy listed without being
+		// checked has no audio said, and isn't preferred over a copy that's really there.)
+		const inAudio = files.filter((f) => audio && f.audio === audio);
+		return inAudio.find((f) => !f.burnedIn) ?? inAudio[0] ?? files.find((f) => audio === 'English' || f.audio !== 'English') ?? files[0];
 	}
 	// Of the wanted quality: one with both languages first, then the largest. (It took the first
 	// one listed: Dungeon Meshi E8 lists a 503 MB single-file copy before its 2.45 GB one. Then

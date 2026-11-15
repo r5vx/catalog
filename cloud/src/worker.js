@@ -141,6 +141,15 @@ async function useCode(env, code, kind) {
 	return row ?? null;
 }
 
+/** Two accounts become friends (both ways), and any requests between them are answered by it. */
+async function befriend(env, one, other, now) {
+	await env.DB.batch([
+		env.DB.prepare('INSERT OR IGNORE INTO friends (a, b, since) VALUES (?, ?, ?)').bind(one, other, now),
+		env.DB.prepare('INSERT OR IGNORE INTO friends (a, b, since) VALUES (?, ?, ?)').bind(other, one, now),
+		env.DB.prepare('DELETE FROM friend_requests WHERE (from_account = ?1 AND to_account = ?2) OR (from_account = ?2 AND to_account = ?1)').bind(one, other)
+	]);
+}
+
 /** Old leftovers go, now and then. */
 async function tidy(env) {
 	const now = Date.now();
@@ -148,6 +157,8 @@ async function tidy(env) {
 		env.DB.prepare('DELETE FROM codes WHERE expires < ?').bind(now),
 		env.DB.prepare('DELETE FROM pairs WHERE expires < ?').bind(now),
 		env.DB.prepare('DELETE FROM presence WHERE at < ?').bind(now - 6 * HOUR),
+		// Requests nobody answered in 30 days.
+		env.DB.prepare('DELETE FROM friend_requests WHERE at < ?').bind(now - 30 * DAY),
 		env.DB.prepare('DELETE FROM room_members WHERE code IN (SELECT code FROM rooms WHERE updated < ?)').bind(now - 12 * HOUR),
 		env.DB.prepare('DELETE FROM rooms WHERE updated < ?').bind(now - 12 * HOUR),
 		env.DB.prepare('DELETE FROM reports WHERE created < ?').bind(now - 60 * DAY),
@@ -336,7 +347,7 @@ async function answer(request, env, ctx) {
 		const left = await env.DB.prepare('SELECT count(*) AS n FROM members WHERE account = ?').bind(account.id).first();
 		if (!left?.n && !account.google_sub) {
 			await env.DB.batch(
-				['DELETE FROM friends WHERE a = ?1 OR b = ?1', 'DELETE FROM seen WHERE account = ?1', 'DELETE FROM presence WHERE account = ?1', 'DELETE FROM avatars WHERE account = ?1', 'DELETE FROM sync_rows WHERE account = ?1', 'DELETE FROM codes WHERE account = ?1', 'DELETE FROM accounts WHERE id = ?1'].map((sql) => env.DB.prepare(sql).bind(account.id))
+				['DELETE FROM friends WHERE a = ?1 OR b = ?1', 'DELETE FROM seen WHERE account = ?1', 'DELETE FROM presence WHERE account = ?1', 'DELETE FROM avatars WHERE account = ?1', 'DELETE FROM sync_rows WHERE account = ?1', 'DELETE FROM codes WHERE account = ?1', 'DELETE FROM activity WHERE account = ?1', 'DELETE FROM friend_requests WHERE from_account = ?1 OR to_account = ?1', 'DELETE FROM accounts WHERE id = ?1'].map((sql) => env.DB.prepare(sql).bind(account.id))
 			);
 		}
 		const fresh = await accountOf(request, env, house, account.name);
@@ -397,12 +408,111 @@ async function answer(request, env, ctx) {
 		return json({ ok: true, name: friend?.name ?? '' });
 	}
 	if (is('GET', '/v1/friends')) {
+		const [rows, asked, known] = await env.DB.batch([
+			env.DB.prepare(
+				'SELECT a.id, a.name, v.rev AS avatar, p.what, p.at FROM friends f JOIN accounts a ON a.id = f.b LEFT JOIN avatars v ON v.account = a.id LEFT JOIN presence p ON p.account = f.b AND p.at > ? WHERE f.a = ? ORDER BY a.name'
+			).bind(Date.now() - 3 * MINUTE, account.id),
+			// Asked to be friends with this account, not answered yet.
+			env.DB.prepare('SELECT a.id, a.name, v.rev AS avatar FROM friend_requests r JOIN accounts a ON a.id = r.from_account LEFT JOIN avatars v ON v.account = a.id WHERE r.to_account = ? ORDER BY r.at DESC LIMIT 20').bind(account.id),
+			// People this account's friends know and it doesn't yet: who knows them, and whether asked already.
+			env.DB.prepare(
+				'SELECT a.id, a.name, v.rev AS avatar, min(via.name) AS via, count(DISTINCT f1.b) AS mutual, ' +
+					'EXISTS (SELECT 1 FROM friend_requests r WHERE r.from_account = ?1 AND r.to_account = a.id) AS requested ' +
+					'FROM friends f1 JOIN friends f2 ON f2.a = f1.b JOIN accounts a ON a.id = f2.b JOIN accounts via ON via.id = f1.b LEFT JOIN avatars v ON v.account = a.id ' +
+					'WHERE f1.a = ?1 AND f2.b != ?1 AND f2.b NOT IN (SELECT b FROM friends WHERE a = ?1) ' +
+					'AND f2.b NOT IN (SELECT from_account FROM friend_requests WHERE to_account = ?1) ' +
+					'GROUP BY a.id ORDER BY mutual DESC, a.name LIMIT 12'
+			).bind(account.id)
+		]);
+		return json({
+			me: publicAccount(account),
+			friends: rows.results.map((r) => ({ id: r.id, name: r.name, avatar: r.avatar ?? 0, watching: r.what ? JSON.parse(r.what) : null, at: r.at ?? null })),
+			requests: asked.results.map((r) => ({ id: r.id, name: r.name, avatar: r.avatar ?? 0 })),
+			suggestions: known.results.map((r) => ({ id: r.id, name: r.name, avatar: r.avatar ?? 0, via: r.via, mutual: r.mutual, requested: Boolean(r.requested) }))
+		});
+	}
+
+	// A friend's friends, to ask the ones this account doesn't know yet.
+	const theirFriends = path.match(/^\/v1\/friends\/([A-Z0-9]{16})\/friends$/);
+	if (theirFriends && method === 'GET') {
+		const them = theirFriends[1];
+		if (!(await env.DB.prepare('SELECT 1 FROM friends WHERE a = ? AND b = ?').bind(account.id, them).first())) return bad(403, 'Not a friend');
 		const rows = await env.DB.prepare(
-			'SELECT a.id, a.name, v.rev AS avatar, p.what, p.at FROM friends f JOIN accounts a ON a.id = f.b LEFT JOIN avatars v ON v.account = a.id LEFT JOIN presence p ON p.account = f.b AND p.at > ? WHERE f.a = ? ORDER BY a.name'
+			'SELECT a.id, a.name, v.rev AS avatar, ' +
+				'EXISTS (SELECT 1 FROM friends m WHERE m.a = ?1 AND m.b = a.id) AS friend, ' +
+				'EXISTS (SELECT 1 FROM friend_requests r WHERE r.from_account = ?1 AND r.to_account = a.id) AS requested, ' +
+				'EXISTS (SELECT 1 FROM friend_requests r WHERE r.from_account = a.id AND r.to_account = ?1) AS asked ' +
+				'FROM friends f JOIN accounts a ON a.id = f.b LEFT JOIN avatars v ON v.account = a.id WHERE f.a = ?2 ORDER BY a.name LIMIT 100'
 		)
-			.bind(Date.now() - 3 * MINUTE, account.id)
+			.bind(account.id, them)
 			.all();
-		return json({ me: publicAccount(account), friends: rows.results.map((r) => ({ id: r.id, name: r.name, avatar: r.avatar ?? 0, watching: r.what ? JSON.parse(r.what) : null, at: r.at ?? null })) });
+		return json({
+			friends: rows.results.map((r) => ({ id: r.id, name: r.name, avatar: r.avatar ?? 0, me: r.id === account.id, friend: Boolean(r.friend), requested: Boolean(r.requested), asked: Boolean(r.asked) }))
+		});
+	}
+
+	// Asking someone to be friends: only someone a friend knows (nobody can be found by guessing).
+	// When they'd asked this account already, that's a yes from both: friends at once.
+	if (is('POST', '/v1/friends/request')) {
+		const sent = await body(request);
+		const to = /^[A-Z0-9]{16}$/.test(sent.to ?? '') ? sent.to : '';
+		if (!to || to === account.id) return bad(400, 'Ask whom?');
+		if (!(await allowed(env, `request:${account.id}`, 30))) return bad(429, 'Enough asking for today');
+		if (await env.DB.prepare('SELECT 1 FROM friends WHERE a = ? AND b = ?').bind(account.id, to).first()) return json({ ok: true, friends: true });
+		const known = await env.DB.prepare('SELECT 1 FROM friends f1 JOIN friends f2 ON f2.a = f1.b WHERE f1.a = ? AND f2.b = ? LIMIT 1').bind(account.id, to).first();
+		if (!known) return bad(403, "Only someone a friend knows can be asked");
+		const now = Date.now();
+		if (await env.DB.prepare('SELECT 1 FROM friend_requests WHERE from_account = ? AND to_account = ?').bind(to, account.id).first()) {
+			await befriend(env, account.id, to, now);
+			return json({ ok: true, friends: true });
+		}
+		await env.DB.prepare('INSERT OR IGNORE INTO friend_requests (from_account, to_account, at) VALUES (?, ?, ?)').bind(account.id, to, now).run();
+		return json({ ok: true, friends: false });
+	}
+	// Taking back a request this account made.
+	if (is('POST', '/v1/friends/unrequest')) {
+		const sent = await body(request);
+		await env.DB.prepare('DELETE FROM friend_requests WHERE from_account = ? AND to_account = ?').bind(account.id, text(sent.to, 16)).run();
+		return json({ ok: true });
+	}
+	// Yes or no to someone who asked.
+	if (is('POST', '/v1/friends/answer')) {
+		const sent = await body(request);
+		const from = text(sent.from, 16);
+		const asked = await env.DB.prepare('SELECT 1 FROM friend_requests WHERE from_account = ? AND to_account = ?').bind(from, account.id).first();
+		if (!asked) return bad(404, 'No such request');
+		if (sent.yes === true) await befriend(env, account.id, from, Date.now());
+		else await env.DB.prepare('DELETE FROM friend_requests WHERE from_account = ? AND to_account = ?').bind(from, account.id).run();
+		return json({ ok: true });
+	}
+
+	// What this account watched lately, for its friends' feed: its newest 20, replaced whole.
+	if (is('PUT', '/v1/activity')) {
+		const sent = await body(request, 64 * 1024);
+		const items = (Array.isArray(sent.items) ? sent.items : [])
+			.slice(0, 20)
+			.map((i) => ({
+				key: text(i?.key, 40),
+				title: text(i?.title, 120),
+				year: text(String(i?.year ?? ''), 4),
+				type: i?.type === 'tv' ? 'tv' : 'movie',
+				poster: /^https:\/\/(image\.tmdb\.org|s4\.anilist\.co)\//.test(i?.poster ?? '') ? text(i.poster, 200) : '',
+				rating: Number.isFinite(Number(i?.rating)) && i.rating !== null ? Math.max(0, Math.min(10, Number(i.rating))) : null,
+				at: whole(i?.at, 0, Date.now() + DAY)
+			}))
+			.filter((i) => SEEN_KEY.test(i.key) && i.title && i.at > 0);
+		await env.DB.prepare('INSERT INTO activity (account, items, updated) VALUES (?, ?, ?) ON CONFLICT (account) DO UPDATE SET items = excluded.items, updated = excluded.updated')
+			.bind(account.id, JSON.stringify(items), Date.now())
+			.run();
+		return json({ ok: true, kept: items.length });
+	}
+	if (is('GET', '/v1/activity')) {
+		const rows = await env.DB.prepare(
+			'SELECT a.id, a.name, v.rev AS avatar, t.items FROM friends f JOIN accounts a ON a.id = f.b JOIN activity t ON t.account = f.b LEFT JOIN avatars v ON v.account = a.id WHERE f.a = ?'
+		)
+			.bind(account.id)
+			.all();
+		return json({ friends: rows.results.map((r) => ({ id: r.id, name: r.name, avatar: r.avatar ?? 0, items: JSON.parse(r.items) })) });
 	}
 	const friendId = path.match(/^\/v1\/friends\/([A-Z0-9]{16})$/);
 	if (friendId && method === 'DELETE') {
@@ -469,10 +579,13 @@ async function answer(request, env, ctx) {
 
 	const roomOf = async (code) => env.DB.prepare('SELECT code, host, state, rev, updated FROM rooms WHERE code = ?').bind(code).first();
 	const inRoom = async (code) => Boolean(await env.DB.prepare('SELECT 1 FROM room_members WHERE code = ? AND account = ?').bind(code, account.id).first());
-	const roomAnswer = async (room) => {
-		const people = await env.DB.prepare('SELECT m.account, m.name, m.at, v.rev AS avatar FROM room_members m LEFT JOIN avatars v ON v.account = m.account WHERE m.code = ? AND m.at > ? ORDER BY m.name').bind(room.code, Date.now() - 2 * MINUTE).all();
-		return json({ code: room.code, host: room.host === account.id, state: JSON.parse(room.state), rev: room.rev, now: Date.now(), people: people.results.map((p) => ({ id: p.account, name: p.name, avatar: p.avatar ?? 0, me: p.account === account.id })) });
+	/** Who's in a room now (seen in the last two minutes). */
+	const peopleIn = async (code) => {
+		const people = await env.DB.prepare('SELECT m.account, m.name, m.at, v.rev AS avatar FROM room_members m LEFT JOIN avatars v ON v.account = m.account WHERE m.code = ? AND m.at > ? ORDER BY m.name').bind(code, Date.now() - 2 * MINUTE).all();
+		return people.results.map((p) => ({ id: p.account, name: p.name, avatar: p.avatar ?? 0, me: p.account === account.id }));
 	};
+	const roomAnswer = async (room) =>
+		json({ code: room.code, host: room.host === account.id, state: JSON.parse(room.state), rev: room.rev, now: Date.now(), people: await peopleIn(room.code) });
 	/** What's playing and where: `at` is this server's clock when it was said, so each house works out "now". */
 	const stateFrom = (sent, by) => ({
 		title: text(sent.title, 120),
@@ -519,9 +632,19 @@ async function answer(request, env, ctx) {
 			return roomAnswer(await roomOf(code));
 		}
 		if (!room[2] && method === 'GET') {
-			// (Still here: noted at most every 20 s, so asking every second or two costs no writes.)
-			if (Math.random() < 0.08) await env.DB.prepare('UPDATE room_members SET at = ? WHERE code = ? AND account = ?').bind(Date.now(), code, account.id).run();
-			if (Number(url.searchParams.get('rev')) === found.rev) return json({ same: true, rev: found.rev, now: Date.now() });
+			const now = Date.now();
+			// Still here: written only once it's 20 s old, so asking every second or two costs few writes.
+			// (It was 1 ask in 12 by chance: someone alone, asking every 8 s, could miss two minutes and drop off the room.)
+			await env.DB.prepare('UPDATE room_members SET at = ? WHERE code = ? AND account = ? AND at < ?').bind(now, code, account.id, now - 20 * 1000).run();
+			if (Number(url.searchParams.get('rev')) === found.rev) {
+				// Nothing new playing, but maybe someone came or went: `people` is who the asker has (ids,
+				// comma-separated). The rev only moves with what's playing, so a host never saw who joined.
+				const known = url.searchParams.get('people');
+				if (known === null) return json({ same: true, rev: found.rev, now });
+				const people = await peopleIn(code);
+				const ids = people.map((p) => p.id).sort().join(',');
+				return ids === known.split(',').filter(Boolean).sort().join(',') ? json({ same: true, rev: found.rev, now }) : json({ same: true, rev: found.rev, now, people });
+			}
 			return roomAnswer(found);
 		}
 	}

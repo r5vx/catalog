@@ -34,6 +34,20 @@ import { aniwaveFiles, aniwaveSeriesStarts, episodesBefore, hianimeFiles, type A
 import { vidriftCopies } from './sources/vidrift';
 import { movyCopy } from './sources/movy';
 import { vidfastCopy } from './sources/vidfast';
+import { sourceHasNot } from './sourceAnswers';
+
+/**
+ * 7Movies', Movy's and Vidfast's copies of a film or episode, listed by its TMDB id without asking
+ * them, except a source's that said lately it hasn't got it: picked, those failed at once
+ * (sourceAnswers.ts). Shared with the film list (routes/api/watch/resolve).
+ */
+export function unasked(what: { type: 'tv' | 'movie'; id: number; season: number; episode: number }) {
+	return [
+		...(sourceHasNot('7Movies', what) ? [] : vidriftCopies(what)),
+		...(sourceHasNot('Movy', what) ? [] : [movyCopy(what)]),
+		...(sourceHasNot('Vidfast', what) ? [] : [vidfastCopy(what)])
+	];
+}
 
 export type ListedEpisode = EpisodeInfo & {
 	/** The share this episode plays from, when it isn't the main entry's. */
@@ -459,7 +473,7 @@ export async function combineEpisodes(
 					const aired = dates.get(episode);
 					if (!aired || !hasAired(aired)) continue;
 					const what = { type: 'tv' as const, id: show.id, season: season.number, episode };
-					const files = [...vidriftCopies(what), movyCopy(what), vidfastCopy(what)];
+					const files = unasked(what);
 					const listed = episodes.find((e) => e.season === season.number && e.episode === episode);
 					if (listed) listed.files = [...listed.files, ...files];
 					else episodes.push({ season: season.number, episode, files });

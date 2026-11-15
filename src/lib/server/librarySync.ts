@@ -10,7 +10,10 @@
  * What never goes: the `settings` table, note pages, downloads, friends' files.
  *
  * Careful by design (the library has been corrupted before):
- * - Nothing is ever deleted: a title removed on one computer stays on the other.
+ * - A title removed by hand on one computer (library_removed) goes from the others too, unless
+ *   that computer turned it off (`removalsOn`); only when it wasn't changed there since. At most
+ *   MOST_REMOVES a round, and a copy of the library goes into `backups/` the first time each day.
+ *   Nothing else is ever deleted.
  * - Titles typed in by name (no TMDB or AniList id) have nothing to match on and stay put.
  * - A copy of the whole library goes into `backups/` before a profile's first round here.
  * - Each round's writes are one transaction, and at most MOST_ADDS titles are added per round.
@@ -21,14 +24,16 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { db, dbPath } from './db/index';
 import { readSettings, updateSettings } from './settings';
-import { categoryIdForSlug, existingSourceKeysWithIds, insertEntry } from './db/queries';
-import { cloud, onlineConnected } from './online';
+import { categoryIdForSlug, existingSourceKeysWithIds, insertEntry, listProfiles, noteRemoved } from './db/queries';
+import { cloud, onlineConnected, profileList } from './online';
 import { titleKey } from '$lib/titleKey';
 import { STATUSES } from '$lib/constants';
 
 const KIND = 'entry';
 /** Titles added per round at most; the rest come in the next round (a few seconds later). */
 const MOST_ADDS = 300;
+/** Titles removed per round at most, the same way. */
+const MOST_REMOVES = 100;
 /** The most one row may hold at the meeting point is 24,000 characters: a review longer than this stays here. */
 const MOST_VALUE = 23_000;
 /** Rows per upload, and characters per upload (the server takes up to 400 rows and 900 KB). */
@@ -51,30 +56,34 @@ type Value = {
 	n?: string;
 	a?: string | null;
 	b?: string | null;
+	/** 1: removed by hand (then `s` is "removed", which a Catalog from before removals skips). */
+	x?: number;
 };
 
 type Local = { key: string; value: Value; updated: number };
 
-export type LibraryRound = { at: number; sent: number; taken: number; added: number; skipped: number; left: number; longNotes: number; error: string };
-export type LibraryPreview = { here: number; there: number; add: number; update: number; send: number; nameOnly: number };
+export type LibraryRound = { at: number; sent: number; taken: number; added: number; removed: number; skipped: number; left: number; longNotes: number; error: string };
+export type LibraryPreview = { here: number; there: number; add: number; update: number; remove: number; send: number; nameOnly: number };
 
 /* ------------------------------------------------------------ the switch, per profile */
 
+/** The profiles kept in step: every profile, unless turned off (on by default since 2026-11-14 night). */
 export function libraryProfiles(): number[] {
-	try {
-		const list = JSON.parse(readSettings().onlineLibrary ?? '[]');
-		return Array.isArray(list) ? list.filter((n) => Number.isInteger(n)) : [];
-	} catch {
-		return [];
-	}
+	const off = new Set(profileList(readSettings().onlineLibraryOff));
+	return listProfiles()
+		.map((one) => one.id)
+		.filter((id) => !off.has(id));
 }
+
+/** Whether titles removed on one computer are removed here too (on unless turned off; per computer). */
+export const removalsOn = () => readSettings().onlineRemovals !== '0';
 
 /** Turns it on or off for a profile. Turning it on does the first round, and says how it went. */
 export async function setLibraryProfile(profile: number, on: boolean): Promise<LibraryRound | null> {
-	const now = new Set(libraryProfiles());
-	if (on) now.add(profile);
-	else now.delete(profile);
-	updateSettings({ onlineLibrary: now.size ? JSON.stringify([...now]) : undefined });
+	const off = new Set(profileList(readSettings().onlineLibraryOff));
+	if (on) off.delete(profile);
+	else off.add(profile);
+	updateSettings({ onlineLibraryOff: off.size ? JSON.stringify([...off]) : undefined });
 	if (!on) {
 		// Turned on again later, it starts over as a whole merge, which is what its preview shows.
 		const all = state();
@@ -176,6 +185,16 @@ function localRows(profile: number): Local[] {
 		}
 		out.push({ key, value, updated: toMs(row.updated) });
 	}
+	// Removed by hand here (and not added again since): sent as removals.
+	const here = new Set(out.map((row) => row.key));
+	const removed = db
+		.prepare('SELECT source, source_id AS sourceId, title, year, removed_at AS at FROM library_removed WHERE profile = ?')
+		.all(profile) as { source: string; sourceId: string; title: string; year: number | null; at: number }[];
+	for (const row of removed) {
+		const key = `${row.source}:${row.sourceId}`;
+		if (!KEY.test(key) || here.has(key)) continue;
+		out.push({ key, value: { t: row.title, y: row.year ?? null, c: '', s: 'removed', p: null, ls: null, le: null, x: 1 }, updated: row.at });
+	}
 	return out.sort((a, b) => a.updated - b.updated);
 }
 
@@ -253,9 +272,12 @@ export async function libraryPreview(profile: number): Promise<{ preview: Librar
 	const there = new Map(remote.rows.map((r) => [r.key, r]));
 	let add = 0;
 	let update = 0;
+	let remove = 0;
 	for (const row of there.values()) {
 		const here = find(row.key, row.value);
-		if (!here) add++;
+		if (row.value?.x === 1) {
+			if (here && removalsOn() && row.updated > here.updated) remove++;
+		} else if (!here) add++;
 		else if (row.updated > here.updated) update++;
 	}
 	let send = 0;
@@ -263,7 +285,8 @@ export async function libraryPreview(profile: number): Promise<{ preview: Librar
 		const theirs = there.get(row.key);
 		if (!theirs || row.updated > theirs.updated) send++;
 	}
-	return { preview: { here: local.length, there: there.size, add, update, send, nameOnly: nameOnlyCount(profile) }, error: '' };
+	const titles = (rows: { value: Value }[]) => rows.filter((row) => row.value?.x !== 1).length;
+	return { preview: { here: titles(local), there: titles([...there.values()]), add, update, remove, send, nameOnly: nameOnlyCount(profile) }, error: '' };
 }
 
 /* ------------------------------------------------------------ a round */
@@ -276,10 +299,20 @@ export const lastLibrarySync = new Map<number, LibraryRound>();
 const justTaken = new Map<string, number>();
 
 function backupFirst(profile: number): void {
+	backupAs(`library-before-library-sync-${profile}-${new Date().toISOString().slice(0, 10)}.db`);
+}
+
+/** Before the first title a day is removed by sync: a copy of the whole library, to undo it by hand. */
+function backupBeforeRemoving(profile: number): void {
+	backupAs(`library-before-sync-removals-${profile}-${new Date().toISOString().slice(0, 10)}.db`);
+}
+
+function backupAs(name: string): void {
 	const dir = join(dirname(dbPath), 'backups');
 	if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-	const file = join(dir, `library-before-library-sync-${profile}-${new Date().toISOString().slice(0, 10)}.db`);
+	const file = join(dir, name);
 	if (existsSync(file)) return;
+	// (Inside the round's transaction VACUUM can't run: the copy is made first, from outside it.)
 	db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
 }
 
@@ -314,7 +347,7 @@ export function syncLibrary(profile: number): Promise<LibraryRound> {
 }
 
 async function oneRound(profile: number): Promise<LibraryRound> {
-	const blank: LibraryRound = { at: Date.now(), sent: 0, taken: 0, added: 0, skipped: 0, left: 0, longNotes: 0, error: '' };
+	const blank: LibraryRound = { at: Date.now(), sent: 0, taken: 0, added: 0, removed: 0, skipped: 0, left: 0, longNotes: 0, error: '' };
 	if (!onlineConnected() || !libraryProfiles().includes(profile)) return { ...blank, error: 'Library sync is off' };
 	const round = { ...blank };
 	const done = (error = '') => {
@@ -362,16 +395,46 @@ async function oneRound(profile: number): Promise<LibraryRound> {
 		const find = matcher(profile);
 		let rev = revBefore;
 		const added: number[] = [];
+		// When each title removed here was removed.
+		const removedHere = new Map(
+			(db.prepare('SELECT source, source_id AS sourceId, removed_at AS at FROM library_removed WHERE profile = ?').all(profile) as { source: string; sourceId: string; at: number }[]).map(
+				(r) => [`${r.source}:${r.sourceId}`, r.at]
+			)
+		);
+		// Removals coming: the day's copy of the library first (VACUUM can't run inside the transaction).
+		if (removalsOn() && remote.rows.some((row) => row.value?.x === 1)) backupBeforeRemoving(profile);
 		db.exec('BEGIN');
 		try {
 			for (const [index, row] of remote.rows.entries()) {
 				const value = row.value;
+				// Removed by hand on another computer: gone here too, when it wasn't changed here since.
+				if (KEY.test(row.key) && value && typeof value === 'object' && value.x === 1) {
+					const here = removalsOn() ? find(row.key, value) : null;
+					if (here && row.updated > here.updated) {
+						if (round.removed >= MOST_REMOVES) {
+							round.left = remote.rows.length - index;
+							rev = row.rev - 1;
+							break;
+						}
+						remove(profile, here.id, row);
+						round.removed++;
+					} else round.skipped++;
+					justTaken.set(`${profile}|${row.key}`, row.updated);
+					rev = row.rev;
+					continue;
+				}
 				if (!KEY.test(row.key) || !value || typeof value !== 'object' || typeof value.t !== 'string' || !STATUS_VALUES.has(value.s)) {
 					round.skipped++;
 					rev = row.rev;
 					continue;
 				}
 				const here = find(row.key, value);
+				// Removed here after the other computer last changed it: stays removed (this removal goes out).
+				if (!here && (removedHere.get(row.key) ?? 0) >= row.updated) {
+					round.skipped++;
+					rev = row.rev;
+					continue;
+				}
 				if (!here) {
 					if (round.added >= MOST_ADDS) {
 						// The rest next round, from this row on. Rows sent together share one number there,
@@ -474,6 +537,18 @@ function change(profile: number, id: number, row: Remote): void {
 	}
 	set('updated_at', sqliteTime(row.updated));
 	db.prepare(`UPDATE profile_titles SET ${sets.join(', ')} WHERE id = ? AND profile = ?`).run(...values, id, profile);
+}
+
+/**
+ * A title removed by hand on the other computer: removed here, noted with their time (so it isn't
+ * sent back as news). Tags and cast go with it, as when Remove is pressed here.
+ */
+function remove(profile: number, id: number, row: Remote): void {
+	const at = row.key.indexOf(':');
+	const named = { source: row.key.slice(0, at), sourceId: row.key.slice(at + 1), title: String(row.value.t ?? ''), year: int(row.value.y) };
+	noteRemoved(profile, named, row.updated);
+	if (profile === 0) db.prepare('DELETE FROM entries WHERE id = ?').run(id);
+	else db.prepare('DELETE FROM profile_titles WHERE id = ? AND profile = ?').run(id, profile);
 }
 
 /* ------------------------------------------------------------ in the background */

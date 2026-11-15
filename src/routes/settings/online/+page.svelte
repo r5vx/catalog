@@ -1,7 +1,12 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { confirmAction } from '$lib/confirm.svelte';
+	import { page } from '$app/state';
+	import { p } from '$lib/altText';
 	import Profile from './Profile.svelte';
+
+	/** A line in the alternate wording when it's on (Settings → Personalization → Code), else as it is. */
+	const t = (text: string) => (page.data.altMode ? p(text) : text);
 
 	/**
 	 * Settings → Online (src/lib/server/online.ts): this computer joining the meeting point, who the
@@ -20,14 +25,20 @@
 		sync: boolean;
 		lastSync: { at: number; sent: number; got: number; error: string } | null;
 		library: { on: boolean; last: LibraryRound | null; nameOnly: number };
+		removals: boolean;
+		computerName: string;
 		owner: boolean;
 	};
-	type LibraryRound = { at: number; sent: number; taken: number; added: number; skipped: number; left: number; longNotes: number; error: string };
-	type LibraryPreview = { here: number; there: number; add: number; update: number; send: number; nameOnly: number };
+	type LibraryRound = { at: number; sent: number; taken: number; added: number; removed: number; skipped: number; left: number; longNotes: number; error: string };
+	type LibraryPreview = { here: number; there: number; add: number; update: number; remove: number; send: number; nameOnly: number };
 	type Report = { id: number; houseName: string; kind: string; title: string; body: string; created: number };
 
 	let status = $state<Status | null>(null);
 	let joinCode = $state('');
+	let joinName = $state('');
+	/** The name typed in the "pick a name" box (shown while this person is still called after the computer). */
+	let newName = $state('');
+	let naming = $state(false);
 	let working = $state(false);
 	let problem = $state('');
 	let linkCode = $state('');
@@ -65,7 +76,7 @@
 		event.preventDefault();
 		working = true;
 		problem = '';
-		const answer = await post({ action: 'connect', join: joinCode }).catch(() => null);
+		const answer = await post({ action: 'connect', join: joinCode, name: joinName }).catch(() => null);
 		working = false;
 		if (!answer?.ok) {
 			const said = await answer?.json().catch(() => null);
@@ -109,6 +120,21 @@
 		status.sync = on;
 		await post({ action: 'sync', on });
 		setTimeout(load, 4000);
+	}
+
+	async function saveName(event: SubmitEvent) {
+		event.preventDefault();
+		naming = true;
+		await cloud('me', 'PUT', { name: newName.trim() });
+		naming = false;
+		newName = '';
+		await load();
+	}
+
+	async function setRemovals(on: boolean) {
+		if (!status) return;
+		status.removals = on;
+		await post({ action: 'removals', on });
 	}
 
 	async function syncNow() {
@@ -268,16 +294,30 @@
 			online, and nothing from Settings does.
 		</p>
 		<form onsubmit={connect}>
-			<label for="join">Join code</label>
+			<label for="joinName">{t('Your name')}</label>
+			<input id="joinName" type="text" bind:value={joinName} maxlength="30" autocomplete="off" placeholder={t('What friends will call you')} />
+			<label for="join">{t('Join code')}</label>
 			<div class="row">
 				<input id="join" type="text" bind:value={joinCode} placeholder="XXXXX-XXXXX-XXXXX" autocomplete="off" spellcheck="false" />
-				<button type="submit" class="btn btn-primary" disabled={working || !joinCode.trim()}>{working ? 'Connecting…' : 'Connect'}</button>
+				<button type="submit" class="btn btn-primary" disabled={working || !joinCode.trim() || !joinName.trim()}>{working ? 'Connecting…' : 'Connect'}</button>
 			</div>
 		</form>
 		{#if problem}<p class="msg bad">{problem}</p>{/if}
 	</section>
 {:else}
 	{#if status.problem}<p class="msg bad">{status.problem}</p>{/if}
+
+	{#if status.account && status.account.name === status.computerName}
+		<!-- Still called after the computer (joined before a name was asked for): asked here. -->
+		<section class="ask">
+			<h2>{t('Pick a name')}</h2>
+			<p class="muted">{t('Friends see this profile as')} <strong>{status.account.name}</strong>, {t("the computer's name.")}</p>
+			<form onsubmit={saveName} class="row">
+				<input type="text" bind:value={newName} maxlength="30" autocomplete="off" placeholder={t('What friends will call you')} aria-label="Name" />
+				<button type="submit" class="btn btn-primary" disabled={naming || !newName.trim()}>{t('Save')}</button>
+			</form>
+		</section>
+	{/if}
 
 	<section>
 		<h2>You</h2>
@@ -313,8 +353,9 @@
 		{#if linkProblem}<p class="msg bad">{linkProblem}</p>{/if}
 		<label class="toggle">
 			<input type="checkbox" checked={status.sync} onchange={(e) => setSync(e.currentTarget.checked)} />
-			Keep my watch progress in step between my computers
+			{t('Keep Continue Watching in step between my computers')}
 		</label>
+		<p class="faint small">{t('Where you got to in every film and episode. An episode watched partly on each computer ends at the farther place on both.')}</p>
 		{#if status.sync}
 			<p class="faint small">
 				{#if status.lastSync?.error}{status.lastSync.error}
@@ -325,9 +366,16 @@
 		{/if}
 		<label class="toggle">
 			<input type="checkbox" checked={status.library.on || libraryAsk !== null} disabled={libraryLooking} onchange={(e) => askLibrary(e.currentTarget.checked)} />
-			Keep my library in step between my computers
+			{t('Keep my library in step between my computers')}
 		</label>
-		<p class="faint small">Statuses, ratings, favorites, reviews, dates and where you got to. Titles are never removed by it.</p>
+		<p class="faint small">{t('Statuses, ratings, favorites, reviews, dates and where you got to.')}</p>
+		{#if status.library.on}
+			<label class="toggle">
+				<input type="checkbox" checked={status.removals} onchange={(e) => setRemovals(e.currentTarget.checked)} />
+				{t('Remove titles here that I remove on my other computers')}
+			</label>
+			<p class="faint small">{t('A copy of this library goes in its backups folder the first time each day.')}</p>
+		{/if}
 		{#if libraryLooking}<p class="faint small">Looking…</p>{/if}
 		{#if libraryProblem}<p class="msg bad">{libraryProblem}</p>{/if}
 		{#if libraryAsk}
@@ -338,6 +386,7 @@
 				<ul>
 					<li><span class="tabular">{libraryAsk.add}</span> added here</li>
 					<li><span class="tabular">{libraryAsk.update}</span> updated here (changed there more recently)</li>
+					{#if libraryAsk.remove}<li><span class="tabular">{libraryAsk.remove}</span> removed here (removed there)</li>{/if}
 					<li><span class="tabular">{libraryAsk.send}</span> sent to your other computers</li>
 				</ul>
 				{#if libraryAsk.nameOnly}<p class="faint small">{libraryAsk.nameOnly === 1 ? '1 title typed in by name, with no TMDB or AniList match, stays' : `${libraryAsk.nameOnly} titles typed in by name, with no TMDB or AniList match, stay`} on this computer only.</p>{/if}
@@ -351,7 +400,7 @@
 		{#if status.library.on}
 			<p class="faint small">
 				{#if status.library.last?.error}{status.library.last.error}
-				{:else if status.library.last}Last at {when(status.library.last.at)}: {status.library.last.sent} sent, {status.library.last.taken} updated here, {status.library.last.added} added here{status.library.last.left ? `, ${status.library.last.left} still to come` : ''}.
+				{:else if status.library.last}Last at {when(status.library.last.at)}: {status.library.last.sent} sent, {status.library.last.taken} updated here, {status.library.last.added} added here{status.library.last.removed ? `, ${status.library.last.removed} removed here` : ''}{status.library.last.left ? `, ${status.library.last.left} still to come` : ''}.
 				{:else}Every two minutes.{/if}
 				<button type="button" class="link" onclick={libraryNow} disabled={working}>Now</button>
 			</p>
@@ -377,7 +426,7 @@
 			<input type="checkbox" checked={status.switches.along} onchange={(e) => setSwitch('along', e.currentTarget.checked)} />
 			Let friends watch along
 		</label>
-		<p class="faint small">Friends get a Watch along button beside what's playing here. Their play, pause and skips happen on this screen too.</p>
+		<p class="faint small">{t("Friends get a Watch along button beside what's playing here. Their screen follows this one; only this one controls it.")}</p>
 		<label class="toggle">
 			<input type="checkbox" checked={status.switches.shared} onchange={(e) => setSwitch('shared', e.currentTarget.checked)} />
 			Share intro and credit times

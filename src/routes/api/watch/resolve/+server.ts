@@ -22,7 +22,7 @@ import {
 import { pickFile, PREFERRED_QUALITY } from '$lib/watch';
 import { fetchAlternativeTitles, tmdbGet } from '$lib/server/metadata/tmdb';
 import { fetchRomajiTitle } from '$lib/server/metadata/anilist';
-import { combineEpisodes, tmdbShow, type EpisodeList } from '$lib/server/combinedEpisodes';
+import { combineEpisodes, tmdbShow, unasked, type EpisodeList } from '$lib/server/combinedEpisodes';
 import { aniwaveFilm } from '$lib/server/sources';
 import { aniwaveStream, parseAniwaveShareKey } from '$lib/server/sources/aniwave';
 import { vidriftCopies, vidriftStream } from '$lib/server/sources/vidrift';
@@ -75,7 +75,8 @@ async function filmCopies(title: string, year: string): Promise<FileOption[]> {
 	const id = await tmdbFilmId(title, year).catch(() => null);
 	if (!id) return [];
 	const what = { type: 'movie' as const, id, season: 0, episode: 0 };
-	return [...vidriftCopies(what), movyCopy(what), vidfastCopy(what)];
+	// (Not a source's that said lately it hasn't got the film: picked, it failed at once.)
+	return unasked(what);
 }
 
 async function findOnShowbox(title: string, type: string, year: string) {

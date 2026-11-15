@@ -96,8 +96,14 @@ export async function cloudPicture(account: string): Promise<{ bytes: ArrayBuffe
 	}
 }
 
-/** This computer joins, with the join code the owner gave out. */
-export async function connectOnline(joinCode: string): Promise<OnlineAnswer> {
+/** The computer's own name (what a person was called online when nothing else was given). */
+export const computerName = () => houseName();
+
+/**
+ * This computer joins, with the join code the owner gave out, and `name` is what the profile
+ * joining is called online (asked for: people were named after their PC, 2026-11-14).
+ */
+export async function connectOnline(joinCode: string, name = '', profile = 0): Promise<OnlineAnswer> {
 	// Back from "offline for now": the same computer and the same people as before.
 	if (onlineJoined()) {
 		updateSettings({ onlineOff: undefined });
@@ -107,6 +113,8 @@ export async function connectOnline(joinCode: string): Promise<OnlineAnswer> {
 	const answer = await cloud<{ house: string; key: string }>('/v1/houses', { open: true, body: { join: joinCode.trim().toUpperCase(), name: houseName() } });
 	if (answer.ok && answer.data?.house && answer.data.key) {
 		updateSettings({ onlineHouse: answer.data.house, onlineKey: answer.data.key });
+		// The name typed in, for the profile that joined (the person is made by this, named so).
+		if (name.trim()) await cloud('/v1/me', { method: 'PUT', profile, body: { name: name.trim().slice(0, 30) } });
 		startOnline();
 	}
 	return answer;
@@ -132,21 +140,32 @@ export function onlineSwitches(): OnlineSwitches {
 	return { reports: s.onlineReports !== '0', share: s.onlineShare !== '0', shared: s.onlineShared !== '0', along: s.onlineAlong === '1' };
 }
 
-/** The profiles whose progress is kept in step with their account. */
-export function syncProfiles(): number[] {
+/** A JSON list of profile numbers from a setting ([] when there's none or it can't be read). */
+export function profileList(text: string | undefined): number[] {
 	try {
-		const list = JSON.parse(readSettings().onlineSync ?? '[]');
+		const list = JSON.parse(text ?? '[]');
 		return Array.isArray(list) ? list.filter((n) => Number.isInteger(n)) : [];
 	} catch {
 		return [];
 	}
 }
 
+/**
+ * The profiles whose progress is kept in step with their account: every profile, unless turned off
+ * (owner, 2026-11-14: "who would sync their profiles for any reason other than syncing").
+ */
+export function syncProfiles(): number[] {
+	const off = new Set(profileList(readSettings().onlineSyncOff));
+	return listProfiles()
+		.map((one) => one.id)
+		.filter((id) => !off.has(id));
+}
+
 export function setSyncProfile(profile: number, on: boolean): void {
-	const now = new Set(syncProfiles());
-	if (on) now.add(profile);
-	else now.delete(profile);
-	updateSettings({ onlineSync: now.size ? JSON.stringify([...now]) : undefined });
+	const off = new Set(profileList(readSettings().onlineSyncOff));
+	if (on) off.delete(profile);
+	else off.add(profile);
+	updateSettings({ onlineSyncOff: off.size ? JSON.stringify([...off]) : undefined });
 	if (on) void syncNow(profile);
 }
 
@@ -214,6 +233,18 @@ export function noteWatchingMore(profile: number, more: { title: string; year: s
 }
 
 /** Called as the player saves its place: tells this profile's friends, a minute apart at most. */
+/**
+ * The player was left (or closed): friends stop seeing this profile as watching straight away.
+ * It used to stay up to three minutes after the last saved place, and longer to look at, since the
+ * Friends page didn't ask again (owner, 2026-11-15). Watching again says so with its next save.
+ */
+export function noteStopped(profile: number): void {
+	said.delete(profile);
+	playingNow.delete(profile);
+	if (!onlineConnected() || !onlineSwitches().share) return;
+	void cloud('/v1/presence', { method: 'DELETE', profile });
+}
+
 export function noteWatching(profile: number, what: { title: string; type: string; season: number; episode: number; poster?: string }): void {
 	const switches = onlineSwitches();
 	if (!onlineConnected() || !switches.share) return;
@@ -252,6 +283,75 @@ export async function shareSeen(): Promise<void> {
 		}
 		if (ok) seenSent.set(profile, now);
 	}
+}
+
+/* ------------------------------------------------------------ what's been watched lately, for friends' feed */
+
+const activitySent = new Map<number, string>();
+const ACTIVITY_POSTER = /^https:\/\/(image\.tmdb\.org|s4\.anilist\.co)\//;
+
+/**
+ * Each profile's 20 titles watched most lately, with the rating given, for the feed on friends'
+ * Friends page. When: the day it was finished, at the time it was marked when that's the same day
+ * (an import of 400 old titles keeps their old dates, so it doesn't fill the feed). Sent when the
+ * list changed, with sharing on.
+ */
+export async function shareActivity(): Promise<void> {
+	if (!onlineConnected() || !onlineSwitches().share) return;
+	for (const { id: profile } of listProfiles()) {
+		type Row = { source: string; id: string; title: string; year: number | null; category: string | null; poster: string | null; rating: number | null; finished: string | null; updated: string };
+		const rows = (
+			profile === 0
+				? db
+						.prepare(
+							`SELECT e.source, e.source_id AS id, e.title, e.year, c.slug AS category, e.poster_url AS poster, e.rating, e.finished_on AS finished, e.updated_at AS updated
+							 FROM entries e LEFT JOIN categories c ON c.id = e.category_id
+							 WHERE e.source IN ('tmdb', 'anilist') AND e.source_id IS NOT NULL AND e.status IN ${WATCHED_SQL}
+							 ORDER BY COALESCE(e.finished_on, substr(e.updated_at, 1, 10)) DESC, e.updated_at DESC LIMIT 20`
+						)
+						.all()
+				: db
+						.prepare(
+							`SELECT source, source_id AS id, title, year, category, poster_url AS poster, NULL AS rating, NULL AS finished, updated_at AS updated
+							 FROM profile_titles WHERE profile = ? AND source IN ('tmdb', 'anilist') AND status IN ${WATCHED_SQL}
+							 ORDER BY updated_at DESC LIMIT 20`
+						)
+						.all(profile)
+		) as Row[];
+		const items = rows
+			.map((r) => {
+				const marked = Date.parse(/[zZ]$/.test(r.updated) ? r.updated : `${r.updated.replace(' ', 'T')}Z`) || 0;
+				const day = r.finished && /^\d{4}-\d{2}-\d{2}$/.test(r.finished) ? r.finished : '';
+				const at = day && new Date(marked).toISOString().slice(0, 10) !== day ? Date.parse(`${day}T12:00:00Z`) : marked;
+				return {
+					key: `${r.source}:${r.id}`,
+					title: r.title,
+					year: r.year ?? '',
+					type: r.category === 'movies' ? 'movie' : 'tv',
+					poster: ACTIVITY_POSTER.test(r.poster ?? '') ? r.poster : '',
+					rating: r.rating,
+					at
+				};
+			})
+			.filter((i) => SEEN_KEY.test(i.key) && i.key.length <= 40 && i.at > 0);
+		const now = JSON.stringify(items);
+		if (activitySent.get(profile) === now || (!items.length && !activitySent.has(profile) && profile !== 0)) continue;
+		const answer = await cloud('/v1/activity', { method: 'PUT', profile, body: { items }, timeout: 20_000 });
+		if (answer.ok) activitySent.set(profile, now);
+	}
+}
+
+/**
+ * The last answers about friends, per profile, so the Friends page shows them the moment it
+ * opens (it was blank for a second while the meeting point was asked), then asks again.
+ */
+const friendsKept = new Map<number, { friends?: unknown; activity?: unknown }>();
+export function keepFriendsAnswer(profile: number, what: 'friends' | 'activity', data: unknown): void {
+	friendsKept.set(profile, { ...friendsKept.get(profile), [what]: data });
+}
+export function friendsSnapshot(profile: number): { friends: unknown; activity: unknown } {
+	const kept = friendsKept.get(profile);
+	return { friends: kept?.friends ?? null, activity: kept?.activity ?? null };
 }
 
 /* ------------------------------------------------------------ progress in step between computers */
@@ -327,6 +427,20 @@ export async function syncNow(profile: number): Promise<{ sent: number; got: num
 				updated_at = excluded.updated_at
 			 WHERE excluded.updated_at > watch_progress.updated_at`
 		);
+		// A show's episode: the place here, to keep the farther of the two.
+		const mine = db.prepare(
+			`SELECT CAST("current_time" AS REAL) AS place, duration, poster_url AS poster, updated_at AS updated
+			 FROM watch_progress WHERE profile = ? AND title = ? AND type = 'tv' AND season = ? AND episode = ?`
+		);
+		const takeFarther = db.prepare(
+			`UPDATE watch_progress SET "current_time" = ?, duration = ?, updated_at = MAX(updated_at, ?),
+				poster_url = CASE WHEN ? != '' THEN ? ELSE poster_url END
+			 WHERE profile = ? AND title = ? AND type = 'tv' AND season = ? AND episode = ?`
+		);
+		const stamp = db.prepare(`UPDATE watch_progress SET updated_at = ? WHERE profile = ? AND title = ? AND type = 'tv' AND season = ? AND episode = ?`);
+		/** Episodes where this computer had got farther: sent back out at once, so the others get the farther place too. */
+		const sendBack: { kind: string; key: string; value: { t: number; d: number; p: string }; updated: number }[] = [];
+		const asTime = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
 		for (let round = 0; round < 20; round++) {
 			type Row = { kind: string; key: string; value: { t?: number; d?: number; p?: string }; updated: number };
 			const answer = await cloud<{ rows: Row[]; rev: number; more: boolean }>(`/v1/sync?since=${rev}`, { profile, timeout: 30_000 });
@@ -337,13 +451,36 @@ export async function syncNow(profile: number): Promise<{ sent: number; got: num
 				const place = Number(row.value?.t);
 				const duration = Number(row.value?.d);
 				if (!title || !Number.isFinite(place) || !Number.isFinite(duration)) continue;
-				const when = new Date(row.updated).toISOString().slice(0, 19).replace('T', ' ');
+				const when = asTime(row.updated);
 				const poster = /^https:\/\/image\.tmdb\.org\//.test(row.value?.p ?? '') ? row.value.p! : '';
-				const result = take.run(profile, title, type === 'tv' ? 'tv' : 'movie', Number(season) || 0, Number(episode) || 0, place, duration, poster, when);
+				const s = Number(season) || 0;
+				const e = Number(episode) || 0;
+				// A show (owner, 2026-11-14: "for tv shows make it accept the one that has farther
+				// progress"): half an episode watched here and half there ends at the farther place on
+				// both, whichever was saved last. Films: the one saved last, as before.
+				const here = type === 'tv' ? (mine.get(profile, title, s, e) as { place: number; duration: number; poster: string; updated: string } | undefined) : undefined;
+				if (here) {
+					if (place > here.place) {
+						takeFarther.run(place, duration, when, poster, poster, profile, title, s, e);
+						got++;
+					} else if (here.place > place) {
+						// Saved after the farther one there: this one goes back out, a second later than theirs.
+						const theirs = row.updated + 1000;
+						if (Date.parse(`${here.updated.replace(' ', 'T')}Z`) < theirs) stamp.run(asTime(theirs), profile, title, s, e);
+						sendBack.push({ kind: 'progress', key: row.key, value: { t: here.place, d: here.duration, p: here.poster ?? '' }, updated: Math.max(theirs, Date.parse(`${here.updated.replace(' ', 'T')}Z`) || 0) });
+					}
+					continue;
+				}
+				const result = take.run(profile, title, type === 'tv' ? 'tv' : 'movie', s, e, place, duration, poster, when);
 				if (result.changes) got++;
 			}
 			rev = answer.data.rev;
 			if (!answer.data.more) break;
+		}
+		for (let at = 0; at < sendBack.length; at += 300) {
+			const answer = await cloud('/v1/sync', { method: 'PUT', profile, timeout: 30_000, body: { rows: sendBack.slice(at, at + 300) } });
+			if (!answer.ok) break;
+			sent += Math.min(300, sendBack.length - at);
 		}
 		// (What was just taken is as old as it was there, so it isn't sent back as news.)
 		const all = syncState();
@@ -413,6 +550,9 @@ export function startOnline(): void {
 	setTimeout(hello, 20_000).unref?.();
 	setTimeout(() => void shareSeen().catch(() => {}), 90_000).unref?.();
 	setInterval(() => void shareSeen().catch(() => {}), 10 * 60 * 1000).unref?.();
+	// Lately watched, for friends' feed: soon after start, then every 5 minutes (sent only when changed).
+	setTimeout(() => void shareActivity().catch(() => {}), 60_000).unref?.();
+	setInterval(() => void shareActivity().catch(() => {}), 5 * 60 * 1000).unref?.();
 	setInterval(() => {
 		for (const profile of syncProfiles()) void syncNow(profile);
 	}, 2 * 60 * 1000).unref?.();

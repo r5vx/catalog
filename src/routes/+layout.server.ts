@@ -5,7 +5,7 @@ import { countNotes } from '$lib/server/db/notes';
 import { DEFAULT_ACCENT, isHexColour } from '$lib/accent';
 import { backgroundFrom } from '$lib/background';
 import { readCustomTheme } from '$lib/customTheme';
-import { warmBrowseCache } from '$lib/server/metadata';
+import { warmBrowseCache, hasTmdbKey } from '$lib/server/metadata';
 import { showboxSignin } from '$lib/server/showboxSignin';
 import type { LayoutServerLoad } from './$types';
 
@@ -59,6 +59,8 @@ export const load: LayoutServerLoad = async ({ request, getClientAddress }) => {
 
 	return {
 		sideTabs,
+		// No TMDB key: a banner says so (src/lib/TmdbBanner.svelte), as most pages need one.
+		tmdbMissing: !hasTmdbKey(),
 		accent: isHexColour(saved) ? saved : DEFAULT_ACCENT,
 		hiddenSorts: (settings.hiddenSorts ?? '').split(',').filter(Boolean),
 		hiddenTabs: (settings.hiddenTabs ?? '').split(',').filter(Boolean),

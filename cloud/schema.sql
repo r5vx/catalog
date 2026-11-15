@@ -65,6 +65,23 @@ CREATE TABLE IF NOT EXISTS seen (
 );
 CREATE INDEX IF NOT EXISTS seen_key ON seen (tkey);
 
+-- What an account watched lately, for its friends' feed: its newest 20 (a JSON list), replaced whole
+-- each time it's sent. Each Catalog sends its own: the title, when, and the rating given.
+CREATE TABLE IF NOT EXISTS activity (
+	account TEXT PRIMARY KEY,
+	items TEXT NOT NULL,
+	updated INTEGER NOT NULL
+);
+
+-- Asked to be friends: from someone a friend knows (a friend's friend), until answered.
+CREATE TABLE IF NOT EXISTS friend_requests (
+	from_account TEXT NOT NULL,
+	to_account TEXT NOT NULL,
+	at INTEGER NOT NULL,
+	PRIMARY KEY (from_account, to_account)
+);
+CREATE INDEX IF NOT EXISTS friend_requests_to ON friend_requests (to_account);
+
 -- Watching together: one room, what's playing and where, and who's in it.
 CREATE TABLE IF NOT EXISTS rooms (
 	code TEXT PRIMARY KEY,

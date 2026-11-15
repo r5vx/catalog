@@ -42,10 +42,17 @@ export const together = $state({
 	host: false,
 	people: [] as RoomPerson[],
 	state: null as RoomState | null,
-	problem: ''
+	problem: '',
+	/**
+	 * Watching along with this friend (their name): this screen follows the room and never moves
+	 * it, like listening along on Spotify. '' in a room joined by its code, where everyone's play,
+	 * pause and skips count (a group session).
+	 */
+	following: ''
 });
 
 const KEPT = 'catalog:room';
+const KEPT_FOLLOWING = 'catalog:room-following';
 const ASK_EVERY = 1500;
 /** While nobody else is in the room there's nobody to keep in step with: asked this seldom. */
 const ASK_EVERY_ALONE = 8000;
@@ -129,7 +136,8 @@ export async function startRoom(): Promise<boolean> {
 	return Boolean(answer);
 }
 
-export async function joinRoom(code: string): Promise<boolean> {
+/** Into a room by its code (everyone controls it), or, with `following`, watching along with that friend (they control it). */
+export async function joinRoom(code: string, following = ''): Promise<boolean> {
 	const clean = code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
 	if (clean.length !== 6) {
 		together.problem = 'A room code is six letters and digits';
@@ -138,6 +146,11 @@ export async function joinRoom(code: string): Promise<boolean> {
 	const answer = await ask<RoomAnswer>(`rooms/${clean}/join`, 'POST', {});
 	if (answer) {
 		leftByHand = false;
+		together.following = following;
+		try {
+			if (following) localStorage.setItem(KEPT_FOLLOWING, following);
+			else localStorage.removeItem(KEPT_FOLLOWING);
+		} catch {}
 		took(answer);
 		// (Someone is here now: looked at often from the start.)
 		lookLater();
@@ -154,9 +167,11 @@ export function leaveRoom(): void {
 	together.state = null;
 	together.people = [];
 	together.problem = '';
+	together.following = '';
 	rev = 0;
 	try {
 		localStorage.removeItem(KEPT);
+		localStorage.removeItem(KEPT_FOLLOWING);
 	} catch {}
 	if (code) void ask(`rooms/${code}/leave`, 'POST', {});
 }
@@ -165,15 +180,20 @@ export function leaveRoom(): void {
 export function rejoinKeptRoom(): void {
 	if (together.code || typeof localStorage === 'undefined') return;
 	let kept = '';
+	let following = '';
 	try {
 		kept = localStorage.getItem(KEPT) ?? '';
+		following = localStorage.getItem(KEPT_FOLLOWING) ?? '';
 	} catch {}
-	if (kept) void joinRoom(kept).then((ok) => !ok && leaveRoom());
+	if (kept) void joinRoom(kept, following).then((ok) => !ok && leaveRoom());
 }
 
 async function look(): Promise<void> {
 	if (!together.code) return;
-	const answer = await ask<RoomAnswer>(`rooms/${together.code}?rev=${rev}`);
+	// Who's here as this screen knows it: the room answers with everyone when that's changed, even
+	// with nothing new playing (a host never saw who joined: only what's playing moves `rev`).
+	const known = together.people.map((person) => person.id).join(',');
+	const answer = await ask<RoomAnswer>(`rooms/${together.code}?rev=${rev}&people=${encodeURIComponent(known)}`);
 	// The room ended (nobody in it for half a day), or this screen was never let in.
 	if (!answer) {
 		if (/No such room|Join the room/.test(together.problem)) leaveRoom();
@@ -181,6 +201,8 @@ async function look(): Promise<void> {
 	}
 	if (answer.same) {
 		clockAhead = answer.now - Date.now();
+		// Someone came or went: only the list changes, nothing is moved on the video.
+		if (answer.people) together.people = answer.people;
 		return;
 	}
 	took(answer);
@@ -289,9 +311,9 @@ function heard(event: Event): void {
 	tell();
 }
 
-/** What happened on this screen, told to the room. */
+/** What happened on this screen, told to the room (never while watching along: the friend leads). */
 function tell(): void {
-	if (!attached || !together.code || Date.now() < applyingUntil) return;
+	if (!attached || !together.code || together.following || Date.now() < applyingUntil) return;
 	const mine = stateNow();
 	const state = together.state;
 	// Something else than the room is watching: only the one who started the room moves it there.

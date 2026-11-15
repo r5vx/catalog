@@ -13,6 +13,36 @@
 	// again, ends where you started (Browse's Actors, say).
 	const here = $derived(data.back ? `/person/${personKey}?back=${encodeURIComponent(data.back)}` : `/person/${personKey}`);
 
+	/**
+	 * Video games they voiced, and as whom (Wikidata, src/lib/server/metadata/gameRoles.ts). Asked
+	 * once the page shows: the lookup takes a few seconds the first time (kept after). Null while
+	 * it's being asked.
+	 */
+	type GameRole = { title: string; year: number | null; roles: string[]; link: string | null };
+	let games = $state<GameRole[] | null>(null);
+	let gamesShown = $state(12);
+	$effect(() => {
+		const sourceId = data.person.sourceId ?? '';
+		games = null;
+		gamesShown = 12;
+		if (!/^(tmdb|anilist):\d+$/.test(sourceId)) {
+			games = [];
+			return;
+		}
+		let stale = false;
+		fetch(`/api/person/games?id=${encodeURIComponent(sourceId)}`)
+			.then((r) => (r.ok ? r.json() : null))
+			.then((answer) => {
+				if (!stale) games = answer?.games ?? [];
+			})
+			.catch(() => {
+				if (!stale) games = [];
+			});
+		return () => {
+			stale = true;
+		};
+	});
+
 	/** Titles added from here, so the button can show it worked. */
 	let justAdded = $state<Record<string, number>>({});
 	let adding = $state<string | null>(null);
@@ -216,6 +246,31 @@
 	</section>
 {/if}
 
+<!-- Only once there's something: most people have no games, and an empty heading says nothing. -->
+{#if games && games.length > 0}
+	<section class="known games">
+		<h2>Video games</h2>
+		<p class="muted small">Voice roles, from Wikidata.</p>
+		<ul class="game-list">
+			{#each games.slice(0, gamesShown) as game (game.title + (game.year ?? ''))}
+				<li>
+					<span class="year faint tabular">{game.year ?? '—'}</span>
+					<span class="game">
+						{#if game.link}<a href={game.link} target="_blank" rel="noopener noreferrer">{game.title}</a>{:else}{game.title}{/if}
+						{#if game.roles.length}<span class="role faint">as {game.roles.join(', ')}</span>{/if}
+					</span>
+				</li>
+			{/each}
+		</ul>
+		{#if games.length > gamesShown}
+			<button type="button" class="btn more" onclick={() => (gamesShown += 24)}>
+				Show {Math.min(24, games.length - gamesShown)} more
+				<span class="faint tabular">({games.length - gamesShown} left)</span>
+			</button>
+		{/if}
+	</section>
+{/if}
+
 {#if ownedMenu}
 	{@const item = ownedMenu.item}
 	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -391,6 +446,45 @@
 	.known h2 {
 		font-size: 1.1rem;
 		margin: 0;
+	}
+
+	/* Video games: one line each, the year, the game (to its Wikipedia page) and who they voiced. */
+	.game-list {
+		list-style: none;
+		margin: 14px 0 0;
+		padding: 0;
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+		gap: 8px 24px;
+	}
+
+	.game-list li {
+		display: flex;
+		gap: 12px;
+		align-items: baseline;
+		min-width: 0;
+	}
+
+	.game-list .year {
+		flex: none;
+		width: 3.2em;
+		font-size: 0.85rem;
+	}
+
+	.game-list .game {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+		font-weight: 600;
+	}
+
+	.game-list .game a:hover {
+		color: var(--accent);
+	}
+
+	.game-list .role {
+		font-weight: 400;
+		font-size: 0.85rem;
 	}
 
 	.known .small {

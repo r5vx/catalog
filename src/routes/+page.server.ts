@@ -1,4 +1,5 @@
-import { tvLibrary, listCategories, listEntries, countsByCategory, completedCount, completedByCategory, sharedCatalogCount, existingSourceKeys, existingSourceKeysWithIds } from '$lib/server/db/queries';
+import { tvLibrary, listCategories, listEntries, countsByCategory, completedCount, completedByCategory, sharedCatalogCount, existingSourceKeys, existingSourceKeysWithIds, listSharedCatalogs } from '$lib/server/db/queries';
+import { friendsSnapshot, onlineConnected } from '$lib/server/online';
 import { countNotes } from '$lib/server/db/notes';
 import { withNextAir } from '$lib/server/nextAirs';
 import { listTags } from '$lib/server/db/tags';
@@ -58,7 +59,7 @@ export const load: PageServerLoad = async ({ url, request }) => {
 
 	// On a phone, someone other than the library's owner: their own list, as the TV shows them.
 	if (currentProfile() !== MAIN_PROFILE) {
-		return { ...ownList({ q, category: activeCategory, status }, categories), filters: { q, cat, status, sort: sort.value, tags: [] as number[], yearFrom: null, yearTo: null }, rememberView: null, continueWatching: await continueWatchingWithPosters(), friendCount: 0, ownedKeys: [] as string[], ownedMap: {} as ReturnType<typeof existingSourceKeysWithIds> };
+		return { ...ownList({ q, category: activeCategory, status }, categories), filters: { q, cat, status, sort: sort.value, tags: [] as number[], yearFrom: null, yearTo: null }, rememberView: null, continueWatching: await continueWatchingWithPosters(), friendCount: 0, ownedKeys: [] as string[], ownedMap: {} as ReturnType<typeof existingSourceKeysWithIds>, friendsStart: null };
 	}
 
 	// Caught-up shows carry their next episode's air date (their card's countdown).
@@ -92,7 +93,10 @@ export const load: PageServerLoad = async ({ url, request }) => {
 		friendCount: sharedCatalogCount(),
 		ownedKeys: [...existingSourceKeys()],
 		ownedMap: existingSourceKeysWithIds(),
-		ownList: false
+		ownList: false,
+		// The Friends tab shows straight away: friends' files from here, and the last answers about
+		// friends online (asked again by the page). Read only; nothing is asked of the meeting point here.
+		friendsStart: cat === 'friends' ? { online: onlineConnected(), ...friendsSnapshot(MAIN_PROFILE), files: listSharedCatalogs() } : null
 	};
 };
 

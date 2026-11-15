@@ -466,13 +466,25 @@
 	}
 
 	/** The sharpest copy, when two or more are known and it stands out (a fifth more). */
+	/**
+	 * The copy the tag is on. It stays there until another is a fifth sharper than it: worked out
+	 * afresh with each new measurement, two copies close in speed traded the tag back and forth every
+	 * few seconds (a friend's Files menu on an anime, 2026-11-14).
+	 */
+	let sharpestHeld = $state('');
 	const sharpestKey = $derived.by(() => {
-		const known = currentFiles.map((f) => copySharp[copyKey(f)]?.mbps ?? 0).filter((m) => m > 0);
+		const known = currentFiles
+			.map((f) => ({ key: copyKey(f), mbps: copySharp[copyKey(f)]?.mbps ?? 0 }))
+			.filter((one) => one.mbps > 0)
+			.sort((a, b) => b.mbps - a.mbps);
 		if (known.length < 2) return '';
-		const sorted = [...known].sort((a, b) => b - a);
-		if (sorted[0] < sorted[1] * 1.2) return '';
-		const best = currentFiles.find((f) => copySharp[copyKey(f)]?.mbps === sorted[0]);
-		return best ? copyKey(best) : '';
+		const held = known.find((one) => one.key === sharpestHeld);
+		if (held && known[0].mbps < held.mbps * 1.2) return held.key;
+		if (known[0].mbps < known[1].mbps * 1.2) return '';
+		return known[0].key;
+	});
+	$effect(() => {
+		if (sharpestKey) sharpestHeld = sharpestKey;
 	});
 
 	/** The pieces of the copy playing, as they load: about 24 s of them gives its real Mbps. */
@@ -1028,11 +1040,12 @@
 		timingSubs = true;
 		timingSubsTimer = setTimeout(() => (timingSubs = false), 120_000);
 	}
-	let videoFit = $state<'contain' | 'cover'>('cover');
 	/*
-	 * A phone held upright: always Fit. Fill (the default, for wide screens) cropped a film to a
-	 * narrow strip of its middle there (2026-11-08). Sideways, the choice applies.
+	 * Fit unless Fill is picked (owner, 2026-11-15: "fill is only good in some scenarios"; it crops
+	 * the picture's edges). A phone held upright: always Fit. Fill cropped a film to a narrow strip
+	 * of its middle there (2026-11-08). Sideways, the choice applies.
 	 */
+	let videoFit = $state<'contain' | 'cover'>('contain');
 	let portrait = $state(false);
 	$effect(() => {
 		const tall = window.matchMedia('(orientation: portrait)');
@@ -3841,9 +3854,17 @@
 		notePlayerEvent('fresh link');
 		// Live: the channel loaded again (its playlist asks for a fresh stream), a few times at most.
 		if (sportsMode) {
-			if (liveRestarts++ >= 4) {
+			// A channel that has shown nothing since it was opened isn't on: said now, not after four more
+			// tries of up to a minute each (NBC USA with nothing on loaded forever, 2026-11-15). One that
+			// played and then got stuck is started again, a few times.
+			const neverPlayed = liveMode && !((videoEl?.currentTime ?? 0) > 0);
+			if (liveRestarts++ >= (neverPlayed ? 0 : 4)) {
 				tellChannel(false);
-				problem = liveMode ? "This channel can't be played right now." : "This replay can't be played right now. Try another version.";
+				problem = liveMode
+					? neverPlayed
+						? "This channel isn't on right now. Try another channel, or try again later."
+						: "This channel can't be played right now."
+					: "This replay can't be played right now. Try another version.";
 				stalledOut = true;
 				return;
 			}
@@ -4271,6 +4292,43 @@
 			keepalive: true
 		}).catch(() => {});
 		showQualityToast(r.afterPause ? `Reloaded after the pause · still at ${fmt(r.spot)}` : `Video reloaded · still at ${fmt(r.spot)}`);
+	}
+
+	/**
+	 * Who last set the video's place, so the stop log's "jumped to" says who moved it: you, code
+	 * (where from), or the browser by itself. Two reports (2026-11-15: Coraline on Showbox, a Movy
+	 * film) went back 1.6 and 4.8 s with minutes loaded, and nothing in the log said what moved it.
+	 */
+	let lastSetBy: { at: number; from: string } | null = null;
+	$effect(() => {
+		const v = videoEl;
+		const own = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime');
+		if (!v || !own?.get || !own.set) return;
+		Object.defineProperty(v, 'currentTime', {
+			configurable: true,
+			get() {
+				return own.get!.call(this);
+			},
+			set(value: number) {
+				// The two calls before this one, as file:line (no addresses, nothing private).
+				const from = (new Error().stack ?? '')
+					.split('\n')
+					.slice(2, 4)
+					.map((line) => line.trim().replace(/^at\s+/, '').replace(/\(?[a-z]+:\/\/[^\s)]*\/([^/\s)]+)\)?/gi, '$1'))
+					.join(' < ');
+				lastSetBy = { at: performance.now(), from: from.slice(0, 160) };
+				own.set!.call(this, value);
+			}
+		});
+		return () => {
+			delete (v as unknown as Record<string, unknown>).currentTime;
+		};
+	});
+	function whoMoved(): string {
+		const now = performance.now();
+		if (now - lastInputAt < 2000) return 'you';
+		if (lastSetBy && now - lastSetBy.at < 250) return `code: ${lastSetBy.from}`;
+		return 'the browser';
 	}
 
 	function noteJumpBack() {
@@ -5071,7 +5129,24 @@
 	 */
 	type KeptSubs = { fileName: string; language: string };
 	const showSubsKey = () => `catalog:showSubs:${(lastResolveArgs?.title ?? '').toLowerCase()}`;
+	/**
+	 * The show's subtitles as the library keeps them (/api/watch/show-subs): asked once per show.
+	 * The browser's copy alone was lost with local storage, and a TV or phone never had it, so a
+	 * show started again on a file timed for another release (2026-11-15).
+	 */
+	let librarySubs: { key: string; value: KeptSubs | null } | null = null;
+	async function askLibrarySubs(): Promise<void> {
+		const key = showSubsKey();
+		const title = lastResolveArgs?.title ?? '';
+		if (showType !== 'tv' || !title || librarySubs?.key === key) return;
+		const value = await fetch(`/api/watch/show-subs?title=${encodeURIComponent(title)}`)
+			.then((r) => (r.ok ? r.json() : null))
+			.catch(() => null);
+		librarySubs = { key, value: value?.fileName ? (value as KeptSubs) : null };
+	}
 	function keptShowSubs(): KeptSubs | null {
+		// The library's first: it's the same on every screen.
+		if (librarySubs?.key === showSubsKey() && librarySubs.value) return librarySubs.value;
 		try {
 			const kept = JSON.parse(localStorage.getItem(showSubsKey()) ?? 'null');
 			return kept?.fileName ? kept : null;
@@ -5081,9 +5156,14 @@
 	}
 	function keepShowSubs(sub: SubOption) {
 		if (showType !== 'tv' || !sub.fileName) return;
+		const kept = { fileName: sub.fileName, language: sub.language };
+		librarySubs = { key: showSubsKey(), value: kept };
 		try {
-			localStorage.setItem(showSubsKey(), JSON.stringify({ fileName: sub.fileName, language: sub.language }));
+			localStorage.setItem(showSubsKey(), JSON.stringify(kept));
 		} catch {}
+		const title = lastResolveArgs?.title ?? '';
+		if (title)
+			void fetch('/api/watch/show-subs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, ...kept }) }).catch(() => {});
 	}
 
 	/** A subtitle file's release, like "bluray|reward" (empty when its name doesn't say). */
@@ -5125,6 +5205,8 @@
 	async function fetchSubtitles(autoMatch?: { fileName: string; language: string; delay: number }) {
 		if (sportsMode) return;
 		if (!videoTitle) return;
+		// What the library remembers for this show, before choosing (a quick local ask, once a show).
+		await askLibrarySubs();
 		const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
 		const ep = showType === 'tv' ? activeEpisode : null;
 		const dub = hearingDub();
@@ -5976,7 +6058,9 @@
 				renderTextTracksNatively: false,
 				// Live: finding a channel's stream can take the computer half a minute.
 				...(liveMode
-					? { manifestLoadPolicy: { default: { maxTimeToFirstByteMs: 40_000, maxLoadTimeMs: 60_000, timeoutRetry: { maxNumRetry: 2, retryDelayMs: 0, maxRetryDelayMs: 0 }, errorRetry: { maxNumRetry: 2, retryDelayMs: 2000, maxRetryDelayMs: 4000 } } } }
+					? // (One retry each: a channel that isn't on kept the page loading for minutes, 2026-11-15.
+						// Each retry is asked on the channel's next player server, daddylive.ts liveTrouble.)
+						{ manifestLoadPolicy: { default: { maxTimeToFirstByteMs: 40_000, maxLoadTimeMs: 60_000, timeoutRetry: { maxNumRetry: 1, retryDelayMs: 0, maxRetryDelayMs: 0 }, errorRetry: { maxNumRetry: 1, retryDelayMs: 2000, maxRetryDelayMs: 4000 } } } }
 					: {}),
 				enableWebVTT: false,
 				enableIMSC1: false,
@@ -6020,6 +6104,10 @@
 			hls.on(Hls.Events.FRAG_LOADING, (_e, data) => pieceAsked(data.frag));
 			hls.on(Hls.Events.FRAG_LOADED, (_e, data) => pieceArrived(data.frag));
 			hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, () => notePlayerEvent('sound track changed'));
+			// What was loaded being cleared (a quality or sound change does it): for the stop log.
+			hls.on(Hls.Events.BUFFER_FLUSHING, (_e, data) =>
+				notePlayerEvent(`cleared ${data.type ?? 'everything'} from ${fmt(data.startOffset)}${Number.isFinite(data.endOffset) ? ` to ${fmt(data.endOffset)}` : ''}`)
+			);
 			hls.on(Hls.Events.BUFFER_APPENDED, (_e, data) => {
 				trackRanges = { ...trackRanges, ...data.timeRanges };
 				if (data.type === 'video') mendPictureSeam(hls, data.timeRanges.video, data.frag.end);
@@ -6382,7 +6470,7 @@
 			const kept = JSON.parse(localStorage.getItem(SUB_LANGUAGES) ?? 'null');
 			if (Array.isArray(kept) && kept.length) subLanguages = kept;
 		} catch {}
-		try { if (localStorage.getItem(VIDEO_FIT) === 'contain') videoFit = 'contain'; } catch {}
+		try { if (localStorage.getItem(VIDEO_FIT) === 'cover') videoFit = 'cover'; } catch {}
 		const title = startParams.get('title');
 		isAuto = startParams.get('auto') === '1';
 		const type = startParams.get('type') ?? '';
@@ -6645,7 +6733,11 @@
 				}
 				const ep = activeEpisode;
 				if (ep) shareKey = ep.shareKey || mainShareKey;
-				const file = ep ? pickFor(ep.files) : null;
+				// Signed out of Febbox: another source's copy first. Picking Showbox's best copy and then
+				// finding no sign-in said "Only Showbox has this" though HiAnime and the rest had the
+				// episode (So I'm a Spider, So What?, a friend's Catalog, 2026-11-14).
+				const others = ep && !data.hasToken ? ep.files.filter((f) => f.source) : [];
+				const file = ep ? (others.length ? pickFor(others) : pickFor(ep.files)) : null;
 				if (!ep || !file) {
 					problem = 'No video file found for this title.';
 					return;
@@ -6718,17 +6810,19 @@
 				const af = currentFiles.find((f) => f.fid === data.fid);
 				activeQuality = af?.quality ?? currentFiles[0]?.quality ?? '';
 				activeFileFid = af?.fid ?? currentFiles[0]?.fid ?? 0;
-			} else if (!data.hasToken) {
-				needsLogin = true;
 			} else {
 				const defaultFile = pickFor(currentFiles);
-				// Showbox gave no link: another source's copy, in the language last picked.
+				// Showbox gave no link (or there's no Febbox sign-in): another source's copy, in the
+				// language last picked. Signed out, this used to say "Only Showbox has this" straight
+				// away though other sources had the film (a friend's Catalog, 2026-11-14).
 				const other = pickFile(currentFiles.filter((f) => f.source), preferredQuality, animeAudio());
 				const got = other ? await linkFor(currentFiles, other) : null;
 				if (got?.url) {
 					activeQuality = got.file.quality;
 					activeFileFid = got.file.fid;
 					streamUrl = got.url;
+				} else if (!data.hasToken) {
+					needsLogin = true;
 				} else if (defaultFile) {
 					useIframe = true;
 					iframeFid = defaultFile.fid;
@@ -7073,12 +7167,24 @@
 		if (!away) document.title = title;
 	});
 
+	/**
+	 * Left or closed: friends stop seeing this as watching now (online.ts `noteStopped`). It stayed
+	 * up minutes after, and the kept player waits half an hour (owner, 2026-11-15). The next saved
+	 * place says it again when it's watched again.
+	 */
+	function sayStopped() {
+		fetch('/api/online', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'stopped' }), keepalive: true }).catch(() => {});
+	}
+	// (onMount's undo, not onDestroy: that also runs while the page is drawn on the server.)
+	onMount(() => sayStopped);
+
 	/** Playing (or about to) when it was left: plays on when it's shown again. */
 	let playOnReturn = false;
 	$effect(() => {
 		const hidden = away;
 		untrack(() => {
 			if (hidden) {
+				if (videoTitle) sayStopped();
 				playOnReturn = Boolean(videoEl && !videoEl.paused) || ((loading || resolving || loadingEpisode) && !userPaused);
 				if (videoEl && !videoEl.paused) {
 					userPaused = true;
@@ -7266,18 +7372,6 @@
 				{@render filePicker()}
 			{/if}
 
-			{#if canDownload}
-				<button type="button" class="bar-btn" class:active={showDownloadMenu} onclick={() => (showDownloadMenu ? (showDownloadMenu = false) : openDownload())}>Download</button>
-			{/if}
-
-			{#if !sportsMode}
-				<button
-					type="button"
-					class="bar-btn cast-btn"
-					class:active={castOpen}
-					onclick={() => { castOpen = !castOpen; }}
-				>{pm ? p('Cast') : 'Cast'}</button>
-			{/if}
 
 			{#if showType === 'tv' && seasons.length > 0}
 				<button
@@ -7287,25 +7381,7 @@
 				>{sidebarOpen ? (pm ? p('alt:Hide episodes') : 'Hide episodes') : (pm ? p('Episodes') : 'Episodes')}</button>
 			{/if}
 
-			{#if showType === 'tv'}
-				<button type="button" class="bar-btn autoplay-btn" class:active={autoplayNext} onclick={toggleAutoplay}>
-					{autoplayNext ? '⏭ Autoplay: On' : '⏭ Autoplay: Off'}
-				</button>
-				<button
-					type="button"
-					class="bar-btn autoplay-btn autosync-btn"
-					class:active={autosync}
-					onclick={toggleAutosync}
-					title="Adds the show to your library as you watch, keeps its episode up to date, and marks it completed after the last one"
-				>{autosync ? '↑ Autosync: On' : '↑ Autosync: Off'}</button>
-				<button
-					type="button"
-					class="bar-btn autoplay-btn"
-					class:active={autoSkip}
-					onclick={toggleAutoSkip}
-					title="Skips intros and end credits by itself"
-				>{autoSkip ? '⏩ Auto-skip: On' : '⏩ Auto-skip: Off'}</button>
-			{/if}
+			<!-- (Autoplay, Auto-skip and Autosync are in the settings menu now, with Cast and Download.) -->
 
 			{#if sportsMode}
 				<!-- (Nothing of the library's for a live channel or a replay.) -->
@@ -7548,7 +7624,7 @@
 							isVideoSeeking = true;
 							lastSeekAt = performance.now();
 							watchJumpLoad();
-							if (videoEl) notePlayerEvent(`jumped to ${fmt(videoEl.currentTime)}`);
+							if (videoEl) notePlayerEvent(`jumped to ${fmt(videoEl.currentTime)} (${whoMoved()})`);
 							noteJumpBack();
 						}}
 						onseeked={() => {
@@ -7843,42 +7919,7 @@
 
 							<div class="ctrl-spacer"></div>
 
-							{#if subtitlesOn}
-								<div class="delay-wrap">
-									<button
-										class="ctrl-btn"
-										class:active={showDelay}
-										onclick={() => { showDelay = !showDelay; showCaptions = false; showSettings = false; showAudioPicker = false; }}
-										title="Subtitle delay ({subtitleDelay > 0 ? '+' : ''}{subtitleDelay.toFixed(1)}s)"
-									>
-										<svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M13.5 5.5C10.5 5.5 8 8 8 11H5l3.5 4L12 11H9.5c0-2.2 1.8-4 4-4s4 1.8 4 4-1.8 4-4 4c-.9 0-1.7-.3-2.4-.8l-1.1 1.3c1 .7 2.2 1.1 3.5 1.1 3 0 5.5-2.5 5.5-5.5S16.5 5.5 13.5 5.5z"/></svg>
-									</button>
-									{#if showDelay}
-										<div class="delay-popup">
-											<button class="sub-delay-jump" onclick={() => subtitleDelay = Math.round((subtitleDelay - 5) * 10) / 10} title="Show them 5 seconds sooner">−5s</button>
-											<button class="sub-delay-jump" onclick={() => subtitleDelay = Math.round((subtitleDelay - 0.5) * 10) / 10} title="Captions late: show them sooner">−0.5s</button>
-											<span class="delay-label">Before audio</span>
-											<span class="sub-delay-value">{subtitleDelay > 0 ? '+' : ''}{subtitleDelay.toFixed(1)}s</span>
-											<span class="delay-label">After audio</span>
-											<button class="sub-delay-jump" onclick={() => subtitleDelay = Math.round((subtitleDelay + 0.5) * 10) / 10} title="Captions early: show them later">+0.5s</button>
-											<button class="sub-delay-jump" onclick={() => subtitleDelay = Math.round((subtitleDelay + 5) * 10) / 10} title="Show them 5 seconds later">+5s</button>
-											<button class="sub-delay-reset" onclick={resetSubtitleDelay} title={subAutoSync ? 'Back to the auto-timing delay' : 'No delay'}>Reset</button>
-										</div>
-									{/if}
-								</div>
-							{/if}
-
-							{#if hlsAudioTracks.length > 1}
-								<button
-									class="ctrl-btn"
-									class:active={showAudioPicker}
-									onclick={() => { showAudioPicker = !showAudioPicker; showCaptions = false; showSettings = false; showDelay = false; }}
-									title="Audio track"
-								>
-									<svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><path d="M12.87 15.07l-2.54-2.51.03-.03A17.52 17.52 0 0014.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg>
-								</button>
-							{/if}
-
+							<!-- Subtitles, their timing and the audio track: one button, one menu (2026-11-15). -->
 							<button
 								class="ctrl-btn"
 								class:active={subtitlesOn}
@@ -7887,7 +7928,7 @@
 									if (!showCaptions && febboxSubs.length === 0 && !loadingSubs) fetchSubtitles();
 									showCaptions = !showCaptions; showSettings = false; showDelay = false; showAudioPicker = false;
 								}}
-								title="Subtitles"
+								title="Subtitles and audio"
 							>
 								<svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22"><path d="M19 4H5c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 7H9.5v-.5h-2v3h2V13H11v1c0 .55-.45 1-1 1H7c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1zm7 0h-1.5v-.5h-2v3h2V13H18v1c0 .55-.45 1-1 1h-3c-.55 0-1-.45-1-1v-4c0-.55.45-1 1-1h3c.55 0 1 .45 1 1v1z"/></svg>
 							</button>
@@ -7918,6 +7959,35 @@
 					<!-- settings popup -->
 					{#if showSettings}
 						<div class="popup popup-settings">
+							<!--
+								Moved here from the bar at the top (owner, 2026-11-15: it was clogged, and wrapped
+								onto two rows over the picture). Switches first, then Cast and Download.
+							-->
+							{#if showType === 'tv'}
+								<p class="popup-label">This show</p>
+								<button class="popup-item popup-switch" class:active={autoplayNext} aria-pressed={autoplayNext} onclick={toggleAutoplay}>
+									<span class="switch-dot" aria-hidden="true"></span>Autoplay next episode
+								</button>
+								<button class="popup-item popup-switch" class:active={autoSkip} aria-pressed={autoSkip} onclick={toggleAutoSkip} title="Skips intros and end credits by itself">
+									<span class="switch-dot" aria-hidden="true"></span>Auto-skip intros and credits
+								</button>
+								{#if !tvMode}
+									<!-- (Not on the TV, as before: the library is the computer's.) -->
+									<button class="popup-item popup-switch" class:active={autosync} aria-pressed={autosync} onclick={toggleAutosync} title="Adds the show to your library as you watch, keeps its episode up to date, and marks it completed after the last one">
+										<span class="switch-dot" aria-hidden="true"></span>Autosync to library
+									</button>
+								{/if}
+								<hr class="popup-divider" />
+							{/if}
+							{#if (!sportsMode && !tvMode) || canDownload}
+								{#if !sportsMode && !tvMode}
+									<button class="popup-item" onclick={() => { castOpen = !castOpen; showSettings = false; }}>{pm ? p('Cast') : 'Cast'}</button>
+								{/if}
+								{#if canDownload}
+									<button class="popup-item" onclick={() => { showSettings = false; showDownloadMenu ? (showDownloadMenu = false) : openDownload(); }}>Download…</button>
+								{/if}
+								<hr class="popup-divider" />
+							{/if}
 							{#if hlsLevels.length > 1}
 								<p class="popup-label">Resolution <span class="popup-hint" title="Higher resolutions may buffer on slower connections">?</span></p>
 								{#each [...hlsLevels].sort((a, b) => b.height - a.height) as lvl (lvl.index)}
@@ -7952,16 +8022,20 @@
 							<button class="popup-item" onclick={toggleStats}>Playback stats: {showStats ? 'On' : 'Off'}</button>
 							<hr class="popup-divider" />
 							<p class="popup-label">Speed</p>
-							{#each SPEEDS as s (s.value)}
-								<button
-									class="popup-item"
-									class:active={playbackRate === s.value}
-									onclick={() => setRate(s.value)}
-								>
-									{#if playbackRate === s.value}<span class="popup-check">&#10003;</span>{/if}
-									{s.label}
-								</button>
-							{/each}
+							<!-- One row of small buttons: a line each took most of the menu (owner, 2026-11-14). -->
+							<div class="speed-row">
+								{#each SPEEDS as s (s.value)}
+									<button
+										type="button"
+										class="speed-chip"
+										class:active={playbackRate === s.value}
+										aria-pressed={playbackRate === s.value}
+										onclick={() => setRate(s.value)}
+									>
+										{s.label.replace(/x$/, '×')}
+									</button>
+								{/each}
+							</div>
 							<hr class="popup-divider" />
 							<p class="popup-label">Aspect ratio</p>
 							<button class="popup-item" class:active={videoFit === 'contain'} onclick={() => chooseFit('contain')}>
@@ -8003,15 +8077,39 @@
 					<!-- captions popup -->
 					{#if showCaptions}
 						<div class="popup popup-captions">
-							<!-- On the TV the timing is here, in the captions menu (its own button is hidden there). -->
-							{#if tvMode && subtitlesOn}
+							<!--
+								Subtitles and audio in one menu (owner, 2026-11-15): the audio track and the
+								subtitle timing had a button each on the bar. The TV had its timing here already.
+							-->
+							{#if hlsAudioTracks.length > 1}
+								<p class="popup-label">Audio</p>
+								{#each hlsAudioTracks as t (t.id)}
+									<button class="popup-item" class:active={hlsActiveAudio === t.id} onclick={() => setAudioTrack(t.id)}>
+										{#if hlsActiveAudio === t.id}<span class="popup-check">&#10003;</span>{/if}
+										{t.name}
+									</button>
+								{/each}
+								<hr class="popup-divider" />
+							{/if}
+							{#if subtitlesOn}
 								<p class="popup-label">Timing</p>
-								<div class="tv-delay">
-									<button class="sub-delay-jump" onclick={() => (subtitleDelay = Math.round((subtitleDelay - 0.5) * 10) / 10)}>Sooner −0.5s</button>
-									<span class="sub-delay-value">{subtitleDelay > 0 ? '+' : ''}{subtitleDelay.toFixed(1)}s</span>
-									<button class="sub-delay-jump" onclick={() => (subtitleDelay = Math.round((subtitleDelay + 0.5) * 10) / 10)}>Later +0.5s</button>
-									{#if subtitleDelay !== 0}<button class="sub-delay-reset" onclick={resetSubtitleDelay}>Reset</button>{/if}
-								</div>
+								{#if tvMode}
+									<div class="tv-delay">
+										<button class="sub-delay-jump" onclick={() => (subtitleDelay = Math.round((subtitleDelay - 0.5) * 10) / 10)}>Sooner −0.5s</button>
+										<span class="sub-delay-value">{subtitleDelay > 0 ? '+' : ''}{subtitleDelay.toFixed(1)}s</span>
+										<button class="sub-delay-jump" onclick={() => (subtitleDelay = Math.round((subtitleDelay + 0.5) * 10) / 10)}>Later +0.5s</button>
+										{#if subtitleDelay !== 0}<button class="sub-delay-reset" onclick={resetSubtitleDelay}>Reset</button>{/if}
+									</div>
+								{:else}
+									<div class="menu-delay">
+										<button class="sub-delay-jump" onclick={() => subtitleDelay = Math.round((subtitleDelay - 5) * 10) / 10} title="Show them 5 seconds sooner">−5s</button>
+										<button class="sub-delay-jump" onclick={() => subtitleDelay = Math.round((subtitleDelay - 0.5) * 10) / 10} title="Captions late: show them sooner">−0.5s</button>
+										<span class="sub-delay-value" title="Below 0: before the audio. Above 0: after it.">{subtitleDelay > 0 ? '+' : ''}{subtitleDelay.toFixed(1)}s</span>
+										<button class="sub-delay-jump" onclick={() => subtitleDelay = Math.round((subtitleDelay + 0.5) * 10) / 10} title="Captions early: show them later">+0.5s</button>
+										<button class="sub-delay-jump" onclick={() => subtitleDelay = Math.round((subtitleDelay + 5) * 10) / 10} title="Show them 5 seconds later">+5s</button>
+										<button class="sub-delay-reset" onclick={resetSubtitleDelay} title={subAutoSync ? 'Back to the auto-timing delay' : 'No delay'}>Reset</button>
+									</div>
+								{/if}
 								<hr class="popup-divider" />
 							{/if}
 							<p class="popup-label">Subtitles</p>
@@ -8245,15 +8343,12 @@
 <style>
 	/* On the TV: only what a remote needs. The TV's own remote does the volume, the picture is
 	   always full screen, and Autosync keeps the library up to date by itself. */
-	:global(html.tv) .cast-btn,
-	:global(html.tv) .autosync-btn,
 	:global(html.tv) .in-library-btn,
 	:global(html.tv) .mark-watched-btn,
 	:global(html.tv) .add-btn,
 	:global(html.tv) .vol-group,
 	:global(html.tv) .pip-btn,
-	:global(html.tv) .fs-btn,
-	:global(html.tv) .delay-wrap {
+	:global(html.tv) .fs-btn {
 		display: none;
 	}
 
@@ -8314,8 +8409,6 @@
 	/* Menus fit the window, and scroll when they're longer. */
 	.player-page.mini .popup { bottom: 44px; right: 6px; max-height: calc(100vh - 84px); max-width: calc(100vw - 12px); min-width: 0; }
 	.player-page.mini .popup-files.popup-files { top: calc(100% + 2px); bottom: auto; left: auto; right: 0; max-height: calc(100vh - 50px); }
-	.player-page.mini .delay-popup { right: -40px; padding: 6px 8px; gap: 4px; }
-	.player-page.mini .delay-popup .delay-label { display: none; }
 	.player-page.mini .mini-top .file-pick-wrap { -webkit-app-region: no-drag; }
 	.player-page.mini .mini-top .file-pick-btn { padding: 3px 8px; font-size: 0.74rem; }
 	@media (max-width: 430px) {
@@ -8354,7 +8447,11 @@
 	.mini-btn:hover { background: rgba(255, 255, 255, 0.15); }
 
 	/* --------------------------------------------------------- top bar */
-	.player-bar { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: rgba(0, 0, 0, 0.8); border-bottom: 1px solid rgba(255, 255, 255, 0.08); z-index: 20; transition: opacity 0.3s ease, transform 0.3s ease; }
+	/*
+	 * Over the top of the picture, fading into it rather than a solid strip (owner, 2026-11-15: it
+	 * felt unwatchable without full screen). Hidden with the controls while the video plays.
+	 */
+	.player-bar { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 8px; padding: 6px 14px 14px; background: linear-gradient(to bottom, rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0.45) 60%, transparent); z-index: 20; transition: opacity 0.3s ease, transform 0.3s ease; }
 	.playback-stats {
 		position: absolute;
 		top: 64px;
@@ -8422,9 +8519,9 @@
 	.add-btn:disabled { opacity: 0.6; cursor: wait; }
 	.in-library-btn { color: var(--good); border-color: var(--good); text-decoration: none; }
 	.in-library-btn:hover { background: rgba(255, 255, 255, 0.06); color: var(--good); }
-	.autoplay-btn { font-size: 0.78rem; cursor: pointer; }
-	.autoplay-btn.active { color: var(--accent); border-color: var(--accent); }
-	.autoplay-btn:hover { background: rgba(255, 255, 255, 0.06); }
+	/* A switch in the settings menu (Autoplay, Auto-skip, Autosync): a dot that lights up when on. */
+	.popup-switch .switch-dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.4); flex: none; }
+	.popup-switch.active .switch-dot { background: var(--accent, #e994c2); border-color: var(--accent, #e994c2); }
 	.ep-ctx-backdrop { position: fixed; inset: 0; z-index: 900; }
 	.ep-ctx-menu {
 		position: fixed;
@@ -8494,7 +8591,6 @@
 	.cast-name { font-size: 0.88rem; font-weight: 600; color: rgba(255, 255, 255, 0.85); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 	.cast-char { font-size: 0.76rem; color: rgba(255, 255, 255, 0.4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 	.cast-sidebar { border-right: none; border-left: 1px solid rgba(255, 255, 255, 0.06); }
-	.cast-btn.active { color: var(--accent); border-color: var(--accent); }
 	.cast-link { display: flex; align-items: center; gap: 10px; text-decoration: none; color: inherit; width: 100%; }
 	.cast-item:hover { background: rgba(255, 255, 255, 0.06); }
 	.cast-item:hover .cast-name { color: var(--accent); }
@@ -8593,6 +8689,12 @@
 	.popup-info { cursor: default; font-size: 0.85rem; color: rgba(255, 255, 255, 0.5); }
 	.popup-divider { border: none; border-top: 1px solid rgba(255, 255, 255, 0.08); margin: 6px 0; }
 
+	/* Speed: a row of small buttons, the one playing at in the accent colour. */
+	.speed-row { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 12px 6px; }
+	.speed-chip { padding: 4px 8px; border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 6px; background: none; color: rgba(255, 255, 255, 0.8); font-size: 0.78rem; cursor: pointer; font-variant-numeric: tabular-nums; }
+	.speed-chip:hover, .speed-chip:focus-visible { background: rgba(255, 255, 255, 0.08); }
+	.speed-chip.active { color: var(--accent, #e994c2); border-color: var(--accent, #e994c2); }
+
 	/* --------------------------------------------------------- file name tooltips */
 	.file-token { position: relative; cursor: help; text-decoration: underline; text-decoration-style: dotted; text-decoration-color: rgba(255, 255, 255, 0.3); text-underline-offset: 2px; }
 	.file-token:hover { text-decoration-color: rgba(255, 255, 255, 0.6); }
@@ -8612,15 +8714,13 @@
 	.sub-source-badge.sharpest { color: var(--accent, #f29ac2) !important; border-color: currentColor; }
 	.sub-source-badge { flex: none; font-size: 0.62rem; padding: 1px 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.4) !important; text-transform: uppercase; letter-spacing: 0.03em; border: 1px solid rgba(255, 255, 255, 0.1); }
 
-	/* --------------------------------------------------------- subtitle delay */
-	.delay-wrap { position: relative; }
-	.delay-popup { position: absolute; bottom: calc(100% + 10px); right: -60px; display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: rgba(20, 20, 20, 0.95); border-radius: 8px; white-space: nowrap; }
+	/* --------------------------------------------------------- subtitle delay (in the subtitles and audio menu) */
+	.menu-delay { display: flex; align-items: center; gap: 6px; padding: 4px 14px 8px; white-space: nowrap; }
 	.sub-delay-jump { padding: 4px 8px; font-size: 0.72rem; font-weight: 600; background: rgba(255, 255, 255, 0.1); border: none; border-radius: 12px; color: white; cursor: pointer; }
 	.sub-delay-jump:hover { background: rgba(255, 255, 255, 0.2); }
 	.sub-delay-value { font-size: 0.82rem; font-variant-numeric: tabular-nums; min-width: 48px; text-align: center; color: rgba(255, 255, 255, 0.85); }
 	.sub-delay-reset { background: none; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 4px; color: rgba(255, 255, 255, 0.6); font-size: 0.72rem; padding: 2px 8px; cursor: pointer; }
 	.sub-delay-reset:hover { color: white; border-color: rgba(255, 255, 255, 0.4); }
-	.delay-label { font-size: 0.62rem; color: rgba(255, 255, 255, 0.35); white-space: nowrap; user-select: none; }
 
 	/* --------------------------------------------------------- buffering spinner */
 	.buffering-overlay { position: absolute; inset: 0; display: grid; place-items: center; z-index: 4; pointer-events: none; }

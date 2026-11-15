@@ -27,7 +27,13 @@ function saved<T>(key: string, maxAge: number): T | undefined {
 	return hit && Date.now() - hit.at < maxAge ? (hit.value as T) : undefined;
 }
 
-/** The show on TMDB and its seasons (not Specials). For a TMDB title its id; for anime, by name. */
+/** Specials (season 0) after the last season, the rest in order. */
+const specialsLast = (a: { number: number }, b: { number: number }) => Number(a.number === 0) - Number(b.number === 0) || a.number - b.number;
+
+/**
+ * The show on TMDB and its seasons, Specials (OVAs, films, extras) last. For a TMDB title its id;
+ * for anime, by name. (Specials were left out: they could only be had from the player, 2026-11-15.)
+ */
 export async function showSeasons(source: string, id: string, title: string): Promise<{ showId: number; seasons: TvSeason[] } | null> {
 	if (source === 'tmdb') {
 		const showId = Number(id.replace(/^tv:/, ''));
@@ -41,21 +47,39 @@ export async function showSeasons(source: string, id: string, title: string): Pr
 			seasons = (details.seasons ?? []).map((s) => ({ number: s.season_number, name: s.name, count: s.episode_count, year: yearOf(s.air_date) }));
 			saveOrderCache(key, seasons, Date.now());
 		}
-		return { showId, seasons: seasons.filter((s) => s.number > 0 && s.count > 0) };
+		return { showId, seasons: seasons.filter((s) => s.number >= 0 && s.count > 0).sort(specialsLast) };
 	}
 	const show = await tmdbShow(title, '').catch(() => null);
 	if (!show) return null;
 	return {
 		showId: show.id,
 		seasons: show.seasons
-			.filter((s) => s.number > 0 && s.count > 0)
+			.filter((s) => s.number >= 0 && s.count > 0)
 			.map((s) => ({ number: s.number, name: s.name, count: s.count, year: yearOf(s.airDate) }))
+			.sort(specialsLast)
 	};
+}
+
+/**
+ * Pictures for episodes TMDB has no still of: the show's own backdrops, a different one each (in
+ * turn). Silver Fang Legend Weed has no still for any of its 26 episodes, and its list was all
+ * grey boxes (2026-11-15). Empty when the show has none either.
+ */
+async function showBackdrops(showId: number): Promise<string[]> {
+	type Images = { backdrops?: { file_path: string }[] };
+	const images = await tmdbGet<Images>(`/tv/${showId}/images`, { include_image_language: 'null,en,ja' });
+	const paths = (images?.backdrops ?? []).map((b) => b.file_path).slice(0, 30);
+	if (!paths.length) {
+		const show = await tmdbGet<{ backdrop_path?: string | null }>(`/tv/${showId}`);
+		if (show?.backdrop_path) paths.push(show.backdrop_path);
+	}
+	return paths.map((path) => `https://image.tmdb.org/t/p/w300${path}`);
 }
 
 /** One season's episodes, with their pictures. */
 export async function seasonEpisodes(showId: number, season: number): Promise<TvEpisode[]> {
-	const key = `tv-season|${showId}|${season}`;
+	// ("tv-season2": lists kept before the backdrops stood in for missing stills.)
+	const key = `tv-season2|${showId}|${season}`;
 	const known = saved<TvEpisode[]>(key, DAY);
 	if (known) return known;
 	type Episode = {
@@ -76,6 +100,11 @@ export async function seasonEpisodes(showId: number, season: number): Promise<Tv
 		runtime: e.runtime,
 		overview: e.overview || null
 	}));
+	if (episodes.some((e) => !e.still)) {
+		const backdrops = await showBackdrops(showId).catch(() => []);
+		let turn = 0;
+		if (backdrops.length) for (const e of episodes) if (!e.still) e.still = backdrops[turn++ % backdrops.length];
+	}
 	saveOrderCache(key, episodes, Date.now());
 	return episodes;
 }

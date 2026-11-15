@@ -53,6 +53,28 @@ const tries: { at: string; channel: number; server: string; result: string }[] =
 export function noteLiveTry(id: number, result: string) {
 	tries.push({ at: new Date().toISOString(), channel: id, server: PLAYERS[playerFor.get(id) ?? 0], result });
 	if (tries.length > 30) tries.shift();
+	// Kept in the library too, so the channel list can say which played lately and which didn't.
+	try {
+		saveOrderCache(`live-try|${id}`, result === 'played', Date.now());
+	} catch {}
+}
+
+/** "On" within this long of playing; "off" within this long of not (a channel comes and goes). */
+const ON_FOR = 60 * 60 * 1000;
+const OFF_FOR = 30 * 60 * 1000;
+
+/**
+ * Whether a channel played, or didn't, the last time it was tried (on this computer, lately):
+ * shown in the channel list, so a channel that isn't on doesn't just load forever when picked
+ * (NBC USA with nothing on, owner, 2026-11-15). Null when it wasn't tried lately.
+ */
+export function channelTried(id: number): { ok: boolean; minutesAgo: number } | null {
+	const kept = getOrderCache(`live-try|${id}`);
+	if (!kept) return null;
+	const age = Date.now() - kept.at;
+	const ok = kept.value === true;
+	if (age > (ok ? ON_FOR : OFF_FOR)) return null;
+	return { ok, minutesAgo: Math.floor(age / 60_000) };
 }
 
 /**
@@ -140,7 +162,7 @@ export async function liveChannels(games: LiveGame[] = []): Promise<LiveChannel[
 		const named = sportOf(name);
 		if (named) sports.add(named);
 		else if (sporty && !sports.size) sports.add('other');
-		return { id, name, sports: [...sports], country: countryOf(name) };
+		return { id, name, sports: [...sports], country: countryOf(name), tried: channelTried(id) };
 	});
 }
 

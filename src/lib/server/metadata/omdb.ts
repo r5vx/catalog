@@ -31,7 +31,7 @@ export async function verifyOmdbKey(key: string): Promise<{ ok: boolean; message
 		url.searchParams.set('apikey', key.trim());
 		url.searchParams.set('i', 'tt0111161'); // The Shawshank Redemption
 
-		const response = await fetch(url);
+		const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
 
 		// A bad key comes back 401 with the reason in the body — "Invalid API
 		// key!", or "No API key provided." — so read it either way rather than

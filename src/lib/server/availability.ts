@@ -1,5 +1,7 @@
 /**
- * Whether something can be watched: on Showbox, on 7Movies, on Movy, or (anime) on Aniwave.
+ * Whether something can be watched: on Showbox, on 7Movies, on Movy, or (anime) on Aniwave or
+ * HiAnime, or on Vidfast (asked by playing its copy in a hidden window, only for the title being
+ * looked at). A source's "no" leaves its copies out of the title's list (sourceAnswers.ts).
  *
  * All are asked at once and the first "yes" answers, so the Watch button doesn't wait on the
  * slower one. Answers are kept (a "yes" for a day, a "no" for an hour), and a check already
@@ -13,6 +15,9 @@ import { tmdbShow } from './combinedEpisodes';
 import { aniwaveFiles, aniwaveFilm } from './sources';
 import { onVidrift } from './sources/vidrift';
 import { onMovy, type Wanted } from './sources/movy';
+import { hianimeHas } from './sources/hianime';
+import { vidfastShareKey, vidfastStream } from './sources/vidfast';
+import { malEpisodeOf } from './metadata/skiptimes';
 import { tmdbGet } from './metadata/tmdb';
 import { filmOnlyInCinemas } from './metadata/cinemas';
 import { getOrderCache, saveOrderCache } from './db/queries';
@@ -59,6 +64,20 @@ async function onShowbox(title: string, type: string, year: string): Promise<boo
 	);
 }
 
+/**
+ * HiAnime (anime series): its MyAnimeList entry for the first episode, then whether HiAnime plays
+ * it (Japanese or dub). Left out of this check until 2026-11-14: a show only HiAnime had (So I'm
+ * a Spider, So What?) came up as Showbox's alone.
+ */
+async function onHianime(title: string, type: string): Promise<boolean> {
+	if (type === 'movie') return false;
+	const show = await tmdbShow(title.replace(/\s+(season|s)\s*\d+\s*$/i, '').trim(), '');
+	if (!show?.anime) return false;
+	const spot = await malEpisodeOf(title, 1).catch(() => null);
+	if (!spot) return false;
+	return (await hianimeHas(spot.malId, 'sub')) || (await hianimeHas(spot.malId, 'dub'));
+}
+
 async function onAniwave(title: string, type: string, year: string): Promise<boolean> {
 	if (type === 'movie') return Boolean(await aniwaveFilm(title, year));
 	const show = await tmdbShow(title.replace(/\s+(season|s)\s*\d+\s*$/i, '').trim(), '');
@@ -86,6 +105,19 @@ async function on7Movies(title: string, type: string, year: string): Promise<boo
 async function onMovyToo(title: string, type: string, year: string, wanted: Wanted): Promise<boolean> {
 	const what = await byTmdbId(title, type, year);
 	return what ? onMovy(what, wanted) : false;
+}
+
+/**
+ * Vidfast, by the film or the show's first episode. It has no lookup of its own, only playing
+ * (a hidden window, sources/vidfast.ts), so it was never asked here and its copy was listed for
+ * everything; now its "no" leaves the copy out (sourceAnswers.ts), and a "yes" is kept for playing.
+ * Asked only while `wanted` (the title is being looked at).
+ */
+async function onVidfastToo(title: string, type: string, year: string, wanted: () => boolean): Promise<boolean> {
+	const what = await byTmdbId(title, type, year);
+	if (!what || !wanted()) return false;
+	const full = { type: what.type, id: what.id, season: what.type === 'tv' ? 1 : 0, episode: what.type === 'tv' ? 1 : 0 };
+	return Boolean(await vidfastStream(vidfastShareKey(full)));
 }
 
 /**
@@ -155,11 +187,14 @@ function startCheck(key: string, title: string, type: string, year: string): Pro
 		noted(list, 'Showbox', onShowbox(title, type, year)),
 		noted(list, '7Movies', on7Movies(title, type, year)),
 		noted(list, 'Aniwave', onAniwave(title, type, year)),
+		noted(list, 'HiAnime', onHianime(title, type)),
 		noted(list, 'Movy', onMovyToo(title, type, year, {
 			// Not started once another source has it, unless it's the title being looked at.
 			start: () => key === latest || (stillOpen(key) && !list.some((s) => s.state === 'yes')),
 			keep: () => stillOpen(key)
-		}))
+		})),
+		// Only while the title is being looked at: it's a hidden window, like Movy's.
+		noted(list, 'Vidfast', onVidfastToo(title, type, year, () => key === latest || stillOpen(key)))
 	];
 	// The sources' progress stays until every one has answered, and a minute more for the page.
 	Promise.allSettled(checks).then(() => setTimeout(() => progress.delete(key), 60_000));

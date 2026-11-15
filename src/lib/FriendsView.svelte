@@ -3,7 +3,8 @@
 	import MoreButton from '$lib/MoreButton.svelte';
 	import { goto, invalidateAll, beforeNavigate } from '$app/navigation';
 	import { statusLabel, sortBadge } from '$lib/constants';
-	import { onMount, tick } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
+	import { p } from '$lib/altText';
 
 	type SharedTitle = {
 		title: string;
@@ -32,11 +33,13 @@
 		owned: Set<string>;
 		ownedMap?: Record<string, number>;
 		altMode?: boolean;
+		/** Friends' files as the page loaded them, so they show at once (then asked for again). */
+		files?: Friend[] | null;
 	};
 
-	let { owned, ownedMap = {}, altMode = false }: Props = $props();
+	let { owned, ownedMap = {}, altMode = false, files = null }: Props = $props();
 
-	let friends = $state<Friend[]>([]);
+	let friends = $state<Friend[]>(untrack(() => files ?? []));
 	let activeFriend = $state<number | null>(null);
 	let titles = $state<SharedTitle[]>([]);
 	let loadingFriend = $state(false);
@@ -287,18 +290,16 @@
 </script>
 
 {#if friends.length === 0 && !activeFriend}
-	<div class="empty-state">
-		<h2>No friends imported yet</h2>
-		<p class="muted">Someone shares their catalog from Settings → Library → Share. Open their file here.</p>
-
+	<!-- Small on purpose: friends online (above) do this by themselves; a file is for someone who isn't. -->
+	<div class="file-line">
+		<span class="faint">{altMode ? p("A friend's catalog file, from Settings → Library → Share:") : "A friend's catalog file, from Settings → Library → Share:"}</span>
+		<label class="file-button">
+			<input type="file" accept="application/json,.json" onchange={(e) => { const f = e.currentTarget.files?.[0]; if (f) importFile(f); }} />
+			{altMode ? p('Open a file') : 'Open a file'}
+		</label>
 		{#if problem}
 			<p class="msg bad" role="alert">{problem}</p>
 		{/if}
-
-		<label class="drop">
-			<input type="file" accept="application/json,.json" onchange={(e) => { const f = e.currentTarget.files?.[0]; if (f) importFile(f); }} />
-			<span class="drop-label">Import a friend's catalog</span>
-		</label>
 	</div>
 {:else}
 	<div class="friends-header">
@@ -463,29 +464,35 @@
 {/if}
 
 <style>
-	.empty-state {
-		max-width: 46ch;
-		margin: 4vh 0 0;
+	/* No friends' files yet: one quiet line with a small button. */
+	.file-line {
 		display: flex;
-		flex-direction: column;
-		gap: 12px;
-		align-items: flex-start;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 10px;
+		font-size: 0.85rem;
 	}
 
-	.drop {
-		width: 100%;
-		border: 1px dashed var(--rule-firm);
-		border-radius: var(--radius);
-		padding: 26px;
-		text-align: center;
+	.file-button {
+		position: relative;
 		cursor: pointer;
-		background: var(--surface);
+		padding: 4px 10px;
+		border: 1px solid var(--rule);
+		border-radius: var(--radius-sm);
+		color: var(--accent);
 	}
 
-	.drop:hover { border-color: var(--accent); }
-	.drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+	.file-button:hover {
+		border-color: var(--accent);
+	}
 
-	.drop-label { font-weight: 600; color: var(--accent); }
+	.file-button input {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		opacity: 0;
+	}
+
 	.friend-actions { display: flex; gap: 6px; align-items: center; }
 	.rename { display: flex; gap: 6px; align-items: center; }
 	.rename-input { width: 160px; padding: 4px 8px; font-size: 0.85rem; }

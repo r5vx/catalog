@@ -24,7 +24,8 @@ export const GET: RequestHandler = async ({ url }) => {
 	const names = [title, alt].filter(Boolean).map((n) => n.toLowerCase());
 	const continuing = continueWatchingList().find((item) => item.type === 'tv' && names.includes(item.title.toLowerCase())) ?? null;
 
-	let season = continuing?.season ?? 0;
+	// (-1 when nothing's being watched: 0 is Specials now, and the page opened on them, 2026-11-15.)
+	let season = continuing?.season ?? -1;
 	if (!show.seasons.some((s) => s.number === season)) {
 		const sameYear = source === 'anilist' ? show.seasons.find((s) => s.year === year)?.number : 0;
 		season = sameYear || show.seasons[0].number;

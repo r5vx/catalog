@@ -49,7 +49,8 @@ export async function episodeRatings(source: string, id: string, title: string):
 	const kept = getOrderCache(cacheKey);
 	if (kept && Date.now() - kept.at < KEEP) return kept.value as EpisodeRatings;
 
-	const seasons = show.seasons.slice(0, MAX_SEASONS).map((s) => s.number);
+	// (Not Specials: the seasons' list has them last since 2026-11-15, and IMDb doesn't rate them as a season.)
+	const seasons = show.seasons.filter((s) => s.number > 0).slice(0, MAX_SEASONS).map((s) => s.number);
 	const ids = await tmdbGet<{ imdb_id?: string | null }>(`/tv/${show.showId}/external_ids`);
 	const imdbId = ids?.imdb_id ?? null;
 

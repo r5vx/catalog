@@ -5,6 +5,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import BackBar from '$lib/BackBar.svelte';
+	import RandomPick from '$lib/RandomPick.svelte';
 	import { p, pRandom } from '$lib/altText';
 	import type { SearchResult } from '$lib/server/metadata/types';
 	import { titleKey } from '$lib/titleKey';
@@ -188,6 +189,8 @@
 	 */
 	let extra = $state<Record<string, SearchResult[]>>({});
 	let at = $state<Record<string, number>>({});
+	/** The list a shelf has moved on to (anime: from trending to all-time once trending runs out). */
+	let shelfMode = $state<Record<string, string>>({});
 	let loading = $state<string | null>(null);
 	let ended = $state<Record<string, boolean>>({});
 	/** A shelf whose last "Show more" didn't come back: its button says so, and can be pressed again. */
@@ -204,6 +207,7 @@
 		showing = signature;
 		extra = {};
 		at = {};
+		shelfMode = {};
 		ended = {};
 		failed = {};
 	});
@@ -237,10 +241,11 @@
 		try {
 			const already = new Set(shelfResults(shelf).map((one) => one.key));
 			let currentPage = at[shelf.key] ?? shelf.page;
-			let mode = data.mode;
+			let mode = shelfMode[shelf.key] ?? data.mode;
 			let fresh: SearchResult[] = [];
 
-			// Anime runs out of what's trending quickly; then it carries on with the all-time list.
+			// Anime runs out of what's trending quickly; then it carries on with the all-time list,
+			// from its first page (it went on at trending's page number, so the best-known were skipped).
 			for (let round = 0; round < 2 && fresh.length === 0; round++) {
 				const numbers = Array.from({ length: PAGES_PER_CLICK }, (_, i) => currentPage + 1 + i);
 				const pages = await Promise.all(numbers.map((n) => pageOf(n, mode)));
@@ -250,13 +255,16 @@
 					already.add(one.key);
 					return true;
 				});
-				if (fresh.length === 0 && shelf.key === 'anime' && mode === 'trending' && !data.sort) mode = 'popular';
-				else break;
+				if (fresh.length === 0 && shelf.key === 'anime' && mode === 'trending' && !data.sort) {
+					mode = 'popular';
+					currentPage = 0;
+				} else break;
 			}
 
 			if (fresh.length > 0) {
 				extra = { ...extra, [shelf.key]: [...(extra[shelf.key] ?? []), ...fresh] };
 				at = { ...at, [shelf.key]: currentPage };
+				shelfMode = { ...shelfMode, [shelf.key]: mode };
 			} else {
 				ended = { ...ended, [shelf.key]: true };
 			}
@@ -415,6 +423,10 @@
 				</div>
 			{/if}
 		</div>
+
+		{#if data.tmdbEnabled}
+			<RandomPick cat={data.cat} genre={data.genre} genreName={GENRES.find((g) => g.value === String(data.genre ?? ''))?.label ?? ''} />
+		{/if}
 	</div>
 {/if}
 

@@ -21,6 +21,7 @@
 	import TagFilter from '$lib/TagFilter.svelte';
 	import FriendsView from '$lib/FriendsView.svelte';
 	import OnlineFriends from '$lib/OnlineFriends.svelte';
+	import FriendsFeed from '$lib/FriendsFeed.svelte';
 	import { p } from '$lib/altText';
 	import type { PageData } from './$types';
 
@@ -332,8 +333,9 @@
 		</ul>
 	{/if}
 {:else if data.filters.cat === 'friends'}
-	<OnlineFriends />
-	<FriendsView owned={new Set(data.ownedKeys)} ownedMap={data.ownedMap} altMode={pm} />
+	<OnlineFriends initial={data.friendsStart} />
+	{#if data.friendsStart?.online}<FriendsFeed start={data.friendsStart.activity} />{/if}
+	<FriendsView owned={new Set(data.ownedKeys)} ownedMap={data.ownedMap} altMode={pm} files={data.friendsStart?.files ?? null} />
 {:else}
 	<FillingIn />
 
