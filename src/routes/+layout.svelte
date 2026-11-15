@@ -9,6 +9,7 @@
 	import SideNav from '$lib/SideNav.svelte';
 	import WatchPlayer from '$lib/WatchPlayer.svelte';
 	import NowPlaying from '$lib/NowPlaying.svelte';
+	import ChatOverlay from '$lib/ChatOverlay.svelte';
 	import { keptPlayer, followRoute } from '$lib/keptPlayer.svelte';
 	import { navigating, page } from '$app/state';
 	import { beforeNavigate } from '$app/navigation';
@@ -158,6 +159,8 @@
 		{/key}
 	{/if}
 	{#if !onWatch}<NowPlaying floating besideNav={sideNav} />{/if}
+	<!-- Messages from friends and the room, bottom right, and "Ann started …: Join?" (lib/ChatOverlay.svelte). -->
+	<ChatOverlay />
 	<ConfirmDialog />
 	<!-- "Rate it" after leaving the player (not over it, nor on a TV's screens). -->
 	{#if !/^\/(watch|tv)(\/|$)/.test(page.url.pathname)}<RatePrompt />{/if}

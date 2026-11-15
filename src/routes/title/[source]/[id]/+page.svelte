@@ -205,9 +205,11 @@
 	<Synopsis text={details.overview} tagline={details.tagline} />
 
 	<!-- Everyone is clickable: ours by id, the rest by the provider's. -->
+	<!-- With a Music tab beside it: who did the music, the soundtrack, an anime's openings and endings. -->
 	<CastRow
 		cast={data.cast.map((person) => ({ ...person, id: person.entryPersonId }))}
 		back={page.url.pathname + page.url.search}
+		music={{ source: data.source, sourceId: data.sourceId, title: details.title ?? '', year: details.year, type: data.watchType === 'movie' ? 'movie' : 'tv', anime: details.categorySlug === 'anime' }}
 	/>
 
 	{#if data.watchType === 'tv' && !details.unreleased}

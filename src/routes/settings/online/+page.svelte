@@ -2,11 +2,11 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { confirmAction } from '$lib/confirm.svelte';
 	import { page } from '$app/state';
-	import { p } from '$lib/altText';
+	import { wording } from '$lib/altText';
 	import Profile from './Profile.svelte';
 
 	/** A line in the alternate wording when it's on (Settings → Personalization → Code), else as it is. */
-	const t = (text: string) => (page.data.altMode ? p(text) : text);
+	const t = (text: string) => wording(page.data.altMode, text);
 
 	/**
 	 * Settings → Online (src/lib/server/online.ts): this computer joining the meeting point, who the
@@ -21,7 +21,7 @@
 		account: Account | null;
 		computers: number;
 		google: boolean;
-		switches: { reports: boolean; share: boolean; shared: boolean; along: boolean };
+		switches: { reports: boolean; share: boolean; shared: boolean; along: boolean; autoJoin: boolean };
 		sync: boolean;
 		lastSync: { at: number; sent: number; got: number; error: string } | null;
 		library: { on: boolean; last: LibraryRound | null; nameOnly: number };
@@ -109,7 +109,7 @@
 	}
 
 
-	async function setSwitch(which: 'reports' | 'share' | 'shared' | 'along', on: boolean) {
+	async function setSwitch(which: 'reports' | 'share' | 'shared' | 'along' | 'autoJoin', on: boolean) {
 		if (!status) return;
 		status.switches[which] = on;
 		await post({ action: 'switches', ...status.switches });
@@ -427,6 +427,11 @@
 			Let friends watch along
 		</label>
 		<p class="faint small">{t("Friends get a Watch along button beside what's playing here. Their screen follows this one; only this one controls it.")}</p>
+		<label class="toggle">
+			<input type="checkbox" checked={status.switches.autoJoin} onchange={(e) => setSwitch('autoJoin', e.currentTarget.checked)} />
+			{t('Open what the room starts by itself')}
+		</label>
+		<p class="faint small">{t('In a watch-together room, whatever someone starts opens here without asking first.')}</p>
 		<label class="toggle">
 			<input type="checkbox" checked={status.switches.shared} onchange={(e) => setSwitch('shared', e.currentTarget.checked)} />
 			Share intro and credit times

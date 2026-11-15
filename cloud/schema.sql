@@ -41,6 +41,13 @@ CREATE TABLE IF NOT EXISTS codes (
 	expires INTEGER NOT NULL
 );
 
+-- Each person's own friend code, the same for good (owner, 2026-11-15: "like how destiny 2 has
+-- join codes that stay the same"). A new one only when they ask for it.
+CREATE TABLE IF NOT EXISTS friend_codes (
+	account TEXT PRIMARY KEY,
+	code TEXT NOT NULL UNIQUE
+);
+
 CREATE TABLE IF NOT EXISTS friends (
 	a TEXT NOT NULL,
 	b TEXT NOT NULL,
@@ -81,6 +88,49 @@ CREATE TABLE IF NOT EXISTS friend_requests (
 	PRIMARY KEY (from_account, to_account)
 );
 CREATE INDEX IF NOT EXISTS friend_requests_to ON friend_requests (to_account);
+
+-- More about each watched title, for a friend's library and profile: year, film or show, poster,
+-- status. Sent with `seen`; a row may be missing (older Catalogs only sent the title).
+CREATE TABLE IF NOT EXISTS seen_info (
+	account TEXT NOT NULL,
+	tkey TEXT NOT NULL,
+	year TEXT NOT NULL DEFAULT '',
+	type TEXT NOT NULL DEFAULT '',
+	poster TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT '',
+	PRIMARY KEY (account, tkey)
+);
+
+-- What a person says about themselves on their profile: a line or two, up to eight favorites
+-- (a JSON list), and a color.
+CREATE TABLE IF NOT EXISTS profiles (
+	account TEXT PRIMARY KEY,
+	bio TEXT NOT NULL DEFAULT '',
+	favorites TEXT NOT NULL DEFAULT '[]',
+	color TEXT NOT NULL DEFAULT '',
+	updated INTEGER NOT NULL
+);
+
+-- Messages: a whisper to one friend (to_account), or a line in a watch-together room (room).
+CREATE TABLE IF NOT EXISTS messages (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	from_account TEXT NOT NULL,
+	to_account TEXT NOT NULL DEFAULT '',
+	room TEXT NOT NULL DEFAULT '',
+	body TEXT NOT NULL,
+	at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS messages_to ON messages (to_account, id);
+CREATE INDEX IF NOT EXISTS messages_from ON messages (from_account, id);
+CREATE INDEX IF NOT EXISTS messages_room ON messages (room, id);
+
+-- The newest whisper from `other` that `account` has read.
+CREATE TABLE IF NOT EXISTS message_reads (
+	account TEXT NOT NULL,
+	other TEXT NOT NULL,
+	last INTEGER NOT NULL,
+	PRIMARY KEY (account, other)
+);
 
 -- Watching together: one room, what's playing and where, and who's in it.
 CREATE TABLE IF NOT EXISTS rooms (

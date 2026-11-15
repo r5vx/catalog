@@ -12,6 +12,50 @@ without both.
 
 ## Unreleased
 
+## 4.4.0 — 2026-11-15 — Profiles, messages and watching along together
+
+### New
+
+**Friends**
+- Profiles: when someone joined, their favorites, highest rated, what they watched lately and their friends
+- Edit your own profile: a line about you, up to eight favorites and a color
+- A friend's whole library, with films or shows, sorting and search
+- Messages: whisper to a friend; it shows in the corner of their screen for a few seconds, even while they watch
+- A Messages page with every conversation and what's unread
+- Group chat in a watch-together room
+- Press Enter anywhere (even in the player) to send a message; Tab picks who it goes to
+- Right-click a friend for their profile, library, a whisper, or ways to watch what they're watching
+- Your friend code stays the same for good (New code if you want a different one)
+
+**Watch together**
+- When someone in the room starts something, everyone else is asked to join; or join by itself every time
+
+**Title pages**
+- A Music tab beside Cast: who did the music, the soundtrack's songs, and an anime's openings and endings
+
+**Fire TV**
+- Install or update the TV app from the computer (Settings → TV and phones), like the Roku: after ADB debugging is turned on once, nothing to press on the TV
+
+**Linux**
+- Catalog for Linux, as an AppImage that updates itself
+
+### Improved
+
+**Friends**
+- Friends are big cards at the top of the page; starting a room is below them
+- Watch along starts at the friend's place and follows them; Start it myself and Want to watch are there too
+- Friends' watched lately shows the episode for shows and anime
+- Watch along is on unless you turn it off
+
+**Watch together**
+- When a player pauses by itself to change to a sharper copy, the others see why instead of "paused"
+
+### Fixed
+
+**Friends**
+- The add-a-friend button said "alt:Add"
+- Adding a friend closed your code and gave you a new one
+
 ## 4.3.0 — 2026-11-15 — What friends watched, Continue Watching on every computer, and Random
 
 ### New

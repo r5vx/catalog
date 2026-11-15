@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { p } from '$lib/altText';
+	import { wording } from '$lib/altText';
 	import type { SearchResult } from '$lib/server/metadata/types';
 
 	/**
@@ -25,7 +25,7 @@
 	let problem = $state('');
 	let box = $state<HTMLDivElement | null>(null);
 
-	const t = (text: string) => (page.data.altMode ? p(text) : text);
+	const t = (text: string) => wording(page.data.altMode, text);
 	const here = $derived(page.url.pathname + page.url.search);
 
 	function toggle(event: MouseEvent) {

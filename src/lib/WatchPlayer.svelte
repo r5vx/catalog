@@ -10,7 +10,7 @@
 	import { p, pRandom } from '$lib/altText';
 	import { bothLanguages, bytesOf, isCinemaRecording, isFourK, pickFile, playableHere, PREFERRED_QUALITY } from '$lib/watch';
 	import { isTv, tvPlayer } from '$lib/tv';
-	import { together, attachTogether, rejoinKeptRoom, nowPlaying } from '$lib/watchTogether.svelte';
+	import { together, attachTogether, rejoinKeptRoom, nowPlaying, holdRoom } from '$lib/watchTogether.svelte';
 	import { matchTvFrameRate } from '$lib/tvFrameRate';
 	import { StyledSubs, isStyledLine, onlyStyledLines } from '$lib/styledSubs';
 	import { padActive } from '$lib/gamepad';
@@ -472,6 +472,8 @@
 	 * few seconds (a friend's Files menu on an anime, 2026-11-14).
 	 */
 	let sharpestHeld = $state('');
+	/** The copy the video last loaded (not state): a load of another one tells the room "switching copies". */
+	let copyLoadedLast = '';
 	const sharpestKey = $derived.by(() => {
 		const known = currentFiles
 			.map((f) => ({ key: copyKey(f), mbps: copySharp[copyKey(f)]?.mbps ?? 0 }))
@@ -6023,6 +6025,15 @@
 		loadPaused = false;
 		// The copy this video is, for noting its sound tracks (untracked: not a reason to reload).
 		const loadingCopy = untrack(() => activeFile);
+		// In a watch-together room, this pause is the player's, not the person's: the others are told
+		// why ("Alex paused" while a sharper copy loaded, owner 2026-11-15).
+		untrack(() => {
+			if (!together.code || !videoEl || videoEl.paused) return;
+			const key = loadingCopy ? copyKey(loadingCopy) : '';
+			const reason = key && key !== copyLoadedLast ? (key === sharpestKey ? 'is switching to the sharpest copy' : 'is switching copies') : 'is loading the video';
+			holdRoom(reason);
+		});
+		copyLoadedLast = loadingCopy ? untrack(() => copyKey(loadingCopy)) : '';
 		videoEl.autoplay = !stayPaused;
 		videoEl.pause();
 		videoEl.removeAttribute('src');

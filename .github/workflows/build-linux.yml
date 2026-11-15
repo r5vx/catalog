@@ -1,0 +1,47 @@
+name: Build Linux
+
+# The Linux copy of Catalog: one AppImage (runs on most distributions without installing) and the
+# latest-linux.yml manifest that an installed AppImage reads to update itself (electron-updater,
+# the same as on Windows). Built on GitHub's Ubuntu machines when a release is made, like the Mac copy.
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to attach the AppImage to (e.g. v4.4.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.event.release.tag_name }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - name: Build the AppImage
+        run: npx electron-builder --linux AppImage --x64 --publish never
+
+      - name: Upload the AppImage and update manifest to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.inputs.tag || github.event.release.tag_name }}"
+          APPIMAGE=$(ls dist-app/*.AppImage | head -1)
+          gh release upload "$TAG" "$APPIMAGE" --clobber
+          if [ -f dist-app/latest-linux.yml ]; then
+            gh release upload "$TAG" dist-app/latest-linux.yml --clobber
+          fi

@@ -107,11 +107,11 @@ export const installNeedsPermission = () => process.env.CATALOG_INSTALL_NEEDS_PE
  * Looked at every five minutes, with an update downloaded: Catalog restarts to install it in
  * the chosen hour — or, once it has waited 6 hours (a computer asleep at night), at any hour —
  * as long as nothing has played for 30 minutes. Once a day at most, so one that won't install
- * doesn't restart it over and over. Windows only: the Mac copy has its own updater.
+ * doesn't restart it over and over. Windows and Linux (the AppImage): the Mac copy has its own updater.
  */
 function installWhenQuiet() {
 	const { on, hour } = nightUpdate();
-	if (!on || updateMode() !== 'release' || process.platform !== 'win32' || !process.send) return;
+	if (!on || updateMode() !== 'release' || (process.platform !== 'win32' && process.platform !== 'linux') || !process.send) return;
 	const now = new Date();
 	const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 	if (readSettings().nightUpdateTried === today) return;

@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import NetworkBanner from '$lib/NetworkBanner.svelte';
 	import RokuInstall from '$lib/RokuInstall.svelte';
+	import FireTvInstall from '$lib/FireTvInstall.svelte';
 	import { FIRE_TV_CODE } from '$lib/tvInstall';
 	import type { PageData } from './$types';
 
@@ -129,6 +130,15 @@
 			If Windows asks whether Catalog may use the network, allow it on private networks — otherwise the TV can't
 			reach it.
 		</p>
+	</section>
+
+	<section>
+		<h2>Install or update on a Fire TV from here</h2>
+		<p class="muted">
+			Like the Roku, Catalog can put its app on a Fire TV from this computer, and update it later with no Downloader and
+			nothing to press on the TV. It needs the TV's ADB debugging turned on once.
+		</p>
+		<FireTvInstall />
 	</section>
 
 	<section>

@@ -66,7 +66,7 @@ export async function rokuInfo(address: string, wait = 3000): Promise<FoundRoku 
 }
 
 /** This computer's own home-network addresses (Wi-Fi, cable; not Tailscale's or a virtual adapter's). */
-function homeAddresses(): string[] {
+export function homeAddresses(): string[] {
 	return Object.values(networkInterfaces())
 		.flat()
 		.filter((a): a is NonNullable<typeof a> => !!a && a.family === 'IPv4' && !a.internal && isHomeAddress(a.address))

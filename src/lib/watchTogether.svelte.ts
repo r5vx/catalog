@@ -15,7 +15,14 @@
  * Watching along: with "Let friends watch along" on (the library's Friends), the player starts a
  * room by itself when something plays, and friends see a Watch along button beside what you're
  * watching, which puts them in that room.
+ *
+ * Paused by the player, not the person (changing to a sharper copy, a reload): the room is told
+ * why (`waiting`), so the others see "Ann is switching to the sharpest copy", not "Ann paused"
+ * (owner, 2026-11-15: "it said 'alex paused this'").
+ *
+ * The room's chat and any whispers ride along with each look at the room (src/lib/chat.svelte.ts).
  */
+import { takeChat, chat, chatRoomCheck } from '$lib/chat.svelte';
 
 export type RoomState = {
 	title: string;
@@ -29,11 +36,13 @@ export type RoomState = {
 	at: number;
 	/** Who said it. */
 	by: string;
+	/** Paused by their player (loading a copy, say), not by them: why, in a few words. '' otherwise. */
+	waiting?: string;
 };
 
 /** Someone in the room: their name and picture (Settings → Online; `avatar` 0 means none). */
 export type RoomPerson = { id: string; name: string; avatar: number; me: boolean };
-type RoomAnswer = { code: string; host: boolean; state: RoomState; rev: number; now: number; people: RoomPerson[]; same?: boolean; error?: string };
+type RoomAnswer = { code: string; host: boolean; state: RoomState; rev: number; now: number; people: RoomPerson[]; same?: boolean; error?: string; chat?: Parameters<typeof takeChat>[0] };
 export type Playing = { title: string; type: 'tv' | 'movie'; year: string; season: number; episode: number };
 
 /** The room this screen is in ('' when none), for the pages. */
@@ -48,8 +57,16 @@ export const together = $state({
 	 * it, like listening along on Spotify. '' in a room joined by its code, where everyone's play,
 	 * pause and skips count (a group session).
 	 */
-	following: ''
+	following: '',
+	/**
+	 * Someone else in the room started something this screen isn't playing: offered here ("Ann
+	 * started Inception: Join?", lib/RoomOffer.svelte) until it's answered or something else starts.
+	 */
+	offer: null as RoomState | null
 });
+
+// (In a room, messages come with the room's looks: the chat's own looks wait.)
+chatRoomCheck(() => Boolean(together.code));
 
 const KEPT = 'catalog:room';
 const KEPT_FOLLOWING = 'catalog:room-following';
@@ -102,14 +119,39 @@ async function ask<T>(path: string, method = 'GET', body?: unknown): Promise<T |
 	}
 }
 
+/** My own name in the room (to tell my own doings from the others'). */
+const myName = () => together.people.find((person) => person.me)?.name ?? '';
+
+/**
+ * The room's state changed to another film or episode: offered to this screen when someone else
+ * started it and this screen isn't on it. `first`: the state as found on joining.
+ */
+function offerIfNew(before: RoomState | null, state: RoomState, first: boolean): void {
+	if (!state?.title) return;
+	const changed = !before || !before.title || before.title.toLowerCase() !== state.title.toLowerCase() || before.season !== state.season || before.episode !== state.episode;
+	if (!changed) return;
+	const here = attached?.playing();
+	if (here && sameThing(here, state)) {
+		together.offer = null;
+		return;
+	}
+	// (The player follows a show's next episode by itself; only what the person isn't watching is asked.)
+	if (here && here.type === 'tv' && state.type === 'tv' && here.title.toLowerCase() === state.title.toLowerCase()) return;
+	if (!first && state.by === myName()) return;
+	together.offer = state;
+}
+
 function took(answer: RoomAnswer): void {
 	rev = answer.rev;
 	clockAhead = answer.now - Date.now();
+	const first = together.code !== answer.code;
 	together.code = answer.code;
 	together.host = answer.host;
 	together.people = answer.people;
 	const before = together.state;
 	together.state = answer.state;
+	if (answer.chat) takeChat(answer.chat, true);
+	offerIfNew(first ? null : before, answer.state, first);
 	try {
 		localStorage.setItem(KEPT, answer.code);
 	} catch {}
@@ -143,7 +185,7 @@ export async function joinRoom(code: string, following = ''): Promise<boolean> {
 		together.problem = 'A room code is six letters and digits';
 		return false;
 	}
-	const answer = await ask<RoomAnswer>(`rooms/${clean}/join`, 'POST', {});
+	const answer = await ask<RoomAnswer>(`rooms/${clean}/join?msg=`, 'POST', {});
 	if (answer) {
 		leftByHand = false;
 		together.following = following;
@@ -168,6 +210,7 @@ export function leaveRoom(): void {
 	together.people = [];
 	together.problem = '';
 	together.following = '';
+	together.offer = null;
 	rev = 0;
 	try {
 		localStorage.removeItem(KEPT);
@@ -193,7 +236,8 @@ async function look(): Promise<void> {
 	// Who's here as this screen knows it: the room answers with everyone when that's changed, even
 	// with nothing new playing (a host never saw who joined: only what's playing moves `rev`).
 	const known = together.people.map((person) => person.id).join(',');
-	const answer = await ask<RoomAnswer>(`rooms/${together.code}?rev=${rev}&people=${encodeURIComponent(known)}`);
+	// (`msg`: the room's chat and whispers after the newest one this screen has, ride along.)
+	const answer = await ask<RoomAnswer>(`rooms/${together.code}?rev=${rev}&people=${encodeURIComponent(known)}&msg=${chat.known ? chat.last : ''}`);
 	// The room ended (nobody in it for half a day), or this screen was never let in.
 	if (!answer) {
 		if (/No such room|Join the room/.test(together.problem)) leaveRoom();
@@ -201,6 +245,7 @@ async function look(): Promise<void> {
 	}
 	if (answer.same) {
 		clockAhead = answer.now - Date.now();
+		if (answer.chat) takeChat(answer.chat, true);
 		// Someone came or went: only the list changes, nothing is moved on the video.
 		if (answer.people) together.people = answer.people;
 		return;
@@ -245,9 +290,25 @@ export async function nowPlaying(what: Playing): Promise<void> {
 
 const sameThing = (a: Playing, b: Playing) => a.title.toLowerCase() === b.title.toLowerCase() && a.type === b.type && a.season === b.season && a.episode === b.episode;
 
+/** Why the player itself has the video paused right now ('' when it hasn't): `holdRoom`. */
+let holdReason = '';
+let holdTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * The player is about to pause the video itself (loading another copy, a reload): the room is told
+ * why instead of "paused". Over when the video plays again, or after a minute at most.
+ */
+export function holdRoom(reason: string): void {
+	holdReason = reason;
+	clearTimeout(holdTimer);
+	holdTimer = setTimeout(() => (holdReason = ''), 60_000);
+}
+
 function stateNow() {
 	const { video, playing } = attached!;
-	return { ...playing(), playing: !video.paused && !video.ended, position: video.currentTime };
+	const on = !video.paused && !video.ended;
+	if (on) holdReason = '';
+	return { ...playing(), playing: on, position: video.currentTime, waiting: on ? '' : holdReason };
 }
 
 /** Where the room is right now, in seconds into the video. */
@@ -284,11 +345,14 @@ function apply(before: RoomState | null, steady = false): void {
 	if (state.playing && video.paused) {
 		applyingUntil = Date.now() + 1500;
 		void video.play().catch(() => {});
-		if (changedHands && before) note(`${state.by} pressed play`);
+		// (After their player's own wait it just goes on: they never pressed anything.)
+		if (changedHands && before && !before.waiting) note(`${state.by} pressed play`);
 	} else if (!state.playing && !video.paused) {
 		applyingUntil = Date.now() + 1500;
 		video.pause();
-		if (changedHands && before) note(`${state.by} paused`);
+		if (changedHands && before) note(state.waiting ? `${state.by} ${state.waiting}…` : `${state.by} paused`);
+	} else if (!state.playing && changedHands && before && state.waiting && !before.waiting) {
+		note(`${state.by} ${state.waiting}…`);
 	}
 }
 
@@ -319,7 +383,7 @@ function tell(): void {
 	// Something else than the room is watching: only the one who started the room moves it there.
 	if (state?.title && !sameThing(mine, state) && !together.host) return;
 	// Already what the room says (an echo of its own doing): nothing to tell.
-	if (state?.title && sameThing(mine, state) && mine.playing === state.playing && Math.abs(mine.position - roomPosition(state)) < OUT_OF_STEP) return;
+	if (state?.title && sameThing(mine, state) && mine.playing === state.playing && (state.waiting ?? '') === mine.waiting && Math.abs(mine.position - roomPosition(state)) < OUT_OF_STEP) return;
 	void ask<RoomAnswer>(`rooms/${together.code}/state`, 'PUT', mine).then((answer) => {
 		if (answer) {
 			rev = answer.rev;
@@ -339,6 +403,7 @@ function tell(): void {
 export function attachTogether(video: HTMLVideoElement, playing: () => Playing, note: (text: string) => void, follow?: (state: RoomState) => void): () => void {
 	attached = { video, playing, note, follow };
 	roomSeekAt = 0;
+	if (together.offer && sameThing(playing(), together.offer)) together.offer = null;
 	// (What the room did to the video before this one is no reason to keep quiet about this one.)
 	applyingUntil = 0;
 	const events = ['play', 'pause', 'seeked'] as const;

@@ -348,7 +348,9 @@ async function upload() {
 **Mac** — Copies from 3.2 on update themselves (Settings → Updates). To install Catalog for the first time, download the **.dmg** once it appears (built automatically), drag Catalog into Applications, then open Terminal and run:
 \`\`\`
 xattr -cr /Applications/Catalog.app
-\`\`\``
+\`\`\`
+
+**Linux** — Download the **.AppImage** once it appears (built automatically), make it runnable (\`chmod +x Catalog-*.AppImage\`) and open it. It updates itself like the Windows copy.`
 			})
 		});
 

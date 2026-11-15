@@ -2,7 +2,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { page } from '$app/state';
 	import Avatar from '$lib/Avatar.svelte';
-	import { p } from '$lib/altText';
+	import { wording } from '$lib/altText';
 
 	/**
 	 * What friends watched lately, newest first, with the rating they gave (the library's Friends,
@@ -10,7 +10,7 @@
 	 * each friend shows at most PER_FRIEND, from the last DAYS days, so one person adding a pile of
 	 * titles at once can't fill it.
 	 */
-	type Item = { key: string; title: string; year: string; type: 'tv' | 'movie'; poster: string; rating: number | null; at: number };
+	type Item = { key: string; title: string; year: string; type: 'tv' | 'movie'; poster: string; rating: number | null; at: number; season?: number; episode?: number };
 	type FromFriend = { id: string; name: string; avatar: number; items: Item[] };
 
 	const PER_FRIEND = 3;
@@ -20,7 +20,7 @@
 	let { start = null }: { start?: unknown } = $props();
 	let friends = $state<FromFriend[]>(untrack(() => ((start as { friends?: FromFriend[] } | null)?.friends ?? [])));
 
-	const t = (text: string) => (page.data.altMode ? p(text) : text);
+	const t = (text: string) => wording(page.data.altMode, text);
 
 	const feed = $derived.by(() => {
 		const since = Date.now() - DAYS * 86_400_000;
@@ -72,6 +72,7 @@
 					</a>
 					<div class="about">
 						<a class="title" href={href(item.key)}>{item.title}</a>
+						{#if item.episode}<span class="episode tabular">S{item.season}E{item.episode}</span>{/if}
 						<span class="faint small">{item.year}</span>
 						<span class="who">
 							<Avatar id={item.friend.id} name={item.friend.name} rev={item.friend.avatar} size={20} />
@@ -137,6 +138,13 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	/* The episode watched last, for a show or anime. */
+	.episode {
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--ink-soft);
 	}
 
 	.title:hover {

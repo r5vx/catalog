@@ -50,7 +50,7 @@ export const GET: RequestHandler = async ({ url }) => {
  * Body { action, … }:
  *   connect { join, name } this computer joins, with the join code and the name friends will see
  *   disconnect             and leaves
- *   switches { reports, share, shared, along }
+ *   switches { reports, share, shared, along, autoJoin? }
  *   watching { title, year, room }   the player: which year's film is open, and its watch-together room
  *   stopped                the player was left or closed: friends stop seeing this profile as watching
  *   sync { on }            this profile's progress kept in step (or not); syncNow does a round at once
@@ -76,7 +76,14 @@ export const POST: RequestHandler = async ({ request }) => {
 	}
 	if (body.action === 'switches') {
 		const flag = (value: unknown) => (value === false ? '0' : undefined);
-		updateSettings({ onlineReports: flag(body.reports), onlineShare: flag(body.share), onlineShared: flag(body.shared), onlineAlong: body.along === true ? '1' : undefined });
+		updateSettings({
+			onlineReports: flag(body.reports),
+			onlineShare: flag(body.share),
+			onlineShared: flag(body.shared),
+			onlineAlong: flag(body.along),
+			// (Sent alone by the "Join?" box; left as it is when a page sends only the others.)
+			...('autoJoin' in body ? { onlineAutoJoin: body.autoJoin === true ? '1' : undefined } : {})
+		});
 		if (body.share === false) void cloud('/v1/presence', { method: 'DELETE', profile });
 		return json({ ok: true });
 	}

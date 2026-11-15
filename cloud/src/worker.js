@@ -24,6 +24,11 @@ const CLEAR = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const SHARED_KINDS = ['skips', 'subtiming', 'sharpness'];
 /** A watched title's key: the site and its own id there, "tmdb:movie:550" or "anilist:21". */
 const SEEN_KEY = /^[a-z]+:[\w:-]+$/;
+/** A poster from TMDB or AniList (nothing else is shown to friends). */
+const POSTER = /^https:\/\/(image\.tmdb\.org|s4\.anilist\.co)\//;
+/** The longest message. */
+const MESSAGE_MOST = 500;
+const ACCOUNT_ID = /^[A-Z0-9]{16}$/;
 
 const json = (body, status = 200, headers = {}) =>
 	new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers } });
@@ -161,6 +166,9 @@ async function tidy(env) {
 		env.DB.prepare('DELETE FROM friend_requests WHERE at < ?').bind(now - 30 * DAY),
 		env.DB.prepare('DELETE FROM room_members WHERE code IN (SELECT code FROM rooms WHERE updated < ?)').bind(now - 12 * HOUR),
 		env.DB.prepare('DELETE FROM rooms WHERE updated < ?').bind(now - 12 * HOUR),
+		// A room's chat goes with the room; whispers are kept 90 days.
+		env.DB.prepare("DELETE FROM messages WHERE room != '' AND room NOT IN (SELECT code FROM rooms)"),
+		env.DB.prepare('DELETE FROM messages WHERE at < ?').bind(now - 90 * DAY),
 		env.DB.prepare('DELETE FROM reports WHERE created < ?').bind(now - 60 * DAY),
 		env.DB.prepare('DELETE FROM tries WHERE day < ?').bind(new Date(now - 2 * DAY).toISOString().slice(0, 10))
 	]);
@@ -347,7 +355,7 @@ async function answer(request, env, ctx) {
 		const left = await env.DB.prepare('SELECT count(*) AS n FROM members WHERE account = ?').bind(account.id).first();
 		if (!left?.n && !account.google_sub) {
 			await env.DB.batch(
-				['DELETE FROM friends WHERE a = ?1 OR b = ?1', 'DELETE FROM seen WHERE account = ?1', 'DELETE FROM presence WHERE account = ?1', 'DELETE FROM avatars WHERE account = ?1', 'DELETE FROM sync_rows WHERE account = ?1', 'DELETE FROM codes WHERE account = ?1', 'DELETE FROM activity WHERE account = ?1', 'DELETE FROM friend_requests WHERE from_account = ?1 OR to_account = ?1', 'DELETE FROM accounts WHERE id = ?1'].map((sql) => env.DB.prepare(sql).bind(account.id))
+				['DELETE FROM friends WHERE a = ?1 OR b = ?1', 'DELETE FROM seen WHERE account = ?1', 'DELETE FROM seen_info WHERE account = ?1', 'DELETE FROM profiles WHERE account = ?1', 'DELETE FROM messages WHERE from_account = ?1 OR to_account = ?1', 'DELETE FROM message_reads WHERE account = ?1','DELETE FROM presence WHERE account = ?1', 'DELETE FROM avatars WHERE account = ?1', 'DELETE FROM sync_rows WHERE account = ?1', 'DELETE FROM codes WHERE account = ?1', 'DELETE FROM friend_codes WHERE account = ?1', 'DELETE FROM activity WHERE account = ?1', 'DELETE FROM friend_requests WHERE from_account = ?1 OR to_account = ?1', 'DELETE FROM accounts WHERE id = ?1'].map((sql) => env.DB.prepare(sql).bind(account.id))
 			);
 		}
 		const fresh = await accountOf(request, env, house, account.name);
@@ -388,16 +396,30 @@ async function answer(request, env, ctx) {
 
 	/* ---- friends */
 
+	// This person's own friend code: the same one every time, for good. `{ fresh: true }` makes a new
+	// one (the old one stops working), for a code that was shared further than meant.
 	if (is('POST', '/v1/friends/code')) {
-		const code = random(8);
-		await env.DB.prepare("INSERT INTO codes (code, kind, account, expires) VALUES (?, 'friend', ?, ?)").bind(code, account.id, Date.now() + DAY).run();
-		return json({ code, hours: 24 });
+		const sent = await body(request);
+		const kept = sent.fresh === true ? null : await env.DB.prepare('SELECT code FROM friend_codes WHERE account = ?').bind(account.id).first();
+		if (kept) return json({ code: kept.code, lasting: true });
+		for (let tries = 0; tries < 5; tries++) {
+			const code = random(8);
+			const made = await env.DB.prepare('INSERT INTO friend_codes (account, code) VALUES (?, ?) ON CONFLICT (account) DO UPDATE SET code = excluded.code')
+				.bind(account.id, code)
+				.run()
+				.catch(() => null);
+			if (made) return json({ code, lasting: true });
+		}
+		return bad(503, 'Try again');
 	}
 	if (is('POST', '/v1/friends/add')) {
 		const sent = await body(request);
 		if (!(await allowed(env, `code:${house.id}`, 40))) return bad(429, 'Too many tries today');
-		const row = await useCode(env, sent.code, 'friend');
+		// Someone's lasting code first; a one-time code from an older Catalog after that.
+		const lasting = await env.DB.prepare('SELECT account FROM friend_codes WHERE code = ?').bind(text(sent.code, 64).toUpperCase().replace(/[^A-Z0-9]/g, '')).first();
+		const row = lasting ?? (await useCode(env, sent.code, 'friend'));
 		if (!row) return bad(404, "That code isn't right, or it ran out");
+		if (await env.DB.prepare('SELECT 1 FROM friends WHERE a = ? AND b = ?').bind(account.id, row.account).first()) return bad(400, "You're friends already");
 		if (row.account === account.id) return bad(400, "That's your own code");
 		const now = Date.now();
 		await env.DB.batch([
@@ -498,7 +520,10 @@ async function answer(request, env, ctx) {
 				type: i?.type === 'tv' ? 'tv' : 'movie',
 				poster: /^https:\/\/(image\.tmdb\.org|s4\.anilist\.co)\//.test(i?.poster ?? '') ? text(i.poster, 200) : '',
 				rating: Number.isFinite(Number(i?.rating)) && i.rating !== null ? Math.max(0, Math.min(10, Number(i.rating))) : null,
-				at: whole(i?.at, 0, Date.now() + DAY)
+				at: whole(i?.at, 0, Date.now() + DAY),
+				// A show's episode watched last (newer Catalogs; 0 when none).
+				season: whole(i?.season, 0, 999),
+				episode: whole(i?.episode, 0, 9999)
 			}))
 			.filter((i) => SEEN_KEY.test(i.key) && i.title && i.at > 0);
 		await env.DB.prepare('INSERT INTO activity (account, items, updated) VALUES (?, ?, ?) ON CONFLICT (account) DO UPDATE SET items = excluded.items, updated = excluded.updated')
@@ -548,16 +573,37 @@ async function answer(request, env, ctx) {
 	// What this account has watched, for "friends who've seen this". Sent in parts of up to 300.
 	if (is('PUT', '/v1/seen')) {
 		const sent = await body(request, 256 * 1024);
-		const items = (Array.isArray(sent.add) ? sent.add : []).slice(0, 300).map((i) => ({ key: text(i?.key, 40), title: text(i?.title, 120), rating: Number.isFinite(Number(i?.rating)) && i.rating !== null ? Number(i.rating) : null })).filter((i) => SEEN_KEY.test(i.key));
-		if (sent.reset === true) await env.DB.prepare('DELETE FROM seen WHERE account = ?').bind(account.id).run();
+		const items = (Array.isArray(sent.add) ? sent.add : [])
+			.slice(0, 300)
+			.map((i) => ({
+				key: text(i?.key, 40),
+				title: text(i?.title, 120),
+				rating: Number.isFinite(Number(i?.rating)) && i.rating !== null ? Number(i.rating) : null,
+				// (Newer Catalogs send these too, for the friend's library and profile.)
+				year: text(String(i?.year ?? ''), 4),
+				type: i?.type === 'tv' || i?.type === 'movie' ? i.type : '',
+				poster: POSTER.test(i?.poster ?? '') ? text(i.poster, 200) : '',
+				status: text(i?.status, 20)
+			}))
+			.filter((i) => SEEN_KEY.test(i.key));
+		if (sent.reset === true) await env.DB.batch([env.DB.prepare('DELETE FROM seen WHERE account = ?').bind(account.id), env.DB.prepare('DELETE FROM seen_info WHERE account = ?').bind(account.id)]);
 		for (let at = 0; at < items.length; at += 25) {
 			const part = items.slice(at, at + 25);
 			await env.DB.prepare(`INSERT INTO seen (account, tkey, title, rating) VALUES ${part.map(() => '(?, ?, ?, ?)').join(', ')} ON CONFLICT (account, tkey) DO UPDATE SET title = excluded.title, rating = excluded.rating`)
 				.bind(...part.flatMap((i) => [account.id, i.key, i.title, i.rating]))
 				.run();
+			const more = part.filter((i) => i.year || i.type || i.poster || i.status);
+			if (more.length) {
+				await env.DB.prepare(
+					`INSERT INTO seen_info (account, tkey, year, type, poster, status) VALUES ${more.map(() => '(?, ?, ?, ?, ?, ?)').join(', ')} ` +
+						'ON CONFLICT (account, tkey) DO UPDATE SET year = excluded.year, type = excluded.type, poster = excluded.poster, status = excluded.status'
+				)
+					.bind(...more.flatMap((i) => [account.id, i.key, i.year, i.type, i.poster, i.status]))
+					.run();
+			}
 		}
 		const gone = (Array.isArray(sent.remove) ? sent.remove : []).slice(0, 20).map((k) => text(k, 40));
-		for (const key of gone) await env.DB.prepare('DELETE FROM seen WHERE account = ? AND tkey = ?').bind(account.id, key).run();
+		for (const key of gone) await env.DB.batch([env.DB.prepare('DELETE FROM seen WHERE account = ? AND tkey = ?').bind(account.id, key), env.DB.prepare('DELETE FROM seen_info WHERE account = ? AND tkey = ?').bind(account.id, key)]);
 		return json({ ok: true, kept: items.length });
 	}
 	if (is('GET', '/v1/seen')) {
@@ -575,6 +621,213 @@ async function answer(request, env, ctx) {
 		return json({ friends: rows.results.map((r) => ({ id: r.id, name: r.name, avatar: r.avatar ?? 0, rating: r.rating ?? null })) });
 	}
 
+	/* ---- profiles: what a person says about themselves, their best rated, their library */
+
+	/** This account itself, or one of its friends (since when, or 0 for itself); null for anyone else. */
+	const knownAs = async (them) => {
+		if (them === account.id) return { since: 0 };
+		const row = await env.DB.prepare('SELECT since FROM friends WHERE a = ? AND b = ?').bind(account.id, them).first();
+		return row ? { since: row.since } : null;
+	};
+	const favoriteFrom = (i) => ({
+		key: text(i?.key, 40),
+		title: text(i?.title, 120),
+		year: text(String(i?.year ?? ''), 4),
+		type: i?.type === 'tv' ? 'tv' : 'movie',
+		poster: POSTER.test(i?.poster ?? '') ? text(i.poster, 200) : ''
+	});
+
+	// This account's own profile: a line or two about itself, up to eight favorites, and a color.
+	if (is('PUT', '/v1/profile')) {
+		const sent = await body(request, 32 * 1024);
+		const favorites = (Array.isArray(sent.favorites) ? sent.favorites : [])
+			.map(favoriteFrom)
+			.filter((i) => SEEN_KEY.test(i.key) && i.title)
+			.slice(0, 8);
+		const color = /^#[0-9a-f]{6}$/i.test(sent.color ?? '') ? sent.color.toLowerCase() : '';
+		await env.DB.prepare(
+			'INSERT INTO profiles (account, bio, favorites, color, updated) VALUES (?, ?, ?, ?, ?) ON CONFLICT (account) DO UPDATE SET bio = excluded.bio, favorites = excluded.favorites, color = excluded.color, updated = excluded.updated'
+		)
+			.bind(account.id, text(sent.bio, 300), JSON.stringify(favorites), color, Date.now())
+			.run();
+		return json({ ok: true });
+	}
+
+	const person = path.match(/^\/v1\/people\/([A-Z0-9]{16})\/(profile|library)$/);
+	if (person && method === 'GET') {
+		const them = person[1];
+		const known = await knownAs(them);
+		if (!known) return bad(403, 'Not a friend');
+		if (person[2] === 'profile') {
+			const [who, about, counts, top, lately, now, mutual] = await env.DB.batch([
+				env.DB.prepare('SELECT a.id, a.name, a.created, v.rev AS avatar FROM accounts a LEFT JOIN avatars v ON v.account = a.id WHERE a.id = ?').bind(them),
+				env.DB.prepare('SELECT bio, favorites, color FROM profiles WHERE account = ?').bind(them),
+				env.DB.prepare(
+					"SELECT count(*) AS total, sum(CASE WHEN i.type = 'movie' THEN 1 ELSE 0 END) AS films, sum(CASE WHEN i.type = 'tv' THEN 1 ELSE 0 END) AS shows, sum(CASE WHEN s.rating IS NOT NULL THEN 1 ELSE 0 END) AS rated " +
+						'FROM seen s LEFT JOIN seen_info i ON i.account = s.account AND i.tkey = s.tkey WHERE s.account = ?'
+				).bind(them),
+				env.DB.prepare(
+					'SELECT s.tkey AS key, s.title, s.rating, i.year, i.type, i.poster FROM seen s LEFT JOIN seen_info i ON i.account = s.account AND i.tkey = s.tkey WHERE s.account = ? AND s.rating IS NOT NULL ORDER BY s.rating DESC, s.title LIMIT 12'
+				).bind(them),
+				env.DB.prepare('SELECT items FROM activity WHERE account = ?').bind(them),
+				env.DB.prepare('SELECT what FROM presence WHERE account = ? AND at > ?').bind(them, Date.now() - 3 * MINUTE),
+				env.DB.prepare('SELECT count(*) AS n FROM friends f1 JOIN friends f2 ON f2.b = f1.b WHERE f1.a = ? AND f2.a = ?').bind(account.id, them)
+			]);
+			const row = who.results[0];
+			if (!row) return bad(404, 'No such person');
+			const said = about.results[0];
+			const count = counts.results[0] ?? {};
+			let favorites = [];
+			let recent = [];
+			try {
+				favorites = JSON.parse(said?.favorites ?? '[]');
+			} catch {}
+			try {
+				recent = JSON.parse(lately.results[0]?.items ?? '[]').slice(0, 10);
+			} catch {}
+			return json({
+				id: row.id,
+				name: row.name,
+				avatar: row.avatar ?? 0,
+				joined: row.created,
+				me: them === account.id,
+				friendsSince: known.since || null,
+				bio: said?.bio ?? '',
+				color: said?.color ?? '',
+				favorites,
+				counts: { total: count.total ?? 0, films: count.films ?? 0, shows: count.shows ?? 0, rated: count.rated ?? 0 },
+				top: top.results.map((r) => ({ key: r.key, title: r.title, rating: r.rating, year: r.year ?? '', type: r.type || '', poster: r.poster ?? '' })),
+				recent,
+				watching: now.results[0] ? JSON.parse(now.results[0].what) : null,
+				mutual: them === account.id ? 0 : (mutual.results[0]?.n ?? 0)
+			});
+		}
+		// Their library: everything they've watched, a page at a time.
+		const sort = url.searchParams.get('sort');
+		const order = sort === 'title' ? 's.title COLLATE NOCASE' : sort === 'year' ? "i.year DESC, s.title COLLATE NOCASE" : 's.rating IS NULL, s.rating DESC, s.title COLLATE NOCASE';
+		const type = url.searchParams.get('type');
+		const kind = type === 'tv' || type === 'movie' ? type : '';
+		const find = text(url.searchParams.get('q'), 60);
+		const offset = whole(url.searchParams.get('offset'), 0, 100000);
+		let where = 's.account = ?';
+		const params = [them];
+		if (kind) {
+			where += ' AND i.type = ?';
+			params.push(kind);
+		}
+		if (find) {
+			where += ' AND s.title LIKE ?';
+			params.push(`%${find.replace(/[%_]/g, '')}%`);
+		}
+		const [rows, total] = await env.DB.batch([
+			env.DB.prepare(`SELECT s.tkey AS key, s.title, s.rating, i.year, i.type, i.poster, i.status FROM seen s LEFT JOIN seen_info i ON i.account = s.account AND i.tkey = s.tkey WHERE ${where} ORDER BY ${order} LIMIT 120 OFFSET ${offset}`).bind(...params),
+			env.DB.prepare(`SELECT count(*) AS n FROM seen s LEFT JOIN seen_info i ON i.account = s.account AND i.tkey = s.tkey WHERE ${where}`).bind(...params)
+		]);
+		return json({
+			total: total.results[0]?.n ?? 0,
+			items: rows.results.map((r) => ({ key: r.key, title: r.title, rating: r.rating, year: r.year ?? '', type: r.type || '', poster: r.poster ?? '', status: r.status ?? '' }))
+		});
+	}
+
+	/* ---- messages: whispers between friends, and a room's chat */
+
+	/** Rooms this account is in now (seen there in the last two minutes). */
+	const myRooms = async () =>
+		(await env.DB.prepare('SELECT code FROM room_members WHERE account = ? AND at > ?').bind(account.id, Date.now() - 2 * MINUTE).all()).results.map((r) => r.code);
+	const messageOut = (r) => ({ id: r.id, from: r.from_account, name: r.name ?? '', avatar: r.avatar ?? 0, to: r.to_account, room: r.room, text: r.body, at: r.at });
+	const MESSAGE_FIELDS = 'm.id, m.from_account, m.to_account, m.room, m.body, m.at, a.name, v.rev AS avatar FROM messages m JOIN accounts a ON a.id = m.from_account LEFT JOIN avatars v ON v.account = m.from_account';
+	/** Whispers not read yet, from everyone. */
+	const unreadCount = async () =>
+		(
+			await env.DB.prepare('SELECT count(*) AS n FROM messages m LEFT JOIN message_reads r ON r.account = ?1 AND r.other = m.from_account WHERE m.to_account = ?1 AND m.id > COALESCE(r.last, 0)')
+				.bind(account.id)
+				.first()
+		)?.n ?? 0;
+	/** Where things stand: the newest message id (a Catalog starting up shows nothing old as new). */
+	const newestMessage = async () => (await env.DB.prepare('SELECT max(id) AS id FROM messages').first())?.id ?? 0;
+	/**
+	 * What came for this account after message `after`: whispers to it, and lines in the rooms it's
+	 * in, from others. (`after` 0 is everything: no message had been sent when it last looked.)
+	 */
+	const newMessages = async (after, rooms) => {
+		const marks = rooms.map((_, n) => `?${n + 3}`).join(', ');
+		const rows = await env.DB.prepare(
+			`SELECT ${MESSAGE_FIELDS} WHERE m.id > ?1 AND m.from_account != ?2 AND (m.to_account = ?2${rooms.length ? ` OR m.room IN (${marks})` : ''}) ORDER BY m.id LIMIT 50`
+		)
+			.bind(after, account.id, ...rooms)
+			.all();
+		const list = rows.results.map(messageOut);
+		return { messages: list, last: list.length ? list[list.length - 1].id : after };
+	};
+
+	if (is('POST', '/v1/messages')) {
+		const sent = await body(request, 8 * 1024);
+		const said = text(sent.text, MESSAGE_MOST);
+		if (!said) return bad(400, 'Say what?');
+		const to = ACCOUNT_ID.test(sent.to ?? '') ? sent.to : '';
+		const roomCode = /^[A-Z0-9]{6}$/.test(sent.room ?? '') ? sent.room : '';
+		if (!to && !roomCode) return bad(400, 'To whom?');
+		if (to && !(to !== account.id && (await knownAs(to)))) return bad(403, 'Only friends can be sent messages');
+		if (roomCode && !(await env.DB.prepare('SELECT 1 FROM room_members WHERE code = ? AND account = ?').bind(roomCode, account.id).first())) return bad(403, 'Join the room first');
+		if (!(await allowed(env, `message:${account.id}`, 600))) return bad(429, 'Enough messages for today');
+		const now = Date.now();
+		const row = await env.DB.prepare('INSERT INTO messages (from_account, to_account, room, body, at) VALUES (?, ?, ?, ?, ?) RETURNING id').bind(account.id, to, to ? '' : roomCode, said, now).first();
+		// (Writing to someone counts as having read what they'd sent.)
+		if (to) await env.DB.prepare('INSERT INTO message_reads (account, other, last) VALUES (?, ?, ?) ON CONFLICT (account, other) DO UPDATE SET last = max(last, excluded.last)').bind(account.id, to, row.id).run();
+		return json({ ok: true, message: { id: row.id, from: account.id, name: account.name, avatar: account.avatar ?? 0, to, room: to ? '' : roomCode, text: said, at: now } });
+	}
+	if (is('GET', '/v1/messages')) {
+		// No `after` (or an empty one): a first look, only where things stand.
+		const asked = url.searchParams.get('after');
+		if (!asked) return json({ messages: [], last: await newestMessage(), unread: await unreadCount() });
+		const found = await newMessages(whole(asked, 0, Number.MAX_SAFE_INTEGER), await myRooms());
+		return json({ ...found, unread: await unreadCount() });
+	}
+	// Everyone this account has whispered with (and every friend), newest first, with what's unread.
+	if (is('GET', '/v1/messages/threads')) {
+		const rows = await env.DB.prepare(
+			'SELECT a.id, a.name, v.rev AS avatar, ' +
+				'(SELECT max(m.id) FROM messages m WHERE (m.from_account = ?1 AND m.to_account = a.id) OR (m.from_account = a.id AND m.to_account = ?1)) AS lastId, ' +
+				'(SELECT count(*) FROM messages m WHERE m.from_account = a.id AND m.to_account = ?1 AND m.id > COALESCE((SELECT last FROM message_reads r WHERE r.account = ?1 AND r.other = a.id), 0)) AS unread ' +
+				'FROM friends f JOIN accounts a ON a.id = f.b LEFT JOIN avatars v ON v.account = a.id WHERE f.a = ?1'
+		)
+			.bind(account.id)
+			.all();
+		const ids = rows.results.map((r) => r.lastId).filter(Boolean);
+		const last = new Map();
+		if (ids.length) {
+			const found = await env.DB.prepare(`SELECT id, from_account, body, at FROM messages WHERE id IN (${ids.map(() => '?').join(', ')})`).bind(...ids).all();
+			for (const m of found.results) last.set(m.id, m);
+		}
+		const threads = rows.results
+			.map((r) => {
+				const m = last.get(r.lastId);
+				return { id: r.id, name: r.name, avatar: r.avatar ?? 0, unread: r.unread ?? 0, last: m ? { text: m.body, at: m.at, mine: m.from_account === account.id } : null };
+			})
+			.sort((a, b) => (b.last?.at ?? 0) - (a.last?.at ?? 0) || a.name.localeCompare(b.name));
+		return json({ threads, unread: threads.reduce((n, t) => n + t.unread, 0) });
+	}
+	const withWhom = path.match(/^\/v1\/messages\/with\/([A-Z0-9]{16})$/);
+	if (withWhom && method === 'GET') {
+		const them = withWhom[1];
+		if (them === account.id || !(await knownAs(them))) return bad(403, 'Not a friend');
+		const before = whole(url.searchParams.get('before'), 0, Number.MAX_SAFE_INTEGER) || Number.MAX_SAFE_INTEGER;
+		const rows = await env.DB.prepare(
+			`SELECT ${MESSAGE_FIELDS} WHERE m.id < ?3 AND ((m.from_account = ?1 AND m.to_account = ?2) OR (m.from_account = ?2 AND m.to_account = ?1)) ORDER BY m.id DESC LIMIT 60`
+		)
+			.bind(account.id, them, before)
+			.all();
+		return json({ messages: rows.results.map(messageOut).reverse(), more: rows.results.length === 60 });
+	}
+	if (is('POST', '/v1/messages/read')) {
+		const sent = await body(request);
+		const other = ACCOUNT_ID.test(sent.with ?? '') ? sent.with : '';
+		const upto = whole(sent.upto, 0, Number.MAX_SAFE_INTEGER);
+		if (!other || !upto) return bad(400, 'Read what?');
+		await env.DB.prepare('INSERT INTO message_reads (account, other, last) VALUES (?, ?, ?) ON CONFLICT (account, other) DO UPDATE SET last = max(last, excluded.last)').bind(account.id, other, upto).run();
+		return json({ ok: true, unread: await unreadCount() });
+	}
+
 	/* ---- watching together */
 
 	const roomOf = async (code) => env.DB.prepare('SELECT code, host, state, rev, updated FROM rooms WHERE code = ?').bind(code).first();
@@ -584,8 +837,23 @@ async function answer(request, env, ctx) {
 		const people = await env.DB.prepare('SELECT m.account, m.name, m.at, v.rev AS avatar FROM room_members m LEFT JOIN avatars v ON v.account = m.account WHERE m.code = ? AND m.at > ? ORDER BY m.name').bind(code, Date.now() - 2 * MINUTE).all();
 		return people.results.map((p) => ({ id: p.account, name: p.name, avatar: p.avatar ?? 0, me: p.account === account.id }));
 	};
+	/**
+	 * With `?msg=<id>` (newer Catalogs): the room's chat and whispers after that message ride along
+	 * with the answer, so a screen in a room asks nothing more for them. `msg=` (empty: just joined,
+	 * or nothing known yet): the room's last 30 lines, and where things stand.
+	 */
+	const chatFor = async (code) => {
+		const asked = url.searchParams.get('msg');
+		if (asked === null) return {};
+		if (asked !== '') return { chat: await newMessages(whole(asked, 0, Number.MAX_SAFE_INTEGER), [code]) };
+		const [history, newest] = await env.DB.batch([
+			env.DB.prepare(`SELECT ${MESSAGE_FIELDS} WHERE m.room = ? ORDER BY m.id DESC LIMIT 30`).bind(code),
+			env.DB.prepare('SELECT max(id) AS id FROM messages')
+		]);
+		return { chat: { messages: [], history: history.results.map(messageOut).reverse(), last: newest.results[0]?.id ?? 0 } };
+	};
 	const roomAnswer = async (room) =>
-		json({ code: room.code, host: room.host === account.id, state: JSON.parse(room.state), rev: room.rev, now: Date.now(), people: await peopleIn(room.code) });
+		json({ code: room.code, host: room.host === account.id, state: JSON.parse(room.state), rev: room.rev, now: Date.now(), people: await peopleIn(room.code), ...(await chatFor(room.code)) });
 	/** What's playing and where: `at` is this server's clock when it was said, so each house works out "now". */
 	const stateFrom = (sent, by) => ({
 		title: text(sent.title, 120),
@@ -595,6 +863,8 @@ async function answer(request, env, ctx) {
 		episode: whole(sent.episode, 0, 9999),
 		playing: sent.playing === true,
 		position: Math.max(0, Math.min(86400, Number(sent.position) || 0)),
+		// Paused by the player itself, not the person (changing to a sharper copy, say): why, in a few words.
+		waiting: sent.playing === true ? '' : text(sent.waiting, 60),
 		at: Date.now(),
 		by
 	});
@@ -640,10 +910,11 @@ async function answer(request, env, ctx) {
 				// Nothing new playing, but maybe someone came or went: `people` is who the asker has (ids,
 				// comma-separated). The rev only moves with what's playing, so a host never saw who joined.
 				const known = url.searchParams.get('people');
-				if (known === null) return json({ same: true, rev: found.rev, now });
+				const chat = await chatFor(code);
+				if (known === null) return json({ same: true, rev: found.rev, now, ...chat });
 				const people = await peopleIn(code);
 				const ids = people.map((p) => p.id).sort().join(',');
-				return ids === known.split(',').filter(Boolean).sort().join(',') ? json({ same: true, rev: found.rev, now }) : json({ same: true, rev: found.rev, now, people });
+				return ids === known.split(',').filter(Boolean).sort().join(',') ? json({ same: true, rev: found.rev, now, ...chat }) : json({ same: true, rev: found.rev, now, people, ...chat });
 			}
 			return roomAnswer(found);
 		}

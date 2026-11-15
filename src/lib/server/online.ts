@@ -132,12 +132,15 @@ export function disconnectOnline(): void {
 
 /* ------------------------------------------------------------ the switches (Settings → Online) */
 
-export type OnlineSwitches = { reports: boolean; share: boolean; shared: boolean; along: boolean };
+export type OnlineSwitches = { reports: boolean; share: boolean; shared: boolean; along: boolean; autoJoin: boolean };
 
-/** On unless turned off: problem reports, sharing what's watched with friends, shared timings. Watching along is off unless turned on. */
+/**
+ * On unless turned off: problem reports, sharing what's watched with friends, shared timings, and
+ * friends watching along. Off unless turned on: opening what the room starts without asking.
+ */
 export function onlineSwitches(): OnlineSwitches {
 	const s = readSettings();
-	return { reports: s.onlineReports !== '0', share: s.onlineShare !== '0', shared: s.onlineShared !== '0', along: s.onlineAlong === '1' };
+	return { reports: s.onlineReports !== '0', share: s.onlineShare !== '0', shared: s.onlineShared !== '0', along: s.onlineAlong !== '0', autoJoin: s.onlineAutoJoin === '1' };
 }
 
 /** A JSON list of profile numbers from a setting ([] when there's none or it can't be read). */
@@ -270,10 +273,32 @@ export async function shareSeen(): Promise<void> {
 	for (const { id: profile } of listProfiles()) {
 		const rows = (
 			profile === 0
-				? db.prepare(`SELECT source, source_id AS id, title, rating FROM entries WHERE source != 'manual' AND source_id IS NOT NULL AND status IN ${WATCHED_SQL} ORDER BY id LIMIT 6000`).all()
-				: db.prepare(`SELECT source, source_id AS id, title, NULL AS rating FROM profile_titles WHERE profile = ? AND status IN ${WATCHED_SQL} ORDER BY id LIMIT 6000`).all(profile)
-		) as { source: string; id: string; title: string; rating: number | null }[];
-		const items = rows.map((r) => ({ key: `${r.source}:${r.id}`, title: r.title, rating: r.rating })).filter((i) => SEEN_KEY.test(i.key) && i.key.length <= 40);
+				? db
+						.prepare(
+							`SELECT e.source, e.source_id AS id, e.title, e.rating, e.year, c.slug AS category, e.poster_url AS poster, e.status
+							 FROM entries e LEFT JOIN categories c ON c.id = e.category_id
+							 WHERE e.source != 'manual' AND e.source_id IS NOT NULL AND e.status IN ${WATCHED_SQL} ORDER BY e.id LIMIT 6000`
+						)
+						.all()
+				: db
+						.prepare(
+							`SELECT source, source_id AS id, title, NULL AS rating, year, category, poster_url AS poster, status
+							 FROM profile_titles WHERE profile = ? AND status IN ${WATCHED_SQL} ORDER BY id LIMIT 6000`
+						)
+						.all(profile)
+		) as { source: string; id: string; title: string; rating: number | null; year: number | null; category: string | null; poster: string | null; status: string }[];
+		// (Year, film or show, poster and status too: a friend's library and profile show them.)
+		const items = rows
+			.map((r) => ({
+				key: `${r.source}:${r.id}`,
+				title: r.title,
+				rating: r.rating,
+				year: r.year ? String(r.year) : '',
+				type: r.category === 'movies' ? 'movie' : r.category ? 'tv' : '',
+				poster: ACTIVITY_POSTER.test(r.poster ?? '') ? r.poster : '',
+				status: r.status
+			}))
+			.filter((i) => SEEN_KEY.test(i.key) && i.key.length <= 40);
 		const now = JSON.stringify(items);
 		// (A profile with nothing watched that never sent anything has nothing to take back either.)
 		if (seenSent.get(profile) === now || (!items.length && !seenSent.has(profile) && profile !== 0)) continue;
@@ -318,22 +343,65 @@ export async function shareActivity(): Promise<void> {
 						)
 						.all(profile)
 		) as Row[];
-		const items = rows
-			.map((r) => {
-				const marked = Date.parse(/[zZ]$/.test(r.updated) ? r.updated : `${r.updated.replace(' ', 'T')}Z`) || 0;
-				const day = r.finished && /^\d{4}-\d{2}-\d{2}$/.test(r.finished) ? r.finished : '';
-				const at = day && new Date(marked).toISOString().slice(0, 10) !== day ? Date.parse(`${day}T12:00:00Z`) : marked;
-				return {
-					key: `${r.source}:${r.id}`,
-					title: r.title,
-					year: r.year ?? '',
-					type: r.category === 'movies' ? 'movie' : 'tv',
-					poster: ACTIVITY_POSTER.test(r.poster ?? '') ? r.poster : '',
-					rating: r.rating,
-					at
-				};
-			})
-			.filter((i) => SEEN_KEY.test(i.key) && i.key.length <= 40 && i.at > 0);
+		type Item = { key: string; title: string; year: number | string; type: string; poster: string; rating: number | null; at: number; season?: number; episode?: number };
+		const toItem = (r: Row): Item => {
+			const marked = Date.parse(/[zZ]$/.test(r.updated) ? r.updated : `${r.updated.replace(' ', 'T')}Z`) || 0;
+			const day = r.finished && /^\d{4}-\d{2}-\d{2}$/.test(r.finished) ? r.finished : '';
+			const at = day && new Date(marked).toISOString().slice(0, 10) !== day ? Date.parse(`${day}T12:00:00Z`) : marked;
+			return {
+				key: `${r.source}:${r.id}`,
+				title: r.title,
+				year: r.year ?? '',
+				type: r.category === 'movies' ? 'movie' : 'tv',
+				poster: ACTIVITY_POSTER.test(r.poster ?? '') ? (r.poster ?? '') : '',
+				rating: r.rating,
+				at
+			};
+		};
+		const byTitle = new Map(rows.map(toItem).map((item) => [item.title.toLowerCase(), item]));
+		// Shows and anime: the episode watched last, and when (owner, 2026-11-15: "it should show the
+		// episode they watched instead of just showing the entire anime"). An episode counts once
+		// most of it is watched; a show still being watched comes in this way too.
+		const episodes = db
+			.prepare(
+				`SELECT title, season, episode, updated_at AS updated FROM watch_progress
+				 WHERE profile = ? AND type = 'tv' AND episode > 0 AND duration > 0 AND CAST("current_time" AS REAL) >= duration * 0.8
+				 ORDER BY updated_at DESC LIMIT 300`
+			)
+			.all(profile) as { title: string; season: number; episode: number; updated: string }[];
+		const showOf =
+			profile === 0
+				? db.prepare(
+						`SELECT e.source, e.source_id AS id, e.title, e.year, c.slug AS category, e.poster_url AS poster, e.rating, NULL AS finished, e.updated_at AS updated
+						 FROM entries e LEFT JOIN categories c ON c.id = e.category_id
+						 WHERE lower(e.title) = lower(?) AND e.source IN ('tmdb', 'anilist') AND e.source_id IS NOT NULL AND COALESCE(c.slug, '') != 'movies' LIMIT 1`
+					)
+				: db.prepare(
+						`SELECT source, source_id AS id, title, year, category, poster_url AS poster, NULL AS rating, NULL AS finished, updated_at AS updated
+						 FROM profile_titles WHERE profile = ? AND lower(title) = lower(?) AND source IN ('tmdb', 'anilist') AND category != 'movies' LIMIT 1`
+					);
+		const done = new Set<string>();
+		for (const ep of episodes) {
+			const name = ep.title.toLowerCase();
+			if (done.has(name)) continue;
+			done.add(name);
+			if (done.size > 20) break;
+			const at = Date.parse(`${ep.updated.replace(' ', 'T')}Z`) || 0;
+			let item = byTitle.get(name);
+			if (!item) {
+				const show = (profile === 0 ? showOf.get(ep.title) : showOf.get(profile, ep.title)) as Row | undefined;
+				if (!show) continue;
+				item = toItem(show);
+				byTitle.set(name, item);
+			}
+			item.season = ep.season;
+			item.episode = ep.episode;
+			if (at > item.at) item.at = at;
+		}
+		const items = [...byTitle.values()]
+			.filter((i) => SEEN_KEY.test(i.key) && i.key.length <= 40 && i.at > 0)
+			.sort((a, b) => b.at - a.at)
+			.slice(0, 20);
 		const now = JSON.stringify(items);
 		if (activitySent.get(profile) === now || (!items.length && !activitySent.has(profile) && profile !== 0)) continue;
 		const answer = await cloud('/v1/activity', { method: 'PUT', profile, body: { items }, timeout: 20_000 });

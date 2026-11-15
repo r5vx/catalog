@@ -1,7 +1,7 @@
 {
 	"name": "catalog",
 	"private": true,
-	"version": "4.3.0",
+	"version": "4.4.0",
 	"type": "module",
 	"description": "Your personal library of everything you've watched.",
 	"main": "electron/main.cjs",
@@ -82,6 +82,13 @@
 		},
 		"dmg": {
 			"title": "Catalog ${version}"
+		},
+		"linux": {
+			"target": "AppImage",
+			"icon": "assets/icon.png",
+			"category": "AudioVideo",
+			"synopsis": "A personal library of everything you have watched",
+			"artifactName": "Catalog-${version}-linux-${arch}.${ext}"
 		},
 		"nsis": {
 			"oneClick": false,

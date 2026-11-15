@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { p } from '$lib/altText';
+	import { wording } from '$lib/altText';
 
 	/**
 	 * Says when there's no TMDB key: without one Browse, the watch lists, posters and episode lists
@@ -25,7 +25,7 @@
 		} catch {}
 	}
 
-	const t = (text: string) => (page.data.altMode ? p(text) : text);
+	const t = (text: string) => wording(page.data.altMode, text);
 
 	// Not where the key goes, on the PIN or first-run pages, over the player, or on a TV.
 	const here = $derived(

@@ -398,7 +398,11 @@
 
 	<Synopsis text={overview} pending={looking} />
 
-	<CastRow {cast} back={page.url.pathname + page.url.search} />
+	<CastRow
+		{cast}
+		back={page.url.pathname + page.url.search}
+		music={entry.sourceId && (entry.source === 'tmdb' || entry.source === 'anilist') ? { source: entry.source, sourceId: entry.sourceId, title: entry.title, year: entry.year, type: watchType === 'movie' ? 'movie' : 'tv', anime: isAnime } : null}
+	/>
 
 	{#if watchType === 'tv' && entry.sourceId && (entry.source === 'tmdb' || entry.source === 'anilist')}
 		<EpisodeRatings source={entry.source} sourceId={entry.sourceId} title={entry.title} />

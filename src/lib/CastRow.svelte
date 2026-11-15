@@ -1,16 +1,22 @@
 <script lang="ts">
+	import MusicCredits from '$lib/MusicCredits.svelte';
+
 	/**
 	 * Who's in it, in billing order.
 	 *
 	 * Anyone already in your library links to their page. On a title you don't
 	 * own, most of the cast won't be — those render as plain faces rather than
 	 * dead links.
+	 *
+	 * With `music` (which title it is), a Music tab sits beside Cast: who did the music, the
+	 * soundtrack's songs, an anime's openings and endings (lib/MusicCredits.svelte).
 	 */
 	let {
 		cast,
 		back = null,
 		heading = 'Cast',
-		note = null
+		note = null,
+		music = null
 	}: {
 		cast: {
 			id?: number | null;
@@ -24,7 +30,17 @@
 		back?: string | null;
 		heading?: string;
 		note?: string | null;
+		music?: { source: string; sourceId: string; title: string; year: string | number | null; type: 'movie' | 'tv'; anime?: boolean } | null;
 	} = $props();
+
+	let tab = $state<'cast' | 'music'>('cast');
+	/** The Music tab was opened once: it stays drawn (and doesn't ask again) after going back to Cast. */
+	let musicSeen = $state(false);
+	const showMusic = $derived(Boolean(music?.title && music.sourceId));
+	function pick(which: 'cast' | 'music') {
+		tab = which;
+		if (which === 'music') musicSeen = true;
+	}
 
 	/**
 	 * Our own id where we have one; the provider's where we don't, with their name and photo, so
@@ -43,10 +59,23 @@
 	};
 </script>
 
-{#if cast.length > 0}
+{#if cast.length > 0 || showMusic}
 	<section class="cast">
-		<h2 class="label">{heading}</h2>
-		<ul>
+		{#if showMusic}
+			<div class="tabs" role="tablist">
+				<button type="button" role="tab" class="label" class:on={tab === 'cast'} aria-selected={tab === 'cast'} onclick={() => pick('cast')}>{heading}</button>
+				<button type="button" role="tab" class="label" class:on={tab === 'music'} aria-selected={tab === 'music'} onclick={() => pick('music')}>Music</button>
+			</div>
+		{:else}
+			<h2 class="label">{heading}</h2>
+		{/if}
+		{#if showMusic && musicSeen}
+			<div hidden={tab !== 'music'}>
+				<MusicCredits source={music!.source} sourceId={music!.sourceId} title={music!.title} year={music!.year} type={music!.type} anime={music!.anime} {back} />
+			</div>
+		{/if}
+		{#if tab === 'cast' && !cast.length}<p class="faint">No cast listed.</p>{/if}
+		<ul hidden={tab !== 'cast' || !cast.length}>
 			{#each cast as person, index (person.id ?? person.name + index)}
 				<li>
 					{#if person.id || person.sourceId}
@@ -73,11 +102,35 @@
 				</li>
 			{/each}
 		</ul>
-		{#if note}<p class="faint hint">{note}</p>{/if}
+		{#if note && tab === 'cast'}<p class="faint hint">{note}</p>{/if}
 	</section>
 {/if}
 
 <style>
+	.tabs {
+		display: flex;
+		gap: 18px;
+		margin: 0 0 10px;
+	}
+
+	.tabs .label {
+		margin: 0;
+		padding: 0 0 4px;
+		border: 0;
+		border-bottom: 2px solid transparent;
+		background: none;
+		cursor: pointer;
+	}
+
+	.tabs .label.on {
+		color: var(--ink);
+		border-bottom-color: var(--accent);
+	}
+
+	ul[hidden] {
+		display: none;
+	}
+
 	.label {
 		font-family: var(--body);
 		font-size: 0.72rem;

@@ -26,6 +26,7 @@ import { withScores } from '$lib/server/liveScores';
 import { linkUnmatchedSoon } from '$lib/server/linkEntry';
 import { customThemeCss, readCustomTheme } from '$lib/customTheme';
 import { startYouTubeForPhones } from '$lib/server/youtubePhone';
+import { noteFireTv } from '$lib/server/fireTvInstall';
 
 // Before anything asks another site for something: a time limit for every outside request,
 // and a note of the slow ones (on /api/diagnostics).
@@ -219,6 +220,13 @@ export const handle: Handle = async ({ event, resolve }) => {
 	event.url.protocol = event.request.headers.get('x-forwarded-proto') === 'https' ? 'https:' : 'http:';
 	checkSameOrigin(event);
 	noteOwnAddress(event.url);
+	// A Fire TV opening Catalog: remembered, so Settings can install the TV app on it from here.
+	const agent = event.request.headers.get('user-agent') ?? '';
+	if (agent.includes('CatalogTV/')) {
+		try {
+			noteFireTv(event.getClientAddress(), agent);
+		} catch {}
+	}
 
 	const settingsNow = readSettings();
 	const theme = settingsNow.theme;

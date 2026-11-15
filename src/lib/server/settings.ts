@@ -116,8 +116,17 @@ export type Settings = {
 	onlineReports?: string;
 	onlineShare?: string;
 	onlineShared?: string;
-	/** '1': friends may watch along with what's playing here (off unless turned on). */
+	/**
+	 * '0': friends may not watch along with what's playing here. On unless turned off since
+	 * 2026-11-15 (owner: friends' "Watch it too" should be watching along); before that '1' was on.
+	 */
 	onlineAlong?: string;
+	/** '1': when someone in this screen's room starts something, it opens here by itself (no "Join?" first). */
+	onlineAutoJoin?: string;
+	/** This computer's key for Fire TVs' developer connection (fireTvInstall.ts). Never leaves the computer. */
+	fireTvKey?: string;
+	/** Fire TVs seen opening Catalog, and their names once installed on (JSON: address → { seen, name }). */
+	fireTvKnown?: string;
 	/** '1': taken offline for now. The computer's place and key are kept, so it's the same people when it comes back. */
 	onlineOff?: string;
 	/**

@@ -1,24 +1,29 @@
 <script lang="ts">
-	import { onDestroy, onMount, untrack } from 'svelte';
+	import { onDestroy, onMount, untrack, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import Avatar from '$lib/Avatar.svelte';
-	import { p } from '$lib/altText';
-	import { together, startRoom, joinRoom, leaveRoom, rejoinKeptRoom, alongChanged, type RoomState } from '$lib/watchTogether.svelte';
+	import ContextMenu, { menuAt, type MenuItem } from '$lib/ContextMenu.svelte';
+	import { wording } from '$lib/altText';
+	import { together, startRoom, joinRoom, leaveRoom, rejoinKeptRoom, alongChanged } from '$lib/watchTogether.svelte';
+	import { chat, sendMessage, openChat } from '$lib/chat.svelte';
+	import { watchHref, wantToWatch } from '$lib/friendLinks';
 
 	/**
-	 * Friends online (src/lib/server/online.ts), at the top of the library's Friends: what each
-	 * friend is watching right now, with Watch along (their room, when they allow it) or Watch it
-	 * too; adding a friend with a code; the switch that lets friends watch along with you; and
-	 * watching together by room code (src/lib/watchTogether.svelte.ts).
+	 * Friends online (src/lib/server/online.ts), at the top of the library's Friends: each friend as
+	 * a card (picture, name, what they're watching), with View profile (/friends/<id>) and, when
+	 * they're watching, Watch along (falls in step with them, like listening along on Spotify),
+	 * Start it myself, or Want to watch. Right-click a card for all of it. Below: adding a friend,
+	 * people friends know, and watching together by room code with the room's chat
+	 * (src/lib/watchTogether.svelte.ts, src/lib/chat.svelte.ts).
 	 * Nothing shows until this Catalog is online (Settings → Online).
 	 */
 	type Watching = { title: string; type: 'tv' | 'movie'; year: string; season: number; episode: number; poster: string; room?: string };
 	type Friend = { id: string; name: string; avatar: number; watching: Watching | null };
-	type Switches = { reports: boolean; share: boolean; shared: boolean; along: boolean };
-	/** Someone a friend knows ("Bob, a friend of Ann's"), or one of a friend's friends. */
-	type Known = { id: string; name: string; avatar: number; via?: string; mutual?: number; requested?: boolean; me?: boolean; friend?: boolean; asked?: boolean };
-	type FriendsAnswer = { me?: { name: string }; friends?: Friend[]; requests?: Known[]; suggestions?: Known[] };
+	type Switches = { reports: boolean; share: boolean; shared: boolean; along: boolean; autoJoin?: boolean };
+	/** Someone a friend knows ("Bob, a friend of Ann's"). */
+	type Known = { id: string; name: string; avatar: number; via?: string; mutual?: number; requested?: boolean };
+	type FriendsAnswer = { me?: { id?: string; name: string; avatar?: number }; friends?: Friend[]; requests?: Known[]; suggestions?: Known[] };
 
 	/**
 	 * What the page had to hand (src/routes/+page.server.ts `friendsStart`): whether this Catalog is
@@ -28,13 +33,10 @@
 	const kept = untrack(() => (initial?.friends ?? null) as FriendsAnswer | null);
 
 	let connected = $state<boolean | null>(untrack(() => (initial ? (initial.online ? true : false) : null)));
-	let me = $state(kept?.me?.name ?? '');
+	let me = $state(kept?.me ?? null);
 	let friends = $state<Friend[]>(kept?.friends ?? []);
 	let requests = $state<Known[]>(kept?.requests ?? []);
 	let suggestions = $state<Known[]>(kept?.suggestions ?? []);
-	/** A friend whose friends are listed under their name (to ask the ones you don't know). */
-	let openFriend = $state<string | null>(null);
-	let theirFriends = $state<Known[] | null>(null);
 	let switches = $state<Switches | null>(null);
 	let adding = $state(false);
 	let myCode = $state('');
@@ -44,14 +46,18 @@
 	let ownerSaved = $state(false);
 	let roomCode = $state('');
 	let problem = $state('');
+	let note = $state('');
 	let busy = $state(false);
+	let menu = $state<{ at: { x: number; y: number }; items: MenuItem[] } | null>(null);
+	let groupLine = $state('');
+	let groupList = $state<HTMLUListElement | null>(null);
 	let timer: ReturnType<typeof setInterval> | undefined;
 
 	/** A line in the alternate wording when it's on (Settings → Personalization → Code), else as it is. */
-	const t = (text: string) => (page.data.altMode ? p(text) : text);
+	const t = (text: string) => wording(page.data.altMode, text);
 
-	const watchingNow = $derived(friends.filter((friend) => friend.watching));
-	const others = $derived(friends.filter((friend) => !friend.watching));
+	/** Watching now first, then everyone else, by name. */
+	const ordered = $derived([...friends].sort((a, b) => Number(Boolean(b.watching)) - Number(Boolean(a.watching)) || a.name.localeCompare(b.name)));
 
 	const cloud = (path: string, method = 'GET', body?: unknown) =>
 		fetch(`/api/online/c/${path}`, { method, headers: body === undefined ? undefined : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
@@ -63,7 +69,7 @@
 		// (Not online: this Catalog hasn't joined, which the server side answers as "not yet".)
 		connected = answer.ok ? true : answer.status === 0 || /isn't online/.test(answer.data?.error ?? '') ? false : connected;
 		if (!answer.ok) return;
-		me = answer.data.me?.name ?? '';
+		me = answer.data.me ?? null;
 		friends = answer.data.friends ?? [];
 		requests = answer.data.requests ?? [];
 		suggestions = answer.data.suggestions ?? [];
@@ -75,13 +81,11 @@
 		const answer = await cloud('friends/request', 'POST', { to: person.id });
 		busy = false;
 		problem = answer.ok ? '' : (answer.data?.error ?? "Couldn't ask");
-		if (theirFriends) theirFriends = theirFriends.map((p) => (p.id === person.id ? { ...p, requested: !answer.data?.friends, friend: Boolean(answer.data?.friends) } : p));
 		await load();
 	}
 
 	async function unask(person: Known) {
 		await cloud('friends/unrequest', 'POST', { to: person.id });
-		if (theirFriends) theirFriends = theirFriends.map((p) => (p.id === person.id ? { ...p, requested: false } : p));
 		await load();
 	}
 
@@ -91,20 +95,6 @@
 		await cloud('friends/answer', 'POST', { from: person.id, yes });
 		busy = false;
 		await load();
-	}
-
-	/** A friend's own friends, under their name (again: closed). */
-	async function showTheirFriends(friend: Friend) {
-		if (openFriend === friend.id) {
-			openFriend = null;
-			theirFriends = null;
-			return;
-		}
-		openFriend = friend.id;
-		theirFriends = null;
-		const answer = await cloud(`friends/${friend.id}/friends`);
-		if (openFriend !== friend.id) return;
-		theirFriends = answer.ok ? (answer.data.friends ?? []) : [];
 	}
 
 	onMount(() => {
@@ -147,8 +137,9 @@
 		if (adding && !myCode) await newCode();
 	}
 
-	async function newCode() {
-		const answer = await cloud('friends/code', 'POST', {});
+	/** Your own friend code: the same one every time (`fresh`: a new one, and the old one stops working). */
+	async function newCode(fresh = false) {
+		const answer = await cloud('friends/code', 'POST', fresh ? { fresh: true } : {});
 		myCode = answer.data?.code ?? '';
 		copied = false;
 		problem = answer.ok ? '' : (answer.data?.error ?? "Couldn't make a code");
@@ -185,9 +176,8 @@
 			return;
 		}
 		theirCode = '';
-		adding = false;
-		// (A code works once: the next friend gets a new one.)
-		myCode = '';
+		note = answer.data?.name ? `${answer.data.name} ${t('is your friend now')}` : '';
+		// (The add-a-friend part stays open, for the next friend, and your code stays the same.)
 		await load();
 	}
 
@@ -204,13 +194,52 @@
 		alongChanged();
 	}
 
-	/** Into the friend's room, then their film or episode opens here and falls in step with theirs. */
-	/** Watching along with a friend: their player leads, this one follows (a room code is for everyone controlling it). */
+	/** Watching along with a friend: into their room, then their film or episode opens here at their place and follows their player. */
 	async function watchAlong(watching: Watching, name: string) {
 		busy = true;
 		if (watching.room && together.code !== watching.room) await joinRoom(watching.room, name);
 		busy = false;
 		await goto(watchHref(watching));
+	}
+
+	/** The same film or episode, on its own here: from your own place, not in step with them. */
+	async function startMyself(watching: Watching) {
+		// (Still in their room, the player would fall in step with them.)
+		if (together.code && together.code === watching.room) leaveRoom();
+		await goto(watchHref(watching));
+	}
+
+	async function addWanted(watching: Watching) {
+		note = (await wantToWatch(watching)) ? `${watching.title}: ${t('added to Want to watch')}` : '';
+		problem = note ? '' : t("Couldn't add it");
+	}
+
+	function friendMenu(event: MouseEvent, friend: Friend) {
+		const w = friend.watching;
+		const items: MenuItem[] = [
+			{ label: t('View profile'), run: () => goto(`/friends/${friend.id}`) },
+			{ label: t('View their library'), run: () => goto(`/friends/${friend.id}/library`) },
+			{ label: `${t('Whisper to')} ${friend.name}`, run: () => openChat(friend) },
+			{ label: t('Messages'), run: () => goto(`/messages?with=${friend.id}`) }
+		];
+		if (w) {
+			items.push('-');
+			if (w.room) items.push({ label: t('Watch along'), run: () => watchAlong(w, friend.name) });
+			items.push({ label: t('Start it myself'), run: () => startMyself(w) }, { label: t('Add to Want to watch'), run: () => addWanted(w) });
+		}
+		items.push('-', { label: t('Remove friend'), run: () => removeFriend(friend), danger: true });
+		menu = { at: menuAt(event, items.length), items };
+	}
+
+	/** The ⋯ button beside Watch along: the other ways to watch it. */
+	function watchMenu(event: MouseEvent, friend: Friend) {
+		const w = friend.watching!;
+		const items: MenuItem[] = [
+			...(w.room ? [{ label: t('Watch along'), run: () => watchAlong(w, friend.name) }] : []),
+			{ label: t('Start it myself'), run: () => startMyself(w) },
+			{ label: t('Add to Want to watch'), run: () => addWanted(w) }
+		];
+		menu = { at: menuAt(event, items.length), items };
 	}
 
 	async function start() {
@@ -226,201 +255,204 @@
 		busy = false;
 	}
 
-	const label = (w: { title: string; type: string; season: number; episode: number }) => (w.type === 'tv' && w.season ? `${w.title} S${w.season}E${w.episode}` : w.title);
-	function watchHref(w: Watching | RoomState): string {
-		const params = new URLSearchParams({ title: w.title, type: w.type, year: w.year ?? '', auto: '1' });
-		if (w.type === 'tv' && w.season) {
-			params.set('resume_s', String(w.season));
-			params.set('resume_e', String(w.episode));
-		}
-		return `/watch?${params}`;
+	async function sendGroup(event: SubmitEvent) {
+		event.preventDefault();
+		if (!groupLine.trim() || !together.code) return;
+		const sent = await sendMessage(groupLine, { room: together.code });
+		if (sent) groupLine = '';
+		else problem = t("Couldn't send it");
 	}
-</script>
 
-{#snippet theirList()}
-	{#if theirFriends === null}
-		<p class="faint small">…</p>
-	{:else if !theirFriends.filter((person) => !person.me).length}
-		<p class="faint small">{t('No other friends yet.')}</p>
-	{:else}
-		<ul class="theirs">
-			{#each theirFriends.filter((person) => !person.me) as person (person.id)}
-				<li>
-					<Avatar id={person.id} name={person.name} rev={person.avatar} size={22} />
-					<span class="who">{person.name}</span>
-					{#if person.friend}
-						<span class="faint small">{t('Your friend')}</span>
-					{:else if person.requested}
-						<span class="faint small">{t('Asked')}</span>
-						<button type="button" class="link" onclick={() => unask(person)}>{t('Take back')}</button>
-					{:else}
-						<button type="button" class="btn" onclick={() => ask(person)} disabled={busy}>{person.asked ? t('Yes, be friends') : t('Ask to be friends')}</button>
-					{/if}
-				</li>
-			{/each}
-		</ul>
-	{/if}
-{/snippet}
+	// The group chat stays scrolled to its newest line.
+	$effect(() => {
+		void chat.room.length;
+		void tick().then(() => groupList && (groupList.scrollTop = groupList.scrollHeight));
+	});
+
+	const label = (w: { title: string; type: string; season: number; episode: number }) => (w.type === 'tv' && w.season ? `${w.title} S${w.season}E${w.episode}` : w.title);
+	const clock = (at: number) => new Date(at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+</script>
 
 {#if connected === false}
 	<p class="off faint">{t('Friends online, watching together and synced progress:')} <a href="/settings/online">{t('Settings')} → Online</a>.</p>
 {:else if connected}
-	<section class="online">
-		<div class="block">
-			<div class="head">
-				<h2>{t('Friends online')}</h2>
-				<span class="row">
-					<button type="button" class="btn" onclick={refresh} disabled={refreshing}>{refreshing ? '…' : t('Refresh')}</button>
-					<button type="button" class="btn" class:btn-primary={!friends.length} onclick={openAdding} aria-expanded={adding}>{t('Add a friend')}</button>
-				</span>
-			</div>
+	<section class="friends">
+		<div class="head">
+			<h2>{t('Friends')}</h2>
+			<span class="row">
+				{#if me?.id}<a class="btn" href="/friends/{me.id}">{t('My profile')}</a>{/if}
+				<a class="btn" href="/messages">
+					{t('Messages')}
+					{#if chat.unread}<span class="badge">{chat.unread}</span>{/if}
+				</a>
+				<button type="button" class="btn" onclick={refresh} disabled={refreshing}>{refreshing ? '…' : t('Refresh')}</button>
+				<button type="button" class="btn" class:btn-primary={!friends.length} onclick={openAdding} aria-expanded={adding}>{t('Add a friend')}</button>
+			</span>
+		</div>
 
-			{#if requests.length}
-				<ul class="rest asked">
-					{#each requests as person (person.id)}
-						<li>
-							<Avatar id={person.id} name={person.name} rev={person.avatar} size={28} />
-							<span class="who">{person.name}</span>
-							<span class="what faint">{t('Asked to be friends')}</span>
-							<button type="button" class="btn btn-primary" onclick={() => answerRequest(person, true)} disabled={busy}>{t('Yes')}</button>
-							<button type="button" class="link" onclick={() => answerRequest(person, false)} disabled={busy}>{t('No')}</button>
-						</li>
-					{/each}
-				</ul>
-			{/if}
+		{#if requests.length}
+			<ul class="asked">
+				{#each requests as person (person.id)}
+					<li>
+						<Avatar id={person.id} name={person.name} rev={person.avatar} size={32} />
+						<span class="who">{person.name}</span>
+						<span class="faint">{t('Asked to be friends')}</span>
+						<button type="button" class="btn btn-primary" onclick={() => answerRequest(person, true)} disabled={busy}>{t('Yes')}</button>
+						<button type="button" class="link" onclick={() => answerRequest(person, false)} disabled={busy}>{t('No')}</button>
+					</li>
+				{/each}
+			</ul>
+		{/if}
 
-			{#if adding}
-				<div class="adding">
-					<p class="faint">{t("Give a friend your code, or type theirs. Either way you're both added.")}</p>
-					<div class="row">
-						<span>{t('Your code')}</span>
-						{#if myCode}
-							<strong class="code tabular">{myCode}</strong>
-							<button type="button" class="link" onclick={copyCode}>{copied ? t('Copied') : t('Copy')}</button>
-							<span class="faint small">{t('works once, for a day')}</span>
-						{:else}
-							<span class="faint">…</span>
-						{/if}
-					</div>
-					<form class="row" onsubmit={addFriend}>
-						<input type="text" bind:value={theirCode} placeholder={t("A friend's code")} autocomplete="off" spellcheck="false" maxlength="200" aria-label="A friend's code" />
-						<button type="submit" class="btn btn-primary" disabled={!theirCode.trim()}>{t('alt:Add')}</button>
-					</form>
+		{#if adding}
+			<div class="adding">
+				<p class="faint">{t("Give a friend your code, or type theirs. Either way you're both added. Your code stays the same.")}</p>
+				<div class="row">
+					<span>{t('Your code')}</span>
+					{#if myCode}
+						<strong class="code tabular">{myCode}</strong>
+						<button type="button" class="link" onclick={copyCode}>{copied ? t('Copied') : t('Copy')}</button>
+						<span class="faint small">{t('yours to keep')}</span>
+						<button type="button" class="link" onclick={() => newCode(true)} title={t('The old code stops working')}>{t('New code')}</button>
+					{:else}
+						<span class="faint">…</span>
+					{/if}
 				</div>
-			{/if}
-			{#if problem}<p class="msg bad">{problem}</p>{/if}
-			{#if ownerSaved}<p class="msg">{t('Problem reports are in')} <a href="/settings/online">{t('Settings')} → Online</a>.</p>{/if}
+				<form class="row" onsubmit={addFriend}>
+					<input type="text" bind:value={theirCode} placeholder={t("A friend's code")} autocomplete="off" spellcheck="false" maxlength="200" aria-label="A friend's code" />
+					<button type="submit" class="btn btn-primary" disabled={!theirCode.trim()}>{t('alt:Add')}</button>
+				</form>
+			</div>
+		{/if}
+		{#if problem}<p class="msg bad">{problem}</p>{/if}
+		{#if note}<p class="msg">{note}</p>{/if}
+		{#if ownerSaved}<p class="msg">{t('Problem reports are in')} <a href="/settings/online">{t('Settings')} → Online</a>.</p>{/if}
 
-			{#if watchingNow.length}
-				<h3 class="label">{t('Watching now')}</h3>
-				<ul class="now">
-					{#each watchingNow as friend (friend.id)}
-						{@const watching = friend.watching!}
-						<li>
-							{#if watching.poster}<img class="poster" src={watching.poster} alt="" />{:else}<span class="poster empty" aria-hidden="true"></span>{/if}
-							<div class="about">
-								<span class="who"><Avatar id={friend.id} name={friend.name} rev={friend.avatar} size={24} />{friend.name}</span>
-								<span class="what">{label(watching)}</span>
-								<div class="row">
+		{#if ordered.length}
+			<ul class="cards">
+				{#each ordered as friend (friend.id)}
+					{@const watching = friend.watching}
+					<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+					<li class="card" class:live={watching} oncontextmenu={(e) => friendMenu(e, friend)}>
+						<a class="face" href="/friends/{friend.id}" aria-label="{friend.name}'s profile">
+							<Avatar id={friend.id} name={friend.name} rev={friend.avatar} size={72} />
+						</a>
+						<div class="about">
+							<a class="name" href="/friends/{friend.id}">{friend.name}</a>
+							{#if watching}
+								<span class="now"><span class="dot" aria-hidden="true"></span>{t('Watching')} <strong>{label(watching)}</strong></span>
+							{:else}
+								<span class="faint">{t('Not watching now')}</span>
+							{/if}
+							<div class="row">
+								{#if watching}
 									{#if watching.room}
 										<button type="button" class="btn btn-primary" onclick={() => watchAlong(watching, friend.name)} disabled={busy}>{t('Watch along')}</button>
 									{:else}
-										<a class="btn" href={watchHref(watching)}>{t('Watch it too')}</a>
+										<button type="button" class="btn btn-primary" onclick={() => startMyself(watching)}>{t('Watch it too')}</button>
 									{/if}
-									<button type="button" class="link" onclick={() => showTheirFriends(friend)} aria-expanded={openFriend === friend.id}>{t('Their friends')}</button>
-									<button type="button" class="link" onclick={() => removeFriend(friend)}>{t('Remove')}</button>
-								</div>
-								{#if openFriend === friend.id}{@render theirList()}{/if}
+									<button type="button" class="btn more" onclick={(e) => watchMenu(e, friend)} aria-label="More ways to watch it" title="More">⋯</button>
+								{/if}
+								<a class="btn" href="/friends/{friend.id}">{t('View profile')}</a>
 							</div>
-						</li>
-					{/each}
-				</ul>
-			{/if}
+						</div>
+						{#if watching?.poster}<img class="poster" src={watching.poster} alt="" />{/if}
+					</li>
+				{/each}
+			</ul>
+		{:else}
+			<p class="faint">{t('Nobody yet.')}</p>
+		{/if}
 
-			{#if others.length}
-				<ul class="rest">
-					{#each others as friend (friend.id)}
-						<li>
-							<Avatar id={friend.id} name={friend.name} rev={friend.avatar} size={28} />
-							<span class="who">{friend.name}</span>
-							<span class="what faint">{t('Not watching now')}</span>
-							<button type="button" class="link" onclick={() => showTheirFriends(friend)} aria-expanded={openFriend === friend.id}>{t('Their friends')}</button>
-							<button type="button" class="link" onclick={() => removeFriend(friend)}>{t('Remove')}</button>
-							{#if openFriend === friend.id}<div class="their">{@render theirList()}</div>{/if}
-						</li>
-					{/each}
-				</ul>
-			{:else if !friends.length}
-				<p class="faint">{t('Nobody yet.')}</p>
-			{/if}
+		{#if suggestions.length}
+			<h3 class="label">{t('People your friends know')}</h3>
+			<ul class="rest">
+				{#each suggestions as person (person.id)}
+					<li>
+						<Avatar id={person.id} name={person.name} rev={person.avatar} size={32} />
+						<span class="who">{person.name}</span>
+						<span class="faint small">{person.mutual && person.mutual > 1 ? `${t('Knows')} ${person.via} +${person.mutual - 1}` : `${t('Knows')} ${person.via}`}</span>
+						{#if person.requested}
+							<span class="faint small">{t('Asked')}</span>
+							<button type="button" class="link" onclick={() => unask(person)}>{t('Take back')}</button>
+						{:else}
+							<button type="button" class="btn" onclick={() => ask(person)} disabled={busy}>{t('Ask to be friends')}</button>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+		{/if}
 
-			{#if suggestions.length}
-				<h3 class="label">{t('People your friends know')}</h3>
-				<ul class="rest">
-					{#each suggestions as person (person.id)}
-						<li>
-							<Avatar id={person.id} name={person.name} rev={person.avatar} size={28} />
-							<span class="who">{person.name}</span>
-							<span class="what faint">{person.mutual && person.mutual > 1 ? `${t('Knows')} ${person.via} +${person.mutual - 1}` : `${t('Knows')} ${person.via}`}</span>
-							{#if person.requested}
-								<span class="faint small">{t('Asked')}</span>
-								<button type="button" class="link" onclick={() => unask(person)}>{t('Take back')}</button>
-							{:else}
-								<button type="button" class="btn" onclick={() => ask(person)} disabled={busy}>{t('Ask to be friends')}</button>
-							{/if}
-						</li>
-					{/each}
-				</ul>
-			{/if}
+		{#if switches}
+			<label class="toggle">
+				<input type="checkbox" checked={switches.along} onchange={(e) => setAlong(e.currentTarget.checked)} />
+				{t('Let friends watch along with me')}
+			</label>
+		{/if}
+	</section>
 
-			{#if switches}
-				<label class="toggle">
-					<input type="checkbox" checked={switches.along} onchange={(e) => setAlong(e.currentTarget.checked)} />
-					{t('Let friends watch along with me')}
-				</label>
-				<p class="faint small">{t("Friends get a Watch along button beside what you're watching. Their screen follows yours; only you control it.")}</p>
-			{/if}
-		</div>
-
-		<div class="block">
-			<h2>{t('Watch together')}</h2>
-			{#if together.code && together.following}
-				<p>{t('Watching along with')} <strong>{together.following}</strong>. {t('Their player leads; yours follows.')}</p>
-			{:else if together.code}
-				<p>
-					{t('Room')} <strong class="code tabular">{together.code}</strong>
-				</p>
-				<p class="faint small">{t("Everyone in the room controls it: anyone's play, pause and skips happen for all.")}</p>
-				<p class="people">
-					{#each together.people as person (person.id)}
-						<span class="person"><Avatar id={person.id} name={person.name} rev={person.avatar} size={24} />{person.me ? `${person.name} ${t('(you)')}` : person.name}</span>
+	<section class="together">
+		<h2>{t('Watch together')}</h2>
+		{#if together.code}
+			<div class="room">
+				<div class="room-side">
+					{#if together.following}
+						<p>{t('Watching along with')} <strong>{together.following}</strong>. {t('Their player leads; yours follows.')}</p>
 					{:else}
-						<span class="faint">{me}</span>
-					{/each}
-				</p>
-				{#if together.state?.title}
-					<p class="what">
-						{together.state.playing ? t('Playing') : t('Paused')}: {label(together.state)}
-						<a class="btn btn-primary" href={watchHref(together.state)}>{t('Watch')}</a>
+						<p>{t('Room')} <strong class="code tabular">{together.code}</strong></p>
+						<p class="faint small">{t("Everyone in the room controls it: anyone's play, pause and skips happen for all.")}</p>
+					{/if}
+					<p class="people">
+						{#each together.people as person (person.id)}
+							<span class="person"><Avatar id={person.id} name={person.name} rev={person.avatar} size={26} />{person.me ? `${person.name} ${t('(you)')}` : person.name}</span>
+						{:else}
+							<span class="faint">{me?.name ?? ''}</span>
+						{/each}
 					</p>
-				{:else}
-					<p class="faint">{t('Nothing playing yet. Whoever started the room plays something; the others open it from here.')}</p>
-				{/if}
-				<div><button type="button" class="btn" onclick={leaveRoom}>{together.following ? t('Stop watching along') : t('Leave the room')}</button></div>
-			{:else}
-				<p class="faint">{t('Play, pause and skips happen in every house at once. Each house plays from its own computer.')}</p>
-				<div class="row">
-					<button type="button" class="btn" onclick={start} disabled={busy}>{t('Start a room')}</button>
-					<form class="row" onsubmit={join}>
-						<input type="text" bind:value={roomCode} placeholder={t('Room code')} autocomplete="off" spellcheck="false" maxlength="8" aria-label="Room code" />
-						<button type="submit" class="btn" disabled={busy || !roomCode.trim()}>{t('Join')}</button>
+					{#if together.state?.title}
+						<p class="what">
+							{together.state.playing ? t('Playing') : together.state.waiting ? t('Loading') : t('Paused')}: {label(together.state)}
+							<a class="btn btn-primary" href={watchHref(together.state)}>{t('Join in')}</a>
+						</p>
+					{:else}
+						<p class="faint">{t('Nothing playing yet. When someone starts something, everyone in the room is asked to join.')}</p>
+					{/if}
+					<div><button type="button" class="btn" onclick={leaveRoom}>{together.following ? t('Stop watching along') : t('Leave the room')}</button></div>
+				</div>
+				<div class="group">
+					<h3 class="label">{t('Group chat')}</h3>
+					<ul class="lines" bind:this={groupList}>
+						{#each chat.room as message (message.id)}
+							<li class:mine={message.mine}>
+								<span class="faint small">{clock(message.at)}</span>
+								<strong>{message.mine ? t('You') : message.name}</strong>
+								<span>{message.text}</span>
+							</li>
+						{:else}
+							<li class="faint small">{t('Nothing said yet. Press Enter anywhere, even in the player, to say something.')}</li>
+						{/each}
+					</ul>
+					<form class="row" onsubmit={sendGroup}>
+						<input type="text" bind:value={groupLine} maxlength="500" autocomplete="off" placeholder={t('Message the group')} aria-label="Message the group" />
+						<button type="submit" class="btn" disabled={!groupLine.trim()}>{t('Send')}</button>
 					</form>
 				</div>
-			{/if}
-			{#if together.problem}<p class="msg bad">{together.problem}</p>{/if}
-		</div>
+			</div>
+		{:else}
+			<p class="faint">{t('Play, pause and skips happen in every house at once. Each house plays from its own computer.')}</p>
+			<div class="row">
+				<button type="button" class="btn" onclick={start} disabled={busy}>{t('Start a room')}</button>
+				<form class="row" onsubmit={join}>
+					<input type="text" bind:value={roomCode} placeholder={t('Room code')} autocomplete="off" spellcheck="false" maxlength="8" aria-label="Room code" />
+					<button type="submit" class="btn" disabled={busy || !roomCode.trim()}>{t('Join')}</button>
+				</form>
+			</div>
+		{/if}
+		{#if together.problem}<p class="msg bad">{together.problem}</p>{/if}
 	</section>
 {/if}
+
+{#if menu}<ContextMenu at={menu.at} items={menu.items} close={() => (menu = null)} />{/if}
 
 <style>
 	.off {
@@ -428,18 +460,13 @@
 		font-size: 0.9rem;
 	}
 
-	.online {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-		gap: 14px;
-		margin-bottom: 22px;
-	}
-
-	.block {
+	.friends,
+	.together {
 		display: flex;
 		flex-direction: column;
-		gap: 12px;
-		padding: 14px 16px;
+		gap: 14px;
+		margin-bottom: 22px;
+		padding: 18px 20px;
 		border: 1px solid var(--rule);
 		border-radius: var(--radius);
 		background: var(--surface);
@@ -449,12 +476,17 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
+		flex-wrap: wrap;
 		gap: 10px;
 	}
 
 	h2 {
 		margin: 0;
-		font-size: 1.05rem;
+		font-size: 1.35rem;
+	}
+
+	.together h2 {
+		font-size: 1.1rem;
 	}
 
 	h3 {
@@ -463,6 +495,33 @@
 
 	p {
 		margin: 0;
+	}
+
+	ul {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+
+	.row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.badge {
+		display: inline-block;
+		min-width: 18px;
+		margin-left: 6px;
+		padding: 0 5px;
+		border-radius: 9px;
+		background: var(--accent);
+		color: var(--accent-ink);
+		font-size: 0.72rem;
+		font-weight: 700;
+		line-height: 18px;
+		text-align: center;
 	}
 
 	/* The add-a-friend part, set in from the rest. */
@@ -475,17 +534,15 @@
 		background: var(--sunk);
 	}
 
-	ul {
-		list-style: none;
-		margin: 0;
-		padding: 0;
+	.asked,
+	.rest {
 		display: flex;
 		flex-direction: column;
 		gap: 10px;
 	}
 
-	.rest li,
-	.row {
+	.asked li,
+	.rest li {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
@@ -499,51 +556,86 @@
 		background: var(--accent-bg);
 	}
 
-	/* A friend's own friends, opened under their name. */
-	.their {
-		flex-basis: 100%;
-		padding-left: 38px;
-	}
-
-	.theirs {
-		list-style: none;
-		margin: 4px 0 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-	}
-
-	.theirs li {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 8px;
-		font-size: 0.9rem;
-	}
-
-	/* A friend watching something: its poster, who, what, and the button. */
-	.now li {
-		display: flex;
+	/* Each friend: a big picture, their name, what they're watching, and the buttons. */
+	.cards {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
 		gap: 12px;
-		align-items: stretch;
 	}
 
-	.poster {
-		flex: none;
-		width: 62px;
-		aspect-ratio: 2 / 3;
-		border-radius: var(--radius-sm);
-		object-fit: cover;
+	.card {
+		position: relative;
+		display: flex;
+		align-items: center;
+		gap: 16px;
+		min-height: 104px;
+		padding: 14px 16px;
+		border: 1px solid var(--rule);
+		border-radius: var(--radius);
 		background: var(--sunk);
+		overflow: hidden;
+	}
+
+	.card.live {
+		border-color: color-mix(in srgb, var(--accent) 45%, var(--rule));
+	}
+
+	.face {
+		flex: none;
+		border-radius: 50%;
 	}
 
 	.about {
+		position: relative;
+		z-index: 1;
 		display: flex;
 		flex-direction: column;
-		justify-content: center;
 		gap: 6px;
 		min-width: 0;
+		flex: 1;
+	}
+
+	.name {
+		font-size: 1.15rem;
+		font-weight: 700;
+		color: var(--ink);
+		text-decoration: none;
+	}
+
+	.name:hover {
+		color: var(--accent);
+	}
+
+	.now {
+		font-size: 0.92rem;
+	}
+
+	.dot {
+		display: inline-block;
+		width: 8px;
+		height: 8px;
+		margin-right: 6px;
+		border-radius: 50%;
+		background: var(--good, #3c9);
+		vertical-align: 1px;
+	}
+
+	/* What they're watching, faded in behind the right side of the card. */
+	.poster {
+		position: absolute;
+		top: 0;
+		right: 0;
+		height: 100%;
+		width: 34%;
+		object-fit: cover;
+		opacity: 0.28;
+		mask-image: linear-gradient(to left, #000 30%, transparent);
+		-webkit-mask-image: linear-gradient(to left, #000 30%, transparent);
+		pointer-events: none;
+	}
+
+	.more {
+		padding-inline: 10px;
 	}
 
 	.who {
@@ -553,17 +645,56 @@
 		font-weight: 600;
 	}
 
-	.what {
-		flex: 1;
+	.row input {
+		width: 11rem;
+	}
+
+	/* The room: who and what on one side, its chat on the other (one under the other on a phone). */
+	.room {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+		gap: 18px;
+	}
+
+	.room-side,
+	.group {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+
+	.lines {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		max-height: 240px;
+		min-height: 80px;
+		overflow-y: auto;
+		padding: 10px;
+		border-radius: var(--radius-sm);
+		background: var(--sunk);
 		font-size: 0.92rem;
 	}
 
-	.about .what {
-		flex: none;
+	.lines li {
+		display: flex;
+		gap: 8px;
+		align-items: baseline;
+		overflow-wrap: anywhere;
 	}
 
-	.row input {
-		width: 11rem;
+	.lines li.mine strong {
+		color: var(--accent);
+	}
+
+	.group form input {
+		flex: 1;
+		width: auto;
+		min-width: 0;
+	}
+
+	.group form {
+		flex-wrap: nowrap;
 	}
 
 	/* Who's in the room: a picture and a name each. */
@@ -578,6 +709,13 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 6px;
+	}
+
+	.what {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 10px;
 	}
 
 	.code {
@@ -599,10 +737,6 @@
 
 	.small {
 		font-size: 0.85rem;
-	}
-
-	.toggle + .small {
-		margin-top: -8px;
 	}
 
 	.link {

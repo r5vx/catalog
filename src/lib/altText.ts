@@ -25,10 +25,19 @@ function read(): Table {
 	return table;
 }
 
+/** A line as it normally reads: "alt:Add" is "Add" (the prefix only marks lines with their own alternate). */
+export const plain = (text: string): string => text.replace(/^alt:/, '').replace(/#\d+$/, '');
+
 /** "alt:" keys are lines with their own wording; without one, the normal text after the prefix. */
 export function p(text: string): string {
-	return read().words[text] ?? text.replace(/^alt:/, '').replace(/#\d+$/, '');
+	return read().words[text] ?? plain(text);
 }
+
+/**
+ * The components' `t()`: the alternate wording when it's on, else the normal line. (The normal
+ * line still loses its "alt:" prefix: the Friends page showed "alt:Add", 2026-11-15.)
+ */
+export const wording = (on: unknown, text: string): string => (on ? p(text) : plain(text));
 
 export function pHint(text: string): string {
 	return read().hints[text] ?? text;

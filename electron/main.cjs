@@ -1351,7 +1351,10 @@ function updateLog(line) {
 /** Whether Catalog can write to its own folder without asking Windows' permission. */
 function canWriteAppFolder() {
 	try {
-		const probe = path.join(path.dirname(process.execPath), `.write-test-${process.pid}`);
+		// On Linux, Catalog runs from inside its AppImage (a read-only folder); an update replaces
+		// the AppImage file itself, so it's the AppImage's own folder that must be writable.
+		const folder = process.platform === 'linux' && process.env.APPIMAGE ? path.dirname(process.env.APPIMAGE) : path.dirname(process.execPath);
+		const probe = path.join(folder, `.write-test-${process.pid}`);
 		fs.writeFileSync(probe, '');
 		fs.unlinkSync(probe);
 		return true;
