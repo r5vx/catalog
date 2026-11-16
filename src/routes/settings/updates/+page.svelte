@@ -201,14 +201,15 @@
 
 	function isOpen(version: string, index: number): boolean {
 		if (expandedVersions.has(version)) return true;
-		return index < 3 && !expandedVersions.has(version + '__closed');
+		// Only the newest is open to start with (owner, 2026-11-15); the rest open with a click.
+		return index < 1 && !expandedVersions.has(version + '__closed');
 	}
 
 	function toggle(version: string, index: number) {
 		const next = new Set(expandedVersions);
 		if (isOpen(version, index)) {
 			next.delete(version);
-			if (index < 3) next.add(version + '__closed');
+			if (index < 1) next.add(version + '__closed');
 		} else {
 			next.add(version);
 			next.delete(version + '__closed');
@@ -295,7 +296,7 @@
 				<div class="night">
 					<label class="toggle">
 						<input type="checkbox" checked={night.on} onchange={(e) => setNight(e.currentTarget.checked, night.hour)} />
-						Install updates by itself at
+						Install updates automatically at
 					</label>
 					<select value={night.hour} disabled={!night.on} onchange={(e) => setNight(night.on, Number(e.currentTarget.value))}>
 						{#each Array.from({ length: 24 }, (_, h) => h) as h (h)}

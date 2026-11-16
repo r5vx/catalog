@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { fitOnScreen } from '$lib/fitOnScreen';
 	/**
 	 * "More like this" under a title (src/lib/server/recommendations.ts says where it comes
 	 * from). Asked for once the page is up, so it never holds the page back; nothing shows if
@@ -151,7 +152,7 @@
 
 {#if menu}
 	<div class="ctx-backdrop" role="presentation" onclick={closeMenu} oncontextmenu={(e) => { e.preventDefault(); closeMenu(); }}></div>
-	<div class="ctx-menu" style="left: {menu.x}px; top: {menu.y}px;">
+	<div class="ctx-menu" use:fitOnScreen style="left: {menu.x}px; top: {menu.y}px;">
 		<button type="button" onclick={() => { goto(watchLink(menu!.item)); closeMenu(); }}>▶ Watch</button>
 		<button type="button" onclick={() => { goto(`/title/${menu!.item.source}/${menu!.item.sourceId}`); closeMenu(); }}>View details</button>
 		<hr />

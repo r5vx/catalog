@@ -5,7 +5,7 @@
  * Madagascar), and the servers named inside a playlist from one of those. Each remembers which
  * source it's for, since that decides the headers it's asked with. Kept while Catalog runs.
  */
-export type RelayKind = 'vidrift' | 'aniwave' | 'movy' | 'live' | 'hianime' | 'vidfast';
+export type RelayKind = 'vidrift' | 'aniwave' | 'movy' | 'live' | 'hianime' | 'vidfast' | 'addon';
 
 const hosts = new Map<string, RelayKind>();
 /** Live TV's servers: the headers its player asked them with (sources/daddylive.ts). */
@@ -22,6 +22,18 @@ export function trustLiveHost(address: string | URL, headers: Record<string, str
 }
 
 export const liveHeadersFor = (url: URL): Record<string, string> => liveHeaders.get(url.host) ?? {};
+
+/** A Stremio addon's video server (sources/addons.ts), and the headers the addon said to ask it with. */
+const addonHeaders = new Map<string, Record<string, string>>();
+export function trustAddonHost(address: string | URL, headers: Record<string, string>): void {
+	try {
+		const url = typeof address === 'string' ? new URL(address) : address;
+		if (url.protocol !== 'https:') return;
+		hosts.set(url.host, 'addon');
+		addonHeaders.set(url.host, headers);
+	} catch {}
+}
+export const addonHeadersFor = (url: URL): Record<string, string> => addonHeaders.get(url.host) ?? {};
 
 export function trustVideoHost(address: string | URL, kind: RelayKind): void {
 	try {

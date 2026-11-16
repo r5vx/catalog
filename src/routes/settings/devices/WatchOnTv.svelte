@@ -58,8 +58,7 @@
 		Use the TV layout on the TV app
 	</label>
 	<p class="muted">
-		Big rows made for the remote, like Netflix. Off, the TV app shows the same screens as this computer. Only the
-		TV app changes: computers and phones always have the normal layout.
+		Big rows made for the remote. Off, the TV shows the same screens as this computer.
 	</p>
 	{#if !onTv}
 		<p class="muted">
@@ -78,8 +77,7 @@
 	<section>
 		<h2>Catalog on a Fire TV</h2>
 		<p class="muted">
-			The TV shows the Catalog on this computer, so this computer needs to be on, with Catalog open, while
-			you watch, and on the same Wi-Fi as the TV.
+			The TV plays from this computer, so keep it on with Catalog open, on the same Wi-Fi as the TV.
 		</p>
 
 		{#if where}
@@ -135,8 +133,7 @@
 	<section>
 		<h2>Install or update on a Fire TV from here</h2>
 		<p class="muted">
-			Like the Roku, Catalog can put its app on a Fire TV from this computer, and update it later with no Downloader and
-			nothing to press on the TV. It needs the TV's ADB debugging turned on once.
+			Installs and updates the Fire TV app from here. Turn on ADB debugging on the TV once first.
 		</p>
 		<FireTvInstall />
 	</section>
@@ -144,8 +141,7 @@
 	<section>
 		<h2>Catalog on a Roku</h2>
 		<p class="muted">
-			Like the Fire TV, the Roku shows the Catalog on this computer. Catalog puts the app on the Roku from here; it
-			finds this computer by itself when it opens.
+			The Roku plays from this computer too. Catalog installs the app on it from here.
 		</p>
 		<RokuInstall />
 	</section>

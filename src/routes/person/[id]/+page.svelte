@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { fitOnScreen } from '$lib/fitOnScreen';
 	import { watchTypeOf } from '$lib/watchType';
 	import MoreButton from '$lib/MoreButton.svelte';
 	import { goto } from '$app/navigation';
@@ -275,7 +276,7 @@
 	{@const item = ownedMenu.item}
 	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div class="ctx-backdrop" onclick={() => (ownedMenu = null)} oncontextmenu={(e) => { e.preventDefault(); ownedMenu = null; }}></div>
-	<div class="ctx-menu" style="left: {ownedMenu.x}px; top: {ownedMenu.y}px;">
+	<div class="ctx-menu" use:fitOnScreen style="left: {ownedMenu.x}px; top: {ownedMenu.y}px;">
 		<button type="button" onclick={() => watchOwned(item)}>▶ Watch</button>
 		<button type="button" onclick={() => { ownedMenu = null; goto(`/entry/${item.id}`); }}>View entry</button>
 	</div>
@@ -286,7 +287,7 @@
 	{@const key = `${credit.source}:${credit.sourceId}`}
 	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div class="ctx-backdrop" onclick={() => (menu = null)} oncontextmenu={(e) => { e.preventDefault(); menu = null; }}></div>
-	<div class="ctx-menu" style="left: {menu.x}px; top: {menu.y}px;">
+	<div class="ctx-menu" use:fitOnScreen style="left: {menu.x}px; top: {menu.y}px;">
 		<button type="button" onclick={() => watch(credit)}>▶ Watch</button>
 		<button type="button" onclick={() => { menu = null; goto(`/title/${credit.source}/${credit.sourceId}?back=${encodeURIComponent(here)}`); }}>
 			View details

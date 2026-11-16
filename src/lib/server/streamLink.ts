@@ -12,6 +12,8 @@ import { movyStream, parseMovyShareKey } from './sources/movy';
 import { hianimeStream, parseHianimeShareKey } from './sources/hianime';
 import { vidfastStream, parseVidfastShareKey } from './sources/vidfast';
 import { nothingFrom } from './reachable';
+import { debridStream, parseDebridShareKey } from './sources/debrid';
+import { addonStream, parseAddonShareKey } from './sources/addons';
 
 export async function streamLink(shareKey: string, fid: number, refresh = false): Promise<{ url: string; debug?: string }> {
 	// Another source's file: its share key says which show, episode and version. Its video
@@ -51,6 +53,20 @@ export async function streamLink(shareKey: string, fid: number, refresh = false)
 		const playlist = await vidfastStream(shareKey, refresh);
 		if (!playlist) return { url: '', debug: await nothingFrom('Vidfast', 'Vidfast has nothing for this right now') };
 		return { url: `/api/watch/relay?u=${encodeURIComponent(playlist)}` };
+	}
+
+	// A debrid service (sources/debrid.ts): a direct link to the file, played as it is.
+	if (parseDebridShareKey(shareKey)) {
+		const found = await debridStream(shareKey, refresh);
+		if (!found.url) return { url: '', debug: found.why };
+		return { url: found.url, debug: found.name };
+	}
+
+	// A Stremio addon (sources/addons.ts): a plain file as it is, or a playlist through the relay.
+	if (parseAddonShareKey(shareKey)) {
+		const found = await addonStream(shareKey, refresh);
+		if (!found.url) return { url: '', debug: found.why };
+		return { url: found.url, debug: found.name };
 	}
 
 	const { febboxToken } = readSettings();

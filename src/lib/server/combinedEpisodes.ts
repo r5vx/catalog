@@ -34,6 +34,8 @@ import { aniwaveFiles, aniwaveSeriesStarts, episodesBefore, hianimeFiles, type A
 import { vidriftCopies } from './sources/vidrift';
 import { movyCopy } from './sources/movy';
 import { vidfastCopy } from './sources/vidfast';
+import { debridCopies, debridSetting } from './sources/debrid';
+import { addonCopies, savedAddons } from './sources/addons';
 import { sourceHasNot } from './sourceAnswers';
 
 /**
@@ -43,11 +45,22 @@ import { sourceHasNot } from './sourceAnswers';
  */
 export function unasked(what: { type: 'tv' | 'movie'; id: number; season: number; episode: number }) {
 	return [
+		// A debrid service's copies first, when one is set up (sources/debrid.ts): whoever pays
+		// for one wants it played before the free sites.
+		...debridCopies(what),
+		// Then each Stremio addon's, in the order Settings → Services lists them (sources/addons.ts).
+		...addonCopies(what),
 		...(sourceHasNot('7Movies', what) ? [] : vidriftCopies(what)),
 		...(sourceHasNot('Movy', what) ? [] : [movyCopy(what)]),
 		...(sourceHasNot('Vidfast', what) ? [] : [vidfastCopy(what)])
 	];
 }
+
+/**
+ * Which debrid service and addons the copies above come from: a film or show's list kept from
+ * before one was added or removed in Settings → Services is made again (routes/api/watch/resolve).
+ */
+export const unaskedSetup = () => `${debridSetting()?.service ?? ''}|${savedAddons().map((a) => a.key).join(',')}`;
 
 export type ListedEpisode = EpisodeInfo & {
 	/** The share this episode plays from, when it isn't the main entry's. */

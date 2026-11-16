@@ -4,7 +4,7 @@
  * in the bottom-right corner, over the player too (lib/ChatOverlay.svelte); the Messages page
  * (/messages) keeps every whisper.
  *
- * Asked for every 15 seconds while Catalog is in front. In a room, they ride along with the room's
+ * Asked for every 15 seconds while talking, less often when quiet (askEvery). In a room, they ride along with the room's
  * own looks instead (src/lib/watchTogether.svelte.ts), so a room costs no extra asking.
  */
 
@@ -28,7 +28,22 @@ type ChatAnswer = { messages: Message[]; last: number; history?: Message[]; unre
 
 /** How long a new message stays in the corner. */
 const SHOWN_FOR = 7000;
-const ASK_EVERY = 15_000;
+/**
+ * How often to ask (owner, 2026-11-15: "ask less often"): every 15 s while talking (a message came
+ * or went in the last 5 minutes, or the box is open), every 60 s when quiet, every 3 minutes while
+ * Catalog is behind other windows, never while it's minimized. Coming back to it asks at once.
+ */
+const ASK_TALKING = 15_000;
+const ASK_QUIET = 60_000;
+const ASK_AWAY = 3 * 60_000;
+const TALKING_FOR = 5 * 60_000;
+let lastTalk = 0;
+let lastLook = 0;
+
+function askEvery(): number {
+	if (chat.open || Date.now() - lastTalk < TALKING_FOR) return ASK_TALKING;
+	return document.hasFocus() ? ASK_QUIET : ASK_AWAY;
+}
 
 export const chat = $state({
 	/** The newest message id this screen knows of. */
@@ -86,6 +101,7 @@ export function takeChat(answer: ChatAnswer, fromRoom = false): void {
 			if (fromRoom) chat.unread++;
 		}
 		show(message);
+		lastTalk = Date.now();
 	}
 	chat.last = Math.max(chat.last, answer.last ?? 0);
 }
@@ -96,19 +112,26 @@ function show(message: Message): void {
 }
 
 async function look(): Promise<void> {
+	lastLook = Date.now();
 	try {
 		const response = await fetch(`/api/online/c/messages?after=${chat.known ? chat.last : ''}`);
 		if (response.ok) takeChat(await response.json());
 	} catch {}
 }
 
+/** Waits a short while and looks again whenever it's due (so a quiet wait shortens when talk starts). */
 function lookLater(): void {
 	clearTimeout(timer);
 	timer = setTimeout(async () => {
-		// (In a room, the room's looks bring them; while Catalog is behind other windows, nothing.)
-		if (!document.hidden && !inRoom()) await look();
+		// (In a room, the room's looks bring them; while Catalog is minimized, nothing.)
+		if (!document.hidden && !inRoom() && Date.now() - lastLook >= askEvery() - 1000) await look();
 		lookLater();
-	}, ASK_EVERY);
+	}, 5000);
+}
+
+/** Back to Catalog after a while away: asked now, not at the next turn. */
+function lookNowIfStale(): void {
+	if (!document.hidden && !inRoom() && Date.now() - lastLook > ASK_TALKING) void look();
 }
 
 /** Started once, by the root layout: only when this Catalog is online. */
@@ -122,9 +145,8 @@ export async function startChat(): Promise<void> {
 	if (!chat.online) return;
 	await look();
 	lookLater();
-	document.addEventListener('visibilitychange', () => {
-		if (!document.hidden && !inRoom()) void look();
-	});
+	document.addEventListener('visibilitychange', lookNowIfStale);
+	window.addEventListener('focus', lookNowIfStale);
 }
 
 /** Sends a line: to the room this screen is in (`room` is its code), or a whisper to a friend. */
@@ -140,6 +162,7 @@ export async function sendMessage(text: string, to: { room?: string; friend?: st
 		const answer = await response.json().catch(() => null);
 		if (!response.ok || !answer?.message) return null;
 		const message = { ...answer.message, mine: true } as Message;
+		lastTalk = Date.now();
 		if (message.room) chat.room = [...chat.room, message].slice(-100);
 		else chat.whispers = [...chat.whispers, message].slice(-50);
 		return message;
@@ -171,4 +194,6 @@ export function openChat(to?: { id: string; name: string } | 'room'): void {
 		chat.toName = to.name;
 	}
 	chat.open = true;
+	// (Opening the box means talking: answers are looked for every 15 s from now.)
+	lastTalk = Date.now();
 }

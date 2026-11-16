@@ -69,7 +69,7 @@ export async function tmdbGet<T>(path: string, params: Record<string, string> = 
 	}
 }
 
-type TmdbItem = {
+export type TmdbItem = {
 	id: number;
 	media_type: 'movie' | 'tv' | 'person';
 	title?: string;
@@ -290,7 +290,7 @@ export async function searchTmdb(query: string, fuzzy = false): Promise<SearchRe
 }
 
 /** One TMDB record in the shape the rest of the app uses. */
-function toResult(item: TmdbItem): SearchResult {
+export function toResult(item: TmdbItem): SearchResult {
 	const title = item.title ?? item.name ?? 'Untitled';
 	const original = item.original_title ?? item.original_name ?? null;
 	const { slug, confident } = categorize(item);
@@ -380,9 +380,8 @@ export async function trendingTmdb(
 				// Series are numbered differently: TV Sci-Fi is "Sci-Fi & Fantasy" (10765), and Thriller
 				// has no series genre at all. Asked with the film numbers, TMDB found no series (2026-11-14).
 				// The TVs' rows ask by the series numbers already (10759, 10765, 10764): those pass as they are.
-				const asSeries = kind === 'tv' ? SERIES_GENRE[filters.genre] : undefined;
-				if (asSeries?.genre) url.searchParams.set('with_genres', asSeries.genre);
-				else if (asSeries?.keyword) url.searchParams.set('with_keywords', asSeries.keyword);
+				const asSeries = kind === 'tv' ? seriesGenreParams(filters.genre, false, url.searchParams.get('without_genres') ?? '') : null;
+				if (asSeries) for (const [name, value] of Object.entries(asSeries)) url.searchParams.set(name, value);
 				else url.searchParams.set('with_genres', String(filters.genre));
 			}
 
@@ -449,21 +448,109 @@ const KIDS_SERIES = '10762';
  * Thriller: "thriller" or "psychological thriller" (Breaking Bad, Squid Game, Dark, Mr. Robot);
  * History: "historical" or "historical fiction" (Peaky Blinders, Vikings, Band of Brothers).
  */
-const SERIES_GENRE: Record<number, { genre?: string; keyword?: string }> = {
-	28: { genre: '10759' }, 12: { genre: '10759' }, 878: { genre: '10765' }, 14: { genre: '10765' },
+/**
+ * Film genres as series are asked for. TMDB's series genres are broader: "Sci-Fi & Fantasy" (10765)
+ * holds Game of Thrones, Lucifer and The Walking Dead, so TV Sci-Fi showed those first (owner,
+ * 2026-11-15). Where a series genre is that broad, TMDB's keywords narrow it: both must match.
+ * Keyword ids checked against TMDB's /search/keyword and the results looked at, 2026-11-15.
+ */
+const SCI_FI_WORDS = '281358|9882|3801|4379|9951|4565|310|298517|12190|14544|252937|10854'; // science fiction, space, space travel, time travel, alien, dystopia, AI, science fantasy, cyberpunk, robot, spaceship, time loop
+const FANTASY_WORDS = '293198|2343|12554|298506|6152'; // fantasy, magic, dragon, historical fantasy, supernatural
+const SERIES_GENRE: Record<number, { genre?: string; keyword?: string; without?: string }> = {
+	28: { genre: '10759' }, 12: { genre: '10759' },
+	878: { genre: '10765', keyword: SCI_FI_WORDS }, 14: { genre: '10765', keyword: FANTASY_WORDS },
 	35: { genre: '35' }, 18: { genre: '18' }, 9648: { genre: '9648' }, 80: { genre: '80' },
-	10751: { genre: '10751' }, 99: { genre: '99' }, 37: { genre: '37' }, 10752: { genre: '10768' },
+	10751: { genre: '10751' }, 99: { genre: '99' }, 37: { genre: '37' },
+	10752: { genre: '10768', keyword: '273967|1956|2504' }, // war, world war ii, world war i (10768 alone is "War & Politics": Homeland, Designated Survivor)
 	16: { genre: '16' },
-	10749: { keyword: '9840' }, 27: { keyword: '315058' }, 53: { keyword: '316362|12565' }, 36: { keyword: '15126|12995' }
+	10749: { keyword: '9840', without: '80,16,10762' }, // (not crime, cartoons or children's: Better Call Saul, Miraculous)
+	27: { keyword: '315058|12339|3358|12377|162846' }, // horror, slasher, haunted house, zombie, ghost
+	53: { keyword: '316362|12565' }, 36: { keyword: '15126|12995|192772' }
 };
+
+/**
+ * A film genre as series discover parameters (`anime`: with Animation too), or null when series
+ * have none. `without`: the genres already left out, kept along with the genre's own.
+ */
+function seriesGenreParams(genre: number, anime = false, without = ''): Record<string, string> | null {
+	const asSeries = SERIES_GENRE[genre];
+	if (!asSeries) return null;
+	const out: Record<string, string> = {};
+	const genres = [anime ? '16' : '', asSeries.genre && asSeries.genre !== '16' ? asSeries.genre : ''].filter(Boolean).join(',');
+	if (genres) out.with_genres = genres;
+	if (asSeries.keyword) out.with_keywords = asSeries.keyword;
+	// (Anime is animation: never left out there.)
+	const leftOut = [...new Set([...without.split(','), ...(asSeries.without ?? '').split(',')].filter((g) => g && !(anime && g === '16')))];
+	if (leftOut.length) out.without_genres = leftOut.join(',');
+	return out;
+}
 
 /**
  * A random well-known film, series or anime (Browse → Random). Only from what many people have
  * rated, a random page of TMDB's most popular, so it's something the sources will have, not a
  * 1920s film nobody streams. `skip` (keys already in the library) is left out when it can be.
  */
-export async function randomPick(kind: 'movies' | 'tv' | 'anime', genre: number | undefined, skip: Set<string>): Promise<SearchResult | null> {
+/** How many pages each "really random" search has (TMDB says on the first one), kept a day. */
+const deepPages = new Map<string, { pages: number; at: number }>();
+
+/**
+ * "Really random" (the Random window's switch, owner 2026-11-15; films and series too since the
+ * same evening): anything TMDB has with a poster and a few votes, from any of its pages rather
+ * than the popular first ones. Anime: any Japanese animation, series or film (three in ten).
+ * Still never adult, children's, news, reality or talk shows.
+ */
+async function deepPick(kind: 'movies' | 'tv' | 'anime', genre: number | undefined, skip: Set<string>): Promise<SearchResult | null> {
+	const asMovie = kind === 'movies' || (kind === 'anime' && Math.random() < 0.3);
+	const params: Record<string, string> = {
+		sort_by: 'popularity.desc',
+		include_adult: 'false',
+		without_keywords: NOT_FOR_BROWSING
+	};
+	if (kind === 'anime') {
+		params.with_original_language = 'ja';
+		params['vote_count.gte'] = '5';
+		params.with_genres = asMovie && genre ? `16,${genre}` : '16';
+		if (!asMovie) {
+			params.without_genres = KIDS_SERIES;
+			if (genre) Object.assign(params, seriesGenreParams(genre, true, params.without_genres) ?? {});
+		}
+	} else if (kind === 'movies') {
+		// (Enough votes that it's a real film someone has seen, not a home video.)
+		params['vote_count.gte'] = '40';
+		params.without_genres = '99,10770';
+		if (genre) params.with_genres = String(genre);
+	} else {
+		params['vote_count.gte'] = '25';
+		params.without_genres = '16,99,10762,10763,10764,10766,10767';
+		if (genre) Object.assign(params, seriesGenreParams(genre, false, params.without_genres) ?? { with_genres: String(genre) });
+	}
+	const path = asMovie ? '/discover/movie' : '/discover/tv';
+	const known = `${path}|${JSON.stringify(params)}`;
+	let pages = deepPages.get(known);
+	if (!pages || Date.now() - pages.at > 86_400_000) {
+		const first = await tmdbGet<{ total_pages?: number }>(path, { ...params, page: '1' });
+		if (!first) return null;
+		// (TMDB answers no page past 500.)
+		pages = { pages: Math.max(1, Math.min(500, first.total_pages ?? 1)), at: Date.now() };
+		deepPages.set(known, pages);
+	}
+	for (let tries = 0; tries < 3; tries++) {
+		const page = 1 + Math.floor(Math.random() * pages.pages);
+		const answer = await tmdbGet<{ results?: TmdbItem[] }>(path, { ...params, page: String(page) });
+		const all = (answer?.results ?? []).filter((item) => item.poster_path).map((item) => toResult({ ...item, media_type: asMovie ? 'movie' : 'tv' }));
+		const fresh = all.filter((one) => !skip.has(one.key) && !skip.has(`tmdb:${one.sourceId}`));
+		if (fresh.length) return fresh[Math.floor(Math.random() * fresh.length)];
+	}
+	return null;
+}
+
+/**
+ * One random title for the Random window. `deep`: really random (above). `skip`: library
+ * keys left out (empty when the window's "Leave out my library" is off).
+ */
+export async function randomPick(kind: 'movies' | 'tv' | 'anime', genre: number | undefined, skip: Set<string>, deep = false): Promise<SearchResult | null> {
 	if (!tmdbKey()) return null;
+	if (deep) return deepPick(kind, genre, skip);
 	const asMovie = kind === 'movies';
 	const params: Record<string, string> = {
 		sort_by: 'popularity.desc',
@@ -479,17 +566,13 @@ export async function randomPick(kind: 'movies' | 'tv' | 'anime', genre: number 
 		params['vote_count.gte'] = '400';
 		// Not cartoons, children's, news, reality or talk shows.
 		params.without_genres = '16,10762,10763,10764,10767';
-		const asSeries = genre ? SERIES_GENRE[genre] : undefined;
-		if (asSeries?.genre) params.with_genres = asSeries.genre;
-		else if (asSeries?.keyword) params.with_keywords = asSeries.keyword;
-		else if (genre) params.with_genres = String(genre);
+		if (genre) Object.assign(params, seriesGenreParams(genre, false, params.without_genres) ?? { with_genres: String(genre) });
 	} else {
 		params['vote_count.gte'] = '150';
 		params.with_original_language = 'ja';
 		params.without_genres = KIDS_SERIES;
-		const asSeries = genre ? SERIES_GENRE[genre] : undefined;
-		params.with_genres = asSeries?.genre ? `16,${asSeries.genre}` : '16';
-		if (!asSeries?.genre && asSeries?.keyword) params.with_keywords = asSeries.keyword;
+		params.with_genres = '16';
+		if (genre) Object.assign(params, seriesGenreParams(genre, true, params.without_genres) ?? {});
 		pages = 8;
 	}
 	const path = asMovie ? '/discover/movie' : '/discover/tv';
@@ -552,9 +635,7 @@ export async function trendingAnimeTmdb(page = 1, mode: BrowseMode = 'trending',
 	films.with_genres = '16';
 	if (filters?.genre) {
 		films.with_genres = `16,${filters.genre}`;
-		const asSeries = SERIES_GENRE[filters.genre];
-		if (asSeries?.genre) series.with_genres = `16,${asSeries.genre}`;
-		else if (asSeries?.keyword) series.with_keywords = asSeries.keyword;
+		Object.assign(series, seriesGenreParams(filters.genre, true, series.without_genres) ?? {});
 	}
 	const browsingNow = mode === 'trending' && !filters?.sort && !filters?.yearFrom && !filters?.yearTo;
 	if (browsingNow) {

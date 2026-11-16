@@ -250,6 +250,28 @@ export function completedByCategory(): Record<number, number> {
 	return Object.fromEntries(rows.map((row) => [row.categoryId, row.n]));
 }
 
+/**
+ * The posters behind the library's stat tiles (src/lib/LibraryHeader.svelte, owner 2026-11-15):
+ * the last three watched titles with a poster, overall (`all`) and in each category, newest first
+ * (by the day it was finished, else when it was last changed).
+ */
+export function recentlyWatchedPosters(): { all: string[]; byCategory: Record<number, string[]> } {
+	const order = `COALESCE(finished_on, '') DESC, updated_at DESC`;
+	const watched = `status IN ${WATCHED_SQL} AND poster_url IS NOT NULL AND poster_url != ''`;
+	const all = db.prepare(`SELECT poster_url AS poster FROM entries WHERE ${watched} ORDER BY ${order} LIMIT 3`).all() as { poster: string }[];
+	const rows = db
+		.prepare(
+			`SELECT categoryId, poster FROM (
+				SELECT category_id AS categoryId, poster_url AS poster, ROW_NUMBER() OVER (PARTITION BY category_id ORDER BY ${order}) AS n
+				FROM entries WHERE ${watched}
+			) WHERE n <= 3 ORDER BY categoryId, n`
+		)
+		.all() as { categoryId: number; poster: string }[];
+	const byCategory: Record<number, string[]> = {};
+	for (const row of rows) (byCategory[row.categoryId] ??= []).push(row.poster);
+	return { all: all.map((row) => row.poster), byCategory };
+}
+
 /* -------------------------------------------------------- shared catalogs */
 
 export type SharedCatalog = {

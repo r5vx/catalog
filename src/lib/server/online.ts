@@ -83,13 +83,14 @@ function profileName(profile: number): string {
  * Someone's picture from the meeting point (Settings → Online), as the image itself.
  * Null when they have none or the server can't be reached.
  */
-export async function cloudPicture(account: string): Promise<{ bytes: ArrayBuffer; type: string } | null> {
+export async function cloudPicture(account: string, kind: 'avatar' | 'banner' = 'avatar', profile = 0): Promise<{ bytes: ArrayBuffer; type: string } | null> {
 	const who = saved();
 	if (!who || !/^[A-Z0-9]{16}$/.test(account)) return null;
 	try {
-		const response = await fetch(`${serverUrl()}/v1/avatar/${account}`, { headers: { Authorization: `Bearer ${who.house}.${who.key}` }, signal: AbortSignal.timeout(10_000) });
+		// (A banner is only for friends: the server asks who is looking, so the profile goes along.)
+		const response = await fetch(`${serverUrl()}/v1/${kind}/${account}`, { headers: { Authorization: `Bearer ${who.house}.${who.key}`, 'X-Catalog-Profile': String(profile) }, signal: AbortSignal.timeout(15_000) });
 		const type = response.headers.get('content-type') ?? '';
-		if (!response.ok || !/^image\/(jpeg|png|webp)$/.test(type)) return null;
+		if (!response.ok || !(kind === 'banner' ? /^image\/(jpeg|png|webp|gif)$/ : /^image\/(jpeg|png|webp)$/).test(type)) return null;
 		return { bytes: await response.arrayBuffer(), type };
 	} catch {
 		return null;
@@ -422,6 +423,35 @@ export function friendsSnapshot(profile: number): { friends: unknown; activity: 
 	return { friends: kept?.friends ?? null, activity: kept?.activity ?? null };
 }
 
+/**
+ * Who each profile is online (id, name, picture), remembered from any answer that said so, for the
+ * My profile button in the library's top bar and the sidebar (src/lib/MyProfileButton.svelte).
+ */
+export type Me = { id: string; name: string; avatar: number };
+const meKept = new Map<number, Me>();
+export function keepMe(profile: number, account: unknown): void {
+	const a = account as Partial<Me> | null;
+	if (a && typeof a.id === 'string' && /^[A-Z0-9]{16}$/.test(a.id)) meKept.set(profile, { id: a.id, name: String(a.name ?? ''), avatar: Number(a.avatar ?? 0) || 0 });
+}
+export const keptMe = (profile: number): Me | null => (onlineConnected() ? (meKept.get(profile) ?? null) : null);
+
+/** Who this profile is online, asking the meeting point when it isn't known yet. */
+export async function myAccount(profile: number): Promise<Me | null> {
+	const kept = keptMe(profile);
+	if (kept || !onlineConnected()) return kept;
+	const hello = await cloud<{ account: Me }>('/v1/hello', { profile, body: {} });
+	keepMe(profile, hello.data?.account);
+	return keptMe(profile);
+}
+
+/** Pages ask for it in the background (at most once a minute a profile, so a server that's down isn't asked on every page). */
+const meAsked = new Map<number, number>();
+export function warmMe(profile: number): void {
+	if (keptMe(profile) || !onlineConnected() || Date.now() - (meAsked.get(profile) ?? 0) < 60_000) return;
+	meAsked.set(profile, Date.now());
+	void myAccount(profile).catch(() => {});
+}
+
 /* ------------------------------------------------------------ progress in step between computers */
 
 type SyncState = Record<string, { pushed: string; rev: number }>;
@@ -608,25 +638,63 @@ export async function pairingCode(port: string): Promise<{ code: string; minutes
 
 /* ------------------------------------------------------------ in the background */
 
+/* ------------------------------------------------------------ asking less when nobody's using it */
+
+/**
+ * Syncing every 2 minutes is only worth it while someone is using this Catalog (owner, 2026-11-15:
+ * "ask less often"; measured that day, the two syncs were 14% of everything the server was asked,
+ * mostly from computers nobody was at). In use = any page or player request in the last 15
+ * minutes (src/hooks.server.ts). Otherwise a round every 10 minutes, and one at once when someone
+ * comes back, so another computer's places show up when they're wanted.
+ */
+const IN_USE_FOR = 15 * 60 * 1000;
+const IDLE_EVERY = 10 * 60 * 1000;
+let lastUse = Date.now();
+const backListeners: (() => void)[] = [];
+
+export function noteInUse(): void {
+	const wasIdle = Date.now() - lastUse > IN_USE_FOR;
+	lastUse = Date.now();
+	if (wasIdle) for (const run of backListeners) run();
+}
+export const inUse = () => Date.now() - lastUse < IN_USE_FOR;
+
+/**
+ * Runs `round` every 2 minutes while in use, every 10 when not, and right away when someone comes
+ * back after a quiet spell. Used by the progress sync here and the library sync (librarySync.ts).
+ */
+export function everyRound(round: () => void, firstAfter: number): void {
+	let lastRound = 0;
+	const go = () => {
+		lastRound = Date.now();
+		round();
+	};
+	setTimeout(go, firstAfter).unref?.();
+	setInterval(() => {
+		if (inUse() || Date.now() - lastRound >= IDLE_EVERY - 5000) go();
+	}, 2 * 60 * 1000).unref?.();
+	backListeners.push(() => {
+		if (Date.now() - lastRound > 60_000) go();
+	});
+}
+
 let started = false;
 
 /** Says hello, shares what each profile has watched (looked at every 10 minutes, sent when it changed), and keeps the synced profiles in step every two minutes. */
 export function startOnline(): void {
 	if (started || !onlineConnected()) return;
 	started = true;
-	const hello = () => void cloud('/v1/hello', { profile: 0, body: { house: houseName() } });
+	const hello = () => void cloud<{ account: Me }>('/v1/hello', { profile: 0, body: { house: houseName() } }).then((answer) => keepMe(0, answer.data?.account));
 	setTimeout(hello, 20_000).unref?.();
 	setTimeout(() => void shareSeen().catch(() => {}), 90_000).unref?.();
 	setInterval(() => void shareSeen().catch(() => {}), 10 * 60 * 1000).unref?.();
 	// Lately watched, for friends' feed: soon after start, then every 5 minutes (sent only when changed).
 	setTimeout(() => void shareActivity().catch(() => {}), 60_000).unref?.();
 	setInterval(() => void shareActivity().catch(() => {}), 5 * 60 * 1000).unref?.();
-	setInterval(() => {
+	// Progress in step: every 2 minutes while in use, every 10 when not (everyRound above).
+	everyRound(() => {
 		for (const profile of syncProfiles()) void syncNow(profile);
-	}, 2 * 60 * 1000).unref?.();
-	setTimeout(() => {
-		for (const profile of syncProfiles()) void syncNow(profile);
-	}, 30_000).unref?.();
+	}, 30_000);
 	// Libraries kept in step, by their own switch (librarySync.ts).
 	void import('./librarySync').then((m) => m.startLibrarySync()).catch(() => {});
 }

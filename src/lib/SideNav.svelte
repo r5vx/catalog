@@ -10,6 +10,7 @@
 	import TabIcon from '$lib/TabIcon.svelte';
 	import Wordmark from '$lib/Wordmark.svelte';
 	import NowPlaying from '$lib/NowPlaying.svelte';
+	import MyProfileButton from '$lib/MyProfileButton.svelte';
 	import { p } from '$lib/altText';
 	import { page } from '$app/state';
 
@@ -52,6 +53,7 @@
 			{link.label}
 		</a>
 	{/each}
+	<MyProfileButton wide />
 </nav>
 
 <style>

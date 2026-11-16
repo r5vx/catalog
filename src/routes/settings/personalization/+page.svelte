@@ -381,7 +381,7 @@
 		</button>
 	</div>
 
-	<p class="muted side-intro">A sidebar with every part of the library, Browse and Settings, on every page.</p>
+	<p class="muted side-intro">Show a sidebar on every page.</p>
 	<div class="layout-options">
 		<button type="button" class="layout-card" class:picked={!sideNav} onclick={() => chooseSideNav(false)}>
 			<span class="layout-preview centered-preview">
@@ -494,7 +494,7 @@
 
 <section>
 	<div class="head"><h2>Sorting</h2></div>
-	<p class="muted">Turn off the orders you never use and they stop appearing in the list.</p>
+	<p class="muted">Hide the sort options you don't use.</p>
 
 	<div class="sorts">
 		{#each SORT_GROUPS as group (group.key)}

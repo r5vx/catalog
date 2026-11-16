@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { fitOnScreen } from '$lib/fitOnScreen';
 	/**
 	 * Live TV (sources/daddylive.ts): games from the schedule, by sport, with the channels showing
 	 * each; the 24/7 channels; and what's saved. The star saves a game (to watch later) or a
@@ -265,18 +266,66 @@
 		const game = showingNow.get(id);
 		return !!game && (sport === 'all' || game.sport === sport);
 	};
+	// Channels found on come first, then the ones not looked at, then the ones found off.
+	const statusRank = (c: LiveChannel) => ({ on: 0, '': 1, off: 2 })[statusOf(c)];
 	const channels = $derived(
 		channelsFound
 			.filter((c) => (sport === 'all' || c.sports.includes(sport)) && (!country || searched || c.country === country))
 			.sort(
 				(a, b) =>
 					Number(onNowHere(b.id)) - Number(onNowHere(a.id)) ||
+					statusRank(a) - statusRank(b) ||
 					countryRank(a.country, guide?.homeCountry) - countryRank(b.country, guide?.homeCountry) ||
 					Number(b.sports.length > 0) - Number(a.sports.length > 0) ||
 					a.name.localeCompare(b.name)
 			)
 	);
 	const channelsOnNow = $derived(channels.filter((c) => onNowHere(c.id)));
+
+	/*
+	 * Which channels are on (owner, 2026-11-15: "a way to see which channels are online"): each one
+	 * asked for its playlist, two at a time, without fetching any of it ahead (?check=1). Each look
+	 * opens the channel's page out of sight, so it's a button, not done by itself. What's found is
+	 * kept on this computer an hour ("on") or half an hour ("off"), like channels played lately.
+	 */
+	let checked = $state<Record<number, boolean>>({});
+	let checking = $state<{ done: number; of: number } | null>(null);
+	let stopChecking = false;
+	type Shown = LiveChannel | { id: number; name: string; country?: string };
+	function statusOf(channel: Shown): 'on' | 'off' | '' {
+		if (channel.id in checked) return checked[channel.id] ? 'on' : 'off';
+		const tried = 'tried' in channel ? channel.tried : null;
+		return tried ? (tried.ok ? 'on' : 'off') : '';
+	}
+	/** How many one click looks at: the next ones in the list not looked at yet. */
+	const CHECK_AT_ONCE = 40;
+	const unchecked = $derived(channels.filter((c) => !(c.id in checked)));
+	async function checkChannels() {
+		const list = unchecked.slice(0, CHECK_AT_ONCE).map((c) => c.id);
+		checking = { done: 0, of: list.length };
+		stopChecking = false;
+		let next = 0;
+		await Promise.all(
+			[0, 1].map(async () => {
+				while (next < list.length && !stopChecking) {
+					const id = list[next++];
+					const answer = await fetch(`/api/live/playlist?ch=${id}&check=1`).catch(() => null);
+					checked = { ...checked, [id]: answer?.status === 204 };
+					if (checking) checking = { ...checking, done: checking.done + 1 };
+				}
+			})
+		);
+		checking = null;
+	}
+	onDestroy(() => (stopChecking = true));
+
+	/* Nothing on the schedule: Replays instead of an empty page (owner, 2026-11-15), once a visit. */
+	let movedToReplays = false;
+	$effect(() => {
+		if (movedToReplays || !guide || tab !== 'games' || searched || gamesFound.length || !replays?.length) return;
+		movedToReplays = true;
+		tab = 'replays';
+	});
 	const channelsRest = $derived(channels.filter((c) => !onNowHere(c.id)));
 
 	const savedCount = $derived((guide?.savedGames.length ?? 0) + (guide?.savedChannels.length ?? 0));
@@ -394,10 +443,10 @@
 			<span class="name">{channel.name}</span>
 			{#if showing}
 				<span class="now"><span class="dot"></span>{showing.title}</span>
-			{:else if 'tried' in channel && channel.tried && !channel.tried.ok}
+			{:else if statusOf(channel) === 'off'}
 				<!-- Didn't play when last tried: said before it's picked (it loaded forever, 2026-11-15). -->
-				<span class="off-air">Off · {channel.tried.minutesAgo < 1 ? 'just now' : `${channel.tried.minutesAgo} min ago`}</span>
-			{:else if 'tried' in channel && channel.tried?.ok}
+				<span class="off-air">Off{channel.country ? ` · ${channel.country}` : ''}</span>
+			{:else if statusOf(channel) === 'on'}
 				<span class="on-air"><span class="dot"></span>On{channel.country ? ` · ${channel.country}` : ''}</span>
 			{:else if channel.country}
 				<span class="country">{channel.country}</span>
@@ -416,7 +465,7 @@
 
 {#if menu}
 	<div class="ctx-backdrop" onclick={closeMenu} oncontextmenu={(e) => { e.preventDefault(); closeMenu(); }} role="presentation"></div>
-	<div class="ctx-menu" style:left="{menu.x}px" style:top="{menu.y}px" role="menu">
+	<div class="ctx-menu" use:fitOnScreen style:left="{menu.x}px" style:top="{menu.y}px" role="menu">
 		{#if menu.game}
 			{@const game = menu.game}
 			{#each channelsBestFirst(game).slice(0, 6) as channel (channel.id)}
@@ -636,6 +685,7 @@
 					</section>
 				{:else}
 					<p class="faint">{searched ? 'Nothing called that.' : 'Nothing on the schedule right now.'}</p>
+					{#if !searched && replays?.length}<button type="button" class="btn" onclick={() => (tab = 'replays')}>See replays</button>{/if}
 				{/each}
 			{:else}
 				{#if leagues.length > 1}
@@ -659,6 +709,7 @@
 					</section>
 				{:else}
 					<p class="faint">{searched ? 'Nothing called that.' : `No ${sportLabel(sport).toLowerCase()} on the schedule right now.`}</p>
+					{#if !searched && replays?.length}<button type="button" class="btn" onclick={() => (tab = 'replays')}>See {sportLabel(sport).toLowerCase()} replays</button>{/if}
 				{/each}
 			{/if}
 		{:else}
@@ -667,6 +718,14 @@
 					<option value="">Every country</option>
 					{#each countries as name (name)}<option value={name}>{name}</option>{/each}
 				</select>
+				{#if checking}
+					<span class="faint tabular">Checking {checking.done} of {checking.of}…</span>
+					<button type="button" class="btn" onclick={() => (stopChecking = true)}>Stop</button>
+				{:else if unchecked.length}
+					<button type="button" class="btn" onclick={checkChannels}>
+						{unchecked.length === channels.length ? 'Check which are on' : `Check ${Math.min(CHECK_AT_ONCE, unchecked.length)} more`}
+					</button>
+				{/if}
 			</div>
 			{#if channelsOnNow.length}
 				<section>
@@ -1058,6 +1117,13 @@
 	}
 
 	.league-pick,
+	.channel-filters {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 10px;
+	}
+
 	.channel-filters select {
 		align-self: flex-start;
 		width: auto;

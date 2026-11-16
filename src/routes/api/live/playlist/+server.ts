@@ -13,6 +13,11 @@ import type { RequestHandler } from './$types';
 export const GET: RequestHandler = async ({ url }) => {
 	const id = Number(url.searchParams.get('ch'));
 	if (!Number.isInteger(id) || id <= 0) return error(400, 'Which channel?');
+	// ?check=1: only whether the channel is on (Live TV's "Check which are on"), no pieces fetched ahead.
+	if (url.searchParams.get('check') === '1') {
+		const checked = await playlistOf(id, false);
+		return new Response(null, { status: checked.status === 200 ? 204 : 502 });
+	}
 	const answer = await sharedPlaylist(id);
 	if (answer.status !== 200) return error(answer.status, answer.text);
 	return new Response(answer.text, { headers: { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' } });
@@ -40,8 +45,8 @@ function sharedPlaylist(id: number): Promise<Answer> {
 }
 
 /** The channel's playlist; when it can't be had, the channel moves to its next player server. */
-async function playlistOf(id: number): Promise<Answer> {
-	const answer = await fromItsSource(id);
+async function playlistOf(id: number, ahead = true): Promise<Answer> {
+	const answer = await fromItsSource(id, ahead);
 	if (answer) return answer;
 	liveTrouble(id);
 	return { status: 502, text: "The channel's server didn't answer" };
@@ -50,7 +55,7 @@ async function playlistOf(id: number): Promise<Answer> {
 const get = (address: string, headers: Record<string, string>) => fetch(address, { headers, signal: AbortSignal.timeout(15_000) }).catch(() => null);
 
 /** The playlist from the player server the channel is on now, or null when it didn't give it. */
-async function fromItsSource(id: number): Promise<Answer | null> {
+async function fromItsSource(id: number, ahead = true): Promise<Answer | null> {
 	let link = await liveLink(id);
 	if (!link) return failed(id, 'no link');
 	let resp = await get(link.url, link.headers);
@@ -105,7 +110,7 @@ async function fromItsSource(id: number): Promise<Answer | null> {
 	// TV waited for each whole piece to come from the channel's server only once it asked, and a
 	// slow one stopped the picture for a few seconds (college football on the Roku, 2026-11-08).
 	const pieces = text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
-	for (const piece of pieces.slice(-3)) {
+	for (const piece of ahead ? pieces.slice(-3) : []) {
 		const full = new URL(piece, base);
 		void sharedLivePiece(full.href, liveHeadersFor(full)).catch(() => {});
 	}

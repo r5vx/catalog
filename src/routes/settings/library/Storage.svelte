@@ -25,8 +25,7 @@
 	<section>
 		<div class="head"><h2>Kept to load faster</h2></div>
 		<p class="muted">
-			Copies Catalog keeps on this computer so things open without asking the internet again. Anything here can
-			be fetched again, so clearing it loses nothing.
+			Saved copies that make things open faster. Clearing them loses nothing.
 		</p>
 
 		<ul class="sizes">
@@ -46,7 +45,7 @@
 					{/each}
 				</select>
 			</label>
-			<p class="faint hint">Each kind has its own share, so none can crowd out the rest; past it, the oldest goes first. Pictures and video change to the new size the next time Catalog opens.</p>
+			<p class="faint hint">When it's full, the oldest goes first.</p>
 		</form>
 
 		<form method="POST" action="?/clear" use:enhance>
@@ -69,7 +68,7 @@
 					{/each}
 				</select>
 			</label>
-			<p class="faint hint">Separate from the limit above. An episode takes about 0.5 to 2 GB; with several TVs watching, each has its own. It never leaves less than 5 GB free on the disk.</p>
+			<p class="faint hint">About 0.5 to 2 GB an episode. Always leaves 5 GB free on the disk.</p>
 		</form>
 	</section>
 

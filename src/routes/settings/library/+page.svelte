@@ -149,8 +149,7 @@
 		<div class="head"><h2>Missing information</h2></div>
 
 		<p class="muted">
-			Runtimes, box office and IMDb scores need a second lookup, which happens on its own
-			shortly after Catalog opens.
+			Runtimes, box office and IMDb scores fill in on their own shortly after Catalog opens.
 		</p>
 
 		{#if filling}
@@ -180,8 +179,7 @@
 		<div class="head"><h2>Share with someone</h2></div>
 
 		<p class="muted">
-			A copy of your list they can open in their own Catalog. No note pages, and nothing of
-			yours unless you tick it.
+			A copy of your list for someone else's Catalog. Your ratings and reviews only if you tick them.
 		</p>
 
 		<label class="field">

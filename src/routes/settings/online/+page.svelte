@@ -62,11 +62,24 @@
 			data: await r.json().catch(() => null)
 		}));
 
+	/** What this profile keeps from its friends (on the server; null until known). */
+	let privacy = $state<{ hideProfile: boolean; hideFriends: boolean } | null>(null);
+
 	async function load() {
 		status = await fetch('/api/online')
 			.then((r) => (r.ok ? r.json() : null))
 			.catch(() => null);
 		if (status?.owner) loadReports();
+		if (status?.connected && status.account?.id) {
+			const mine = await cloud(`people/${status.account.id}/profile`, 'GET');
+			privacy = mine.ok ? (mine.data?.privacy ?? { hideProfile: false, hideFriends: false }) : null;
+		}
+	}
+
+	async function setPrivacy(which: 'hideProfile' | 'hideFriends', on: boolean) {
+		if (!privacy) return;
+		privacy = { ...privacy, [which]: on };
+		await cloud('privacy', 'PUT', privacy);
 	}
 
 	onMount(load);
@@ -99,8 +112,8 @@
 
 	async function leave() {
 		const yes = await confirmAction({
-			title: 'Take this computer offline?',
-			message: 'Friends, synced progress and shared timings stop here until you go back online. Your friends, name and picture are kept.',
+			title: 'Go offline?',
+			message: 'Friends and syncing stop until you go back online. Nothing is lost.',
 			confirmLabel: 'Go offline'
 		});
 		if (!yes) return;
@@ -223,8 +236,8 @@
 
 	async function signOut() {
 		const yes = await confirmAction({
-			title: 'Sign this profile out?',
-			message: 'It becomes its own person again here, with no friends or synced progress. The account keeps what it had.',
+			title: 'Sign out?',
+			message: 'This profile goes back to having no friends or synced progress here. Your account keeps everything.',
 			confirmLabel: 'Sign out'
 		});
 		if (!yes) return;
@@ -281,18 +294,14 @@
 {:else if !status.connected && status.joined}
 	<section>
 		<h2>Offline for now</h2>
-		<p class="muted">Nothing is sent or asked while this Catalog is offline. Your friends, your name and your picture are kept for when it comes back.</p>
+		<p class="muted">Nothing is sent while offline. Your friends are kept.</p>
 		<div><button type="button" class="btn btn-primary" onclick={comeBack} disabled={working}>{working ? 'Connecting…' : 'Go back online'}</button></div>
 		{#if problem}<p class="msg bad">{problem}</p>{/if}
 	</section>
 {:else if !status.connected}
 	<section>
 		<h2>Catalog online</h2>
-		<p class="muted">
-			Connects this Catalog with the family's and friends': friends and what they're watching, watching together,
-			your progress on every computer you use, and problems sent to whoever looks after Catalog. No video goes
-			online, and nothing from Settings does.
-		</p>
+		<p class="muted">Friends, watching together, and your progress on every computer. No video or settings go online.</p>
 		<form onsubmit={connect}>
 			<label for="joinName">{t('Your name')}</label>
 			<input id="joinName" type="text" bind:value={joinName} maxlength="30" autocomplete="off" placeholder={t('What friends will call you')} />
@@ -321,9 +330,7 @@
 
 	<section>
 		<h2>You</h2>
-		<p class="muted">
-			Each profile is its own person online. This one is <strong>{status.account?.name ?? ''}</strong>.
-		</p>
+		<p class="muted">Online as <strong>{status.account?.name ?? ''}</strong>.</p>
 		{#if status.account?.google}
 			<p class="muted">Signed in with Google as <strong>{status.account.email}</strong>.</p>
 		{/if}
@@ -335,7 +342,6 @@
 
 	<section>
 		<h2>Your other computers</h2>
-		<p class="muted">The same person on two computers shares friends and, with the switches below, watch progress and the library.</p>
 		{#if status.google && !status.account?.google}
 			<div><button type="button" class="btn btn-primary" onclick={google} disabled={waitingForGoogle}>{waitingForGoogle ? 'Waiting for Google…' : 'Sign in with Google'}</button></div>
 		{/if}
@@ -344,7 +350,7 @@
 			{#if linkCode}<strong class="code tabular">{linkCode}</strong><span class="faint">15 minutes</span>{/if}
 		</div>
 		<form onsubmit={useOtherCode}>
-			<label for="other">A code from your other computer</label>
+			<label for="other">Code from another computer</label>
 			<div class="row">
 				<input id="other" type="text" bind:value={otherCode} autocomplete="off" spellcheck="false" maxlength="12" />
 				<button type="submit" class="btn" disabled={!otherCode.trim()}>Join</button>
@@ -353,9 +359,8 @@
 		{#if linkProblem}<p class="msg bad">{linkProblem}</p>{/if}
 		<label class="toggle">
 			<input type="checkbox" checked={status.sync} onchange={(e) => setSync(e.currentTarget.checked)} />
-			{t('Keep Continue Watching in step between my computers')}
+			{t('Sync Continue Watching across my computers')}
 		</label>
-		<p class="faint small">{t('Where you got to in every film and episode. An episode watched partly on each computer ends at the farther place on both.')}</p>
 		{#if status.sync}
 			<p class="faint small">
 				{#if status.lastSync?.error}{status.lastSync.error}
@@ -366,15 +371,13 @@
 		{/if}
 		<label class="toggle">
 			<input type="checkbox" checked={status.library.on || libraryAsk !== null} disabled={libraryLooking} onchange={(e) => askLibrary(e.currentTarget.checked)} />
-			{t('Keep my library in step between my computers')}
+			{t('Sync my library across my computers')}
 		</label>
-		<p class="faint small">{t('Statuses, ratings, favorites, reviews, dates and where you got to.')}</p>
 		{#if status.library.on}
 			<label class="toggle">
 				<input type="checkbox" checked={status.removals} onchange={(e) => setRemovals(e.currentTarget.checked)} />
-				{t('Remove titles here that I remove on my other computers')}
+				{t('Remove titles here when I remove them on another computer')}
 			</label>
-			<p class="faint small">{t('A copy of this library goes in its backups folder the first time each day.')}</p>
 		{/if}
 		{#if libraryLooking}<p class="faint small">Looking…</p>{/if}
 		{#if libraryProblem}<p class="msg bad">{libraryProblem}</p>{/if}
@@ -407,36 +410,41 @@
 			{#if status.library.last?.longNotes}<p class="faint small">{status.library.last.longNotes === 1 ? '1 review is too long to send and stays' : `${status.library.last.longNotes} reviews are too long to send and stay`} on this computer.</p>{/if}
 			{#if status.library.nameOnly}<p class="faint small">{status.library.nameOnly === 1 ? '1 title typed in by name stays' : `${status.library.nameOnly} titles typed in by name stay`} on this computer only.</p>{/if}
 		{/if}
-		<div><button type="button" class="btn" onclick={signOut}>Sign this profile out</button></div>
+		<div><button type="button" class="btn" onclick={signOut}>Sign out</button></div>
 	</section>
 
 	<section>
-		<h2>What this computer shares</h2>
+		<h2>Sharing</h2>
 		<label class="toggle">
 			<input type="checkbox" checked={status.switches.reports} onchange={(e) => setSwitch('reports', e.currentTarget.checked)} />
-			Send problems by themselves
+			Send problem reports
 		</label>
-		<p class="faint small">When a video stops to load or subtitles won't match: the title, the source and the player's own log of it.</p>
 		<label class="toggle">
 			<input type="checkbox" checked={status.switches.share} onchange={(e) => setSwitch('share', e.currentTarget.checked)} />
-			Friends see what's being watched
+			Show friends what I'm watching
 		</label>
-		<p class="faint small">What's playing now, and which titles are watched (for "friends who've seen this").</p>
 		<label class="toggle">
 			<input type="checkbox" checked={status.switches.along} onchange={(e) => setSwitch('along', e.currentTarget.checked)} />
 			Let friends watch along
 		</label>
-		<p class="faint small">{t("Friends get a Watch along button beside what's playing here. Their screen follows this one; only this one controls it.")}</p>
 		<label class="toggle">
 			<input type="checkbox" checked={status.switches.autoJoin} onchange={(e) => setSwitch('autoJoin', e.currentTarget.checked)} />
-			{t('Open what the room starts by itself')}
+			{t('Play what others start in a watch-together room')}
 		</label>
-		<p class="faint small">{t('In a watch-together room, whatever someone starts opens here without asking first.')}</p>
 		<label class="toggle">
 			<input type="checkbox" checked={status.switches.shared} onchange={(e) => setSwitch('shared', e.currentTarget.checked)} />
-			Share intro and credit times
+			Share Skip Intro and credits times
 		</label>
-		<p class="faint small">Times one Catalog works out are used by the others.</p>
+		{#if privacy}
+			<label class="toggle">
+				<input type="checkbox" checked={privacy.hideProfile} onchange={(e) => setPrivacy('hideProfile', e.currentTarget.checked)} />
+				{t('Keep my profile private')}
+			</label>
+			<label class="toggle">
+				<input type="checkbox" checked={privacy.hideFriends} onchange={(e) => setPrivacy('hideFriends', e.currentTarget.checked)} />
+				{t('Keep my friends list private')}
+			</label>
+		{/if}
 	</section>
 
 	<!-- Only where the owner's key is kept. It's typed in the Friends panel's friend's-code box: no box here, so nobody else sees there's a key. -->
@@ -465,7 +473,7 @@
 	{/if}
 
 	<section>
-		<div><button type="button" class="btn" onclick={leave}>Take this computer offline</button></div>
+		<div><button type="button" class="btn" onclick={leave}>Go offline</button></div>
 	</section>
 {/if}
 

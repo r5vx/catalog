@@ -25,7 +25,7 @@ import { dirname, join } from 'node:path';
 import { db, dbPath } from './db/index';
 import { readSettings, updateSettings } from './settings';
 import { categoryIdForSlug, existingSourceKeysWithIds, insertEntry, listProfiles, noteRemoved } from './db/queries';
-import { cloud, onlineConnected, profileList } from './online';
+import { cloud, everyRound, onlineConnected, profileList } from './online';
 import { titleKey } from '$lib/titleKey';
 import { STATUSES } from '$lib/constants';
 
@@ -562,6 +562,6 @@ export function startLibrarySync(): void {
 	const all = () => {
 		for (const profile of libraryProfiles()) void syncLibrary(profile);
 	};
-	setTimeout(all, 45_000).unref?.();
-	setInterval(all, 2 * 60 * 1000).unref?.();
+	// Every 2 minutes while someone is using this Catalog, every 10 when not (online.ts everyRound).
+	everyRound(all, 45_000);
 }

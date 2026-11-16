@@ -3,6 +3,8 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import Avatar from '$lib/Avatar.svelte';
+	import StyledName from '$lib/StyledName.svelte';
+	import type { NameStyle } from '$lib/nameStyle';
 	import ContextMenu, { menuAt, type MenuItem } from '$lib/ContextMenu.svelte';
 	import { wording } from '$lib/altText';
 	import { together, startRoom, joinRoom, leaveRoom, rejoinKeptRoom, alongChanged } from '$lib/watchTogether.svelte';
@@ -19,7 +21,7 @@
 	 * Nothing shows until this Catalog is online (Settings → Online).
 	 */
 	type Watching = { title: string; type: 'tv' | 'movie'; year: string; season: number; episode: number; poster: string; room?: string };
-	type Friend = { id: string; name: string; avatar: number; watching: Watching | null };
+	type Friend = { id: string; name: string; avatar: number; watching: Watching | null; nameStyle?: NameStyle | null };
 	type Switches = { reports: boolean; share: boolean; shared: boolean; along: boolean; autoJoin?: boolean };
 	/** Someone a friend knows ("Bob, a friend of Ann's"). */
 	type Known = { id: string; name: string; avatar: number; via?: string; mutual?: number; requested?: boolean };
@@ -64,7 +66,11 @@
 			.then(async (r) => ({ ok: r.ok, status: r.status, data: await r.json().catch(() => null) }))
 			.catch(() => ({ ok: false, status: 0, data: null }));
 
+	/** When the list was last asked for (the timer above asks again only when it's due). */
+	let lastLoad = 0;
+
 	async function load() {
+		lastLoad = Date.now();
 		const answer = await cloud('friends');
 		// (Not online: this Catalog hasn't joined, which the server side answers as "not yet".)
 		connected = answer.ok ? true : answer.status === 0 || /isn't online/.test(answer.data?.error ?? '') ? false : connected;
@@ -104,9 +110,13 @@
 			.then((r) => (r.ok ? r.json() : null))
 			.then((status) => (switches = status?.switches ?? null))
 			.catch(() => {});
-		// Asked again every 15 s while it's on screen, and as soon as it's looked at again: "watching
-		// now" stayed after a friend had stopped (owner, 2026-11-15).
-		timer = setInterval(() => !document.hidden && connected && load(), 15_000);
+		// Asked again every 30 s while it's on screen (every 2 minutes while Catalog is behind other
+		// windows), and as soon as it's looked at again: "watching now" stayed after a friend had
+		// stopped (owner, 2026-11-15). It was every 15 s, a fifth of all the server was asked that day.
+		timer = setInterval(() => {
+			const due = document.hasFocus() ? 30_000 : 120_000;
+			if (!document.hidden && connected && Date.now() - lastLoad >= due - 1000) load();
+		}, 5000);
 		document.addEventListener('visibilitychange', lookAgain);
 		window.addEventListener('focus', lookAgain);
 		// (Undone here, not in onDestroy: that also runs while the page is drawn on the server,
@@ -120,7 +130,8 @@
 
 	/** Back on the page (another tab or window was in front): asked again now. */
 	function lookAgain() {
-		if (!document.hidden && connected) void load();
+		// (Not again within 10 s: clicking back and forth between windows asked every time.)
+		if (!document.hidden && connected && Date.now() - lastLoad > 10_000) void load();
 	}
 
 	let refreshing = $state(false);
@@ -338,7 +349,7 @@
 							<Avatar id={friend.id} name={friend.name} rev={friend.avatar} size={72} />
 						</a>
 						<div class="about">
-							<a class="name" href="/friends/{friend.id}">{friend.name}</a>
+							<a class="name" href="/friends/{friend.id}"><StyledName name={friend.name} look={friend.nameStyle ?? null} /></a>
 							{#if watching}
 								<span class="now"><span class="dot" aria-hidden="true"></span>{t('Watching')} <strong>{label(watching)}</strong></span>
 							{:else}
@@ -417,7 +428,7 @@
 					{:else}
 						<p class="faint">{t('Nothing playing yet. When someone starts something, everyone in the room is asked to join.')}</p>
 					{/if}
-					<div><button type="button" class="btn" onclick={leaveRoom}>{together.following ? t('Stop watching along') : t('Leave the room')}</button></div>
+					<div><button type="button" class="btn" onclick={() => leaveRoom()}>{together.following ? t('Stop watching along') : t('Leave the room')}</button></div>
 				</div>
 				<div class="group">
 					<h3 class="label">{t('Group chat')}</h3>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { fitOnScreen } from '$lib/fitOnScreen';
 	import { watchTypeOf } from '$lib/watchType';
 	import MoreButton from '$lib/MoreButton.svelte';
 	import { goto, invalidateAll, beforeNavigate } from '$app/navigation';
@@ -438,7 +439,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 {#if ctxMenu}
 	<div class="ctx-backdrop" onclick={closeCtx} oncontextmenu={(e) => { e.preventDefault(); closeCtx(); }}></div>
-	<div class="ctx-menu" style="left: {ctxMenu.x}px; top: {ctxMenu.y}px;">
+	<div class="ctx-menu" use:fitOnScreen style="left: {ctxMenu.x}px; top: {ctxMenu.y}px;">
 		{#if link(ctxMenu.row)}
 			<button type="button" onclick={() => {
 				const r = ctxMenu!.row;

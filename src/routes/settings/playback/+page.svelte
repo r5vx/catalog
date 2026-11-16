@@ -138,7 +138,7 @@
 	<section>
 		<div class="head"><h2>Audio language</h2></div>
 		<p class="muted">
-			For this profile. Films and shows play dubbed in this language where Movy has a copy in it (often lower quality), and in their own language otherwise. Needs Catalog open on the computer.
+			For this profile. Plays dubbed where there's a copy in this language (often lower quality).
 		</p>
 		<div class="inline-form">
 			<select bind:value={audioLanguage} onchange={saveAudioLanguage} aria-label="Audio language">
@@ -154,7 +154,7 @@
 	<section class="wide-full">
 		<div class="head"><h2>Times a video stopped to load</h2></div>
 		<p class="muted">
-			Kept each time, here and on TVs watching through this computer, with how fast it was arriving and from where.
+			From this computer and the TVs that watch through it.
 		</p>
 
 		{#if stops.length}

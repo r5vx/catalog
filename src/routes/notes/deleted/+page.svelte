@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { fitOnScreen } from '$lib/fitOnScreen';
 	import { page } from '$app/state';
 	import { invalidateAll } from '$app/navigation';
 	import CategoryTabs from '$lib/CategoryTabs.svelte';
@@ -124,7 +125,7 @@
 	{@const note = menu.note}
 	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div class="ctx-backdrop" onclick={() => (menu = null)} oncontextmenu={(e) => { e.preventDefault(); menu = null; }}></div>
-	<div class="ctx-menu" style="left: {menu.x}px; top: {menu.y}px;">
+	<div class="ctx-menu" use:fitOnScreen style="left: {menu.x}px; top: {menu.y}px;">
 		<a href="/notes/{note.id}" onclick={() => (menu = null)}>Open</a>
 		<button type="button" onclick={() => { menu = null; act(note.id, 'restore'); }}>Restore</button>
 		<hr />

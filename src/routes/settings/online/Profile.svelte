@@ -93,7 +93,10 @@
 {:else}
 	<section>
 		<h2>Your profile online</h2>
-		<p class="muted">What friends see beside what you're watching and what you've watched. Each profile on this computer has its own.</p>
+		<div class="row">
+			<a class="btn btn-primary" href="/friends/{account.id}">Open my profile</a>
+			<a class="btn" href="/friends/{account.id}?edit=1">Banner, name style and favorites</a>
+		</div>
 
 		<div class="card">
 			<Avatar id={account.id} name={name || account.name} rev={account.avatar} size={96} />
@@ -102,7 +105,6 @@
 					<button type="button" class="btn" onclick={() => fileBox?.click()} disabled={busy}>{account.avatar ? 'Change picture' : 'Choose a picture'}</button>
 					{#if account.avatar}<button type="button" class="btn" onclick={() => send({ avatar: '' }, 'Picture removed.')} disabled={busy}>Remove</button>{/if}
 				</div>
-				<p class="faint small">Any image. The middle of it is used, as a circle.</p>
 				<input bind:this={fileBox} type="file" accept="image/*" hidden onchange={pickPicture} />
 			</div>
 		</div>

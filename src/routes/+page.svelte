@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { fitOnScreen } from '$lib/fitOnScreen';
 	import { posterSrcset, POSTER_SIZES } from '$lib/poster';
 	import { watchTypeOf } from '$lib/watchType';
 	import MoreButton from '$lib/MoreButton.svelte';
@@ -237,6 +238,7 @@
 	total={data.total}
 	completed={data.completed}
 	completedByCategory={data.completedByCategory}
+	posters={data.tilePosters}
 	altMode={pm}
 />
 
@@ -451,7 +453,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 {#if ctxMenu}
 	<div class="ctx-backdrop" onclick={closeCtx} oncontextmenu={(e) => { e.preventDefault(); closeCtx(); }}></div>
-	<div class="ctx-menu" style="left: {ctxMenu.x}px; top: {ctxMenu.y}px;">
+	<div class="ctx-menu" use:fitOnScreen style="left: {ctxMenu.x}px; top: {ctxMenu.y}px;">
 		<button type="button" onclick={() => { const e = ctxMenu!.entry; const t = watchTypeOf(e); goto(`/watch?title=${encodeURIComponent(e.title)}&type=${t}${e.year ? `&year=${e.year}` : ''}&auto=1`); closeCtx(); }}>
 			{pm ? p('▶ Watch') : '▶ Watch'}
 		</button>
@@ -477,7 +479,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 {#if cwCtx}
 	<div class="ctx-backdrop" onclick={closeCwCtx} oncontextmenu={(e) => { e.preventDefault(); closeCwCtx(); }}></div>
-	<div class="ctx-menu" style="left: {cwCtx.x}px; top: {cwCtx.y}px;">
+	<div class="ctx-menu" use:fitOnScreen style="left: {cwCtx.x}px; top: {cwCtx.y}px;">
 		<button type="button" onclick={() => { goto(resumeHref(cwCtx!.item)); closeCwCtx(); }}>
 			▶ {pm ? p('Resume') : 'Resume'}
 		</button>
@@ -559,6 +561,21 @@
 		display: grid;
 		grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
 		gap: 20px 16px;
+	}
+
+	/* Phones: three across (owner, 2026-11-15: two was too few), the words under each a little smaller. */
+	@media (max-width: 560px) {
+		.grid {
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+			gap: 14px 10px;
+		}
+		.grid .card-title {
+			font-size: 0.86rem;
+		}
+		.grid .meta,
+		.grid .sub {
+			font-size: 0.72rem;
+		}
 	}
 
 	.card {

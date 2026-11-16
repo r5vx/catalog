@@ -67,10 +67,19 @@ export type Settings = {
 	customTheme?: string;
 	/** Serialised febbox cookies — stored after login, or pasted by a friend. */
 	febboxToken?: string;
+	/** A debrid service (src/lib/server/sources/debrid.ts): which one, and its API key (Settings → Services). */
+	debridService?: string;
+	debridKey?: string;
+	/** Stremio addons (src/lib/server/sources/addons.ts), as a JSON list. Their links can hold someone's keys. */
+	stremioAddons?: string;
 	/** More Febbox accounts' sign-ins (src/lib/server/febboxAccounts.ts), as a JSON list. */
 	febboxMore?: string;
 	/** Each Febbox account's name or email as Febbox shows it, by account (febboxAccountOf), as JSON. */
 	febboxNames?: string;
+	/** The Random window's choices (src/routes/api/browse/random), as JSON { kind, deep, library }. */
+	randomPrefs?: string;
+	/** Nicknames for friends, per profile (src/lib/server/friendNicknames.ts), as JSON. */
+	friendNicknames?: string;
 	/** '0' centres the layout; otherwise (the default) it stretches edge-to-edge. */
 	wideLayout?: string;
 	/** Your ratings as 5 stars (default) or 10 (Settings → Personalization → Ratings); stored out of 10 either way. */

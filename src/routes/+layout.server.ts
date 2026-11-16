@@ -7,6 +7,7 @@ import { backgroundFrom } from '$lib/background';
 import { readCustomTheme } from '$lib/customTheme';
 import { warmBrowseCache, hasTmdbKey } from '$lib/server/metadata';
 import { showboxSignin } from '$lib/server/showboxSignin';
+import { onlineConnected, keptMe, warmMe } from '$lib/server/online';
 import type { LayoutServerLoad } from './$types';
 
 let browseWarmed = false;
@@ -57,7 +58,13 @@ export const load: LayoutServerLoad = async ({ request, getClientAddress }) => {
 		};
 	}
 
+	// Online: who you are there, for the My profile button (id '' until the server has said).
+	const online = onlineConnected();
+	if (online) warmMe(currentProfile());
+	const onlineMe = online ? (keptMe(currentProfile()) ?? { id: '', name: '', avatar: 0 }) : null;
+
 	return {
+		onlineMe,
 		sideTabs,
 		// No TMDB key: a banner says so (src/lib/TmdbBanner.svelte), as most pages need one.
 		tmdbMissing: !hasTmdbKey(),

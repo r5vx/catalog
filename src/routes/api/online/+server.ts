@@ -1,5 +1,5 @@
 import { error, json } from '@sveltejs/kit';
-import { cloud, computerName, connectOnline, disconnectOnline, noteStopped, lastSync, noteWatchingMore, onlineConnected, onlineJoined, onlineSwitches, setSyncProfile, syncNow, syncProfiles, tryOwnerKey } from '$lib/server/online';
+import { cloud, keepMe, computerName, connectOnline, disconnectOnline, noteStopped, lastSync, noteWatchingMore, onlineConnected, onlineJoined, onlineSwitches, setSyncProfile, syncNow, syncProfiles, tryOwnerKey } from '$lib/server/online';
 import { readSettings, updateSettings } from '$lib/server/settings';
 import { currentProfile } from '$lib/server/profile';
 import { lastLibrarySync, libraryPreview, libraryProfiles, nameOnlyCount, removalsOn, setLibraryProfile, syncLibrary } from '$lib/server/librarySync';
@@ -23,6 +23,7 @@ export const GET: RequestHandler = async ({ url }) => {
 	if (connected) {
 		const hello = await cloud<{ account: Account; computers: number; google: boolean }>('/v1/hello', { profile, body: {} });
 		account = hello.data?.account ?? null;
+		keepMe(profile, account);
 		computers = hello.data?.computers ?? 0;
 		google = hello.data?.google ?? false;
 		problem = hello.ok ? '' : hello.error;

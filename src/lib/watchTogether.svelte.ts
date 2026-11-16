@@ -84,6 +84,8 @@ let clockAhead = 0;
 let timer: ReturnType<typeof setTimeout> | undefined;
 /** The room was left by hand: the player doesn't start another by itself until one is started or joined again. */
 let leftByHand = false;
+/** The room is one the player started by itself (for watching along), not one started or joined by hand. */
+let startedByPlayer = false;
 let attached: { video: HTMLVideoElement; playing: () => Playing; note: (text: string) => void; follow?: (state: RoomState) => void } | null = null;
 /** Until when the video's own play and pause events are the room's doing, not the person's. */
 let applyingUntil = 0;
@@ -137,7 +139,9 @@ function offerIfNew(before: RoomState | null, state: RoomState, first: boolean):
 	}
 	// (The player follows a show's next episode by itself; only what the person isn't watching is asked.)
 	if (here && here.type === 'tv' && state.type === 'tv' && here.title.toLowerCase() === state.title.toLowerCase()) return;
-	if (!first && state.by === myName()) return;
+	// Never what this person started themselves (owner, 2026-11-15: reopening Catalog rejoined the
+	// room their own player had started earlier, and offered them their own film as "Alex started…").
+	if (state.by && state.by === myName()) return;
 	together.offer = state;
 }
 
@@ -172,6 +176,7 @@ function lookLater(): void {
 /** A room started here; its code is in `together.code`. */
 export async function startRoom(): Promise<boolean> {
 	leftByHand = false;
+	startedByPlayer = false;
 	const now = attached ? stateNow() : { title: '', type: 'movie', year: '', season: 0, episode: 0, playing: false, position: 0 };
 	const answer = await ask<RoomAnswer>('rooms', 'POST', now);
 	if (answer) took(answer);
@@ -188,6 +193,7 @@ export async function joinRoom(code: string, following = ''): Promise<boolean> {
 	const answer = await ask<RoomAnswer>(`rooms/${clean}/join?msg=`, 'POST', {});
 	if (answer) {
 		leftByHand = false;
+		startedByPlayer = false;
 		together.following = following;
 		try {
 			if (following) localStorage.setItem(KEPT_FOLLOWING, following);
@@ -200,9 +206,10 @@ export async function joinRoom(code: string, following = ''): Promise<boolean> {
 	return Boolean(answer);
 }
 
-export function leaveRoom(): void {
+export function leaveRoom(byHand = true): void {
 	const code = together.code;
-	leftByHand = true;
+	leftByHand = byHand;
+	startedByPlayer = false;
 	clearTimeout(timer);
 	timer = undefined;
 	together.code = '';
@@ -228,7 +235,18 @@ export function rejoinKeptRoom(): void {
 		kept = localStorage.getItem(KEPT) ?? '';
 		following = localStorage.getItem(KEPT_FOLLOWING) ?? '';
 	} catch {}
-	if (kept) void joinRoom(kept, following).then((ok) => !ok && leaveRoom());
+	// (A room nobody else is in is left again: it was this screen's own, from watching earlier.)
+	if (kept) void joinRoom(kept, following).then((ok) => (!ok || !together.people.some((person) => !person.me)) && leaveRoom(false));
+}
+
+/**
+ * The player closed (let go after it was left, or replaced). A room it started by itself, with
+ * nobody else in it, ends with it: it stayed open after the person stopped watching, so reopening
+ * Catalog later found them "in a group" by themselves (owner, 2026-11-15).
+ */
+export function playerClosed(): void {
+	if (!together.code || !startedByPlayer || together.people.some((person) => !person.me)) return;
+	leaveRoom(false);
 }
 
 async function look(): Promise<void> {
@@ -282,7 +300,7 @@ export function alongChanged(): void {
  * when there's none.
  */
 export async function nowPlaying(what: Playing): Promise<void> {
-	if (!together.code && !leftByHand && (await alongAllowed()) && !together.code) await startRoom();
+	if (!together.code && !leftByHand && (await alongAllowed()) && !together.code && (await startRoom())) startedByPlayer = true;
 	try {
 		await fetch('/api/online', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'watching', title: what.title, year: what.year, room: together.code }) });
 	} catch {}

@@ -111,6 +111,23 @@ CREATE TABLE IF NOT EXISTS profiles (
 	updated INTEGER NOT NULL
 );
 
+-- What a person keeps from their friends (2026-11-15): their profile (watched, favorites, library)
+-- and who their friends are (also not offered as "people you may know" through them).
+CREATE TABLE IF NOT EXISTS privacy (
+  account TEXT PRIMARY KEY,
+  hide_profile INTEGER NOT NULL DEFAULT 0,
+  hide_friends INTEGER NOT NULL DEFAULT 0
+);
+
+-- How a profile looks (2026-11-15): the name's style (a JSON { font, effect, colors }) and a picture
+-- across the top (a data: address, at most ~520 KB; banner_rev changes with each new one, 0 = none).
+CREATE TABLE IF NOT EXISTS looks (
+	account TEXT PRIMARY KEY,
+	name_style TEXT NOT NULL DEFAULT '',
+	banner TEXT,
+	banner_rev INTEGER NOT NULL DEFAULT 0
+);
+
 -- Messages: a whisper to one friend (to_account), or a line in a watch-together room (room).
 CREATE TABLE IF NOT EXISTS messages (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,

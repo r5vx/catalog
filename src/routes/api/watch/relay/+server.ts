@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { isAniwaveVideo, VIDEO_HEADERS } from '$lib/server/sources/aniwave';
 import { isVidriftVideo, playsDirect, VIDRIFT_HEADERS } from '$lib/server/sources/vidrift';
-import { liveHeadersFor, trustVideoHost, trustedVideoHost } from '$lib/server/relayHosts';
+import { addonHeadersFor, liveHeadersFor, trustAddonHost, trustVideoHost, trustedVideoHost } from '$lib/server/relayHosts';
 import { fetchSteadily, piecePart, splitLongPieces } from '$lib/server/relayPieces';
 import { MOVY_HEADERS } from '$lib/server/sources/movy';
 import { HIANIME_HEADERS } from '$lib/server/sources/hianime';
@@ -36,7 +36,7 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	const kind = isVidriftVideo(target) ? 'vidrift' : isAniwaveVideo(target) ? 'aniwave' : trustedVideoHost(target);
 	if (!kind) return error(403, 'Not a video server Catalog was sent to');
 	const askWith: Record<string, string> =
-		kind === 'vidrift' ? VIDRIFT_HEADERS : kind === 'movy' ? MOVY_HEADERS : kind === 'hianime' ? HIANIME_HEADERS : kind === 'vidfast' ? VIDFAST_HEADERS : kind === 'live' ? liveHeadersFor(target) : VIDEO_HEADERS;
+		kind === 'vidrift' ? VIDRIFT_HEADERS : kind === 'movy' ? MOVY_HEADERS : kind === 'hianime' ? HIANIME_HEADERS : kind === 'vidfast' ? VIDFAST_HEADERS : kind === 'live' ? liveHeadersFor(target) : kind === 'addon' ? addonHeadersFor(target) : VIDEO_HEADERS;
 	// Which copy of which episode, and which piece of it (episodeDownloads.ts): 7Movies' and Movy's
 	// episodes are downloaded ahead onto this computer, and kept by these rather than by address.
 	const copy = url.searchParams.get('copy') ?? '';
@@ -219,7 +219,8 @@ export const GET: RequestHandler = async ({ url, request }) => {
 			const full = new URL(address, target);
 			if (direct(full)) return full.href;
 			// A server this playlist names is one the source sent us to as well.
-			trustVideoHost(full, kind!);
+			if (kind === 'addon') trustAddonHost(full, addonHeadersFor(target));
+			else trustVideoHost(full, kind!);
 			// The progress-bar pictures' playlists keep saying so, down to each piece. 7Movies'
 			// pieces carry which mend they had (pieceRepair.ts), so a browser never plays one it
 			// kept from a build that mended them wrongly.

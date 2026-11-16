@@ -14,7 +14,7 @@ import { clearOldStrips } from '$lib/server/previewStrips';
 import { keepWithinLimit, tellAppItsShare } from '$lib/server/storage';
 import { moveOffAniList } from '$lib/server/offAniList';
 import { scheduleNewEpisodeChecks } from '$lib/server/newEpisodes';
-import { startOnline } from '$lib/server/online';
+import { startOnline, noteInUse } from '$lib/server/online';
 import { scheduleNextAirs } from '$lib/server/nextAirs';
 import { installSecureDns } from '$lib/server/secureDns';
 import { noteOwnAddress } from '$lib/server/ownFetch';
@@ -220,6 +220,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 	event.url.protocol = event.request.headers.get('x-forwarded-proto') === 'https' ? 'https:' : 'http:';
 	checkSameOrigin(event);
 	noteOwnAddress(event.url);
+	// Someone is using this Catalog (a page, the player, a TV): online syncing keeps its quick pace.
+	// (The pages' own checks for messages and friends don't count, or they'd keep it awake.)
+	if (!event.url.pathname.startsWith('/api/online')) noteInUse();
 	// A Fire TV opening Catalog: remembered, so Settings can install the TV app on it from here.
 	const agent = event.request.headers.get('user-agent') ?? '';
 	if (agent.includes('CatalogTV/')) {

@@ -35,6 +35,9 @@
 	const others = $derived(data.febboxAccounts.filter((a) => !a.main));
 	const mainAccount = $derived(data.febboxAccounts.find((a) => a.main));
 	let addingMore = $state(false);
+	/** Which debrid service the form is for: the one picked, else the saved one, else Real-Debrid. */
+	let debridPick = $state('');
+	const debridChoice = $derived(debridPick || data.debrid.service || 'realdebrid');
 	let moreFailed = $state(false);
 
 	/** "2.4 of 10 GB used today", or when a used-up allowance comes back. */
@@ -103,7 +106,7 @@
 			Films and TV need a free key from
 			<a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noreferrer"
 				>themoviedb.org</a
-			>. Anime doesn't. Either key they show you works.
+			>. Either key it shows works.
 		</p>
 
 		{#if form?.tmdbError}
@@ -153,9 +156,9 @@
 		</div>
 
 		<p class="muted">
-			IMDb, Rotten Tomatoes, Metacritic, the age rating, awards and box office. Optional,
-			from <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noreferrer">OMDb</a>
-			— pick <strong>FREE</strong>, then click the link they email you or the key won't work.
+			Optional. IMDb, Rotten Tomatoes and Metacritic scores, age ratings and box office from
+			<a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noreferrer">OMDb</a>. Pick
+			<strong>FREE</strong>, then click the link in their email.
 		</p>
 
 		{#if form?.omdbError}
@@ -205,9 +208,8 @@
 		</div>
 
 		<p class="muted">
-			An extra source for films and shows, often the biggest and sharpest copies. Optional:
-			Catalog plays from its other sources without it. Needs a free Febbox account; log in once
-			and the key saves itself. To share with a friend, have them paste your key below.
+			Optional. An extra source, often with the sharpest copies. Log in once with a free Febbox
+			account and the key saves itself. A friend can use yours by pasting your key.
 		</p>
 
 		{#if loginFailed}
@@ -248,8 +250,7 @@
 			<div class="more">
 				<h3>More accounts</h3>
 				<p class="muted">
-					Each Febbox account gets its own HD allowance a day. With more than one, every video uses
-					whichever has the most left, so several TVs can watch at once without dropping to 360p.
+					Each account has its own daily HD allowance. Catalog uses whichever has the most left.
 				</p>
 				{#if moreResult}
 					<p class="msg" class:good={moreResult.ok} class:bad={!moreResult.ok} role="status">{moreResult.text}</p>
@@ -301,6 +302,103 @@
 		{/if}
 	</section>
 
+	<!-- A debrid service (src/lib/server/sources/debrid.ts): two more copies of everything when a key is saved. -->
+	<section>
+		<div class="head">
+			<h2>Debrid</h2>
+			<span class="pill" class:completed={data.debrid.on}>{data.debrid.on ? data.debrid.name : 'Off'}</span>
+		</div>
+
+		<p class="muted">
+			Optional. Adds a 1080p and a 4K copy of everything from your Real-Debrid, TorBox, AllDebrid or
+			Premiumize account.
+		</p>
+
+		{#if form?.debridError}
+			<p class="msg bad" role="alert">{form.debridError}</p>
+		{:else if form?.debridOk}
+			<p class="msg good" role="status">{form.debridOk}</p>
+		{/if}
+
+		{#if data.debrid.on}
+			<div class="saved-row">
+				<span class="muted">{data.debrid.name} key saved.</span>
+				<form method="POST" action="?/removeDebrid">
+					<button type="submit" class="btn btn-danger">Remove</button>
+				</form>
+			</div>
+			<details>
+				<summary>Use another account or service</summary>
+				{@render debridForm()}
+			</details>
+		{:else}
+			{@render debridForm()}
+		{/if}
+	</section>
+
+	<!-- Stremio addons (src/lib/server/sources/addons.ts): two more copies of everything per addon. -->
+	<section>
+		<div class="head">
+			<h2>Stremio addons</h2>
+			<span class="pill" class:completed={data.addons.length > 0}>{data.addons.length ? `${data.addons.length} added` : 'None'}</span>
+		</div>
+
+		<p class="muted">
+			Optional. Paste an addon's install link (it ends in manifest.json). Its streams become copies in the
+			player and its lists become rows in Browse. Torrent-only addons need debrid.
+		</p>
+
+		{#if form?.addonError}
+			<p class="msg bad" role="alert">{form.addonError}</p>
+		{:else if form?.addonOk}
+			<p class="msg good" role="status">{form.addonOk}</p>
+		{/if}
+
+		{#if data.addons.length}
+			<ul class="addons">
+				{#each data.addons as addon, i (addon.key)}
+					<li>
+						<div>
+							<strong>{addon.name}</strong>
+							<span class="muted">{[addon.site, addon.movies && addon.shows ? 'streams for films and shows' : addon.movies ? 'streams for films' : addon.shows ? 'streams for shows' : '', addon.lists ? `${addon.lists} ${addon.lists === 1 ? 'list' : 'lists'} in Browse` : ''].filter(Boolean).join(' · ')}</span>
+						</div>
+						{#if i > 0}
+							<form method="POST" action="?/raiseAddon">
+								<input type="hidden" name="key" value={addon.key} />
+								<button type="submit" class="btn" title="Its copies come before the one above">Move up</button>
+							</form>
+						{/if}
+						<form method="POST" action="?/removeAddon">
+							<input type="hidden" name="key" value={addon.key} />
+							<button type="submit" class="btn btn-danger">Remove</button>
+						</form>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+
+		<form method="POST" action="?/addAddon" class="inline-form">
+			<input type="password" name="addonLink" placeholder="https://.../manifest.json or stremio://..." autocomplete="off" />
+			<button type="submit" class="btn btn-primary">Add</button>
+		</form>
+	</section>
+
+	{#snippet debridForm()}
+		<form method="POST" action="?/saveDebrid" class="inline-form">
+			<select name="debridService" aria-label="Debrid service" value={debridChoice} onchange={(e) => (debridPick = e.currentTarget.value)}>
+				{#each data.debrid.services as service (service.id)}
+					<option value={service.id}>{service.name}</option>
+				{/each}
+			</select>
+			<input type="password" name="debridKey" placeholder="Paste your API key" autocomplete="off" />
+			<button type="submit" class="btn btn-primary">Save</button>
+		</form>
+		{@const chosen = data.debrid.services.find((s) => s.id === debridChoice)}
+		{#if chosen}
+			<p class="muted">Your key is on <a href={chosen.keyPage} target="_blank" rel="noreferrer">{chosen.name}'s API page</a>.</p>
+		{/if}
+	{/snippet}
+
 	<section>
 		<div class="head">
 			<h2>Where to watch</h2>
@@ -308,8 +406,8 @@
 		</div>
 
 		<p class="muted">
-			Titles show what's streaming, free, or for rent — which depends entirely on the country
-			asking. Catalog follows this PC unless you tell it otherwise.
+			What's streaming, free or for rent depends on the country. Catalog uses this computer's unless
+			you pick one.
 		</p>
 
 		<select
@@ -375,6 +473,47 @@
 	.inline-form input {
 		flex: 1;
 		min-width: 0;
+	}
+
+	/* Key boxes look like every other box (app.css styles text boxes, not password ones). */
+	.inline-form input[type='password'] {
+		background: var(--surface);
+		border: 1px solid var(--rule-firm);
+		border-radius: var(--radius-sm);
+		padding: 8px 10px;
+	}
+
+	.addons {
+		list-style: none;
+		margin: 0 0 12px;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.addons li {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 8px 10px;
+		border: 1px solid var(--rule);
+		border-radius: 8px;
+		background: var(--surface-2);
+	}
+	.addons li > div {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+	}
+	.addons li form {
+		margin: 0;
+	}
+
+	/* Debrid's service menu: only as wide as its longest name, so the key box keeps the room. */
+	.inline-form select {
+		flex: none;
+		width: auto;
 	}
 
 	.saved-row {

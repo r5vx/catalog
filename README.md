@@ -1,92 +1,182 @@
+<div align="center">
+
+<img src="static/icon-192.png" width="96" alt="Catalog">
+
 # Catalog
 
-A personal library of everything you've watched — films, TV, anime. Runs as a desktop app on your PC and is reachable from your phone.
+**Everything you've watched, and everything you want to watch, in one app.**
+
+A library for films, TV and anime with its own player. It runs on your computer and plays on your TVs and phones too.
+
+**[Download the latest release](https://github.com/r5vx/catalog/releases/latest)** · Windows · Mac · Linux
+
+</div>
+
+<br>
+
+![The library](docs/screenshots/library.jpg)
+
+## Why Catalog
+
+- **Works as soon as it's installed.** Sources are built in. There are no add-ons to hunt for and you don't need a paid service.
+- **A library, not just a player.** Everything you've watched, with ratings, statuses, notes and what's next.
+- **Subtitles that fit.** Catalog picks them and times them to the sound by itself.
+- **Skip Intro and Skip Credits** on most shows and anime.
+- **One computer for the whole house.** Fire TVs, Rokus and phones play through it, each person with their own profile and progress.
+- **More than films.** Live TV, sports and YouTube without ads, in the same app.
+- **Watch with friends.** Watch together in step, chat while you watch, see what friends are watching.
+- **Debrid if you have it.** Real-Debrid, TorBox, AllDebrid and Premiumize work too, but you don't need one.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/title.jpg" alt="A title page"></td>
+    <td><img src="docs/screenshots/browse.jpg" alt="Browse"></td>
+  </tr>
+  <tr>
+    <td align="center">Title page</td>
+    <td align="center">Browse</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/tv.jpg" alt="Catalog on a TV"></td>
+    <td><img src="docs/screenshots/services.jpg" alt="Settings: Services"></td>
+  </tr>
+  <tr>
+    <td align="center">On a TV</td>
+    <td align="center">Services, with debrid</td>
+  </tr>
+</table>
+
+![A profile](docs/screenshots/profile.jpg)
+
+## Features
+
+**Library**
+- Films, TV and anime, with statuses: watching, completed, want to watch, rewatching, caught up
+- Your ratings out of 5 or 10 stars, notes, a watch list and stats
+- Continue Watching, with new episodes as they come out
+- Profiles for everyone in the house, each with their own list and progress
+- Import from a list, and export everything as a backup you can restore
+
+**Finding something to watch**
+- Browse what's trending or the best of all time, by genre, or a random pick
+- More like this, based on what you've watched
+- Cast and crew pages, including the video games an actor has voiced
+- Soundtracks and anime openings and endings on every title
+- IMDb, Rotten Tomatoes and Metacritic scores, and an episode ratings chart for shows
+
+**Player**
+- Picks the sharpest copy it can find, up to 4K
+- Subtitles from OpenSubtitles, timed to the sound automatically
+- Anime signs and songs drawn as their makers styled them
+- Skip Intro and Skip Credits, next episode by itself, a mini player
+- Downloads to watch with no internet
+- Japanese audio by default for anime
+
+**Sources**
+- Built in: Showbox (with a free Febbox account), 7Movies, Movy, Vidfast, Aniwave and HiAnime
+- Optional debrid: Real-Debrid, TorBox, AllDebrid or Premiumize. Catalog only uses releases with sound it can play.
+
+**TVs and phones**
+- A Fire TV app, installed from Catalog on your computer
+- A Roku app (beta)
+- Phones and tablets through [Tailscale](https://tailscale.com), added to the home screen like an app
+
+**Live TV and YouTube**
+- Live channels and a sports schedule with team logos and live scores
+- Replays of NFL, NBA and soccer games
+- YouTube with no ads, in tabs
+
+**Online (optional)**
+- Friends, profiles with a banner picture and your own name style
+- See what friends are watching and what they've rated
+- Watch together, with group chat and messages
+- Your library and progress kept in step on every computer you use
+
+**Look**
+- Light, dark and black themes, or your own colors
+- Any accent color and a background picture
 
 ## Install
 
-Download **Catalog-Setup.exe** from the [latest release](https://github.com/r5vx/catalog/releases/latest). Windows will warn about an unknown publisher — click **More info → Run anyway**. Updates happen automatically.
+**Windows:** download **Catalog-Setup.exe** from the [latest release](https://github.com/r5vx/catalog/releases/latest). Windows warns about an unknown publisher: click **More info**, then **Run anyway**. Updates install by themselves.
 
-**Mac** — download the **.dmg** from the same page (see [Updating](#updating) for the one Terminal step).
+**Mac:** download the **.dmg** from the same page and drag Catalog to Applications. The app isn't signed, so the first time, open Terminal and run:
 
-**Linux** — download the **.AppImage** from the same page, then make it runnable and open it:
+```
+xattr -cr /Applications/Catalog.app
+```
+
+After that Catalog updates itself.
+
+**Linux:** download the **.AppImage**, then make it runnable and open it:
 
 ```
 chmod +x Catalog-*-linux-x86_64.AppImage
 ./Catalog-*-linux-x86_64.AppImage
 ```
 
-Some distributions need FUSE 2 for AppImages (Ubuntu 22.04 and later: `sudo apt install libfuse2`). If it closes straight away on Ubuntu 24.04 or later, start it with `--no-sandbox`. The library lives in `~/.local/share/Catalog/`.
-
-Your library lives on your PC, and no account is needed. Going online (friends, watching together, keeping two computers in step) is optional: see [Privacy](#privacy).
+Some distributions need FUSE 2 (Ubuntu 22.04 and later: `sudo apt install libfuse2`). If it closes straight away on Ubuntu 24.04 or later, start it with `--no-sandbox`. It updates itself when it sits in a folder you can write to.
 
 ## Setup
 
-**Movies & TV search** — needs a free [TMDB](https://www.themoviedb.org) API key. Paste it in **Settings → Services**. Either the API Key or the Read Access Token works.
+All of these are in **Settings → Services**.
 
-**IMDb / RT / Metacritic scores** — optional. Get a free [OMDb](https://www.omdbapi.com/apikey.aspx) key and paste it in the same place.
+| What | Needed? | Where to get it |
+| --- | --- | --- |
+| TMDB key | For films and TV (anime works without) | Free at [themoviedb.org](https://www.themoviedb.org/settings/api) |
+| OMDb key | Optional: IMDb, Rotten Tomatoes and Metacritic scores | Free at [omdbapi.com](https://www.omdbapi.com/apikey.aspx) |
+| Febbox account | Optional: adds Showbox, often the sharpest copies | Free at [febbox.com](https://www.febbox.com), then log in from Catalog |
+| Debrid key | Optional | Your debrid service's API page |
 
-Anime works without any keys.
+**Phones:** install Tailscale on your computer and your phone with the same account, then open `http://<your computer's Tailscale address>:4173` on the phone.
 
-## Updating
-
-**Windows** — Updates download automatically in the background. Next time you close and reopen Catalog, the new version is installed. You can also check manually in **Settings → Updates**.
-
-**Mac** — Updates are not automatic. Download the new **.dmg** from the [latest release](https://github.com/r5vx/catalog/releases/latest), drag it to Applications, and replace the old copy. Then open Terminal and run:
-
-```
-xattr -cr /Applications/Catalog.app
-```
-
-This is needed after every update because the app isn't signed.
-
-**Linux** — The AppImage updates itself the same way as on Windows, as long as it sits in a folder you can write to (your home folder, not `/opt`).
-
-## Phone access
-
-Install [Tailscale](https://tailscale.com) on both devices, sign in with the same account. Open Catalog on your PC, then visit `http://<your-tailscale-ip>:4173` on your phone. Add to Home Screen for the app icon.
+**TVs:** Settings → TV and phones.
 
 ## Privacy
 
-Catalog has no ads, no analytics and no tracking of its own. Your library, notes, ratings and settings are kept in one file on your computer.
+Catalog has no ads, no analytics and no tracking. Your library, notes, ratings and settings are kept in one file on your computer, and no account is needed.
 
-**What leaves your computer, and to whom:**
-
-- **Catalog online is off until you join it** (Settings → Online). Once joined, Catalog talks to a small server run by Catalog's author on Cloudflare. It receives only what that feature needs: the name and picture you choose, your friends list, what you're watching right now, the titles you've watched with your ratings, your watch progress and library (when sync is on), profile text, messages you send, and watch-together room state. No video ever passes through it.
-- **Problem reports** (on by default once online, can be turned off in Settings → Online) send the title, the source and the player's own log of what went wrong. Web addresses in them are cut short so no sign-in links are sent.
-- **Never sent anywhere by Catalog:** your TMDB or OMDb keys, your Febbox sign-in, or anything else from Settings. Exports and backups leave those out too.
-- **Other services see your IP address** when Catalog asks them for something: TMDB, AniList, OMDb (posters, details, scores), MusicBrainz, AnimeThemes and Jikan (music credits), subtitle sites, the sites videos are played from, and GitHub (updates). Each has its own privacy policy, and Catalog can't control what they log.
-- **Messages** between friends are stored on the Catalog online server so they can be delivered, and are deleted after 90 days (a watch-together room's chat goes when the room ends). They are not end-to-end encrypted, so don't send anything private.
-
-Each switch is in Settings → Online. Going offline there stops everything above except the outside services Catalog needs to show titles.
+- **Catalog online is off until you join** (Settings → Online). It then talks to a small server run by Catalog's author on Cloudflare, which gets only what those features need: your name and picture, your friends, what you're watching now, the titles you've watched and rated, your progress and library when sync is on, your profile, your messages and watch-together rooms. No video passes through it. Messages are kept 90 days and aren't end-to-end encrypted.
+- **Problem reports** (on once you're online, off in Settings → Online) send the title, the source and the player's log. Web addresses in them are cut short.
+- **Never sent anywhere:** your keys, your Febbox sign-in or anything else from Settings. Exports and backups leave them out too.
+- **Other services see your IP address** when Catalog asks them for something: TMDB, AniList, OMDb, MusicBrainz, AnimeThemes, Jikan, subtitle sites, the sites videos play from, and GitHub for updates. With debrid on, Torrentio gets the title's IMDb id and your debrid service gets your key and the release it's asked for.
 
 ## Legal
 
-**Catalog is a personal library and player for your own use.** Please read this before using it.
+- Catalog does not host, store, upload or share any films, shows or other copyrighted material. Video plays straight from third-party websites that Catalog doesn't own or run.
+- You are responsible for having the right to watch or download what you open with Catalog, and for following the law where you live. If a title is available legally where you are, please watch it there.
+- Catalog's author does not endorse copyright infringement and doesn't make money from Catalog. Questions about a video belong to the site that hosts it.
+- Titles, posters and artwork belong to their owners and are shown only to identify what's in your library.
+- This product uses the TMDB API but is not endorsed or certified by TMDB. Catalog is not affiliated with TMDB, AniList, OMDb, MusicBrainz, AnimeThemes, MyAnimeList, YouTube, Torrentio, any debrid service, or any video or subtitle site.
+- Catalog comes as it is, without warranty of any kind. Its author is not liable for any loss or damage from using it, including lost library data. Keep a backup.
 
-- Catalog does not host, store, upload or distribute any films, shows or other copyrighted material. Video is played directly from third-party websites that Catalog does not own, run or control.
-- You are responsible for making sure you have the right to watch or download anything you open with Catalog, and for following the laws where you live. If a title is available legally where you are, please watch it there and support the people who made it.
-- Catalog's author does not endorse copyright infringement and does not profit from Catalog in any way. Questions about a video's content should go to the site that hosts it.
-- Titles, posters and other artwork belong to their owners and are shown only to identify what's in your library.
-- This product uses the TMDB API but is not endorsed or certified by TMDB. Catalog is not affiliated with TMDB, AniList, OMDb, MusicBrainz, AnimeThemes, MyAnimeList, YouTube, or any video or subtitle site.
-- Catalog is provided as it is, without warranty of any kind. Its author is not liable for any loss or damage from using it, including lost library data. Keep a backup of your library.
+<details>
+<summary><b>Building from source</b></summary>
 
-## Commands
+<br>
+
+Needs [Node.js](https://nodejs.org) 24.
 
 ```
-npm run dev        development server with live reload
+npm install
 npm run app        run the desktop app from source
-npm run release    build, pack, and publish a new version
+npm run dev        development server with live reload
+npm run check      type-check the project
 npm run backup     back up now
 npm run restore    preview a restore (-- --write to apply)
-npm run check      type-check the project
+npm run release    build, pack and publish a new version
 ```
-
-## Where things are
 
 | What | Where |
 | --- | --- |
-| Colours and fonts | `src/app.css` — all tokens at the top |
+| Colors and fonts | `src/app.css`, all at the top |
 | Every database query | `src/lib/server/db/queries.ts` |
 | Schema and migrations | `src/lib/server/db/index.ts` |
-| External data sources | `src/lib/server/metadata/` |
+| Outside data | `src/lib/server/metadata/` |
+| Video sources | `src/lib/server/sources/` |
 | Desktop wrapper | `electron/main.cjs` |
+| Online server | `cloud/` |
+
+</details>

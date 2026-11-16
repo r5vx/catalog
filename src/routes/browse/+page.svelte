@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { fitOnScreen } from '$lib/fitOnScreen';
 	import { posterSrcset, POSTER_SIZES } from '$lib/poster';
 	import { watchTypeOf } from '$lib/watchType';
 	import MoreButton from '$lib/MoreButton.svelte';
@@ -228,7 +229,7 @@
 		const PAGES_PER_CLICK = 3;
 
 		const pageOf = async (n: number, mode: string): Promise<SearchResult[]> => {
-			let moreUrl = `/api/browse?cat=${shelf.key}&mode=${mode}&page=${n}`;
+			let moreUrl = `/api/browse?cat=${encodeURIComponent(shelf.key)}&mode=${mode}&page=${n}`;
 			if (data.sort) moreUrl += `&sort=${data.sort}`;
 			if (data.yearFrom) moreUrl += `&from=${data.yearFrom}`;
 			if (data.yearTo) moreUrl += `&to=${data.yearTo}`;
@@ -554,7 +555,7 @@
 				</ul>
 
 				{#if ended[shelf.key]}
-					<p class="faint end">That's everything TMDB has here.</p>
+					<p class="faint end">{shelf.key.startsWith('addon~') ? "That's the whole list." : "That's everything TMDB has here."}</p>
 				{:else}
 					<button
 						type="button"
@@ -577,7 +578,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 {#if ctxMenu}
 	<div class="ctx-backdrop" onclick={closeCtx} oncontextmenu={(e) => { e.preventDefault(); closeCtx(); }}></div>
-	<div class="ctx-menu" style="left: {ctxMenu.x}px; top: {ctxMenu.y}px;">
+	<div class="ctx-menu" use:fitOnScreen style="left: {ctxMenu.x}px; top: {ctxMenu.y}px;">
 		{#if !ctxMenu.result.unreleased}
 		<button type="button" onclick={() => {
 			const r = ctxMenu!.result;
@@ -830,6 +831,23 @@
 		display: grid;
 		grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
 		gap: 24px 16px;
+	}
+
+	/* Phones: three across (owner, 2026-11-15: two was too few), the words under each a little smaller. */
+	@media (max-width: 560px) {
+		.grid {
+			grid-template-columns: repeat(3, minmax(0, 1fr));
+			gap: 14px 10px;
+		}
+		.grid .name {
+			font-size: 0.86rem;
+		}
+		.grid .sub {
+			font-size: 0.72rem;
+		}
+		.grid .blurb {
+			display: none;
+		}
 	}
 
 	.card {

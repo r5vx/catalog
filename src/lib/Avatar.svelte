@@ -4,7 +4,7 @@
 	 * their name on a color of their own. `rev` is the picture's number (0: they have none).
 	 * The size is in pixels. The colors are the profile colors from src/lib/constants.ts.
 	 */
-	import { PROFILE_COLORS } from '$lib/constants';
+	import { letterColor } from '$lib/avatarColor';
 
 	type Props = { id: string; name: string; rev?: number; size?: number; src?: string };
 	/** `src`: a picture to show instead (one just picked, before it's saved). */
@@ -14,7 +14,7 @@
 	const picture = $derived(src || (rev && id && !failed ? `/api/online/avatar/${id}?v=${rev}` : ''));
 	const letter = $derived((name.trim()[0] ?? '?').toUpperCase());
 	// The same person always gets the same color.
-	const color = $derived(PROFILE_COLORS[[...id].reduce((sum, c) => sum + c.charCodeAt(0), 0) % PROFILE_COLORS.length]);
+	const color = $derived(letterColor(id));
 </script>
 
 {#if picture}

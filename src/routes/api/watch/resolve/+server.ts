@@ -22,7 +22,7 @@ import {
 import { pickFile, PREFERRED_QUALITY } from '$lib/watch';
 import { fetchAlternativeTitles, tmdbGet } from '$lib/server/metadata/tmdb';
 import { fetchRomajiTitle } from '$lib/server/metadata/anilist';
-import { combineEpisodes, tmdbShow, unasked, type EpisodeList } from '$lib/server/combinedEpisodes';
+import { combineEpisodes, tmdbShow, unasked, unaskedSetup, type EpisodeList } from '$lib/server/combinedEpisodes';
 import { aniwaveFilm } from '$lib/server/sources';
 import { aniwaveStream, parseAniwaveShareKey } from '$lib/server/sources/aniwave';
 import { vidriftCopies, vidriftStream } from '$lib/server/sources/vidrift';
@@ -108,6 +108,8 @@ interface ResolveCache {
 	files?: unknown[];
 	startSeason: number;
 	time: number;
+	/** unaskedSetup() when it was made. */
+	setup: string;
 }
 const resolveCache = new Map<string, ResolveCache>();
 const RESOLVE_TTL = 30 * 60 * 1000;
@@ -211,7 +213,7 @@ async function lookUp(url: URL): Promise<Response> {
 	/** Seconds until Febbox lists folders again, when it refused Showbox's just now (else 0). */
 	let showboxBusy = 0;
 
-	if (cached && Date.now() - cached.time < RESOLVE_TTL) {
+	if (cached && Date.now() - cached.time < RESOLVE_TTL && cached.setup === unaskedSetup()) {
 		matchTitle = cached.match.title;
 		matchId = cached.match.id;
 		matchType = cached.match.type;
@@ -399,7 +401,8 @@ async function lookUp(url: URL): Promise<Response> {
 			episodes: episodeData,
 			files: movieFileList,
 			startSeason,
-			time: Date.now()
+			time: Date.now(),
+			setup: unaskedSetup()
 		});
 	}
 

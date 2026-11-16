@@ -3,6 +3,7 @@
 	been deleted). Right-click a tag to rename or delete it.
 -->
 <script lang="ts">
+	import { fitOnScreen } from '$lib/fitOnScreen';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { confirmAction, askText } from '$lib/confirm.svelte';
 
@@ -81,7 +82,7 @@
 	{@const tag = menu.tag}
 	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div class="ctx-backdrop" onclick={() => (menu = null)} oncontextmenu={(e) => { e.preventDefault(); menu = null; }}></div>
-	<div class="ctx-menu" style="left: {menu.x}px; top: {menu.y}px;">
+	<div class="ctx-menu" use:fitOnScreen style="left: {menu.x}px; top: {menu.y}px;">
 		<button type="button" onclick={() => rename(tag)}>Rename tag</button>
 		<hr />
 		<button type="button" class="ctx-danger" onclick={() => remove(tag)}>Delete tag</button>

@@ -12,7 +12,8 @@
 	/**
 	 * The corner of the screen, bottom right, over every page and the player (moved into the
 	 * full-screen player when it's full screen): new messages for a few seconds on a see-through
-	 * background, the box to type one (Enter opens it, Escape closes it), and the room's "Ann
+	 * background, the box to type one (Enter opens it, Escape or a click anywhere else closes it;
+	 * solid, not see-through, since 2026-11-15), and the room's "Ann
 	 * started Inception" with Join (owner, 2026-11-15: "a popup when someone in the group starts a
 	 * movie").
 	 */
@@ -25,6 +26,8 @@
 	let sending = $state(false);
 	let problem = $state('');
 	let inputEl = $state<HTMLInputElement | null>(null);
+	let boxEl = $state<HTMLElement | null>(null);
+	let buttonEl = $state<HTMLElement | null>(null);
 	let menu = $state<{ at: { x: number; y: number }; items: MenuItem[] } | null>(null);
 	let autoJoin = $state(false);
 	let tv = $state(false);
@@ -64,6 +67,18 @@
 		if (!chat.open) return;
 		void loadFriends();
 		void tick().then(() => inputEl?.focus());
+	});
+
+	// A click anywhere but the box (or its button) closes it (owner, 2026-11-15). What was typed stays.
+	$effect(() => {
+		if (!chat.open) return;
+		const away = (event: PointerEvent) => {
+			const target = event.target as Node | null;
+			if (target && (boxEl?.contains(target) || buttonEl?.contains(target))) return;
+			close();
+		};
+		document.addEventListener('pointerdown', away, true);
+		return () => document.removeEventListener('pointerdown', away, true);
 	});
 
 	async function loadFriends() {
@@ -245,7 +260,7 @@
 			</ul>
 			{#if chat.shown.length && !tv}<p class="hint">Enter to reply</p>{/if}
 		{:else}
-			<div class="box">
+			<div class="box" bind:this={boxEl}>
 				{#if lines.length}
 					<ul class="history">
 						{#each lines as message (message.id)}
@@ -279,7 +294,7 @@
 		{/if}
 
 		{#if !onPlayer && !tv}
-			<button type="button" class="chat-button" onclick={() => (chat.open ? close() : open())} aria-label="Messages" title="Chat (Enter)">
+			<button type="button" class="chat-button" bind:this={buttonEl} onclick={() => (chat.open ? close() : open())} aria-label="Messages" title="Chat (Enter)">
 				<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 					<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z" />
 				</svg>
@@ -375,49 +390,58 @@
 		font-size: 0.74rem;
 	}
 
+	/* The box for typing: solid, in the page's own colors (the messages that pop up stay see-through). */
 	.box {
 		display: flex;
 		flex-direction: column;
 		align-items: stretch;
-		gap: 6px;
+		gap: 8px;
 		width: min(420px, calc(100vw - 32px));
+		padding: 10px;
+		border: 1px solid var(--rule);
+		border-radius: var(--radius);
+		background: var(--surface);
+		color: var(--ink);
+		box-shadow: var(--shadow);
+		animation: in 0.18s ease-out;
 	}
 
 	.history {
 		align-items: stretch;
+		max-height: 40vh;
+		overflow-y: auto;
+	}
+
+	.box .line {
+		padding: 4px 8px;
+		background: var(--surface-2);
+		color: var(--ink);
+		text-shadow: none;
+	}
+
+	.box .line.mine {
+		background: var(--accent-bg);
 	}
 
 	.box form {
 		display: flex;
 		gap: 6px;
-		padding: 6px;
-		border-radius: var(--radius-sm);
-		background: rgba(0, 0, 0, 0.65);
 	}
 
 	.box select {
 		flex: none;
 		max-width: 9rem;
-		background: rgba(255, 255, 255, 0.12);
-		color: #fff;
-		border-color: transparent;
-	}
-
-	.box select option {
-		color: var(--ink);
-		background: var(--surface);
 	}
 
 	.box input {
 		flex: 1;
 		min-width: 0;
-		background: rgba(255, 255, 255, 0.12);
-		color: #fff;
-		border-color: transparent;
 	}
 
-	.box input::placeholder {
-		color: rgba(255, 255, 255, 0.6);
+	.box .hint {
+		padding: 0 2px;
+		background: none;
+		color: var(--ink-faint);
 	}
 
 	.offer {
@@ -504,7 +528,8 @@
 
 	@media (prefers-reduced-motion: reduce) {
 		.line,
-		.offer {
+		.offer,
+		.box {
 			animation: none;
 		}
 	}

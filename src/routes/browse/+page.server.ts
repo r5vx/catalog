@@ -3,6 +3,7 @@ import { existingSourceKeysWithIds, libraryPosters } from '$lib/server/db/querie
 import { searchPeople } from '$lib/server/db/people';
 import { parseTitle } from '$lib/parseTitle';
 import { watchRegion } from '$lib/server/metadata/providers';
+import { addonShelves } from '$lib/server/sources/addons';
 import type { PageServerLoad } from './$types';
 
 const CATEGORIES = ['movies', 'tv', 'anime'];
@@ -62,7 +63,14 @@ export const load: PageServerLoad = async ({ url }) => {
 
 	const results = category ? found.filter((one) => one.categorySlug === category) : found;
 
-	const shelves = q ? [] : await withinTime(browseShelves(category || undefined, mode, region, filters), 15_000, []);
+	// Rows from Stremio addons' lists come after TMDB's (sources/addons.ts), when nothing narrows
+	// the page (their lists can't be filtered by year or genre) and the tab is one they have.
+	const addonRows = !q && !filters && category !== 'anime' ? addonShelves(category as '' | 'movies' | 'tv') : Promise.resolve([]);
+	const [tmdbShelves, fromAddons] = await Promise.all([
+		q ? [] : withinTime(browseShelves(category || undefined, mode, region, filters), 15_000, []),
+		withinTime(addonRows, 15_000, [])
+	]);
+	const shelves = [...tmdbShelves, ...fromAddons];
 
 	return {
 		q,

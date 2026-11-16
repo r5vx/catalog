@@ -29,6 +29,29 @@ const POSTER = /^https:\/\/(image\.tmdb\.org|s4\.anilist\.co)\//;
 /** The longest message. */
 const MESSAGE_MOST = 500;
 const ACCOUNT_ID = /^[A-Z0-9]{16}$/;
+/** A profile's banner: a picture as a data: address (a GIF may move); the longest one kept. */
+const BANNER = /^data:image\/(jpeg|png|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$/;
+const BANNER_MOST = 700_000;
+
+/**
+ * A name's look (src/lib/nameStyle.ts in Catalog): a font id, an effect and one or two colors.
+ * Only its shape is checked, so Catalog can add fonts without a new server. Null when there's none.
+ */
+function lookOf(value) {
+	let v = value;
+	if (typeof v === 'string') {
+		try {
+			v = v ? JSON.parse(v) : null;
+		} catch {
+			return null;
+		}
+	}
+	if (!v || typeof v !== 'object') return null;
+	const font = typeof v.font === 'string' && /^[a-z0-9-]{0,30}$/.test(v.font) ? v.font : '';
+	const effect = v.effect === 'gradient' || v.effect === 'glow' ? v.effect : 'solid';
+	const colors = (Array.isArray(v.colors) ? v.colors : []).filter((c) => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c)).slice(0, 2).map((c) => c.toLowerCase());
+	return font || colors.length ? { font, effect, colors } : null;
+}
 
 const json = (body, status = 200, headers = {}) =>
 	new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers } });
@@ -355,7 +378,7 @@ async function answer(request, env, ctx) {
 		const left = await env.DB.prepare('SELECT count(*) AS n FROM members WHERE account = ?').bind(account.id).first();
 		if (!left?.n && !account.google_sub) {
 			await env.DB.batch(
-				['DELETE FROM friends WHERE a = ?1 OR b = ?1', 'DELETE FROM seen WHERE account = ?1', 'DELETE FROM seen_info WHERE account = ?1', 'DELETE FROM profiles WHERE account = ?1', 'DELETE FROM messages WHERE from_account = ?1 OR to_account = ?1', 'DELETE FROM message_reads WHERE account = ?1','DELETE FROM presence WHERE account = ?1', 'DELETE FROM avatars WHERE account = ?1', 'DELETE FROM sync_rows WHERE account = ?1', 'DELETE FROM codes WHERE account = ?1', 'DELETE FROM friend_codes WHERE account = ?1', 'DELETE FROM activity WHERE account = ?1', 'DELETE FROM friend_requests WHERE from_account = ?1 OR to_account = ?1', 'DELETE FROM accounts WHERE id = ?1'].map((sql) => env.DB.prepare(sql).bind(account.id))
+				['DELETE FROM friends WHERE a = ?1 OR b = ?1', 'DELETE FROM seen WHERE account = ?1', 'DELETE FROM seen_info WHERE account = ?1', 'DELETE FROM profiles WHERE account = ?1', 'DELETE FROM looks WHERE account = ?1', 'DELETE FROM privacy WHERE account = ?1', 'DELETE FROM messages WHERE from_account = ?1 OR to_account = ?1', 'DELETE FROM message_reads WHERE account = ?1','DELETE FROM presence WHERE account = ?1', 'DELETE FROM avatars WHERE account = ?1', 'DELETE FROM sync_rows WHERE account = ?1', 'DELETE FROM codes WHERE account = ?1', 'DELETE FROM friend_codes WHERE account = ?1', 'DELETE FROM activity WHERE account = ?1', 'DELETE FROM friend_requests WHERE from_account = ?1 OR to_account = ?1', 'DELETE FROM accounts WHERE id = ?1'].map((sql) => env.DB.prepare(sql).bind(account.id))
 			);
 		}
 		const fresh = await accountOf(request, env, house, account.name);
@@ -429,10 +452,16 @@ async function answer(request, env, ctx) {
 		const friend = await env.DB.prepare('SELECT name FROM accounts WHERE id = ?').bind(row.account).first();
 		return json({ ok: true, name: friend?.name ?? '' });
 	}
+	/** What someone keeps from their friends (PUT /v1/privacy). */
+	const privacyOf = async (who) => {
+		const row = await env.DB.prepare('SELECT hide_profile, hide_friends FROM privacy WHERE account = ?').bind(who).first();
+		return { hideProfile: Boolean(row?.hide_profile), hideFriends: Boolean(row?.hide_friends) };
+	};
+
 	if (is('GET', '/v1/friends')) {
 		const [rows, asked, known] = await env.DB.batch([
 			env.DB.prepare(
-				'SELECT a.id, a.name, v.rev AS avatar, p.what, p.at FROM friends f JOIN accounts a ON a.id = f.b LEFT JOIN avatars v ON v.account = a.id LEFT JOIN presence p ON p.account = f.b AND p.at > ? WHERE f.a = ? ORDER BY a.name'
+				'SELECT a.id, a.name, v.rev AS avatar, p.what, p.at, l.name_style FROM friends f JOIN accounts a ON a.id = f.b LEFT JOIN avatars v ON v.account = a.id LEFT JOIN presence p ON p.account = f.b AND p.at > ? LEFT JOIN looks l ON l.account = a.id WHERE f.a = ? ORDER BY a.name'
 			).bind(Date.now() - 3 * MINUTE, account.id),
 			// Asked to be friends with this account, not answered yet.
 			env.DB.prepare('SELECT a.id, a.name, v.rev AS avatar FROM friend_requests r JOIN accounts a ON a.id = r.from_account LEFT JOIN avatars v ON v.account = a.id WHERE r.to_account = ? ORDER BY r.at DESC LIMIT 20').bind(account.id),
@@ -442,13 +471,15 @@ async function answer(request, env, ctx) {
 					'EXISTS (SELECT 1 FROM friend_requests r WHERE r.from_account = ?1 AND r.to_account = a.id) AS requested ' +
 					'FROM friends f1 JOIN friends f2 ON f2.a = f1.b JOIN accounts a ON a.id = f2.b JOIN accounts via ON via.id = f1.b LEFT JOIN avatars v ON v.account = a.id ' +
 					'WHERE f1.a = ?1 AND f2.b != ?1 AND f2.b NOT IN (SELECT b FROM friends WHERE a = ?1) ' +
+					// (Not through a friend who keeps their friends to themselves.)
+					'AND f1.b NOT IN (SELECT account FROM privacy WHERE hide_friends = 1) ' +
 					'AND f2.b NOT IN (SELECT from_account FROM friend_requests WHERE to_account = ?1) ' +
 					'GROUP BY a.id ORDER BY mutual DESC, a.name LIMIT 12'
 			).bind(account.id)
 		]);
 		return json({
 			me: publicAccount(account),
-			friends: rows.results.map((r) => ({ id: r.id, name: r.name, avatar: r.avatar ?? 0, watching: r.what ? JSON.parse(r.what) : null, at: r.at ?? null })),
+			friends: rows.results.map((r) => ({ id: r.id, name: r.name, avatar: r.avatar ?? 0, watching: r.what ? JSON.parse(r.what) : null, at: r.at ?? null, nameStyle: lookOf(r.name_style) })),
 			requests: asked.results.map((r) => ({ id: r.id, name: r.name, avatar: r.avatar ?? 0 })),
 			suggestions: known.results.map((r) => ({ id: r.id, name: r.name, avatar: r.avatar ?? 0, via: r.via, mutual: r.mutual, requested: Boolean(r.requested) }))
 		});
@@ -459,6 +490,7 @@ async function answer(request, env, ctx) {
 	if (theirFriends && method === 'GET') {
 		const them = theirFriends[1];
 		if (!(await env.DB.prepare('SELECT 1 FROM friends WHERE a = ? AND b = ?').bind(account.id, them).first())) return bad(403, 'Not a friend');
+		if ((await privacyOf(them)).hideFriends) return json({ friends: [], hidden: true });
 		const rows = await env.DB.prepare(
 			'SELECT a.id, a.name, v.rev AS avatar, ' +
 				'EXISTS (SELECT 1 FROM friends m WHERE m.a = ?1 AND m.b = a.id) AS friend, ' +
@@ -533,7 +565,7 @@ async function answer(request, env, ctx) {
 	}
 	if (is('GET', '/v1/activity')) {
 		const rows = await env.DB.prepare(
-			'SELECT a.id, a.name, v.rev AS avatar, t.items FROM friends f JOIN accounts a ON a.id = f.b JOIN activity t ON t.account = f.b LEFT JOIN avatars v ON v.account = a.id WHERE f.a = ?'
+			'SELECT a.id, a.name, v.rev AS avatar, t.items FROM friends f JOIN accounts a ON a.id = f.b JOIN activity t ON t.account = f.b LEFT JOIN avatars v ON v.account = a.id WHERE f.a = ? AND f.b NOT IN (SELECT account FROM privacy WHERE hide_profile = 1)'
 		)
 			.bind(account.id)
 			.all();
@@ -592,8 +624,11 @@ async function answer(request, env, ctx) {
 			await env.DB.prepare(`INSERT INTO seen (account, tkey, title, rating) VALUES ${part.map(() => '(?, ?, ?, ?)').join(', ')} ON CONFLICT (account, tkey) DO UPDATE SET title = excluded.title, rating = excluded.rating`)
 				.bind(...part.flatMap((i) => [account.id, i.key, i.title, i.rating]))
 				.run();
-			const more = part.filter((i) => i.year || i.type || i.poster || i.status);
-			if (more.length) {
+			// (In parts of 16: 6 values each, and D1 takes at most 100 in one query. 25 at once failed
+			// "too many SQL variables" for anyone with more than 16 titles, 4.4.0 to 2026-11-15.)
+			const extra = part.filter((i) => i.year || i.type || i.poster || i.status);
+			for (let from = 0; from < extra.length; from += 16) {
+				const more = extra.slice(from, from + 16);
 				await env.DB.prepare(
 					`INSERT INTO seen_info (account, tkey, year, type, poster, status) VALUES ${more.map(() => '(?, ?, ?, ?, ?, ?)').join(', ')} ` +
 						'ON CONFLICT (account, tkey) DO UPDATE SET year = excluded.year, type = excluded.type, poster = excluded.poster, status = excluded.status'
@@ -614,7 +649,7 @@ async function answer(request, env, ctx) {
 		const site = key.split(':')[0];
 		const rows = await env.DB.prepare(
 			'SELECT a.id, a.name, v.rev AS avatar, max(s.rating) AS rating FROM seen s JOIN friends f ON f.b = s.account JOIN accounts a ON a.id = s.account LEFT JOIN avatars v ON v.account = a.id ' +
-				"WHERE f.a = ?1 AND (s.tkey = ?2 OR (?3 != '' AND s.title = ?3 COLLATE NOCASE AND s.tkey NOT LIKE ?4)) GROUP BY a.id ORDER BY a.name"
+				"WHERE f.a = ?1 AND s.account NOT IN (SELECT account FROM privacy WHERE hide_profile = 1) AND (s.tkey = ?2 OR (?3 != '' AND s.title = ?3 COLLATE NOCASE AND s.tkey NOT LIKE ?4)) GROUP BY a.id ORDER BY a.name"
 		)
 			.bind(account.id, key, title, `${site}:%`)
 			.all();
@@ -622,6 +657,17 @@ async function answer(request, env, ctx) {
 	}
 
 	/* ---- profiles: what a person says about themselves, their best rated, their library */
+
+	// What this account keeps from its friends (Settings → Online): its profile, its friends.
+	if (is('PUT', '/v1/privacy')) {
+		const sent = await body(request);
+		await env.DB.prepare(
+			'INSERT INTO privacy (account, hide_profile, hide_friends) VALUES (?, ?, ?) ON CONFLICT (account) DO UPDATE SET hide_profile = excluded.hide_profile, hide_friends = excluded.hide_friends'
+		)
+			.bind(account.id, sent.hideProfile === true ? 1 : 0, sent.hideFriends === true ? 1 : 0)
+			.run();
+		return json({ ok: true });
+	}
 
 	/** This account itself, or one of its friends (since when, or 0 for itself); null for anyone else. */
 	const knownAs = async (them) => {
@@ -638,19 +684,51 @@ async function answer(request, env, ctx) {
 	});
 
 	// This account's own profile: a line or two about itself, up to eight favorites, and a color.
+	// (Since 2026-11-15 also `nameStyle` and `banner`: a picture as a data: address, '' takes it
+	// away, left out keeps it. Older Catalogs send neither, and nothing of the look changes.)
 	if (is('PUT', '/v1/profile')) {
-		const sent = await body(request, 32 * 1024);
+		const sent = await body(request, BANNER_MOST + 40 * 1024);
 		const favorites = (Array.isArray(sent.favorites) ? sent.favorites : [])
 			.map(favoriteFrom)
 			.filter((i) => SEEN_KEY.test(i.key) && i.title)
 			.slice(0, 8);
 		const color = /^#[0-9a-f]{6}$/i.test(sent.color ?? '') ? sent.color.toLowerCase() : '';
-		await env.DB.prepare(
-			'INSERT INTO profiles (account, bio, favorites, color, updated) VALUES (?, ?, ?, ?, ?) ON CONFLICT (account) DO UPDATE SET bio = excluded.bio, favorites = excluded.favorites, color = excluded.color, updated = excluded.updated'
-		)
-			.bind(account.id, text(sent.bio, 300), JSON.stringify(favorites), color, Date.now())
-			.run();
+		const banner = typeof sent.banner === 'string' ? sent.banner : null;
+		if (banner && (banner.length > BANNER_MOST || !BANNER.test(banner))) return bad(400, "That picture can't be used");
+		const writes = [
+			env.DB.prepare(
+				'INSERT INTO profiles (account, bio, favorites, color, updated) VALUES (?, ?, ?, ?, ?) ON CONFLICT (account) DO UPDATE SET bio = excluded.bio, favorites = excluded.favorites, color = excluded.color, updated = excluded.updated'
+			).bind(account.id, text(sent.bio, 300), JSON.stringify(favorites), color, Date.now())
+		];
+		if ('nameStyle' in sent) {
+			const look = lookOf(sent.nameStyle);
+			writes.push(
+				env.DB.prepare('INSERT INTO looks (account, name_style) VALUES (?, ?) ON CONFLICT (account) DO UPDATE SET name_style = excluded.name_style').bind(account.id, look ? JSON.stringify(look) : '')
+			);
+		}
+		if (banner === '') writes.push(env.DB.prepare('UPDATE looks SET banner = NULL, banner_rev = 0 WHERE account = ?').bind(account.id));
+		// (The number is the time in seconds, so it never goes back to one a Catalog kept a picture by.)
+		if (banner)
+			writes.push(
+				env.DB.prepare('INSERT INTO looks (account, banner, banner_rev) VALUES (?, ?, ?) ON CONFLICT (account) DO UPDATE SET banner = excluded.banner, banner_rev = excluded.banner_rev').bind(
+					account.id,
+					banner,
+					Math.floor(Date.now() / 1000)
+				)
+			);
+		await env.DB.batch(writes);
 		return json({ ok: true });
+	}
+
+	// Someone's banner: only for themselves and their friends.
+	const bannerOf = path.match(/^\/v1\/banner\/([A-Z0-9]{16})$/);
+	if (bannerOf && method === 'GET') {
+		if (!(await knownAs(bannerOf[1]))) return bad(403, 'Not a friend');
+		const row = await env.DB.prepare('SELECT banner FROM looks WHERE account = ?').bind(bannerOf[1]).first();
+		const parts = row?.banner ? BANNER.exec(row.banner) : null;
+		if (!parts) return bad(404, 'No banner');
+		const bytes = Uint8Array.from(atob(parts[2]), (c) => c.charCodeAt(0));
+		return new Response(bytes, { headers: { 'Content-Type': `image/${parts[1]}`, 'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff' } });
 	}
 
 	const person = path.match(/^\/v1\/people\/([A-Z0-9]{16})\/(profile|library)$/);
@@ -658,9 +736,14 @@ async function answer(request, env, ctx) {
 		const them = person[1];
 		const known = await knownAs(them);
 		if (!known) return bad(403, 'Not a friend');
+		const kept = await privacyOf(them);
+		const hidden = them !== account.id && kept.hideProfile;
+		if (hidden && person[2] === 'library') return bad(403, 'They keep their library to themselves');
 		if (person[2] === 'profile') {
 			const [who, about, counts, top, lately, now, mutual] = await env.DB.batch([
-				env.DB.prepare('SELECT a.id, a.name, a.created, v.rev AS avatar FROM accounts a LEFT JOIN avatars v ON v.account = a.id WHERE a.id = ?').bind(them),
+				env.DB.prepare(
+					'SELECT a.id, a.name, a.created, v.rev AS avatar, l.name_style, l.banner_rev FROM accounts a LEFT JOIN avatars v ON v.account = a.id LEFT JOIN looks l ON l.account = a.id WHERE a.id = ?'
+				).bind(them),
 				env.DB.prepare('SELECT bio, favorites, color FROM profiles WHERE account = ?').bind(them),
 				env.DB.prepare(
 					"SELECT count(*) AS total, sum(CASE WHEN i.type = 'movie' THEN 1 ELSE 0 END) AS films, sum(CASE WHEN i.type = 'tv' THEN 1 ELSE 0 END) AS shows, sum(CASE WHEN s.rating IS NOT NULL THEN 1 ELSE 0 END) AS rated " +
@@ -685,15 +768,39 @@ async function answer(request, env, ctx) {
 			try {
 				recent = JSON.parse(lately.results[0]?.items ?? '[]').slice(0, 10);
 			} catch {}
+			// Hidden from friends: who they are, and nothing of what they watch.
+			if (hidden)
+				return json({
+					id: row.id,
+					name: row.name,
+					avatar: row.avatar ?? 0,
+					joined: row.created,
+					me: false,
+					friendsSince: known.since || null,
+					bio: '',
+					color: said?.color ?? '',
+					nameStyle: lookOf(row.name_style),
+					banner: row.banner_rev ?? 0,
+					favorites: [],
+					counts: { total: 0, films: 0, shows: 0, rated: 0 },
+					top: [],
+					recent: [],
+					watching: null,
+					mutual: mutual.results[0]?.n ?? 0,
+					hidden: true
+				});
 			return json({
 				id: row.id,
 				name: row.name,
 				avatar: row.avatar ?? 0,
 				joined: row.created,
 				me: them === account.id,
+				...(them === account.id ? { privacy: kept } : {}),
 				friendsSince: known.since || null,
 				bio: said?.bio ?? '',
 				color: said?.color ?? '',
+				nameStyle: lookOf(row.name_style),
+				banner: row.banner_rev ?? 0,
 				favorites,
 				counts: { total: count.total ?? 0, films: count.films ?? 0, shows: count.shows ?? 0, rated: count.rated ?? 0 },
 				top: top.results.map((r) => ({ key: r.key, title: r.title, rating: r.rating, year: r.year ?? '', type: r.type || '', poster: r.poster ?? '' })),

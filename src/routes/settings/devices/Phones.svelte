@@ -43,9 +43,8 @@
 <section>
 	<h2>Catalog on a phone</h2>
 	<p class="muted">
-		Phones open Catalog through Tailscale, at home or away. On its secure address, Catalog can be added to the Home
-		Screen as an app that keeps downloads on the phone and plays them with no connection. Each phone asks who's
-		watching the first time.
+		Phones open Catalog through Tailscale, at home or away. On the secure address it can go on the Home Screen as
+		an app, with downloads that play offline.
 	</p>
 </section>
 
@@ -75,7 +74,7 @@
 	<section>
 		<h2>The phone's address</h2>
 		{#if data.onComputer}
-			<p class="muted">Not turned on yet. It's Tailscale's own secure address for this computer, only reachable on your Tailscale network.</p>
+			<p class="muted">Not turned on yet. Only reachable on your Tailscale network.</p>
 			<button type="button" class="btn btn-primary" onclick={turnOn} disabled={working}>{working ? 'Turning it on…' : 'Turn on the phone address'}</button>
 			{#if enableLink}
 				<p class="muted">

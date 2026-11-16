@@ -1,4 +1,4 @@
-import { tvLibrary, listCategories, listEntries, countsByCategory, completedCount, completedByCategory, sharedCatalogCount, existingSourceKeys, existingSourceKeysWithIds, listSharedCatalogs } from '$lib/server/db/queries';
+import { tvLibrary, listCategories, listEntries, countsByCategory, completedCount, completedByCategory, recentlyWatchedPosters, sharedCatalogCount, existingSourceKeys, existingSourceKeysWithIds, listSharedCatalogs } from '$lib/server/db/queries';
 import { friendsSnapshot, onlineConnected } from '$lib/server/online';
 import { countNotes } from '$lib/server/db/notes';
 import { withNextAir } from '$lib/server/nextAirs';
@@ -84,6 +84,8 @@ export const load: PageServerLoad = async ({ url, request }) => {
 		total,
 		completed: completedCount(),
 		completedByCategory: completedByCategory(),
+		// The last few watched posters behind each stat tile (src/lib/LibraryHeader.svelte).
+		tilePosters: recentlyWatchedPosters(),
 		noteCount: countNotes(),
 		tags: listTags(),
 		filters: { q, cat, status, sort: sort.value, tags: tagIds, yearFrom, yearTo },
@@ -106,6 +108,19 @@ export const load: PageServerLoad = async ({ url, request }) => {
  * owner's library showed under every profile (2026-11-08). Cards open the
  * title's page; the owner-only parts (editing, tags, notes, shared catalogs) aren't offered.
  */
+/** The first three posters overall and per category, from a list that's newest first. */
+function tilePostersOf(list: { categoryId: number; posterUrl?: string | null }[]): { all: string[]; byCategory: Record<number, string[]> } {
+	const all: string[] = [];
+	const byCategory: Record<number, string[]> = {};
+	for (const item of list) {
+		if (!item.posterUrl) continue;
+		if (all.length < 3) all.push(item.posterUrl);
+		const mine = (byCategory[item.categoryId] ??= []);
+		if (mine.length < 3) mine.push(item.posterUrl);
+	}
+	return { all, byCategory };
+}
+
 function ownList(filter: { q: string; category: { id: number; slug: string } | undefined; status: string }, categories: ReturnType<typeof listCategories>) {
 	const bySlug = new Map(categories.map((c) => [c.slug, c]));
 	const all = withNextAir(tvLibrary()).map((item) => {
@@ -135,6 +150,8 @@ function ownList(filter: { q: string; category: { id: number; slug: string } | u
 		total: all.length,
 		completed: watched.length,
 		completedByCategory: count(watched),
+		// This profile's own last three watched posters behind its stat tiles (the list is newest first).
+		tilePosters: tilePostersOf(watched),
 		noteCount: 0,
 		tags: [] as ReturnType<typeof listTags>,
 		/** This profile's own list: no editing, tags or notes here. */

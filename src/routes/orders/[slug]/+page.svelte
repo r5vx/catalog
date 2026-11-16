@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { fitOnScreen } from '$lib/fitOnScreen';
 	import MoreButton from '$lib/MoreButton.svelte';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
@@ -404,7 +405,7 @@
 	{@const item = menu.item}
 	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div class="ctx-backdrop" onclick={() => (menu = null)} oncontextmenu={(e) => { e.preventDefault(); menu = null; }}></div>
-	<div class="ctx-menu" style="left: {menu.x}px; top: {menu.y}px;">
+	<div class="ctx-menu" use:fitOnScreen style="left: {menu.x}px; top: {menu.y}px;">
 		<button type="button" onclick={() => { watch(item); menu = null; }}>{pm ? p('▶ Watch') : '▶ Watch'}</button>
 		<button type="button" onclick={() => { goto(`/title/tmdb/${item.sourceId}${back}`); menu = null; }}>
 			{pm ? p('View details') : 'View details'}

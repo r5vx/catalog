@@ -10,6 +10,7 @@
 </script>
 
 <script lang="ts">
+	import { fitOnScreen } from '$lib/fitOnScreen';
 	/**
 	 * A right-click menu: friends' cards, a friend's titles, the room's "started" box. The same look as
 	 * the library's own (FriendsView's .ctx-menu). Closes on a pick, a click outside or Escape.
@@ -26,7 +27,7 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
 <div class="ctx-backdrop" onclick={close} oncontextmenu={(e) => { e.preventDefault(); close(); }}></div>
-<div class="ctx-menu" role="menu" style="left: {at.x}px; top: {at.y}px;">
+<div class="ctx-menu" use:fitOnScreen role="menu" style="left: {at.x}px; top: {at.y}px;">
 	{#each items as item, index (index)}
 		{#if item === '-'}
 			<hr />

@@ -10,7 +10,7 @@
 	import { p, pRandom } from '$lib/altText';
 	import { bothLanguages, bytesOf, isCinemaRecording, isFourK, pickFile, playableHere, PREFERRED_QUALITY } from '$lib/watch';
 	import { isTv, tvPlayer } from '$lib/tv';
-	import { together, attachTogether, rejoinKeptRoom, nowPlaying, holdRoom } from '$lib/watchTogether.svelte';
+	import { together, attachTogether, rejoinKeptRoom, nowPlaying, holdRoom, playerClosed } from '$lib/watchTogether.svelte';
 	import { matchTvFrameRate } from '$lib/tvFrameRate';
 	import { StyledSubs, isStyledLine, onlyStyledLines } from '$lib/styledSubs';
 	import { padActive } from '$lib/gamepad';
@@ -5672,6 +5672,7 @@
 	 * skips are the room's, and the room's are this video's. Films and episodes only.
 	 */
 	onMount(rejoinKeptRoom);
+	onDestroy(playerClosed);
 	// Friends are told what this is (and the room to watch along in), again when the room changes.
 	$effect(() => {
 		const ready = Boolean(streamUrl) && duration > 0;

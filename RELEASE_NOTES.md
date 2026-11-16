@@ -12,6 +12,76 @@ without both.
 
 ## Unreleased
 
+## 4.4.1 — 2026-11-16 — Debrid, Stremio addons, a new Random, and profile banners
+
+### New
+
+**Friends**
+- My profile button with your picture beside Settings in the library, in the sidebar, and in Settings → Online
+- Profile banners: any picture (a GIF can move) or a solid color across the top of your profile
+- Name styles: twelve fonts, and one color, a gradient or a glow; friends see it on your profile and your card
+- Nicknames for friends, seen only by you
+- Remove friend on a friend's profile
+- Keep your profile or your friends list private (Settings → Online)
+- With no color picked, a profile's top takes its color from the profile picture (or the letter's color, with no picture)
+
+**Browse**
+- Random opens a box in the middle of the screen: click it and a pick bursts out, glowing gold, purple, blue or silver by its rating
+- Watch now, Want to watch or Completed straight from the pick, and Roll again without the window closing
+- Really random (off unless turned on) picks from everything on TMDB, not only popular titles, for films, shows and anime
+- Skip the box: the pick comes straight out
+- Leave out what's in your library, or let it come up too; your choices are remembered
+- An addon's lists (popular, top rated, a Trakt list...) show as rows at the bottom of Browse, with Show more
+
+**Library**
+- The stat tiles show your last three watched posters fanned out, tinted by them, with a progress bar along the bottom
+
+**Sources**
+- Debrid: with a Real-Debrid, TorBox, AllDebrid or Premiumize key (Settings → Services), every film and episode gets a 1080p and a 4K copy from it
+- Only releases with sound Catalog can play are used, English ones first
+- Stremio addons: paste an addon's install link in Settings → Services and every film and episode gets a 1080p and a 4K copy from it
+- Addons that only give torrents play through your debrid service
+
+**Live TV**
+- Check which are on, in Channels: each channel says On or Off
+- With nothing on the schedule, Live TV opens on Replays
+
+### Improved
+
+**Messages**
+- The box for typing a message is solid instead of see-through; messages that pop up while watching stay see-through
+- A click anywhere else closes the message box (what you typed is kept)
+
+**Online**
+- Asks the online server far less often when nobody is using Catalog or chatting; messages still arrive within 15 seconds during a conversation
+- Only real problems are reported: stops of 4 seconds or more and frozen pictures, not short pauses or small jumps back
+
+**Settings**
+- Key boxes in Settings → Services look like every other box
+- Shorter, plainer wording across Settings
+- Updates: only the newest version is opened out; the rest open with a click
+
+**Phones**
+- Three titles across in the library and Browse
+- Menus (the ⋯ on a title) stay on the screen instead of running off its edge
+
+**Friends**
+- Watched lately shows the date for anything older than yesterday
+
+**Browse**
+- The Random button stands out
+
+### Fixed
+
+**Friends**
+- A friend's profile showed 0 films and 0 shows, and no posters in Highest rated, once they had watched more than 16 things
+- A friend on an older Catalog showed "Nothing to show yet": what they watched shows now
+- Catalog offered you something you had started yourself, from an old watch-together room
+- Rooms that started by themselves while you watched now end when you stop, so you're not left in a room alone
+
+**Browse**
+- Genre filters for TV and anime: Sci-Fi no longer shows Game of Thrones, Lucifer or The Walking Dead; Fantasy, War, Horror and Romance are tighter too
+
 ## 4.4.0 — 2026-11-15 — Profiles, messages and watching along together
 
 ### New

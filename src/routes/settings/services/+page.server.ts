@@ -5,6 +5,8 @@ import { watchRegion, detectedRegion } from '$lib/server/metadata/providers';
 import { fail } from '@sveltejs/kit';
 import { addFebboxAccount, febboxAccounts, removeFebboxAccount } from '$lib/server/febboxAccounts';
 import { febboxFlow } from '$lib/server/febboxFlow';
+import { DEBRID_SERVICES, checkDebridKey, debridSetting, serviceName } from '$lib/server/sources/debrid';
+import { addAddon, addonSite, raiseAddon, readAddon, removeAddon, savedAddons } from '$lib/server/sources/addons';
 import type { PageServerLoad, Actions } from './$types';
 
 /** Whether the date Febbox wrote into a sign-in says it has run out. */
@@ -38,6 +40,15 @@ export const load: PageServerLoad = async () => {
 		febboxKeySaved: Boolean(settings.febboxToken),
 		febboxToken: settings.febboxToken ?? '',
 		febboxAccounts: accounts,
+		// (Never the key itself: only whether one is saved, and for which service.)
+		debrid: {
+			on: Boolean(debridSetting()),
+			service: debridSetting()?.service ?? '',
+			name: serviceName(debridSetting()?.service ?? ''),
+			services: DEBRID_SERVICES
+		},
+		// Stremio addons: never their links, which can hold someone's keys; only the site.
+		addons: savedAddons().map((a) => ({ key: a.key, name: a.name, site: addonSite(a), movies: a.streams !== false && a.movies, shows: a.streams !== false && a.shows, lists: (a.catalogs ?? []).length })),
 		region: settings.watchRegion ?? '',
 		regionInUse: watchRegion(),
 		detectedRegion: detectedRegion()
@@ -112,6 +123,44 @@ export const actions: Actions = {
 		if (result === 'refused') return fail(400, { moreError: "That key isn't logged in to Febbox." });
 		if (result === null) return fail(400, { moreError: "Febbox couldn't be reached. Try again in a minute." });
 		return { moreOk: result === 'same' ? 'That account was already here.' : 'Account added.' };
+	},
+
+	// A debrid key is checked with its service before it's saved (who it belongs to, and that it's paid up).
+	saveDebrid: async ({ request }) => {
+		const data = await request.formData();
+		const service = String(data.get('debridService') ?? '');
+		const key = String(data.get('debridKey') ?? '').trim();
+		const known = DEBRID_SERVICES.find((s) => s.id === service);
+		if (!known) return fail(400, { debridError: 'Pick a service.' });
+		if (!key) return fail(400, { debridError: 'Paste your key first.' });
+		const check = await checkDebridKey(known.id, key);
+		if (!check.ok) return fail(400, { debridError: check.message });
+		updateSettings({ debridService: known.id, debridKey: key });
+		return { debridOk: `${known.name}: ${check.message}.` };
+	},
+
+	addAddon: async ({ request }) => {
+		const link = String((await request.formData()).get('addonLink') ?? '').trim();
+		if (!link) return fail(400, { addonError: 'Paste the addon link first.' });
+		const read = await readAddon(link);
+		if ('error' in read) return fail(400, { addonError: read.error });
+		addAddon(read.addon);
+		return { addonOk: `${read.addon.name} added.` };
+	},
+
+	removeAddon: async ({ request }) => {
+		removeAddon(String((await request.formData()).get('key') ?? ''));
+		return { addonOk: 'Addon removed.' };
+	},
+
+	raiseAddon: async ({ request }) => {
+		raiseAddon(String((await request.formData()).get('key') ?? ''));
+		return {};
+	},
+
+	removeDebrid: async () => {
+		updateSettings({ debridService: undefined, debridKey: undefined });
+		return { debridOk: 'Debrid key removed.' };
 	},
 
 	removeFebboxMore: async ({ request }) => {

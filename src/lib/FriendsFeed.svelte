@@ -42,13 +42,15 @@
 		return `/title/${key.slice(0, at)}/${encodeURIComponent(key.slice(at + 1))}`;
 	};
 
+	/** Today, Yesterday, then the date itself ("Nov 12"; with the year when it isn't this year). Owner, 2026-11-15. */
 	function ago(at: number): string {
-		const days = Math.floor((Date.now() - at) / 86_400_000);
+		const then = new Date(at);
+		const start = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+		const days = Math.round((start(new Date()) - start(then)) / 86_400_000);
 		if (days <= 0) return t('Today');
 		if (days === 1) return t('Yesterday');
-		if (days < 7) return `${days} ${t('days ago')}`;
-		const weeks = Math.floor(days / 7);
-		return weeks === 1 ? t('A week ago') : `${weeks} ${t('weeks ago')}`;
+		const sameYear = then.getFullYear() === new Date().getFullYear();
+		return then.toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) });
 	}
 
 	onMount(() => {
