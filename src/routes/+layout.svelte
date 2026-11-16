@@ -22,6 +22,7 @@
 	import { applyCustomTheme } from '$lib/customTheme';
 	import { backgroundPreview } from '$lib/backgroundPreview.svelte';
 	import { sendKeptPlaces } from '$lib/phoneKeep.svelte';
+	import { startSwaps, stopSwaps } from '$lib/altSwap';
 	import type { Snippet } from 'svelte';
 	import type { LayoutData } from './$types';
 
@@ -55,6 +56,13 @@
 	$effect(() => {
 		document.documentElement.classList.toggle('has-background', Boolean(background));
 	});
+
+	// The code's wording on every line, not only the ones a page asks for (src/lib/altSwap.ts).
+	$effect(() => {
+		if (page.data.altMode) startSwaps();
+		else stopSwaps();
+	});
+	onMount(() => stopSwaps);
 
 	// On a TV (the Fire TV app), the remote's arrows move around the page.
 	onMount(startTv);

@@ -195,6 +195,8 @@ async function tidy(env) {
 		env.DB.prepare('DELETE FROM reports WHERE created < ?').bind(now - 60 * DAY),
 		env.DB.prepare('DELETE FROM tries WHERE day < ?').bind(new Date(now - 2 * DAY).toISOString().slice(0, 10))
 	]);
+	// (Its own: a server whose database has no usage table yet skips it.)
+	await env.DB.prepare('DELETE FROM usage WHERE day < ?').bind(new Date(now - 90 * DAY).toISOString().slice(0, 10)).run().catch(() => {});
 }
 
 /* ------------------------------------------------------------ signing in with Google */
@@ -1118,14 +1120,137 @@ async function answer(request, env, ctx) {
 	return bad(404, 'No such address');
 }
 
+/* ------------------------------------------------------------ how much it's used, per day */
+
+/*
+ * The free plan's daily limits: 100,000 requests, 5 million database rows read, 100,000 rows
+ * written. Counted here so the owner can see how near they are (Catalog → Settings → Online,
+ * owner only; owner, 2026-11-16). Each request adds itself and the rows its questions read and
+ * wrote (D1 says so with each answer); the counts are kept up here and added to the `usage` row
+ * for the day (UTC, as Cloudflare's limits are) every 25 requests or minute, so counting costs
+ * about one written row in 25. What a copy of the worker hadn't added yet when Cloudflare stopped
+ * it is lost: the numbers are a little under, never over.
+ */
+const USAGE_EVERY = 25;
+let pending = { day: '', requests: 0, read: 0, written: 0, since: 0 };
+
+/** env.DB, telling `tally` how many rows each answer read and wrote. */
+function counted(db, tally) {
+	const add = (meta) => {
+		tally.read += Number(meta?.rows_read) || 0;
+		tally.written += Number(meta?.rows_written) || 0;
+	};
+	const statement = (real) => ({
+		real,
+		bind: (...values) => statement(real.bind(...values)),
+		// (first() says nothing about rows: all() does, and the first row is the same.)
+		async first(column) {
+			const result = await real.all();
+			add(result.meta);
+			const row = result.results?.[0] ?? null;
+			return column === undefined ? row : (row?.[column] ?? null);
+		},
+		async all() {
+			const result = await real.all();
+			add(result.meta);
+			return result;
+		},
+		async run() {
+			const result = await real.run();
+			add(result.meta);
+			return result;
+		},
+		raw: (...options) => real.raw(...options)
+	});
+	return {
+		prepare: (sql) => statement(db.prepare(sql)),
+		async batch(list) {
+			const results = await db.batch(list.map((one) => one.real ?? one));
+			for (const result of results) add(result.meta);
+			return results;
+		},
+		exec: (sql) => db.exec(sql),
+		dump: () => db.dump()
+	};
+}
+
+const USAGE_TABLE = 'CREATE TABLE IF NOT EXISTS usage (day TEXT PRIMARY KEY, requests INTEGER NOT NULL DEFAULT 0, rows_read INTEGER NOT NULL DEFAULT 0, rows_written INTEGER NOT NULL DEFAULT 0)';
+
+/** Adds what's been counted here to its day's row. */
+async function keepUsage(db, done) {
+	const add = () =>
+		db
+			.prepare('INSERT INTO usage (day, requests, rows_read, rows_written) VALUES (?, ?, ?, ?) ON CONFLICT (day) DO UPDATE SET requests = requests + excluded.requests, rows_read = rows_read + excluded.rows_read, rows_written = rows_written + excluded.rows_written')
+			.bind(done.day, done.requests, done.read, done.written)
+			.run();
+	try {
+		await add();
+	} catch (problem) {
+		// A server put online before its database was given the table: it makes it itself.
+		if (!/no such table/i.test(String(problem?.message ?? problem))) throw problem;
+		await db.prepare(USAGE_TABLE).run();
+		await add();
+	}
+}
+
+/** One request answered, and the rows it read and wrote: counted, and now and then kept. */
+function countRequest(env, ctx, tally) {
+	const now = Date.now();
+	const day = new Date(now).toISOString().slice(0, 10);
+	// A new day (UTC): what's counted so far is the day before's.
+	if (pending.day && pending.day !== day && pending.requests) {
+		const done = pending;
+		pending = { day, requests: 0, read: 0, written: 0, since: now };
+		ctx.waitUntil(keepUsage(env.DB, done).catch(() => {}));
+	}
+	if (pending.day !== day) pending = { day, requests: 0, read: 0, written: 0, since: now };
+	pending.requests += 1;
+	pending.read += tally.read;
+	pending.written += tally.written;
+	if (pending.requests >= USAGE_EVERY || now - pending.since > MINUTE) {
+		const done = pending;
+		// (Its own row written is counted with the next ones.)
+		pending = { day, requests: 0, read: 0, written: 1, since: now };
+		ctx.waitUntil(keepUsage(env.DB, done).catch(() => {}));
+	}
+}
+
+/** The owner's look at the last 30 days (oldest first), with what this copy hasn't kept yet. */
+async function usageAnswer(env) {
+	let rows = [];
+	try {
+		const answer = await env.DB.prepare('SELECT day, requests, rows_read AS rowsRead, rows_written AS rowsWritten FROM usage ORDER BY day DESC LIMIT 30').all();
+		rows = (answer.results ?? []).reverse();
+	} catch {}
+	if (pending.day && pending.requests) {
+		const today = rows.find((row) => row.day === pending.day);
+		if (today) {
+			today.requests += pending.requests;
+			today.rowsRead += pending.read;
+			today.rowsWritten += pending.written;
+		} else rows.push({ day: pending.day, requests: pending.requests, rowsRead: pending.read, rowsWritten: pending.written });
+	}
+	return json({ days: rows, limits: { requests: 100_000, rowsRead: 5_000_000, rowsWritten: 100_000 } });
+}
+
 export default {
-	async fetch(request, env, ctx) {
+	async fetch(request, real, ctx) {
+		const tally = { read: 0, written: 0 };
+		// Every binding as it is, but the database counts its rows.
+		const env = Object.assign(Object.create(real), { DB: counted(real.DB, tally) });
 		try {
+			const url = new URL(request.url);
+			if (request.method === 'GET' && url.pathname.replace(/\/+$/, '') === '/v1/usage') {
+				const refused = await notOwner(request, env);
+				return refused ?? (await usageAnswer(real));
+			}
 			return await answer(request, env, ctx);
 		} catch (problem) {
 			if (problem instanceof Problem) return bad(problem.status, problem.message);
 			console.error(problem);
 			return bad(500, 'Something went wrong here');
+		} finally {
+			countRequest(real, ctx, tally);
 		}
 	}
 };

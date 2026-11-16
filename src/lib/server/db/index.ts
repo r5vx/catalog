@@ -3,6 +3,7 @@ import { slimSubtitle } from '../subtitleFonts';
 import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { WATCHED_SQL } from '$lib/constants';
 
 /**
  * SQLite is built into Node itself, so this app has no database driver to
@@ -171,7 +172,10 @@ const laterColumns: Record<string, string> = {
 	providers_checked_at: 'TEXT',
 	// Its other names, one per line ("Dungeon Meshi" for Delicious in Dungeon), so searching
 	// finds it either way. NULL until asked (src/lib/server/otherNames.ts).
-	other_titles: 'TEXT'
+	other_titles: 'TEXT',
+	// When it was last finished (or started again), set by the triggers below. Not updated_at:
+	// changing a rating moves that, and friends saw a re-rated film as just watched (owner, 2026-11-16).
+	watched_at: 'TEXT'
 };
 
 for (const [name, type] of Object.entries(laterColumns)) {
@@ -270,6 +274,32 @@ db.exec(`
 	WHEN OLD.status = 'planned' AND NEW.status IN ('completed', 'watching', 'rewatching', 'caught_up')
 	BEGIN
 		UPDATE entries SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = NEW.id;
+	END
+`);
+
+// Finishing something (or starting a rewatch) stamps when: friends' "watched lately" goes by this.
+db.exec(`
+	CREATE TRIGGER IF NOT EXISTS entries_watched_on_update
+	AFTER UPDATE OF status ON entries
+	WHEN NEW.status IN ${WATCHED_SQL} AND OLD.status IS NOT NEW.status
+	BEGIN
+		UPDATE entries SET watched_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = NEW.id;
+	END
+`);
+db.exec(`
+	CREATE TRIGGER IF NOT EXISTS entries_watched_on_rewatch
+	AFTER UPDATE OF rewatches ON entries
+	WHEN NEW.rewatches > OLD.rewatches
+	BEGIN
+		UPDATE entries SET watched_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = NEW.id;
+	END
+`);
+db.exec(`
+	CREATE TRIGGER IF NOT EXISTS entries_watched_on_insert
+	AFTER INSERT ON entries
+	WHEN NEW.status IN ${WATCHED_SQL}
+	BEGIN
+		UPDATE entries SET watched_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = NEW.id;
 	END
 `);
 
@@ -491,6 +521,9 @@ once('progress-per-profile', () => {
 // minute and a half out until auto-timing fitted again, and for good on one TV (2026-10-31).
 // (After the move to per-profile progress above, so a new library's table gets it too.)
 try { db.exec('ALTER TABLE watch_progress ADD COLUMN sub_rate REAL NOT NULL DEFAULT 1'); } catch {}
+// The delay was set by hand (the player's Timing buttons): auto-timing leaves it alone when it's
+// opened again (owner, 2026-11-16).
+try { db.exec('ALTER TABLE watch_progress ADD COLUMN sub_by_hand INTEGER NOT NULL DEFAULT 0'); } catch {}
 
 /**
  * Shows someone has watched to the last episode there was to play (src/lib/server/newEpisodes.ts).

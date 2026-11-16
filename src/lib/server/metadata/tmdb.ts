@@ -398,6 +398,20 @@ export async function trendingTmdb(
 				const dateKey = kind === 'movie' ? 'primary_release_date.lte' : 'first_air_date.lte';
 				url.searchParams.set(dateKey, new Date().toISOString().slice(0, 10));
 			}
+
+			// "Trending now" with a sort or a genre (TMDB's trending list takes neither) stays now, as
+			// anime's does: films out this past year, series aired in the last 60 days. It was all time,
+			// so Most popular brought back decades-old titles (owner, 2026-11-16). Years chosen win.
+			if (mode === 'trending' && !filters?.yearFrom && !filters?.yearTo) {
+				const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+				if (kind === 'movie') {
+					url.searchParams.set('primary_release_date.gte', daysAgo(365));
+					url.searchParams.set('primary_release_date.lte', daysAgo(0));
+				} else url.searchParams.set('air_date.gte', daysAgo(60));
+				// (300 votes is a lot for a film out this year: 50 still leaves out what nobody watched.
+				// Series take 100, as anime's do: reruns and daily shows have fewer.)
+				if (filters?.sort !== 'vote_average') url.searchParams.set('vote_count.gte', kind === 'movie' ? '50' : '100');
+			}
 		}
 
 		if (region && !useDiscover) {
@@ -637,11 +651,13 @@ export async function trendingAnimeTmdb(page = 1, mode: BrowseMode = 'trending',
 		films.with_genres = `16,${filters.genre}`;
 		Object.assign(series, seriesGenreParams(filters.genre, true, series.without_genres) ?? {});
 	}
-	const browsingNow = mode === 'trending' && !filters?.sort && !filters?.yearFrom && !filters?.yearTo;
+	// "Trending now" stays now with any sort: sorted by Most popular it used to drop this, and
+	// Pokémon (1997) and Chibi Maruko-chan (1990) came top (owner, 2026-11-16). Years chosen win.
+	const browsingNow = mode === 'trending' && !filters?.yearFrom && !filters?.yearTo;
 	if (browsingNow) {
 		series['air_date.gte'] = daysAgo(60);
 		// Known well enough to be what people are watching (Chibi Maruko-chan airs every week too).
-		series['vote_count.gte'] = '100';
+		if (Number(series['vote_count.gte']) < 100) series['vote_count.gte'] = '100';
 		films['primary_release_date.gte'] = daysAgo(365);
 	}
 	// A genre series can't be asked for by (no series genre or keyword for it): films only.

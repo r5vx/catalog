@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
+	import { withBack } from '$lib/back';
 	import ContextMenu, { menuAt, type MenuItem } from '$lib/ContextMenu.svelte';
 	import { titleHref, watchHref, wantToWatch } from '$lib/friendLinks';
 
@@ -7,15 +9,21 @@
 	 * A row (or grid) of posters from a friend's profile or library: each opens the title's page,
 	 * and right-click offers Open, Watch and Add to Want to watch.
 	 */
-	type Item = { key: string; title: string; year?: string; type?: string; poster?: string; rating?: number | null; status?: string; season?: number; episode?: number };
+	/** `href`: where it opens instead of the title's page (its library page, on your own profile). */
+	type Item = { key: string; title: string; year?: string; type?: string; poster?: string; rating?: number | null; status?: string; season?: number; episode?: number; href?: string };
 
 	let { items, grid = false, onadded }: { items: Item[]; grid?: boolean; onadded?: (title: string, ok: boolean) => void } = $props();
+
+	/** Every poster carries the way back here, so the next page's Back returns to this profile. */
+	const here = $derived(page.url.pathname + page.url.search);
+	const link = (item: Item) => withBack(item.href ?? titleHref(item.key), here);
 
 	let menu = $state<{ at: { x: number; y: number }; items: MenuItem[] } | null>(null);
 
 	function open(event: MouseEvent, item: Item) {
 		const list: MenuItem[] = [
-			{ label: 'Open', run: () => goto(titleHref(item.key)) },
+			...(item.href ? [{ label: 'Open in library', run: () => goto(withBack(item.href!, here)) }] : []),
+			{ label: item.href ? 'Open title page' : 'Open', run: () => goto(withBack(titleHref(item.key), here)) },
 			...(item.type ? [{ label: 'Watch', run: () => goto(watchHref({ title: item.title, type: item.type!, year: item.year, season: item.season, episode: item.episode })) }] : []),
 			{ label: 'Add to Want to watch', run: () => void wantToWatch(item).then((ok) => onadded?.(item.title, ok)) }
 		];
@@ -26,7 +34,7 @@
 <ul class:grid>
 	{#each items as item (item.key)}
 		<li>
-			<a href={titleHref(item.key)} oncontextmenu={(e) => open(e, item)} title={item.title}>
+			<a href={link(item)} oncontextmenu={(e) => open(e, item)} title={item.title}>
 				{#if item.poster}<img src={item.poster} alt="" loading="lazy" />{:else}<span class="empty">{item.title}</span>{/if}
 				<span class="name">{item.title}</span>
 				<span class="faint small">

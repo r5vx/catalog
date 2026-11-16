@@ -36,10 +36,12 @@
 			.slice(0, MOST);
 	});
 
-	/** The title's own page: "tmdb:movie:550" opens /title/tmdb/movie:550. */
+	/** The title's own page: "tmdb:movie:550" opens /title/tmdb/movie:550?back=…. */
 	const href = (key: string) => {
 		const at = key.indexOf(':');
-		return `/title/${key.slice(0, at)}/${encodeURIComponent(key.slice(at + 1))}`;
+		// With the way back, so the title page's Back returns to Friends rather than the library.
+		const back = encodeURIComponent(page.url.pathname + page.url.search);
+		return `/title/${key.slice(0, at)}/${encodeURIComponent(key.slice(at + 1))}?back=${back}`;
 	};
 
 	/** Today, Yesterday, then the date itself ("Nov 12"; with the year when it isn't this year). Owner, 2026-11-15. */

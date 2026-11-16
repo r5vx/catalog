@@ -77,7 +77,7 @@ export type EpisodeList = { seasons: number[]; episodes: ListedEpisode[]; qualit
 
 export type TmdbSeason = { number: number; name: string; count: number; airDate: string | null };
 /** `anime`: Japanese animation, the shows other sources are asked about. */
-export type TmdbShow = { id: number; name: string; anime: boolean; poster: string | null; seasons: TmdbSeason[] };
+export type TmdbShow = { id: number; name: string; anime: boolean; poster: string | null; seasons: TmdbSeason[]; /** Its original language ("en", "ja"). */ language?: string };
 /** Another Showbox entry for the same show, and the TMDB season its season 1 is. */
 type Companion = { title: string; shareKey: string; firstSeason: number };
 
@@ -124,6 +124,7 @@ export async function tmdbShow(title: string, year: string): Promise<TmdbShow | 
 			name: details.name ?? title,
 			// TMDB's "Animation" genre is 16.
 			anime: details.original_language === 'ja' && (details.genres ?? []).some((g) => g.id === 16),
+			language: details.original_language ?? '',
 			poster: details.poster_path ? `https://image.tmdb.org/t/p/w342${details.poster_path}` : null,
 			seasons: (details.seasons ?? []).map((s) => ({
 				number: s.season_number,

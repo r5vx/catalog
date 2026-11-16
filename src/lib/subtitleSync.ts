@@ -57,6 +57,14 @@ export class SubtitleSync {
 	private plan: DelayPlan | null = null;
 	private lastSet: number | null = null;
 	private heldByHand = false;
+	/**
+	 * The player's own word that the delay was set by hand (its buttons, or a saved place that was):
+	 * left alone, even before auto-timing first moved it. Seen only by comparing, a delay changed
+	 * before then was put back as soon as a timing was found (owner, 2026-11-16).
+	 */
+	byHand: () => boolean = () => false;
+	/** Where the subtitles' later parts begin, for a set joined from parts (each part is timed on its own). */
+	joins: () => number[] = () => [];
 	private told = false;
 	/** Seconds heard when a plan last said these subtitles fit. */
 	private fittedWith = 0;
@@ -154,7 +162,7 @@ export class SubtitleSync {
 			if (this.plan?.fits) this.mismatchFrom = null;
 			// No longer fitting, after it moved them: put back where they were. (Venom 2's cinema-copy
 			// subtitles fit at −22 s for the first minutes, then not at all — and the −22 s stayed.)
-			if (this.plan && !this.plan.fits && this.lastSet !== null && !this.heldByHand && this.before !== null) {
+			if (this.plan && !this.plan.fits && this.lastSet !== null && !this.heldByHand && !this.byHand() && this.before !== null) {
 				this.lastSet = null;
 				this.onDelay?.(this.before);
 				this.onRate?.(1);
@@ -199,7 +207,7 @@ export class SubtitleSync {
 			return;
 		}
 		this.chosen = '';
-		this.useCues(cues, null);
+		this.useCues(cues, null, this.joins());
 		this.worker.postMessage({ kind: 'fit' });
 	}
 
@@ -230,7 +238,7 @@ export class SubtitleSync {
 		this.apply();
 	}
 
-	private useCues(cues: TimedCue[], plan: DelayPlan | null): void {
+	private useCues(cues: TimedCue[], plan: DelayPlan | null, joins: number[] = []): void {
 		this.plan = plan;
 		this.wordPlan = null;
 		this.waitForWordsUntil = 0;
@@ -242,7 +250,7 @@ export class SubtitleSync {
 		this.told = false;
 		this.mismatchFrom = null;
 		this.round++;
-		this.worker.postMessage({ kind: 'cues', cues, round: this.round });
+		this.worker.postMessage({ kind: 'cues', cues, joins, round: this.round });
 	}
 
 	/** Another episode or another audio track: everything heard is thrown away. */
@@ -380,7 +388,7 @@ export class SubtitleSync {
 
 	/** Sets the delay for the part of the video playing now, from the plan. */
 	private apply(): void {
-		if (!this.running || this.heldByHand || !this.plan?.fits || !this.onDelay) return;
+		if (!this.running || this.heldByHand || this.byHand() || !this.plan?.fits || !this.onDelay) return;
 		if (!this.wordPlan && Date.now() < this.waitForWordsUntil && this.plan.steps.every((s) => Math.abs(s.delay) < 5)) return;
 		const current = this.delay();
 		// Moved by hand since it last moved them: left alone from now on.
@@ -740,7 +748,7 @@ export class SubtitleSync {
 	private hear(context: AudioContext, buffer: AudioBuffer): void {
 		const v = this.video;
 		// The whole track is being heard instead, or there's nothing worth hearing.
-		if (this.track || !this.running || this.heldByHand || v.paused || v.seeking || v.muted || v.volume < 0.05 || v.playbackRate !== 1) {
+		if (this.track || !this.running || this.heldByHand || this.byHand() || v.paused || v.seeking || v.muted || v.volume < 0.05 || v.playbackRate !== 1) {
 			this.pending = [];
 			this.pendingStart = -1;
 			this.fresh = true;

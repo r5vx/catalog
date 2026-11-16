@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { afterNavigate, pushState } from '$app/navigation';
-	import { startTvNav, tvBack, MENU_SCREENS } from '$lib/tvNav';
+	import { afterNavigate, goto, pushState } from '$app/navigation';
+	import { startTvNav, tvBack, tvFocus, MENU_SCREENS } from '$lib/tvNav';
+	import { together, type RoomState } from '$lib/watchTogether.svelte';
+	import { watchHref } from '$lib/friendLinks';
 	import TvMenu from '$lib/tv/TvMenu.svelte';
 	import Wordmark from '$lib/Wordmark.svelte';
 	import { p } from '$lib/altText';
@@ -26,6 +28,7 @@
 		{ href: '/tv/browse/tv', label: 'TV Shows', icon: 'tv' },
 		{ href: '/tv/browse/anime', label: 'Anime', icon: 'anime' },
 		{ href: '/tv/library', label: 'My Library', icon: 'library' },
+		{ href: '/tv/friends', label: 'Friends', icon: 'friends' },
 		{ href: '/tv/live', label: 'Live TV', icon: 'live' },
 		{ href: '/tv/youtube', label: 'YouTube', icon: 'youtube' },
 		{ href: '/tv/settings', label: 'Settings', icon: 'settings' }
@@ -63,6 +66,26 @@
 		window.addEventListener('popstate', onPop);
 		return () => window.removeEventListener('popstate', onPop);
 	});
+
+	/*
+	 * Someone in the watch-together room started something (Friends → Watch along put this TV in
+	 * it): Join or Not now, highlighted as it comes up. The computer's corner box can't be reached
+	 * with the remote on these screens (lib/ChatOverlay.svelte); in the player it can.
+	 */
+	let joinButton = $state<HTMLButtonElement | null>(null);
+	const offer = $derived(together.offer);
+	$effect(() => {
+		if (offer && joinButton) tvFocus(joinButton);
+	});
+	const offerLabel = (state: RoomState) => (state.type === 'tv' && state.season ? `${state.title} S${state.season}E${state.episode}` : state.title);
+	async function joinOffer(state: RoomState) {
+		together.offer = null;
+		await goto(watchHref(state));
+	}
+	function skipOffer() {
+		together.offer = null;
+		startTvNav(app ?? null);
+	}
 
 	// Each screen starts with something highlighted.
 	afterNavigate(() => {
@@ -103,6 +126,9 @@
 						<path d="M12 3.5 14.4 9l5.6.5-4.3 3.7 1.4 5.6L12 15.8 6.9 18.8l1.4-5.6L4 9.5 9.6 9Z" />
 					{:else if item.icon === 'library'}
 						<path d="M5 4v16M10 4v16M15 4.5l4.5 15" />
+					{:else if item.icon === 'friends'}
+						<!-- Two people. -->
+						<circle cx="9" cy="8" r="3.2" /><path d="M3 20c0-3.6 2.7-6 6-6s6 2.4 6 6" /><circle cx="17" cy="9" r="2.6" /><path d="M16 14.2c2.9.2 5 2.4 5 5.3" />
 					{:else if item.icon === 'live'}
 						<!-- An aerial on a screen. -->
 						<rect x="3" y="8" width="18" height="12" rx="2" /><path d="M8 3l4 5 4-5" />
@@ -126,6 +152,13 @@
 			{@render children()}
 		</div>
 		<TvMenu bind:showing={menuOpen} />
+		{#if offer && !menuOpen}
+			<div class="room-offer" role="dialog" aria-label="Someone in the room started something" data-tv-row>
+				<p><strong>{offer.by}</strong> started <strong>{offerLabel(offer)}</strong></p>
+				<button type="button" class="offer-button" data-tv-item bind:this={joinButton} onclick={() => joinOffer(offer)}>Join</button>
+				<button type="button" class="offer-button" data-tv-item onclick={skipOffer}>Not now</button>
+			</div>
+		{/if}
 	</main>
 </div>
 
@@ -139,6 +172,44 @@
 		background: var(--paper);
 		color: var(--ink);
 		font-size: 1.45vw;
+	}
+
+	/* A room's "started" box, bottom right. */
+	.room-offer {
+		position: absolute;
+		right: 3vw;
+		bottom: 5vh;
+		z-index: 6;
+		display: flex;
+		align-items: center;
+		gap: 1vw;
+		padding: 1.2vw 1.6vw;
+		border-radius: 0.9vw;
+		background: var(--surface-2, #222);
+		box-shadow: 0 0.6vw 2vw rgb(0 0 0 / 50%);
+	}
+
+	.room-offer p {
+		margin: 0 0.6vw 0 0;
+		font-size: 1.4vw;
+	}
+
+	.offer-button {
+		padding: 0.7vw 1.5vw;
+		border: none;
+		border-radius: 100vw;
+		background: rgb(255 255 255 / 12%);
+		color: var(--ink);
+		font: inherit;
+		font-size: 1.3vw;
+		font-weight: 700;
+		outline: none;
+	}
+
+	.offer-button:focus,
+	.offer-button:global(.tv-focused) {
+		background: var(--ink);
+		color: var(--paper);
 	}
 
 	/* ------------------------------------------------------------ the menu */

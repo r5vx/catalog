@@ -221,3 +221,12 @@ CREATE TABLE IF NOT EXISTS avatars (
 	image TEXT NOT NULL,
 	rev INTEGER NOT NULL DEFAULT 1
 );
+
+-- Requests and database rows read and written, per day (UTC), for the owner's look at the free
+-- plan's limits (Settings → Online in the owner's Catalog). The worker makes it itself if missing.
+CREATE TABLE IF NOT EXISTS usage (
+	day TEXT PRIMARY KEY,
+	requests INTEGER NOT NULL DEFAULT 0,
+	rows_read INTEGER NOT NULL DEFAULT 0,
+	rows_written INTEGER NOT NULL DEFAULT 0
+);

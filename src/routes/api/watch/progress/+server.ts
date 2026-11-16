@@ -1,5 +1,5 @@
 import { json, error, type RequestHandler } from '@sveltejs/kit';
-import { noteWatching } from '$lib/server/online';
+import { noteWatching, notePaused } from '$lib/server/online';
 import { currentProfile } from '$lib/server/profile';
 import { markEpisodes, saveWatchProgress, getWatchProgress, listAllWatchProgress, listAllWatchProgressFull, clearAllWatchProgress, deleteWatchProgress, deleteTitleProgress, hideFromContinueWatching, watchedEpisodesForTitle } from '$lib/server/db/queries';
 
@@ -39,9 +39,10 @@ export const POST: RequestHandler = async ({ request }) => {
 	const ct = currentTime ?? 0;
 	const d = duration ?? 0;
 
-	saveWatchProgress(title, t, s, e, ct, d, subUrl ?? '', subDelay ?? 0, subFileName ?? '', posterUrl ?? '', shareKey ?? '', fid ?? 0, Number(subRate) || 1);
-	// Friends see what's playing (Catalog online, when it's on and sharing is).
-	if (d > 0) noteWatching(currentProfile(), { title: String(title), type: t, season: Number(s) || 0, episode: Number(e) || 0, poster: String(posterUrl ?? '') });
+	saveWatchProgress(title, t, s, e, ct, d, subUrl ?? '', subDelay ?? 0, subFileName ?? '', posterUrl ?? '', shareKey ?? '', fid ?? 0, Number(subRate) || 1, body.subByHand === true);
+	// Friends see what's playing (Catalog online, when it's on and sharing is), only while it plays.
+	if (body.paused === true) notePaused(currentProfile());
+	else if (d > 0) noteWatching(currentProfile(), { title: String(title), type: t, season: Number(s) || 0, episode: Number(e) || 0, poster: String(posterUrl ?? '') });
 	return json({ ok: true });
 };
 

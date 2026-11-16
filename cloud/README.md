@@ -21,7 +21,9 @@ It lives at `https://catalog-meeting.catalog-meet-f5725.workers.dev` (the addres
 - **Join code** (`JOIN_CODE`): what a Catalog types under Settings → Online to join. Give it to
   family and friends. Without it nobody can join.
 - **Owner's key** (`ADMIN_KEY`): typed once on the owner's own computer, to read the reports
-  Catalogs send (Settings → Online → Problem reports, shown only once the key is kept). The
+  Catalogs send (Settings → Online → Problem reports, shown only once the key is kept), and
+  `GET /v1/usage`: requests and database rows read and written per day, the last 30 days, against
+  the free plan's limits (Settings → Online → Server use). The
   server counts wrong tries per address: after 10 in a day that address is refused until tomorrow.
 
 Both are in `secrets.local.json`. To change one: edit the file, then run

@@ -11,7 +11,8 @@
 	 * Clicked, the box shakes while the pick is asked for (src/routes/api/browse/random), its lid
 	 * flies off and the poster comes out in a burst of light, colored by how well rated it is
 	 * (gold 8.3+, purple 7.6+, blue 6.8+, silver below), like a loot box's rarity. Then: Watch now,
-	 * Want to watch, Completed, Open, or Roll again. Under the box: film, series or anime; really
+	 * Want to watch, Completed, Open, or Roll again. Under the box: film, series, anime, or several
+	 * of them (each roll picks one of those on); really
 	 * random anime (any of TMDB's, not only popular ones; off unless turned on); leave out what's
 	 * in the library (on); only the genre Browse is showing. Those are kept in settings.
 	 */
@@ -27,7 +28,8 @@
 
 	let open = $state(false);
 	let phase = $state<Phase>('idle');
-	let kind = $state<Kind>('movies');
+	/** The kinds it may pick from: one or more (owner, 2026-11-16: "TV show and anime at the same time"). */
+	let kinds = $state<Kind[]>(['movies']);
 	let deep = $state(false);
 	/** No box to open: the pick comes straight out (the window's "Skip the box"). */
 	let quick = $state(false);
@@ -40,7 +42,7 @@
 	let added = $state('');
 	let adding = $state(false);
 	let crateEl = $state<HTMLButtonElement | null>(null);
-	let saved: { kind: Kind; deep: boolean; library: boolean; quick: boolean } | null = null;
+	let saved: { kinds: Kind[]; deep: boolean; library: boolean; quick: boolean } | null = null;
 
 	const t = (text: string) => wording(page.data.altMode, text);
 	const here = $derived(page.url.pathname + page.url.search);
@@ -67,8 +69,11 @@
 
 	async function openWindow() {
 		open = true;
-		// The part of Browse you're in comes first (anime while browsing anime), else the last one picked.
-		kind = cat === 'tv' || cat === 'anime' ? cat : cat === 'movies' ? 'movies' : (saved?.kind ?? 'movies');
+		// The part of Browse you're in (anime while browsing anime), unless the last ones picked have
+		// it among them; else the last ones picked.
+		const here: Kind | null = cat === 'tv' || cat === 'anime' || cat === 'movies' ? cat : null;
+		const last = saved?.kinds?.length ? saved.kinds : (['movies'] as Kind[]);
+		kinds = here && !last.includes(here) ? [here] : [...last];
 		deep = saved?.deep ?? false;
 		quick = saved?.quick ?? false;
 		leaveOutLibrary = !(saved?.library ?? false);
@@ -91,12 +96,16 @@
 	}
 
 	function keep() {
-		saved = { kind, deep, library: !leaveOutLibrary, quick };
+		saved = { kinds: [...kinds], deep, library: !leaveOutLibrary, quick };
 		void fetch('/api/browse/random', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(saved) }).catch(() => {});
 	}
 
-	function setKind(value: Kind) {
-		kind = value;
+	/** On or off; the last one on stays on (there has to be something to pick from). */
+	function toggleKind(value: Kind) {
+		if (kinds.includes(value)) {
+			if (kinds.length === 1) return;
+			kinds = kinds.filter((k) => k !== value);
+		} else kinds = KINDS.map((option) => option.value).filter((k) => k === value || kinds.includes(k));
 		keep();
 	}
 
@@ -114,6 +123,8 @@
 		if (phase === 'shaking' || phase === 'opening') return;
 		reset();
 		phase = 'shaking';
+		// One of the kinds on, each as likely as the others.
+		const kind = kinds[Math.floor(Math.random() * kinds.length)] ?? 'movies';
 		const params = new URLSearchParams({ kind });
 		if (genre && useGenre) params.set('genre', String(genre));
 		if (deep) params.set('deep', '1');
@@ -170,7 +181,7 @@
 <svelte:window onkeydown={onKey} />
 
 <!-- Brighter than the buttons around it, so it's noticed (owner: "just a grey box no one will pay attention to"). -->
-<button type="button" class="random-button" onclick={openWindow}>
+{#snippet dice()}
 	<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true">
 		<rect x="3.5" y="3.5" width="17" height="17" rx="4" />
 		<circle cx="8.5" cy="8.5" r="1.3" fill="currentColor" stroke="none" />
@@ -179,6 +190,10 @@
 		<circle cx="8.5" cy="15.5" r="1.3" fill="currentColor" stroke="none" />
 		<circle cx="15.5" cy="15.5" r="1.3" fill="currentColor" stroke="none" />
 	</svg>
+{/snippet}
+
+<button type="button" class="random-button" onclick={openWindow}>
+	{@render dice()}
 	{t('Random')}
 </button>
 
@@ -277,7 +292,11 @@
 										<button type="button" class="btn" disabled={adding} onclick={() => addAs('completed')}>{t('Completed')}</button>
 									</div>
 								{/if}
-								<button type="button" class="btn again" onclick={roll}>{t('Roll again')}</button>
+								<!-- The Random button's dice and glow (owner, 2026-11-16). -->
+								<button type="button" class="random-button again" onclick={roll}>
+									{@render dice()}
+									{t('Roll again')}
+								</button>
 							</div>
 						{/if}
 					</div>
@@ -285,9 +304,10 @@
 			</div>
 
 			<div class="choices">
-				<div class="kinds" role="radiogroup" aria-label="What kind">
+				<!-- One or more: it picks from all the ones on. -->
+				<div class="kinds" role="group" aria-label="What kind">
 					{#each KINDS as option (option.value)}
-						<button type="button" class="kind" class:on={kind === option.value} role="radio" aria-checked={kind === option.value} onclick={() => setKind(option.value)}>
+						<button type="button" class="kind" class:on={kinds.includes(option.value)} aria-pressed={kinds.includes(option.value)} onclick={() => toggleKind(option.value)}>
 							{t(option.label)}
 						</button>
 					{/each}

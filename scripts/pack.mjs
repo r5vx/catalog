@@ -14,12 +14,17 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const exe = join(root, 'dist-app', 'win-unpacked', 'Catalog.exe');
 
 const run = (command, args) =>
 	spawnSync(command, args, { cwd: root, stdio: 'inherit', shell: true });
+
+// The web build loads the server code, which opens the library and adds any new columns.
+// Give it a throwaway library so building never touches the real one.
+process.env.CATALOG_DB = join(tmpdir(), 'catalog-build', 'library.db');
 
 console.log('\n— Building the web app —');
 if (run('npm', ['run', 'build']).status !== 0) {

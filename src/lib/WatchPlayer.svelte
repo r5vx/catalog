@@ -416,6 +416,63 @@
 		return true;
 	}
 
+	/*
+	 * A copy with no sound in the title's own language, nor in English or the profile's language:
+	 * another copy plays instead. Digger's only Showbox copies were cinema recordings dubbed in
+	 * Russian, Ukrainian, Kazakh and Uzbek; "MULTi" in the name even put one first (a friend,
+	 * 2026-11-16). Only copies whose every track says its language: an unlabelled one may be fine.
+	 * Such copies are skipped for the rest of the visit, and known ones (copy-audio) from the start.
+	 */
+	const foreignOnly = new Set<string>();
+	const PROFILE_CODES: Record<string, string> = { Spanish: 'es', French: 'fr', German: 'de', Hindi: 'hi' };
+	/** The languages a copy may be in, as two-letter codes. */
+	const fineLanguages = () => new Set([originalLanguage, 'en', PROFILE_CODES[profileAudio] ?? ''].filter(Boolean));
+	/** Known (from before) to be only in other languages: its tracks' names, as noted by noteCopyAudio. */
+	function knownForeign(f: FileOption): boolean {
+		if (foreignOnly.has(copyKey(f))) return true;
+		const known = copyAudio[copyKey(f)];
+		if (!known?.length || !originalLanguage || f.audio) return false;
+		const fine = [...fineLanguages()].map((code) => languageName(code, '').toLowerCase());
+		return !known.some((name) => fine.includes(name.toLowerCase()) || name === 'Unknown');
+	}
+	function leaveForeignOnly(tracks: { lang?: string; name?: string }[]): boolean {
+		const file = activeFile;
+		if (!file || file.audio || !originalLanguage || liveMode || replayMode || !tracks.length) return false;
+		const codes = tracks.map((t) => (t.lang ?? '').split(/[-_]/)[0].toLowerCase());
+		if (codes.some((code) => !code || code === 'und')) return false;
+		const fine = fineLanguages();
+		// (Three-letter codes too: "eng", "rus".)
+		if (codes.some((code) => fine.has(code) || fine.has(code.slice(0, 2)))) return false;
+		foreignOnly.add(copyKey(file));
+		foreignHeard = [...new Set(tracks.map((t) => languageName(t.lang ?? '', t.name ?? '')))].join(', ');
+		debugInfo = (debugInfo ? debugInfo + ' | ' : '') + `only in ${foreignHeard}`;
+		return moveToLanguage();
+	}
+
+	/** The languages the last such copy had ("Russian"), and the copies tried instead for this title. */
+	let foreignHeard = '';
+	const triedForLanguage = new Set<string>();
+
+	/**
+	 * The next copy to try in place of one only in other languages; when none is left (or each one
+	 * tried had nothing), says so and the copy playing carries on. Tried in turn: a copy that has
+	 * nothing comes back here from changeToFile.
+	 */
+	function moveToLanguage(): boolean {
+		const others = currentFiles.filter(
+			(f) => f !== activeFile && playableHere(f) && !knownEmpty(f) && !knownForeign(f) && !triedForLanguage.has(copyKey(f))
+		);
+		const next = pickFile(others, preferredQuality, animeAudio(), fourKOk);
+		if (!next) {
+			showQualityToast(`Only copies in ${foreignHeard} so far`);
+			return false;
+		}
+		triedForLanguage.add(copyKey(next));
+		showQualityToast(`That copy was only in ${foreignHeard}: trying ${next.source ?? 'another copy'}`);
+		setTimeout(() => changeToFile(next, true), 0);
+		return true;
+	}
+
 	/* --------------------------------------------------------------- how sharp each copy is */
 
 	/*
@@ -639,6 +696,9 @@
 	 * picture, say), which then stays picked episode after episode.
 	 */
 	const pickFor = (files: FileOption[]) => {
+		// Copies known to be only in other languages, unless nothing else is left (leaveForeignOnly).
+		const notForeign = files.filter((f) => !knownForeign(f));
+		if (notForeign.length) files = notForeign;
 		// The mini player starts on the copy the big player had.
 		if (startFid !== null) {
 			const start = files.find((f) => f.fid === startFid && playableHere(f));
@@ -740,6 +800,8 @@
 	const PICKED_SOURCE_WAIT = 15_000;
 	/** A dubbed copy in the profile's language: Movy's dub servers take longer to answer (up to ~25 s). */
 	const LANGUAGE_DUB_WAIT = 40_000;
+	/** No copy answered in this long: the player stops waiting and says it couldn't play (linkFor). */
+	const GIVE_UP_AFTER = 75_000;
 	/*
 	 * Copies whose source had nothing for them when asked (by copyId), and when. "Keeps stopping to
 	 * load" offered "Play on 7Movies" for SVU S28E4 while 7Movies had nothing for it (2026-10-30), and
@@ -826,7 +888,14 @@
 			? Promise.any(burnedIn).then((link) => new Promise<typeof link>((r) => setTimeout(() => r(link), BURNED_IN_WAIT)))
 			: null;
 		try {
-			const found = await Promise.any(burnedInLater ? [...wanted, burnedInLater] : wanted);
+			// Never "Getting stream…" for ever: Movy and Vidfast look in hidden windows two at a time,
+			// so with earlier episodes' lookups still in line, one episode waited minutes on copies that
+			// had nothing (Jungle King Taa-chan E50, 2026-11-15). After GIVE_UP_AFTER it says so.
+			const found = await Promise.race([
+				Promise.any(burnedInLater ? [...wanted, burnedInLater] : wanted),
+				new Promise<null>((r) => setTimeout(() => r(null), GIVE_UP_AFTER))
+			]);
+			if (!found) return { file, url: '', debug };
 			if (isLanguageDub(file) && found.file !== file) showQualityToast(`No ${file.audio} copy of this: playing it in its own language`);
 			return found;
 		} catch {
@@ -881,16 +950,33 @@
 	 * of fan-club names: its own subtitles end 28 minutes early, the cinema cut's 58, and the cinema
 	 * ones went first, "20 minutes ahead", 2026-11-08). Only files that say when they end are moved,
 	 * among themselves; the rest keep their place.
+	 *
+	 * A set joined from more than two parts counts one step worse: each join is a guess, and
+	 * those CD splits are mostly old cinema-cut rips. The Two Towers' first pick was one of four
+	 * parts whose numbers were wrong (its second part was the film's last hour) and "really bad"
+	 * (a friend, 2026-11-16); its length looked right only by chance. Among equals, a file named
+	 * like the copy playing (EXTENDED, RARBG, BluRay…) goes first, then single files, then fewer parts.
 	 */
 	function byCut(list: SubOption[], length: number): SubOption[] {
 		if (!(length > 600)) return list;
+		const parts = (s: SubOption) => Number(s.fileName.match(/\((\d+) parts joined\)$/)?.[1] ?? 1);
 		const fits = (s: SubOption) => {
 			const early = length - s.lastAt!;
 			if (s.lastAt! > length * 1.05 + 60) return 3;
-			return early <= 16 * 60 ? 0 : early <= 35 * 60 ? 1 : 2;
+			const byLength = early <= 16 * 60 ? 0 : early <= 35 * 60 ? 1 : 2;
+			return Math.min(3, byLength + (parts(s) > 2 ? 1 : 0));
 		};
+		// The copy's release words, leaving out the title's own ("the", "lord", "rings"…).
+		const words = (text: string) => text.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
+		const titleWords = new Set(words(videoTitle));
+		const copyWords = new Set(words(activeFile?.name ?? '').filter((w) => !titleWords.has(w) && !/^(19|20)\d\d$/.test(w) && w !== 'mkv' && w !== 'mp4'));
+		const named = (s: SubOption) => words(s.fileName).filter((w) => copyWords.has(w)).length;
+		// Made for this very release (three of its words or more, "EXTENDED.1080p.BluRay.H264.AAC-RARBG"):
+		// within a long credit roll it's as good as it gets. Return of the King's ended 16.3 minutes
+		// early and went fifth, behind ones a few seconds apart from it after the halfway break.
+		const rank = (s: SubOption) => (named(s) >= 3 && fits(s) <= 1 ? 0 : fits(s));
 		const timed = list.filter((s) => s.lastAt);
-		const ordered = [...timed].sort((a, b) => fits(a) - fits(b));
+		const ordered = [...timed].sort((a, b) => rank(a) - rank(b) || named(b) - named(a) || parts(a) - parts(b));
 		let next = 0;
 		return list.map((s) => (s.lastAt ? ordered[next++] : s));
 	}
@@ -1022,7 +1108,18 @@
 			subtitleDelay = liveAutoDelay;
 			return;
 		}
+		subDelayByHand = false;
 		if (!(subAutoSync && subSync?.backToTiming())) subtitleDelay = 0;
+	}
+	/**
+	 * The delay moved with the Timing buttons: auto-timing leaves it there from now on, for these
+	 * subtitles on this copy, kept with the saved place (owner, 2026-11-16: it put it back). Reset
+	 * and Retime hand it back to auto-timing; other subtitles, an episode or a copy start afresh.
+	 */
+	let subDelayByHand = false;
+	function moveDelayByHand(by: number) {
+		subDelayByHand = true;
+		subtitleDelay = Math.round((subtitleDelay + by) * 10) / 10;
 	}
 	function toggleAutoSync() {
 		subAutoSync = !subAutoSync;
@@ -1034,6 +1131,7 @@
 	function retimeSubs() {
 		showCaptions = false;
 		subtitleDelay = 0;
+		subDelayByHand = false;
 		syncedOnce = false;
 		// A sound track that couldn't be fetched before is tried again.
 		soundTrackFailed = '';
@@ -1523,6 +1621,8 @@
 					// first few minutes of sound are a megabyte or two: once it has a few seconds.)
 					return !videoEl || videoEl.paused || bufferedAhead() > (first ? 8 : 30);
 				});
+				subSync.byHand = () => subDelayByHand;
+				subSync.joins = partsOf;
 				subSync.onRate = (rate) => (subtitleRate = rate);
 				subSync.onDelay = (delay) => {
 					subtitleDelay = delay;
@@ -1530,6 +1630,8 @@
 					syncedOnce = true;
 				};
 				subSync.onMismatch = () => {
+					// Timed by hand: whoever did it made them fit, so they're not swapped for others.
+					if (subDelayByHand) return;
 					// (Told to the owner, where this Catalog is online and reports are on.)
 					fetch('/api/online/report', {
 						method: 'POST',
@@ -3607,6 +3709,9 @@
 		const ct = videoEl.currentTime;
 		const dur = videoEl.duration;
 		if (!dur || !isFinite(dur) || dur < 10 || ct < 3) return null;
+		// Paused, or kept out of sight (Now playing in the corner): friends don't see it as watching
+		// (owner, 2026-11-16). Saves go on every 10 s whatever it's doing, so each one says which.
+		const paused = away || videoEl.paused || videoEl.ended;
 		// A download: its own place (sent from here, as this runs on leaving too), and the title's.
 		if (downloadMode) {
 			if (!downloaded) return null;
@@ -3615,10 +3720,10 @@
 				navigator.sendBeacon(`/api/downloads/${d.id}`, new Blob([JSON.stringify({ place: ct, duration: dur })], { type: 'application/json' }));
 			} catch {}
 			const type = d.kind === 'episode' ? 'tv' : d.kind === 'replay' ? 'replay' : 'movie';
-			return JSON.stringify({ title: d.title, type, season: d.season, episode: d.episode, currentTime: ct, duration: dur, posterUrl: d.poster ?? '' });
+			return JSON.stringify({ title: d.title, type, season: d.season, episode: d.episode, currentTime: ct, duration: dur, posterUrl: d.poster ?? '', paused });
 		}
 		// A replay keeps its place too (Continue Watching, Live TV's Recently watched), by its title.
-		if (replayMode) return JSON.stringify({ title: videoTitle, type: 'replay', season: 0, episode: 0, currentTime: ct, duration: dur, posterUrl: replayPoster });
+		if (replayMode) return JSON.stringify({ title: videoTitle, type: 'replay', season: 0, episode: 0, currentTime: ct, duration: dur, posterUrl: replayPoster, paused });
 		// Marked completed here: saving its place would put it back in Continue Watching.
 		if (markedDone && markedDone === progressKey()) return null;
 		const baseTitle = videoTitle.replace(/ S\d+E\d+$/, '');
@@ -3631,9 +3736,11 @@
 			subDelay: subtitleDelay,
 			// (Auto-timing's speed goes with its delay: one without the other is way out later in.)
 			subRate: subAutoSync ? subtitleRate : 1,
+			subByHand: subDelayByHand,
 			subFileName: subtitlesOn ? activeSubFileName : '',
 			posterUrl: watchPosterUrl,
-			shareKey, fid: activeFileFid
+			shareKey, fid: activeFileFid,
+			paused
 		});
 	}
 
@@ -3738,7 +3845,7 @@
 	}
 
 	/** `fid`: the copy it was saved on (its subtitles' delay and speed were for that copy). */
-	type SavedPlace = { at: number; subUrl?: string; subFileName?: string; subDelay?: number; subRate?: number; fid?: number };
+	type SavedPlace = { at: number; subUrl?: string; subFileName?: string; subDelay?: number; subRate?: number; subByHand?: boolean; fid?: number };
 
 	/**
 	 * Where this video was left, in seconds (0: from the start), with the subtitles saved there.
@@ -3775,7 +3882,7 @@
 			// Left on another copy (a sharper one started this time): copies run a few seconds apart
 			// (Wimpy Kid's Showbox and Movy, 7 s), so a little before, never after, where it was.
 			if (at > 0 && data.fid && activeFile && data.fid !== activeFile.fid) at = Math.max(0, at - 10);
-			return { at, subUrl: data.subUrl, subFileName: data.subFileName, subDelay: data.subDelay, subRate: data.subRate, fid: data.fid };
+			return { at, subUrl: data.subUrl, subFileName: data.subFileName, subDelay: data.subDelay, subRate: data.subRate, subByHand: Boolean(data.subByHand), fid: data.fid };
 		} catch {
 			return { at: handedOver ?? 0 };
 		}
@@ -3808,6 +3915,8 @@
 				}
 			});
 			if (place.subDelay && sameCopy) subtitleDelay = place.subDelay;
+			// Timed by hand last time: still theirs.
+			subDelayByHand = Boolean(place.subByHand && place.subDelay && sameCopy);
 		}
 	}
 
@@ -5285,6 +5394,7 @@
 				// Auto-timing works out this episode's own timing (the last one's was 11 s, this one's
 				// 69 s); without it, the delay set by hand carries on.
 				subtitleDelay = subAutoSync ? 0 : autoMatch.delay;
+				if (subAutoSync) subDelayByHand = false;
 				// Not picked for this episode: when auto-timing hears they don't fit, the others are tried.
 				subsAuto = true;
 			}
@@ -5429,6 +5539,8 @@
 	}
 
 	function showSub(sub: SubOption, cues: Cue[]) {
+		const joins = cueJoins.get(cues);
+		shownJoins = joins ? { count: cues.length, first: cues[0]?.start ?? 0, joins } : null;
 		subtitleCues = cues;
 		subtitlesOn = true;
 		activeSubFid = sub.id;
@@ -5455,10 +5567,19 @@
 			const data = await resp.json();
 			// No lines in it at all counts as not had (so the next one is tried).
 			const cues = data.content ? parseSrt(data.content) : [];
+			// A set joined from parts: where each later part begins, for auto-timing (`partsOf`).
+			if (cues.length && Array.isArray(data.joins) && data.joins.length) cueJoins.set(cues, data.joins);
 			if (cues.length) return cues;
 		} catch {}
 		return null;
 	}
+	/** Downloaded subtitles joined from parts, and where their later parts begin. */
+	const cueJoins = new WeakMap<Cue[], number[]>();
+	/** The subtitles showing, if joined from parts: told apart by their line count and first line. */
+	let shownJoins: { count: number; first: number; joins: number[] } | null = null;
+	/** Where the subtitles showing have their later parts (auto-timing times each on its own); [] for most. */
+	const partsOf = () =>
+		shownJoins && subtitleCues.length === shownJoins.count && subtitleCues[0]?.start === shownJoins.first ? shownJoins.joins : [];
 
 	/* --------------------------------------------------------------- episode names */
 
@@ -5497,6 +5618,8 @@
 	let isAnime = false;
 	/** Settles once it's known whether this is anime (asked as each title opens). */
 	let animeKnown: Promise<boolean> = Promise.resolve(false);
+	/** The title's original language ("en"), from the same answer; '' until known. */
+	let originalLanguage = '';
 	const isJapaneseTrack = (t: { lang?: string; name?: string }) => /^ja/i.test(t.lang ?? '') || /\b(jpn|japanese)\b/i.test(t.name ?? '');
 	const isEnglishTrack = (t: { lang?: string; name?: string }) => /^en/i.test(t.lang ?? '') || /\b(eng|english)\b/i.test(t.name ?? '');
 
@@ -5883,7 +6006,9 @@
 	/** Captions the channel carries, as hls.js reads them out of the video: kept for the last few minutes. */
 	function addLiveCues(cues: { startTime: number; endTime: number; text: string }[]) {
 		for (const cue of cues) {
-			const text = cue.text.trim();
+			// Escaped like every other subtitle (they're drawn as HTML): a channel's stream could put
+			// a script in its captions otherwise (found 2026-11-16).
+			const text = safeSubHtml(cue.text.trim());
 			if (text) liveCues.push({ start: cue.startTime, end: cue.endTime, text, top: false });
 		}
 		const now = videoEl?.currentTime ?? 0;
@@ -6166,6 +6291,10 @@
 					hlsActiveLevel = 0;
 				}
 				if (showboxHeldBack(hls.levels.map((l) => l.height))) return;
+				// A copy only in other languages (once the title's own language is known): another copy.
+				void animeKnown.then(() => {
+					if (hlsInstance === hls) untrack(() => leaveForeignOnly(hls.audioTracks));
+				});
 				videoEl?.addEventListener('loadedmetadata', checkLowQuality, { once: true });
 				switchingEpisode = false;
 				autoplayFired = false;
@@ -6574,6 +6703,8 @@
 		resolveFailed = false;
 		stalledOut = false;
 		streamRefreshes = 0;
+		// Another title: a delay timed by hand was for the one before (its saved place says again).
+		if (lastResolveArgs?.title !== title) subDelayByHand = false;
 		lastResolveArgs = { title, type, year };
 		// Anime starts in Japanese (asked alongside; the audio is put right when it answers), or in
 		// whatever this show was last heard in, as the library keeps it.
@@ -6585,12 +6716,15 @@
 				if (lastResolveArgs?.title === title) serverShowAudio = r.audio ?? '';
 			})
 			.catch(() => {});
+		originalLanguage = '';
+		triedForLanguage.clear();
 		animeKnown = fetch(`/api/watch/is-anime?${new URLSearchParams({ title, type: type === 'movie' ? 'movie' : 'tv', year: year ?? '' })}`)
 			.then((r) => (r.ok ? r.json() : { anime: false }))
-			.then(async (r: { anime?: boolean }) => {
+			.then(async (r: { anime?: boolean; original?: string }) => {
 				await showAudioSoon;
 				if (lastResolveArgs?.title !== title) return false;
 				isAnime = r.anime === true;
+				originalLanguage = (r.original ?? '').toLowerCase();
 				if (isAnime) {
 					applyPreferredAudio();
 					// Picked before this was known: English audio is the dub after all.
@@ -6879,6 +7013,7 @@
 		if (before && (before.source ?? '') === (next.source ?? '') && before.name && before.name === next.name) return;
 		subSync?.reset();
 		subtitleDelay = 0;
+		subDelayByHand = false;
 		syncedOnce = false;
 		if (!subtitlesOn || subtitleCues.length === 0) return;
 		clearTimeout(timingSubsTimer);
@@ -6961,6 +7096,12 @@
 				}, 20000);
 			} else {
 				prevStreamUrl = '';
+				// Tried in place of a copy only in other languages, and it had nothing: the next one, or
+				// "Only copies in Russian so far" (leaveForeignOnly), not "7Movies couldn't play this".
+				if (byItself && activeFile && foreignOnly.has(copyKey(activeFile))) {
+					moveToLanguage();
+					return;
+				}
 				const said = file.source ? cantPlay(file.source, data.debug, 'this one') : 'Could not get that quality.';
 				// Something still playing: it carries on, so a passing message, and the stream info
 				// stays about it. (It was a red line that never went, and "7Movies has nothing for
@@ -8107,18 +8248,18 @@
 								<p class="popup-label">Timing</p>
 								{#if tvMode}
 									<div class="tv-delay">
-										<button class="sub-delay-jump" onclick={() => (subtitleDelay = Math.round((subtitleDelay - 0.5) * 10) / 10)}>Sooner −0.5s</button>
+										<button class="sub-delay-jump" onclick={() => moveDelayByHand(-0.5)}>Sooner −0.5s</button>
 										<span class="sub-delay-value">{subtitleDelay > 0 ? '+' : ''}{subtitleDelay.toFixed(1)}s</span>
-										<button class="sub-delay-jump" onclick={() => (subtitleDelay = Math.round((subtitleDelay + 0.5) * 10) / 10)}>Later +0.5s</button>
+										<button class="sub-delay-jump" onclick={() => moveDelayByHand(0.5)}>Later +0.5s</button>
 										{#if subtitleDelay !== 0}<button class="sub-delay-reset" onclick={resetSubtitleDelay}>Reset</button>{/if}
 									</div>
 								{:else}
 									<div class="menu-delay">
-										<button class="sub-delay-jump" onclick={() => subtitleDelay = Math.round((subtitleDelay - 5) * 10) / 10} title="Show them 5 seconds sooner">−5s</button>
-										<button class="sub-delay-jump" onclick={() => subtitleDelay = Math.round((subtitleDelay - 0.5) * 10) / 10} title="Captions late: show them sooner">−0.5s</button>
+										<button class="sub-delay-jump" onclick={() => moveDelayByHand(-5)} title="Show them 5 seconds sooner">−5s</button>
+										<button class="sub-delay-jump" onclick={() => moveDelayByHand(-0.5)} title="Captions late: show them sooner">−0.5s</button>
 										<span class="sub-delay-value" title="Below 0: before the audio. Above 0: after it.">{subtitleDelay > 0 ? '+' : ''}{subtitleDelay.toFixed(1)}s</span>
-										<button class="sub-delay-jump" onclick={() => subtitleDelay = Math.round((subtitleDelay + 0.5) * 10) / 10} title="Captions early: show them later">+0.5s</button>
-										<button class="sub-delay-jump" onclick={() => subtitleDelay = Math.round((subtitleDelay + 5) * 10) / 10} title="Show them 5 seconds later">+5s</button>
+										<button class="sub-delay-jump" onclick={() => moveDelayByHand(0.5)} title="Captions early: show them later">+0.5s</button>
+										<button class="sub-delay-jump" onclick={() => moveDelayByHand(5)} title="Show them 5 seconds later">+5s</button>
 										<button class="sub-delay-reset" onclick={resetSubtitleDelay} title={subAutoSync ? 'Back to the auto-timing delay' : 'No delay'}>Reset</button>
 									</div>
 								{/if}
@@ -8165,7 +8306,10 @@
 														if (ok) {
 															keepShowSubs(sub);
 															// Timed afresh: the delay of the ones before was for them.
-															if (subAutoSync) subtitleDelay = 0;
+															if (subAutoSync) {
+																subtitleDelay = 0;
+																subDelayByHand = false;
+															}
 														} else if (ok === false) showQualityToast("Those subtitles couldn't be loaded. Try another.");
 													});
 												}}

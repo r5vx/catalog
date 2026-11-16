@@ -464,23 +464,37 @@ function srtTime(seconds: number): string {
 	return `${pad(Math.floor(ms / 3600000))}:${pad(Math.floor(ms / 60000) % 60)}:${pad(Math.floor(ms / 1000) % 60)},${pad(ms % 1000, 3)}`;
 }
 
+/** Where each joined set's later parts begin, in its own time (seconds): `joinsOf`. */
+const joinedAt = new Map<string, number[]>();
+
+/**
+ * Where a joined set's parts after the first begin, once it has been downloaded here: auto-timing
+ * times each part on its own (subtitleAlign.ts `fitParts`). Empty for anything else.
+ */
+export const joinsOf = (url: string): number[] => joinedAt.get(url) ?? [];
+
 /**
  * A set in parts as one file: each part starts where the one before it last spoke. Measured on
  * The Fellowship of the Ring's Extended Edition (2026-11-08): its DVD 2 part, put on after DVD 1's
- * last line, matched a one-file Extended subtitle line for line, 0.5 s out; auto-timing mends a
- * join that far out (it follows jumps of up to 20 s). '' when any part can't be had.
+ * last line, matched a one-file Extended subtitle line for line, 0.5 s out. But it's a guess: two
+ * Two Towers sets joined this way agree for the first 1 h 50 m and then differ by 62 s
+ * (2026-11-16), more than auto-timing follows in one go, so where each part begins is kept
+ * (`joinsOf`) and auto-timing times the parts one by one. '' when any part can't be had.
  */
 async function joinedSubtitle(url: string, lang?: string): Promise<string> {
 	const texts = await Promise.all(url.slice(JOINED.length).split('|').map((part) => downloadSubtitleText(part, undefined, undefined, lang)));
 	if (texts.some((t) => !t)) return '';
 	const all: SrtLine[] = [];
+	const joins: number[] = [];
 	let offset = 0;
 	for (const text of texts) {
 		const lines = srtLines(text);
 		if (!lines.length) return '';
+		if (all.length) joins.push(Math.round(offset * 1000) / 1000);
 		for (const line of lines) all.push({ start: line.start + offset, end: line.end + offset, text: line.text });
 		offset += lines[lines.length - 1].end + 0.5;
 	}
+	joinedAt.set(url, joins);
 	return all.map((line, i) => `${i + 1}\n${srtTime(line.start)} --> ${srtTime(line.end)}\n${line.text}\n`).join('\n');
 }
 

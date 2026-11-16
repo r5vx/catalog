@@ -38,7 +38,6 @@
 	const pm = $derived(page.data.altMode);
 
 	let busyKey = $state<string | null>(null);
-	let showWatchElsewhere = $state(false);
 
 	onMount(() => {
 		if (page.url.searchParams.get('edit') === '1') {
@@ -67,7 +66,6 @@
 	);
 
 	const isAnime = $derived(category?.slug === 'anime' || entry.source === 'anilist');
-	const isMovie = $derived(category?.slug === 'movies');
 
 	const watchType = $derived(watchTypeOf({ categorySlug: category?.slug, sourceId: entry.sourceId, episodesTotal: entry.episodesTotal }));
 	// (Its own copy of the title, so a click below doesn't ask again whether it can be watched.)
@@ -309,15 +307,6 @@
 				contentRating={scores?.contentRating ?? null}
 				loading={looking}
 			/>
-			{#if scoresSettled && !looking && !entry.sourceId}
-				<p class="faint hint why-none">Not matched to a title on TMDB, so there are no ratings or details. Pick it under More details → Wrong match?</p>
-			{:else if scoresSettled && !looking && entry.externalRating == null && entry.rating == null && scores?.imdbRating == null && scores?.rtScore == null && scores?.metascore == null}
-				<p class="faint hint why-none">No ratings yet: TMDB, IMDb, Rotten Tomatoes and Metacritic have none for it.</p>
-			{/if}
-
-			{#if entry.sourceId && entry.source !== 'manual'}
-				<FriendsSeen source={entry.source} sourceId={entry.sourceId} title={entry.title} year={entry.year} />
-			{/if}
 
 			<!-- Where a title's page from Browse has them, so they're in the same place everywhere. -->
 			<div class="title-actions">
@@ -338,40 +327,7 @@
 				{#if watchAvailable === true}
 					<DownloadTitle title={entry.title} type={watchType} year={entry.year} poster={entry.posterUrl} />
 				{/if}
-				<span class="watch-elsewhere-wrap">
-					<button class="btn watch-elsewhere" onclick={() => showWatchElsewhere = !showWatchElsewhere}>
-						Watch elsewhere ▾
-					</button>
-					{#if showWatchElsewhere}
-						<div class="watch-elsewhere-menu">
-							<a
-								class="watch-elsewhere-item"
-								class:disabled={isMovie}
-								href={isMovie ? undefined : `https://www.miruro.tv/search?query=${encodeURIComponent(entry.title)}`}
-								target="_blank"
-								rel="noopener"
-								onclick={() => showWatchElsewhere = false}
-							>
-								Miruro
-								<span class="watch-elsewhere-note">{isMovie ? 'Anime only' : 'Anime'}</span>
-							</a>
-							<a
-								class="watch-elsewhere-item"
-								class:disabled={isAnime}
-								href={isAnime ? undefined : `https://cinejoy.pk/search/${encodeURIComponent(entry.title)}`}
-								target="_blank"
-								rel="noopener"
-								onclick={() => showWatchElsewhere = false}
-							>
-								CineJoy
-								<span class="watch-elsewhere-note">{isAnime ? 'Movies & TV only' : 'Movies & TV'}</span>
-							</a>
-						</div>
-					{/if}
-				</span>
 			</div>
-			{#if inCinemas && watchAvailable === true}<p class="cinema-note">In cinemas: copies online are likely recorded in a cinema</p>{/if}
-			<SourceChecks sources={watchSources} />
 
 			<!-- Your rating, status and progress, beside the poster where they're seen at once. -->
 			{#key data.entry.id}
@@ -381,6 +337,19 @@
 					onsaved={(fields) => (changed = { ...changed, ...fields })}
 				/>
 			{/key}
+
+			<!-- Below your rating, not above it: these come in a moment after the page opens, and above it they
+			     pushed the rating down while you went to click it (owner, 2026-11-16). -->
+			{#if inCinemas && watchAvailable === true}<p class="cinema-note">In cinemas: copies online are likely recorded in a cinema</p>{/if}
+			<SourceChecks sources={watchSources} />
+			{#if scoresSettled && !looking && !entry.sourceId}
+				<p class="faint hint why-none">Not matched to a title on TMDB, so there are no ratings or details. Pick it under More details → Wrong match?</p>
+			{:else if scoresSettled && !looking && entry.externalRating == null && entry.rating == null && scores?.imdbRating == null && scores?.rtScore == null && scores?.metascore == null}
+				<p class="faint hint why-none">No ratings yet: TMDB, IMDb, Rotten Tomatoes and Metacritic have none for it.</p>
+			{/if}
+			{#if entry.sourceId && entry.source !== 'manual'}
+				<FriendsSeen source={entry.source} sourceId={entry.sourceId} title={entry.title} year={entry.year} />
+			{/if}
 
 			{#if progressSummary(entry)}
 				<p class="airing muted">{progressSummary(entry)}</p>
@@ -558,15 +527,19 @@
 		gap: 10px;
 	}
 
+	/* Watch and Download side by side: Download comes in once Watch is known, and stacked under it, it
+	   pushed everything below down. */
 	.title-actions {
 		display: flex;
-		flex-direction: column;
 		gap: 8px;
+		/* As tall as with Download in it (its icon makes it a little taller than Watch). */
+		min-height: 41px;
 		margin-top: 4px;
 		max-width: 360px;
 	}
 
 	.btn-watch {
+		flex: 1;
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
@@ -601,55 +574,6 @@
 	.btn-watch.unavailable:hover,
 	.btn-watch.checking:hover {
 		filter: none;
-	}
-
-	.watch-elsewhere-wrap {
-		position: relative;
-		display: flex;
-		flex-direction: column;
-	}
-
-	.btn.watch-elsewhere {
-		width: 100%;
-	}
-
-	.watch-elsewhere-menu {
-		position: absolute;
-		top: calc(100% + 6px);
-		left: 0;
-		z-index: 20;
-		min-width: 180px;
-		background: var(--paper);
-		border: 1px solid var(--rule);
-		border-radius: var(--radius-sm);
-		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-		padding: 4px 0;
-	}
-
-	.watch-elsewhere-item {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 12px;
-		padding: 8px 14px;
-		text-decoration: none;
-		color: var(--ink);
-		font-size: 0.88rem;
-		cursor: pointer;
-	}
-
-	.watch-elsewhere-item:hover:not(.disabled) {
-		background: var(--hover);
-	}
-
-	.watch-elsewhere-item.disabled {
-		opacity: 0.35;
-		pointer-events: none;
-	}
-
-	.watch-elsewhere-note {
-		font-size: 0.74rem;
-		color: var(--ink-soft);
 	}
 
 	h1 {

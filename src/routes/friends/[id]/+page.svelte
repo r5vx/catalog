@@ -51,6 +51,35 @@
 		await goto(watchHref(w));
 	}
 
+	/*
+	 * Highest rated, all of it or just films, shows or anime. Your own comes with the page; a
+	 * friend's is asked for the first time a chip is pressed (./top), then kept.
+	 */
+	type TopKind = '' | 'movie' | 'tv' | 'anime';
+	let topKind = $state<TopKind>('');
+	let topAsked = $state<Record<string, Titled[]>>({});
+	let topLoading = $state(false);
+	$effect(() => {
+		void person.id;
+		topKind = '';
+		topAsked = {};
+	});
+	const topShown = $derived(topKind === '' ? person.top : (person.topKinds?.[topKind] ?? topAsked[topKind] ?? null));
+	async function pickTop(kind: TopKind) {
+		topKind = kind;
+		if (!kind || person.topKinds || topAsked[kind]) return;
+		topLoading = true;
+		const answer = await fetch(`/friends/${person.id}/top?kind=${kind}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+		topAsked = { ...topAsked, [kind]: answer?.items ?? [] };
+		topLoading = false;
+	}
+	const TOP_KINDS: { kind: TopKind; label: string }[] = [
+		{ kind: '', label: 'All' },
+		{ kind: 'movie', label: 'Films' },
+		{ kind: 'tv', label: 'Shows' },
+		{ kind: 'anime', label: 'Anime' }
+	];
+
 	const added = (title: string, ok: boolean) => (note = ok ? `${title}: ${t('added to Want to watch')}` : t("Couldn't add it"));
 	const label = (w: { title: string; type: string; season: number; episode: number }) => (w.type === 'tv' && w.season ? `${w.title} S${w.season}E${w.episode}` : w.title);
 	/* ---------------------------------------------------------- editing your own */
@@ -456,8 +485,21 @@
 
 	{#if person.top.length}
 		<section>
-			<h2 class="label">{t('Highest rated')}</h2>
-			<TitleShelf items={person.top} onadded={added} />
+			<div class="top-head">
+				<h2 class="label">{t('Highest rated')}</h2>
+				<div class="kinds" role="tablist">
+					{#each TOP_KINDS as one (one.kind)}
+						<button type="button" role="tab" aria-selected={topKind === one.kind} class:on={topKind === one.kind} onclick={() => pickTop(one.kind)}>{t(one.label)}</button>
+					{/each}
+				</div>
+			</div>
+			{#if topShown?.length}
+				<TitleShelf items={topShown} onadded={added} />
+			{:else if topShown || !topLoading}
+				<p class="faint top-none">{t('Nothing rated here yet.')}</p>
+			{:else}
+				<p class="faint top-none">…</p>
+			{/if}
 		</section>
 	{/if}
 
@@ -675,6 +717,46 @@
 	.counts strong {
 		color: var(--ink);
 		font-size: 1.15rem;
+	}
+
+	.top-head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px 14px;
+		margin-bottom: 10px;
+	}
+
+	.top-head .label {
+		margin: 0;
+	}
+
+	.kinds {
+		display: flex;
+		gap: 4px;
+	}
+
+	.kinds button {
+		padding: 3px 11px;
+		border: 1px solid var(--rule);
+		border-radius: 100px;
+		background: none;
+		color: var(--ink-soft);
+		font: inherit;
+		font-size: 0.8rem;
+		cursor: pointer;
+	}
+
+	.kinds button.on {
+		border-color: var(--accent);
+		background: var(--accent-bg);
+		color: var(--ink);
+	}
+
+	/* In place of the posters when that kind has nothing rated. */
+	.top-none {
+		min-height: 3em;
+		margin: 0;
 	}
 
 	.label {

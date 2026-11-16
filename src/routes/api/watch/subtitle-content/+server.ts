@@ -1,5 +1,5 @@
 import { json, error } from '@sveltejs/kit';
-import { downloadSubtitleWhole, isScrambled } from '$lib/server/showbox-subs';
+import { downloadSubtitleWhole, isScrambled, joinsOf } from '$lib/server/showbox-subs';
 import { slimSubtitle } from '$lib/server/subtitleFonts';
 import { keepStyled } from '$lib/server/styledSubtitles';
 import { forgetSubtitle, savedSubtitle, saveSubtitle } from '$lib/server/db/queries';
@@ -31,8 +31,12 @@ export const GET: RequestHandler = async ({ url }) => {
 
 	// A season pack holds every episode, so its copy is only reused for the same episode.
 	const key = season && episode ? `${subUrl}#${season}x${episode}` : subUrl;
+	// A set joined from parts: where each part begins goes with it (`joins`, seconds), kept beside
+	// it, so auto-timing can time the parts one by one. One kept before that was known is fetched again.
+	const joined = subUrl.startsWith('joined:');
+	const keptJoins = joined ? savedSubtitle(`${key}#joins`) : '';
 	const kept = savedSubtitle(key);
-	if (kept && isSubtitles(kept) && !isScrambled(kept)) return json({ content: kept });
+	if (kept && isSubtitles(kept) && !isScrambled(kept) && (!joined || keptJoins)) return json({ content: kept, ...(joined ? { joins: JSON.parse(keptJoins!) } : {}) });
 	// An error page (or a scrambled file) kept by mistake before: thrown away, and fetched again.
 	if (kept) forgetSubtitle(key);
 
@@ -41,6 +45,10 @@ export const GET: RequestHandler = async ({ url }) => {
 	if (whole && isSubtitles(whole)) keepStyled(key, whole);
 	const content = slimSubtitle(whole);
 	if (!content || !isSubtitles(content)) return json({ content: '' });
-	if (show) saveSubtitle(key, show, content);
-	return json({ content });
+	const joins = joined ? joinsOf(subUrl) : [];
+	if (show) {
+		saveSubtitle(key, show, content);
+		if (joined) saveSubtitle(`${key}#joins`, show, JSON.stringify(joins));
+	}
+	return json({ content, ...(joined ? { joins } : {}) });
 };

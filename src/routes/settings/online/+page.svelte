@@ -4,6 +4,7 @@
 	import { page } from '$app/state';
 	import { wording } from '$lib/altText';
 	import Profile from './Profile.svelte';
+	import ServerUse from '$lib/ServerUse.svelte';
 
 	/** A line in the alternate wording when it's on (Settings → Personalization → Code), else as it is. */
 	const t = (text: string) => wording(page.data.altMode, text);
@@ -449,6 +450,7 @@
 
 	<!-- Only where the owner's key is kept. It's typed in the Friends panel's friend's-code box: no box here, so nobody else sees there's a key. -->
 	{#if status.owner}
+		<ServerUse />
 		<section>
 			<h2>Problem reports</h2>
 			{#if reportsProblem}<p class="msg bad">{reportsProblem}</p>{/if}

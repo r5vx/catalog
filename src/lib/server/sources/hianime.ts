@@ -120,6 +120,66 @@ export async function hianimeHas(mal: number, kind: HianimeKind): Promise<boolea
 	return Boolean(stream);
 }
 
+/**
+ * Whether HiAnime has this one episode: true, false (its player says 404), or null when that
+ * can't be told (the site didn't answer).
+ */
+async function hasEpisode(mal: number, episode: number, kind: HianimeKind): Promise<boolean | null> {
+	try {
+		const page = await fetch(`${PLAYER}/stream/mal/${mal}/${episode}/${kind}`, {
+			headers: { 'User-Agent': UA, Accept: 'text/html' },
+			signal: AbortSignal.timeout(10_000)
+		});
+		if (page.status === 404) return false;
+		if (!page.ok) return null;
+		return /window\.__P="/.test(await page.text());
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * How many episodes of this MyAnimeList entry HiAnime has, counting up from episode 1, looked at
+ * up to `upTo`. HiAnime can have only the start of a show: Jungle King Taa-chan has episode 1 of
+ * 50, so episode 50 was listed, picked, and the player waited on nothing (2026-11-15). Found by
+ * asking the last episode needed, then halving (about 6 asks for 50 episodes), and kept: a whole
+ * entry 12 hours, one whose end was found 3 hours (a show still coming out gets more).
+ * When HiAnime doesn't answer, `upTo` (as before: tried when played).
+ */
+export async function hianimeEpisodeCount(mal: number, kind: HianimeKind, upTo: number): Promise<number> {
+	const key = `hianime-count|${mal}|${kind}`;
+	const kept = getOrderCache(key) as { at: number; value: { upTo: number; count: number } } | undefined;
+	let low = 1;
+	if (kept?.value && typeof kept.value.count === 'number') {
+		const { upTo: keptUpTo, count } = kept.value;
+		const ended = count < keptUpTo;
+		const age = Date.now() - kept.at;
+		if (ended && age < 3 * HOUR) return count;
+		if (!ended && age < 12 * HOUR) {
+			if (upTo <= count) return upTo;
+			low = count;
+		}
+	}
+	if (upTo <= low) return upTo;
+	const last = await hasEpisode(mal, upTo, kind);
+	if (last === null) return upTo;
+	let count = upTo;
+	if (!last) {
+		// `low` is there, `high` isn't.
+		let high = upTo;
+		while (high - low > 1) {
+			const middle = Math.floor((low + high) / 2);
+			const there = await hasEpisode(mal, middle, kind);
+			if (there === null) return upTo;
+			if (there) low = middle;
+			else high = middle;
+		}
+		count = low;
+	}
+	saveOrderCache(key, { upTo, count }, Date.now());
+	return count;
+}
+
 async function siteAnswers(): Promise<boolean> {
 	try {
 		const r = await fetch(`${PLAYER}/`, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(8000) });

@@ -21,7 +21,14 @@ const last: Record<'more' | 'main', Outcome | null> = { more: null, main: null }
  * or (`more`) another one (src/lib/server/febboxAccounts.ts). `confirmed`: the window saw it
  * signed in on Febbox's own page; `name`: the account's name or email there.
  */
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, getClientAddress }) => {
+	// Only the desktop app's sign-in window, on this computer: this path skips the PIN, and anyone
+	// on the network could otherwise put their own Febbox account in (found 2026-11-16).
+	let address = '';
+	try {
+		address = getClientAddress();
+	} catch {}
+	if (!onThisComputer(request.headers, address)) return error(403, 'Only from the computer Catalog runs on');
 	const body = (await request.json()) as { token?: string; more?: boolean; confirmed?: boolean; name?: string; stage?: string };
 	const kind = body?.more ? 'more' : 'main';
 	// The window opened, or closed without anyone signed in (no Febbox cookies at all).

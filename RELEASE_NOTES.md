@@ -12,6 +12,71 @@ without both.
 
 ## Unreleased
 
+## 4.5.0 — 2026-11-16 — Friends on the TV and a steadier title page
+
+### New
+
+**TV**
+- Friends on the TV: see who's watching what and watch along, accept friends, add a friend by their code, and see your own code
+- When someone in your watch-together room starts something, the TV asks whether to join
+
+**Friends**
+- Highest rated on a profile can show just films, shows or anime
+
+**Browse**
+- Random can pick from more than one kind at once, like TV shows and anime together
+
+**Settings**
+- Turning a code on or off in Personalization plays a short animation instead of reloading the page
+- Online shows the owner how much the online server is used each day, against its free daily limits
+
+### Improved
+
+**Friends**
+- On your own profile, a title opens its page in your library, where you can change its rating
+- A new rating shows on your profile straight away, and friends see it within half a minute
+- Friends only see what you're watching while it plays, not while it's paused or set aside
+
+**Player**
+- A copy with no sound in the film's own language (or English) is passed over for another copy, so a dubbed cinema recording isn't what plays
+- Subtitle timing you change yourself stays where you put it, even after reopening; Reset hands it back to auto-timing
+- Subtitles made for the very copy playing are picked first
+- Subtitles made of several parts are timed part by part, so a long film's second half lines up too
+
+**Browse**
+- Roll again has the same dice and glow as the Random button
+
+**Library**
+- A title's page no longer jumps around while it loads, so its rating can be changed straight away
+- Watch and Download sit side by side
+- The Watch elsewhere button is gone
+
+**Security**
+- Catalog only answers to this computer's own addresses, so a website can't reach it by pretending to be it
+- Febbox sign-ins are only taken from this computer
+- Only web and email links open outside Catalog
+- Live TV captions are cleaned like every other subtitle
+
+**Settings**
+- Playback's stop log shows the newest five, one line each; press one for its details, or Show all
+
+### Fixed
+
+**Friends**
+- Back from a title opened on a profile, or from the friends feed, returns there instead of to the library
+- Changing a rating no longer puts a title under Watched lately for friends
+
+**Messages**
+- The chat button and Whisper work after going online, without restarting Catalog
+
+**Browse**
+- Trending now with a sort like Most popular shows what's on now, not shows from decades ago
+
+**Player**
+- Subtitles split into many parts no longer go first, as their parts can be in the wrong order
+- Anime that HiAnime has only part of no longer lists HiAnime for the episodes it doesn't have
+- An episode no source answers for says so after a minute and a bit, instead of loading forever
+
 ## 4.4.1 — 2026-11-16 — Debrid, Stremio addons, a new Random, and profile banners
 
 ### New

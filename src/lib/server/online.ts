@@ -249,6 +249,18 @@ export function noteStopped(profile: number): void {
 	void cloud('/v1/presence', { method: 'DELETE', profile });
 }
 
+/**
+ * The video is paused, or the player is kept out of sight: friends stop seeing this profile as
+ * watching (owner, 2026-11-16). Said once (a save comes every 10 s while paused); the year and
+ * room are kept, so pressing play says it all again at the next save.
+ */
+export function notePaused(profile: number): void {
+	if (!said.has(profile)) return;
+	said.delete(profile);
+	if (!onlineConnected() || !onlineSwitches().share) return;
+	void cloud('/v1/presence', { method: 'DELETE', profile });
+}
+
 export function noteWatching(profile: number, what: { title: string; type: string; season: number; episode: number; poster?: string }): void {
 	const switches = onlineSwitches();
 	if (!onlineConnected() || !switches.share) return;
@@ -325,20 +337,22 @@ const ACTIVITY_POSTER = /^https:\/\/(image\.tmdb\.org|s4\.anilist\.co)\//;
 export async function shareActivity(): Promise<void> {
 	if (!onlineConnected() || !onlineSwitches().share) return;
 	for (const { id: profile } of listProfiles()) {
-		type Row = { source: string; id: string; title: string; year: number | null; category: string | null; poster: string | null; rating: number | null; finished: string | null; updated: string };
+		// `watched`: when it was finished (entries.watched_at; profiles' titles: their last change, they have no ratings).
+		type Row = { source: string; id: string; title: string; year: number | null; category: string | null; poster: string | null; rating: number | null; finished: string | null; watched: string | null };
 		const rows = (
 			profile === 0
 				? db
 						.prepare(
-							`SELECT e.source, e.source_id AS id, e.title, e.year, c.slug AS category, e.poster_url AS poster, e.rating, e.finished_on AS finished, e.updated_at AS updated
+							`SELECT e.source, e.source_id AS id, e.title, e.year, c.slug AS category, e.poster_url AS poster, e.rating, e.finished_on AS finished, e.watched_at AS watched
 							 FROM entries e LEFT JOIN categories c ON c.id = e.category_id
 							 WHERE e.source IN ('tmdb', 'anilist') AND e.source_id IS NOT NULL AND e.status IN ${WATCHED_SQL}
-							 ORDER BY COALESCE(e.finished_on, substr(e.updated_at, 1, 10)) DESC, e.updated_at DESC LIMIT 20`
+							   AND (e.watched_at IS NOT NULL OR e.finished_on IS NOT NULL)
+							 ORDER BY COALESCE(e.watched_at, e.finished_on || 'T12:00:00Z') DESC LIMIT 20`
 						)
 						.all()
 				: db
 						.prepare(
-							`SELECT source, source_id AS id, title, year, category, poster_url AS poster, NULL AS rating, NULL AS finished, updated_at AS updated
+							`SELECT source, source_id AS id, title, year, category, poster_url AS poster, NULL AS rating, NULL AS finished, updated_at AS watched
 							 FROM profile_titles WHERE profile = ? AND source IN ('tmdb', 'anilist') AND status IN ${WATCHED_SQL}
 							 ORDER BY updated_at DESC LIMIT 20`
 						)
@@ -346,9 +360,10 @@ export async function shareActivity(): Promise<void> {
 		) as Row[];
 		type Item = { key: string; title: string; year: number | string; type: string; poster: string; rating: number | null; at: number; season?: number; episode?: number };
 		const toItem = (r: Row): Item => {
-			const marked = Date.parse(/[zZ]$/.test(r.updated) ? r.updated : `${r.updated.replace(' ', 'T')}Z`) || 0;
+			const marked = r.watched ? Date.parse(/[zZ]$/.test(r.watched) ? r.watched : `${r.watched.replace(' ', 'T')}Z`) || 0 : 0;
 			const day = r.finished && /^\d{4}-\d{2}-\d{2}$/.test(r.finished) ? r.finished : '';
-			const at = day && new Date(marked).toISOString().slice(0, 10) !== day ? Date.parse(`${day}T12:00:00Z`) : marked;
+			// A rating changed later never moves it: no stamp (finished before the stamp existed) means its finished day.
+			const at = day && (!marked || new Date(marked).toISOString().slice(0, 10) !== day) ? Date.parse(`${day}T12:00:00Z`) : marked;
 			return {
 				key: `${r.source}:${r.id}`,
 				title: r.title,
@@ -373,12 +388,12 @@ export async function shareActivity(): Promise<void> {
 		const showOf =
 			profile === 0
 				? db.prepare(
-						`SELECT e.source, e.source_id AS id, e.title, e.year, c.slug AS category, e.poster_url AS poster, e.rating, NULL AS finished, e.updated_at AS updated
+						`SELECT e.source, e.source_id AS id, e.title, e.year, c.slug AS category, e.poster_url AS poster, e.rating, NULL AS finished, NULL AS watched
 						 FROM entries e LEFT JOIN categories c ON c.id = e.category_id
 						 WHERE lower(e.title) = lower(?) AND e.source IN ('tmdb', 'anilist') AND e.source_id IS NOT NULL AND COALESCE(c.slug, '') != 'movies' LIMIT 1`
 					)
 				: db.prepare(
-						`SELECT source, source_id AS id, title, year, category, poster_url AS poster, NULL AS rating, NULL AS finished, updated_at AS updated
+						`SELECT source, source_id AS id, title, year, category, poster_url AS poster, NULL AS rating, NULL AS finished, NULL AS watched
 						 FROM profile_titles WHERE profile = ? AND lower(title) = lower(?) AND source IN ('tmdb', 'anilist') AND category != 'movies' LIMIT 1`
 					);
 		const done = new Set<string>();
@@ -680,6 +695,31 @@ export function everyRound(round: () => void, firstAfter: number): void {
 
 let started = false;
 
+/** How the library looked at the last look (its newest change and size), and whether a send is under way. */
+let libraryMark = '';
+let sharingNow = false;
+
+/** Shares what's watched (and the feed) when the library changed since the last look: a quick local check. */
+async function shareIfLibraryChanged(): Promise<void> {
+	if (sharingNow || !onlineConnected() || !onlineSwitches().share) return;
+	try {
+		const entries = db.prepare('SELECT max(updated_at) AS at, count(*) AS n FROM entries').get() as { at: string | null; n: number };
+		const others = db.prepare('SELECT max(id) AS id, count(*) AS n FROM profile_titles').get() as { id: number | null; n: number };
+		const mark = `${entries.at}|${entries.n}|${others.id}|${others.n}`;
+		if (mark === libraryMark) return;
+		const first = !libraryMark;
+		libraryMark = mark;
+		// (The first look only notes where things stand: startOnline sends soon after starting anyway.)
+		if (first) return;
+		sharingNow = true;
+		await shareSeen();
+		await shareActivity();
+	} catch {
+	} finally {
+		sharingNow = false;
+	}
+}
+
 /** Says hello, shares what each profile has watched (looked at every 10 minutes, sent when it changed), and keeps the synced profiles in step every two minutes. */
 export function startOnline(): void {
 	if (started || !onlineConnected()) return;
@@ -691,6 +731,9 @@ export function startOnline(): void {
 	// Lately watched, for friends' feed: soon after start, then every 5 minutes (sent only when changed).
 	setTimeout(() => void shareActivity().catch(() => {}), 60_000).unref?.();
 	setInterval(() => void shareActivity().catch(() => {}), 5 * 60 * 1000).unref?.();
+	// A rating or status changed: sent within about 20 s, not at the next 10-minute look (owner,
+	// 2026-11-16: "changed a rating... it took forever" on the profile).
+	setInterval(() => void shareIfLibraryChanged(), 20_000).unref?.();
 	// Progress in step: every 2 minutes while in use, every 10 when not (everyRound above).
 	everyRound(() => {
 		for (const profile of syncProfiles()) void syncNow(profile);

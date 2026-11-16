@@ -28,6 +28,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const packageFile = join(root, 'package.json');
@@ -170,6 +171,10 @@ if (existsSync(join(root, OUT))) {
 		}
 	}
 }
+
+// The web build loads the server code, which opens the library and adds any new columns.
+// Give it a throwaway library so building never touches the real one.
+process.env.CATALOG_DB = join(tmpdir(), 'catalog-build', 'library.db');
 
 console.log('— Building the web app —');
 if (run('npm', ['run', 'build']).status !== 0) {

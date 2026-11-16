@@ -190,7 +190,8 @@ const NEAR = 20; // how far each stretch may differ from that (a longer or short
  * break (HorribleSubs −0.1 s, then −6 s from 7:20), drifting ones (Breaking Bad's HDTV, 1.7 s
  * to 5.7 s) are followed, and files for another episode or another show find no clear stretch.
  */
-export function fitDelays(speech: Float32Array, cues: TimedCue[]): DelayPlan | null {
+export function fitDelays(speech: Float32Array, cues: TimedCue[], joins: number[] = []): DelayPlan | null {
+	if (joins.length) return fitParts(speech, cues, joins);
 	const plan = fitAtRate(speech, cues, 1);
 	if (plan?.fits && plan.clear >= 0.5) return plan;
 	// A musical (`spoken` kept its sung lines): only a clear answer at normal speed counts, and
@@ -215,6 +216,65 @@ export function fitDelays(speech: Float32Array, cues: TimedCue[]): DelayPlan | n
 	return best;
 }
 
+
+/**
+ * Subtitles joined from parts (one per disc or CD, showbox-subs.ts `joinedSubtitle`): `joins` are
+ * where the later parts begin, in the subtitles' own time. Each part is put after the last line
+ * of the one before, which is a guess: the second Two Towers DVD part came out 62 s late in one
+ * set and right in another (2026-11-16), and stretches only look within 20 s of the overall
+ * delay. So each part is timed as subtitles of its own (within 2½ minutes either way, like any
+ * file), all at the speed the first part that fits finds; the change between parts goes in the
+ * quietest moment between them. A part that clearly doesn't fit (a set whose parts were numbered
+ * wrong) makes the whole set not fit; a part not heard enough yet keeps the delay before it.
+ */
+function fitParts(speech: Float32Array, cues: TimedCue[], joins: number[]): DelayPlan | null {
+	const bounds = [-Infinity, ...[...joins].sort((a, b) => a - b), Infinity];
+	const parts = bounds.slice(0, -1).map((from, i) => cues.filter((c) => c.start >= from && c.start < bounds[i + 1])).filter((part) => part.length > 0);
+	if (parts.length < 2) return fitDelays(speech, cues);
+	// The speed: from the first part that fits (DVD parts are all made at the same one).
+	let rate = 1;
+	const plans: (DelayPlan | null)[] = parts.map(() => null);
+	let found = -1;
+	for (let i = 0; i < parts.length && found < 0; i++) {
+		plans[i] = fitDelays(speech, parts[i]);
+		if (plans[i]?.fits) {
+			found = i;
+			rate = (plans[i] as DelayPlan & { fits: true }).rate;
+		}
+	}
+	if (found < 0) return plans.some((p) => p && !p.fits) ? { steps: [], fits: false } : null;
+	for (let i = found + 1; i < parts.length; i++) plans[i] = fitAtRate(speech, parts[i], rate);
+	// (Parts before the first that fits were tried at every speed above: a "doesn't fit" there counts too.)
+	if (plans.some((p) => p && !p.fits)) return { steps: [], fits: false };
+
+	let steps: DelayStep[] = [];
+	let clear = 0;
+	let counted = 0;
+	for (let i = 0; i < parts.length; i++) {
+		const plan = plans[i];
+		if (!plan?.fits) continue;
+		clear += plan.clear;
+		counted++;
+		if (!steps.length) {
+			steps = [...plan.steps];
+			continue;
+		}
+		// Where this part starts in the video, and where the one before it ended.
+		const lastBefore = parts[i - 1][parts[i - 1].length - 1];
+		const firstHere = parts[i][0];
+		const before = lastBefore.end * rate + delayAt(steps, lastBefore.end * rate);
+		const here = firstHere.start * rate + delayAt(plan.steps, firstHere.start * rate);
+		const change = here > before ? quietestBetween(speech, before, here) : (before + here) / 2;
+		steps = steps.filter((s) => s.from < change);
+		const startDelay = delayAt(plan.steps, change);
+		if (Math.abs(startDelay - steps[steps.length - 1].delay) >= 0.1) steps.push({ from: change, delay: startDelay });
+		for (const step of plan.steps) {
+			if (step.from <= change || Math.abs(step.delay - steps[steps.length - 1].delay) < 0.1) continue;
+			steps.push(step);
+		}
+	}
+	return { steps, fits: true, clear: clear / counted, rate };
+}
 
 /** Speeds subtitles are often made for, against the one the video plays at. */
 const RATES = [25 / 23.976, 23.976 / 25, 25 / 24, 24 / 25, 24 / 23.976, 23.976 / 24];

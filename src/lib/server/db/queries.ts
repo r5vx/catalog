@@ -272,6 +272,38 @@ export function recentlyWatchedPosters(): { all: string[]; byCategory: Record<nu
 	return { all: all.map((row) => row.poster), byCategory };
 }
 
+/**
+ * The library's best rated titles, for your own profile's "Highest rated" (read here, so a new
+ * rating shows at once; the meeting point's copy is up to a few seconds behind). Same order as the
+ * meeting point's: rating, then title.
+ */
+/** `kind`: just films, shows or anime, by the library's categories (a profile's chips beside Highest rated). */
+export function topRatedEntries(limit = 12, kind: 'movie' | 'tv' | 'anime' | null = null): { id: number; key: string; title: string; year: string; type: string; poster: string; rating: number }[] {
+	const rows = db
+		.prepare(
+			`SELECT e.id, e.source, e.source_id AS sourceId, e.title, e.year, e.poster_url AS poster, e.rating, c.slug AS category
+			 FROM entries e LEFT JOIN categories c ON c.id = e.category_id
+			 WHERE e.rating IS NOT NULL AND e.status IN ${WATCHED_SQL} ${kind ? 'AND c.slug = ?' : ''}
+			 ORDER BY e.rating DESC, e.title LIMIT ?`
+		)
+		.all(...(kind ? [kind === 'movie' ? 'movies' : kind] : []), limit) as { id: number; source: string; sourceId: string | null; title: string; year: number | null; poster: string | null; rating: number; category: string | null }[];
+	return rows.map((r) => ({
+		id: r.id,
+		key: r.sourceId ? `${r.source}:${r.sourceId}` : `entry:${r.id}`,
+		title: r.title,
+		year: r.year ? String(r.year) : '',
+		type: r.category === 'movies' ? 'movie' : r.category ? 'tv' : '',
+		poster: r.poster ?? '',
+		rating: r.rating
+	}));
+}
+
+/** Each library title's entry number by its key ("tmdb:movie:550"), for links into the library. */
+export function entryIdsByKey(): Map<string, number> {
+	const rows = db.prepare(`SELECT id, source, source_id AS sourceId FROM entries WHERE source_id IS NOT NULL`).all() as { id: number; source: string; sourceId: string }[];
+	return new Map(rows.map((r) => [`${r.source}:${r.sourceId}`, r.id]));
+}
+
 /* -------------------------------------------------------- shared catalogs */
 
 export type SharedCatalog = {
@@ -936,6 +968,8 @@ interface WatchProgress {
 	subFileName: string;
 	/** How fast the subtitles run against the video (auto-timing's rate; 1 for most). */
 	subRate: number;
+	/** The delay was set by hand: auto-timing leaves it alone. */
+	subByHand?: boolean;
 	/** The copy it was saved on (0: not known). */
 	fid?: number;
 }
@@ -953,13 +987,14 @@ export function saveWatchProgress(
 	posterUrl?: string,
 	shareKey?: string,
 	fid?: number,
-	subRate?: number
+	subRate?: number,
+	subByHand?: boolean
 ): void {
 	// No length yet (duration 0) is "started this episode": it moves to the front of Continue
 	// Watching, but a place already saved in it is kept.
 	db.prepare(`
-		INSERT INTO watch_progress (profile, title, type, season, episode, current_time, duration, sub_url, sub_delay, sub_file_name, poster_url, share_key, fid, sub_rate, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		INSERT INTO watch_progress (profile, title, type, season, episode, current_time, duration, sub_url, sub_delay, sub_file_name, poster_url, share_key, fid, sub_rate, sub_by_hand, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 		ON CONFLICT (profile, title, type, season, episode)
 		DO UPDATE SET
 			current_time = CASE WHEN excluded.duration > 0 THEN excluded.current_time ELSE watch_progress.current_time END,
@@ -967,12 +1002,13 @@ export function saveWatchProgress(
 			sub_url = CASE WHEN excluded.duration > 0 THEN excluded.sub_url ELSE watch_progress.sub_url END,
 			sub_delay = CASE WHEN excluded.duration > 0 THEN excluded.sub_delay ELSE watch_progress.sub_delay END,
 			sub_rate = CASE WHEN excluded.duration > 0 THEN excluded.sub_rate ELSE watch_progress.sub_rate END,
+			sub_by_hand = CASE WHEN excluded.duration > 0 THEN excluded.sub_by_hand ELSE watch_progress.sub_by_hand END,
 			sub_file_name = CASE WHEN excluded.duration > 0 THEN excluded.sub_file_name ELSE watch_progress.sub_file_name END,
 			poster_url = CASE WHEN excluded.poster_url != '' THEN excluded.poster_url ELSE watch_progress.poster_url END,
 			share_key = CASE WHEN excluded.share_key != '' THEN excluded.share_key ELSE watch_progress.share_key END,
 			fid = CASE WHEN excluded.fid != 0 THEN excluded.fid ELSE watch_progress.fid END,
 			updated_at = excluded.updated_at
-	`).run(currentProfile(), title, type, season, episode, currentTime, duration, subUrl ?? '', subDelay ?? 0, subFileName ?? '', posterUrl ?? '', shareKey ?? '', fid ?? 0, subRate && subRate > 0.5 && subRate < 2 ? subRate : 1);
+	`).run(currentProfile(), title, type, season, episode, currentTime, duration, subUrl ?? '', subDelay ?? 0, subFileName ?? '', posterUrl ?? '', shareKey ?? '', fid ?? 0, subRate && subRate > 0.5 && subRate < 2 ? subRate : 1, subByHand ? 1 : 0);
 }
 
 export function getWatchProgress(
@@ -982,9 +1018,9 @@ export function getWatchProgress(
 	episode: number
 ): WatchProgress | null {
 	const row = db
-		.prepare('SELECT title, type, season, episode, "current_time" AS currentTime, duration, sub_url AS subUrl, sub_delay AS subDelay, sub_file_name AS subFileName, sub_rate AS subRate, fid FROM watch_progress WHERE profile = ? AND title = ? AND type = ? AND season = ? AND episode = ?')
-		.get(currentProfile(), title, type, season, episode) as WatchProgress | undefined;
-	return row ? { ...row } : null;
+		.prepare('SELECT title, type, season, episode, "current_time" AS currentTime, duration, sub_url AS subUrl, sub_delay AS subDelay, sub_file_name AS subFileName, sub_rate AS subRate, sub_by_hand AS subByHand, fid FROM watch_progress WHERE profile = ? AND title = ? AND type = ? AND season = ? AND episode = ?')
+		.get(currentProfile(), title, type, season, episode) as (Omit<WatchProgress, 'subByHand'> & { subByHand: number }) | undefined;
+	return row ? { ...row, subByHand: row.subByHand === 1 } : null;
 }
 
 export interface SavedShowboxMatch {

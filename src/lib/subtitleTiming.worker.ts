@@ -6,7 +6,8 @@
  * Messages in:
  *   { kind: 'sound', at, samples, fresh }  16 kHz mono from video time `at`; `fresh` = not
  *                                           straight after the last sound sent
- *   { kind: 'cues', cues, round }           the subtitles in use (only the spoken lines);
+ *   { kind: 'cues', cues, joins, round }    the subtitles in use (only the spoken lines);
+ *                                           `joins`: where a joined set's later parts begin;
  *                                           `round` counts changes of subtitles
  *   { kind: 'fit' }                         work out the plan now
  *   { kind: 'best', sets }                  several subtitles' spoken lines: which fits best?
@@ -46,6 +47,8 @@ function model() {
 /** Talking probability for every 32 ms of the video; NaN where it hasn't been heard. */
 let speech: Float32Array = new Float32Array(0);
 let cues: TimedCue[] = [];
+/** Where the subtitles' later parts begin, when they were joined from parts (subtitleAlign `fitParts`). */
+let joins: number[] = [];
 let round = 0;
 let state: Float32Array = new Float32Array(256);
 let previous: Float32Array = new Float32Array(CONTEXT);
@@ -76,6 +79,7 @@ async function handle(message: any): Promise<void> {
 		previous = new Float32Array(CONTEXT);
 	} else if (message.kind === 'cues') {
 		cues = message.cues;
+		joins = Array.isArray(message.joins) ? message.joins : [];
 		round = message.round;
 	} else if (message.kind === 'sound') {
 		await hear(message.at, message.samples, message.fresh);
@@ -95,7 +99,7 @@ async function handle(message: any): Promise<void> {
 	} else if (message.kind === 'dump') {
 		self.postMessage({ kind: 'speech', speech: speech.slice() });
 	} else if (message.kind === 'fit') {
-		self.postMessage({ kind: 'plan', plan: fitDelays(speech, cues), heard: heardSeconds(), round });
+		self.postMessage({ kind: 'plan', plan: fitDelays(speech, cues, joins), heard: heardSeconds(), round });
 	} else if (message.kind === 'best') {
 		// The one with the most stretches clearly lined up (each costs a fit, about a second).
 		const sets: TimedCue[][] = message.sets;

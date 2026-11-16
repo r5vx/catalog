@@ -6,6 +6,7 @@
 	import { DEFAULT_DIM, MAX_DIM, MAX_BLUR } from '$lib/background';
 	import { backgroundPreview } from '$lib/backgroundPreview.svelte';
 	import { codeBox } from '$lib/codeBox.svelte';
+	import WordScramble from '$lib/WordScramble.svelte';
 	import { SORTS, SORT_GROUPS } from '$lib/constants';
 	import type { PageData, ActionData } from './$types';
 
@@ -40,6 +41,8 @@
 	const altMode = $derived((data as any).altMode as boolean);
 	let codeText = $state('');
 	let codeError = $state('');
+	/** Turned on or off: the words on screen jumble into their new wording (lib/WordScramble.svelte), then every page's data is fetched again. */
+	let scrambling = $state<'on' | 'off' | null>(null);
 
 	async function applyCode(off = false) {
 		codeError = '';
@@ -48,7 +51,7 @@
 		else body.set('code', codeText);
 		const resp = await fetch('?/saveCode', { method: 'POST', body, headers: { 'x-sveltekit-action': 'true' } });
 		const answer = await resp.json().catch(() => null);
-		if (answer?.type === 'success') window.location.reload();
+		if (answer?.type === 'success') scrambling = off ? 'off' : 'on';
 		else codeError = 'That code does nothing.';
 	}
 
@@ -528,6 +531,16 @@
 	</div>
 </section>
 <!-- Hidden until Personalization is pressed 7 times in a row (src/lib/codeBox.svelte.ts). -->
+{#if scrambling}
+	<WordScramble
+		turningOn={scrambling === 'on'}
+		refresh={invalidateAll}
+		done={() => {
+			scrambling = null;
+			codeText = '';
+		}}
+	/>
+{/if}
 {#if altMode || codeBox.shown}
 <section>
 	<div class="head"><h2>Code</h2></div>

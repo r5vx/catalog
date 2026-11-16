@@ -145,6 +145,22 @@ function checkSameOrigin(event: RequestEvent): void {
 	}
 }
 
+/**
+ * Visits must call this computer by a name people use for it: an IP address, localhost, a name
+ * with no dots ("desktop-pc"), or a home-network or Tailscale name (.local, .lan, .home, .ts.net…).
+ * A website can point its own name at this computer after its page has loaded (DNS rebinding) and
+ * then read Catalog as if Catalog were part of that website; its visits still carry the website's
+ * name, so they're refused here (2026-11-16).
+ */
+const HOME_NAMES = /\.(local|lan|home|home\.arpa|internal|localdomain|localhost|test|ts\.net)$/i;
+function hostAllowed(hostHeader: string | null): boolean {
+	if (!hostHeader) return true;
+	if (hostHeader.startsWith('[')) return true; // an IPv6 address
+	const name = hostHeader.replace(/:\d+$/, '').toLowerCase();
+	if (/^\d{1,3}(\.\d{1,3}){3}$/.test(name)) return true;
+	return name === 'localhost' || !name.includes('.') || HOME_NAMES.test(name);
+}
+
 /** Where this request is from: the computer Catalog runs on, or another device. */
 function fromThisComputer(event: RequestEvent): boolean {
 	let address = '';
@@ -218,6 +234,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 	// guessed right, which is how it was missed. Kept as https only when something in front
 	// (Tailscale Serve, say) says the visit really was https.
 	event.url.protocol = event.request.headers.get('x-forwarded-proto') === 'https' ? 'https:' : 'http:';
+	if (!hostAllowed(event.request.headers.get('host'))) error(403, "Catalog only answers to this computer's own addresses.");
 	checkSameOrigin(event);
 	noteOwnAddress(event.url);
 	// Someone is using this Catalog (a page, the player, a TV): online syncing keeps its quick pace.

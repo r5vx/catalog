@@ -134,19 +134,48 @@ function lookNowIfStale(): void {
 	if (!document.hidden && !inRoom() && Date.now() - lastLook > ASK_TALKING) void look();
 }
 
-/** Started once, by the root layout: only when this Catalog is online. */
-export async function startChat(): Promise<void> {
-	if (started) return;
-	started = true;
+let running = false;
+let onlineTimer: ReturnType<typeof setInterval> | undefined;
+
+/** Asks this computer (not the meeting point) whether it's online now. */
+async function checkOnline(): Promise<void> {
 	try {
 		const status = await fetch('/api/online?light=1').then((r) => (r.ok ? r.json() : null));
 		chat.online = Boolean(status?.connected);
 	} catch {}
-	if (!chat.online) return;
+}
+
+/** Messages start being asked for (once). */
+async function begin(): Promise<void> {
+	if (running || !chat.online) return;
+	running = true;
+	clearInterval(onlineTimer);
 	await look();
 	lookLater();
 	document.addEventListener('visibilitychange', lookNowIfStale);
 	window.addEventListener('focus', lookNowIfStale);
+}
+
+/** Not online yet: looked at again now (a Whisper press), and the chat starts if it is. */
+async function wake(): Promise<void> {
+	if (running) return;
+	await checkOnline();
+	await begin();
+}
+
+/**
+ * Started once, by the root layout. When this Catalog isn't online yet (joined after it was
+ * opened: a friend's first evening), it looks again every 20 s and on every Whisper press, so the
+ * chat button comes without restarting Catalog. (Only this computer is asked, never the server.)
+ */
+export async function startChat(): Promise<void> {
+	if (started) return;
+	started = true;
+	await checkOnline();
+	if (chat.online) return begin();
+	onlineTimer = setInterval(() => {
+		if (!document.hidden) void wake();
+	}, 20_000);
 }
 
 /** Sends a line: to the room this screen is in (`room` is its code), or a whisper to a friend. */
@@ -196,4 +225,5 @@ export function openChat(to?: { id: string; name: string } | 'room'): void {
 	chat.open = true;
 	// (Opening the box means talking: answers are looked for every 15 s from now.)
 	lastTalk = Date.now();
+	if (!running) void wake();
 }

@@ -41,6 +41,10 @@
 		before?: { secondsBefore: number; what: string }[];
 	};
 	const stops = $derived(data.stops as Stop[]);
+	/** The newest few, one line each (owner, 2026-11-15: the long list pushed the rest of the page down). */
+	const FIRST_SHOWN = 5;
+	let showAllStops = $state(false);
+	const shownStops = $derived(showAllStops ? stops : stops.slice(0, FIRST_SHOWN));
 
 	const when = (iso: string) =>
 		new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -159,13 +163,16 @@
 
 		{#if stops.length}
 			<ul class="stops">
-				{#each stops as stop (stop.at)}
+				{#each shownStops as stop (stop.at)}
 					<li>
-						<div class="top">
-							<b>{stop.title || 'Video'}</b>
-							<span class="faint">{when(stop.at)}{stop.tv ? ' · TV' : ''}</span>
-						</div>
-						<p class="why">{guess(stop)}</p>
+						<details>
+						<summary>
+							<span class="top">
+								<b>{stop.title || 'Video'}</b>
+								<span class="faint">{when(stop.at)}{stop.tv ? ' · TV' : ''}</span>
+							</span>
+							<span class="why">{guess(stop)}</span>
+						</summary>
 						<dl>
 							<dt>Source</dt><dd>{stop.source ?? '—'} · {stop.height ? `${stop.height}p` : (stop.quality ?? '')}{stop.relayed ? ' · through this computer' : ''}</dd>
 							<dt>Loaded ahead</dt><dd>{stop.aheadSeconds ?? '—'} s{stop.pictureAhead != null && stop.soundAhead != null ? ` (picture ${stop.pictureAhead} s, sound ${stop.soundAhead} s)` : ''}</dd>
@@ -193,9 +200,15 @@
 							<dt>Server</dt><dd>{stop.servers?.join(', ') || '—'}</dd>
 							<dt>Also downloading</dt><dd>{[stop.previewsDownloading ? 'preview pictures' : '', stop.hearingSound ? 'sound for auto-timing' : ''].filter(Boolean).join(', ') || 'nothing'}</dd>
 						</dl>
+						</details>
 					</li>
 				{/each}
 			</ul>
+			{#if stops.length > FIRST_SHOWN}
+				<button type="button" class="btn show-all" onclick={() => (showAllStops = !showAllStops)}>
+					{showAllStops ? 'Show fewer' : `Show all ${stops.length}`}
+				</button>
+			{/if}
 		{:else}
 			<p class="faint">None yet.</p>
 		{/if}
@@ -246,8 +259,21 @@
 	}
 
 	.stops li {
-		padding: 12px 0;
 		border-bottom: 1px solid var(--rule);
+	}
+
+	/* One line a stop: title, when, and the likely reason; a press opens the details. */
+	summary {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		padding: 8px 0;
+		cursor: pointer;
+		list-style: none;
+	}
+
+	summary::-webkit-details-marker {
+		display: none;
 	}
 
 	.top {
@@ -258,7 +284,23 @@
 	}
 
 	.why {
-		margin: 4px 0 8px;
+		font-size: 0.88rem;
+		color: var(--ink-faint);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	details[open] .why {
+		white-space: normal;
+	}
+
+	details[open] dl {
+		padding-bottom: 10px;
+	}
+
+	.show-all {
+		align-self: flex-start;
 	}
 
 	dl {

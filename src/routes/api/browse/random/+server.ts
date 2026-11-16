@@ -10,15 +10,24 @@ import type { RequestHandler } from './$types';
  *       `library` lets titles already in the library come up too (left out unless it's 1).
  *   GET ?prefs=1   the window's choices as last left (kept in settings: this app's browser
  *       storage doesn't last, see CATALOG_CONTEXT.md).
- *   POST { kind, deep, library, quick }   keeps them (`quick`: no box to open, the pick at once).
+ *   POST { kinds, deep, library, quick }   keeps them (`quick`: no box to open, the pick at once).
  */
-type Prefs = { kind: 'movies' | 'tv' | 'anime'; deep: boolean; library: boolean; quick: boolean };
+type Kind = 'movies' | 'tv' | 'anime';
+type Prefs = { kinds: Kind[]; deep: boolean; library: boolean; quick: boolean };
+const KINDS: Kind[] = ['movies', 'tv', 'anime'];
+
+/** The kinds kept: one or more (`kinds`), or the single `kind` kept before 2026-11-16. */
+function kindsOf(sent: { kinds?: unknown; kind?: unknown }): Kind[] {
+	const asked = Array.isArray(sent.kinds) ? sent.kinds : [sent.kind];
+	const kinds = KINDS.filter((k) => asked.includes(k));
+	return kinds.length ? kinds : ['movies'];
+}
 
 function prefs(): Prefs | null {
 	try {
-		const saved = JSON.parse(readSettings().randomPrefs ?? 'null') as Partial<Prefs> | null;
+		const saved = JSON.parse(readSettings().randomPrefs ?? 'null') as (Partial<Prefs> & { kind?: string }) | null;
 		if (!saved) return null;
-		return { kind: saved.kind === 'tv' || saved.kind === 'anime' ? saved.kind : 'movies', deep: saved.deep === true, library: saved.library === true, quick: saved.quick === true };
+		return { kinds: kindsOf(saved), deep: saved.deep === true, library: saved.library === true, quick: saved.quick === true };
 	} catch {
 		return null;
 	}
@@ -35,8 +44,8 @@ export const GET: RequestHandler = async ({ url }) => {
 };
 
 export const POST: RequestHandler = async ({ request }) => {
-	const sent = (await request.json().catch(() => ({}))) as Partial<Prefs>;
-	const kept: Prefs = { kind: sent.kind === 'tv' || sent.kind === 'anime' ? sent.kind : 'movies', deep: sent.deep === true, library: sent.library === true, quick: sent.quick === true };
+	const sent = (await request.json().catch(() => ({}))) as Partial<Prefs> & { kind?: string };
+	const kept: Prefs = { kinds: kindsOf(sent), deep: sent.deep === true, library: sent.library === true, quick: sent.quick === true };
 	updateSettings({ randomPrefs: JSON.stringify(kept) });
 	return json({ ok: true });
 };

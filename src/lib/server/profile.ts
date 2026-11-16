@@ -25,7 +25,8 @@ export function withProfile<T>(profile: number, run: () => T): T {
  * this computer too, but Tailscale says who it is for (Tailscale-User-Login, X-Forwarded-For).
  */
 export function onThisComputer(headers: Headers, clientAddress: string): boolean {
-	if (/Electron\//.test(headers.get('user-agent') ?? '')) return true;
+	// By the address only. Being Electron (its user agent) counted too until 2026-11-16, but any
+	// phone or computer on the network can say it's Electron; Catalog's window asks 127.0.0.1 anyway.
 	if (headers.has('tailscale-user-login') || headers.has('x-forwarded-for')) return false;
 	return /^(127\.|::1$|::ffff:127\.)/.test(clientAddress);
 }

@@ -26,7 +26,7 @@ import {
 	type AniwaveEpisode
 } from './aniwave';
 import { searchNexus, nexusEpisodes, nexusSubtitles, type NexusShow, type NexusSubtitle } from './animenexus';
-import { hianimeCopies, hianimeHas } from './hianime';
+import { hianimeCopies, hianimeEpisodeCount, hianimeHas } from './hianime';
 import { malEpisodeOf } from '../metadata/skiptimes';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -429,15 +429,18 @@ export async function hianimeFiles(
 		for (const e of episodes) {
 			spots.push({ e, spot: await malEpisodeOf(title, e.overall).catch(() => null) });
 		}
-		const entries = [...new Set(spots.flatMap((s) => (s.spot ? [s.spot.malId] : [])))];
+		// The last episode wanted of each entry: HiAnime may have only its first few (hianimeEpisodeCount).
+		const wanted = new Map<number, number>();
+		for (const { spot } of spots) if (spot) wanted.set(spot.malId, Math.max(wanted.get(spot.malId) ?? 0, spot.episode));
+		const upTo = async (mal: number, kind: 'sub' | 'dub') =>
+			(await hianimeHas(mal, kind)) ? await hianimeEpisodeCount(mal, kind, wanted.get(mal) ?? 1) : 0;
 		const has = new Map(
-			await Promise.all(
-				entries.map(async (mal) => [mal, { sub: await hianimeHas(mal, 'sub'), dub: await hianimeHas(mal, 'dub') }] as const)
-			)
+			await Promise.all([...wanted.keys()].map(async (mal) => [mal, { sub: await upTo(mal, 'sub'), dub: await upTo(mal, 'dub') }] as const))
 		);
 		for (const { e, spot } of spots) {
 			if (!spot) continue;
-			const files = hianimeCopies(spot.malId, spot.episode, has.get(spot.malId) ?? { sub: false, dub: false });
+			const count = has.get(spot.malId) ?? { sub: 0, dub: 0 };
+			const files = hianimeCopies(spot.malId, spot.episode, { sub: spot.episode <= count.sub, dub: spot.episode <= count.dub });
 			if (files.length) out.set(`${e.season}-${e.episode}`, files);
 		}
 	})().catch((error) => console.warn('[hianime] could not list:', error));

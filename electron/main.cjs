@@ -32,6 +32,31 @@ try {
 const PORT = Number(process.env.CATALOG_PORT || 4173);
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 
+/** A Febbox page (by its real host: "febbox.com" anywhere in an address used to count). */
+function isFebbox(url) {
+	try {
+		const { protocol, hostname } = new URL(url);
+		return protocol === 'https:' && /(^|\.)febbox\.com$/.test(hostname);
+	} catch {
+		return false;
+	}
+}
+
+/*
+ * Every <webview> a page makes (the player's hidden Febbox one) runs without Node and with no
+ * preload of its own, whatever its tag asks for: a page tricked into making one can't reach the
+ * computer through it (2026-11-16).
+ */
+app.on('web-contents-created', (_event, contents) => {
+	contents.on('will-attach-webview', (_e, webPreferences, params) => {
+		delete webPreferences.preload;
+		webPreferences.nodeIntegration = false;
+		webPreferences.nodeIntegrationInSubFrames = false;
+		webPreferences.contextIsolation = true;
+		if (params.src && !/^https:\/\//i.test(params.src)) _e.preventDefault();
+	});
+});
+
 let server = null;
 let window = null;
 
@@ -1578,13 +1603,15 @@ function createWindow() {
 	// "other" account signed in over the main one and was saved as it (2026-11-08).
 	window.webContents.setWindowOpenHandler(({ url }) => {
 		const signIn = { width: 500, height: 700, autoHideMenuBar: true, icon: path.join(__dirname, '..', 'build', 'client', 'icon.ico') };
-		if (url.includes('febbox.com') && url.includes('#catalog-more')) {
+		if (isFebbox(url) && url.includes('#catalog-more')) {
 			const own = new BrowserWindow({ ...signIn, parent: window, webPreferences: { partition: 'febbox-signin' } });
 			watchSignIn(own, url);
 			return { action: 'deny' };
 		}
-		if (url.includes('febbox.com')) return { action: 'allow', overrideBrowserWindowOptions: signIn };
-		if (!url.startsWith(ORIGIN)) shell.openExternal(url);
+		if (isFebbox(url)) return { action: 'allow', overrideBrowserWindowOptions: signIn };
+		// Only web and mail links go to the computer's own programs: any other kind (file:, or a
+		// program's own link type) could start something on the computer (2026-11-16).
+		if (!url.startsWith(ORIGIN) && /^(https?|mailto):/i.test(url)) shell.openExternal(url);
 		return { action: 'deny' };
 	});
 
