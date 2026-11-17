@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import { createFromResult } from '$lib/server/entries';
 import { findOnTmdb } from '$lib/server/linkEntry';
-import { entryIdForSource, entryBasics, setEntryStatus, markEntryCompleted, incrementRewatches, updateSeasonEpisodeReached, deleteEntry, completeProfileTitle, hideCompletedFromContinueWatching, profileTitleReached, deleteProfileTitle, setEntryFields, type QuickFields } from '$lib/server/db/queries';
+import { entryIdForSource, entryBasics, setEntryStatus, markEntryCompleted, markEntryCaughtUp, incrementRewatches, updateSeasonEpisodeReached, deleteEntry, completeProfileTitle, hideCompletedFromContinueWatching, profileTitleReached, deleteProfileTitle, setEntryFields, type QuickFields } from '$lib/server/db/queries';
 import { STATUSES } from '$lib/constants';
 import { showStillAiring } from '$lib/server/stillAiring';
 import { currentProfile, MAIN_PROFILE } from '$lib/server/profile';
@@ -81,7 +81,7 @@ export const PATCH: RequestHandler = async ({ request }) => {
 		}
 		const status = (await showStillAiring(entry.title, entry.year ? String(entry.year) : '')) ? 'caught_up' : 'completed';
 		if (status === 'completed') markEntryCompleted(body.id);
-		else setEntryStatus(body.id, status);
+		else markEntryCaughtUp(body.id);
 		return json({ ok: true, status });
 	} else if (body.action === 'status' && (body.status === 'rewatching' || body.status === 'watching')) {
 		// The player: a watched show started again from earlier on, or a new episode of one.

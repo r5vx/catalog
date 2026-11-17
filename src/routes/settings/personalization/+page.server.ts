@@ -3,6 +3,8 @@ import { backgroundFrom, clampTo, isOwnPicture, DEFAULT_DIM, MAX_DIM, MAX_BLUR }
 import { DEFAULT_ACCENT, isHexColour } from '$lib/accent';
 import { readCustomTheme, CUSTOM_COLOURS } from '$lib/customTheme';
 import { SORTS } from '$lib/constants';
+import { appIconFrom, logoFrom, LOGO_WORDS_MOST, type AppIconChoice } from '$lib/logo';
+import { inDesktopApp, saveAppIcon } from '$lib/server/appIcon';
 import { fail } from '@sveltejs/kit';
 import { createHash } from 'node:crypto';
 import type { PageServerLoad, Actions } from './$types';
@@ -29,9 +31,22 @@ export const load: PageServerLoad = async () => {
 		sideNav: settings.sideNav !== '0',
 		ratingStars: settings.ratingStars === '10' ? 10 : 5,
 		altMode: settings.altMode === '1',
-		background: backgroundFrom(settings)
+		background: backgroundFrom(settings),
+		logo: logoFrom(settings),
+		appIcon: appIconFrom(settings.appIcon),
+		// The app icon is the desktop app's (its windows and shortcuts): only offered there.
+		desktopApp: inDesktopApp()
 	};
 };
+
+/** A PNG sent as a data address, as the page draws the app icon. At most 2 MB. */
+function pngFrom(address: string): Buffer | null {
+	const m = address.match(/^data:image\/png;base64,([A-Za-z0-9+/=]+)$/);
+	if (!m) return null;
+	const png = Buffer.from(m[1], 'base64');
+	const signature = png.subarray(0, 8).toString('hex') === '89504e470d0a1a0a';
+	return signature && png.length < 2 * 1024 * 1024 ? png : null;
+}
 
 export const actions: Actions = {
 	saveAccent: async ({ request }) => {
@@ -108,6 +123,44 @@ export const actions: Actions = {
 		if (form.has('blur')) patch.backgroundBlur = String(clampTo(form.get('blur'), MAX_BLUR, 0));
 		updateSettings(patch);
 		return { backgroundOk: true };
+	},
+
+	/** The logo: Catalog's own, words, or a picture (an address /api/media handed back), and its dot's color. */
+	saveLogo: async ({ request }) => {
+		const form = await request.formData();
+		const kind = String(form.get('kind') ?? '');
+		const words = String(form.get('words') ?? '').trim().slice(0, LOGO_WORDS_MOST);
+		const image = String(form.get('image') ?? '');
+		const dot = String(form.get('dot') ?? '').trim().toLowerCase();
+		if (kind === 'words' && !words) return fail(400, { logoError: 'Type the words first.' });
+		if (kind === 'picture' && !isOwnPicture(image)) return fail(400, { logoError: 'That picture could not be used.' });
+		if (dot && !isHexColour(dot)) return fail(400, { logoError: 'That is not a color.' });
+		updateSettings({
+			logoKind: kind === 'words' || kind === 'picture' ? kind : undefined,
+			logoWords: words || undefined,
+			logoImage: isOwnPicture(image) ? image : undefined,
+			logoDot: dot || undefined
+		});
+		return { logoOk: true };
+	},
+
+	/** The app icon: what was picked, and the picture the page drew from it (none for the pink circle). */
+	saveAppIcon: async ({ request }) => {
+		const form = await request.formData();
+		const kind = String(form.get('kind') ?? 'pink');
+		if (kind === 'pink') {
+			updateSettings({ appIcon: undefined });
+			saveAppIcon(null);
+			return { iconOk: true };
+		}
+		const png = pngFrom(String(form.get('png') ?? ''));
+		if (!png) return fail(400, { iconError: 'That icon could not be made.' });
+		const choice: AppIconChoice = appIconFrom(
+			JSON.stringify({ kind, color: String(form.get('color') ?? ''), image: String(form.get('image') ?? ''), round: form.get('round') !== '0' })
+		);
+		updateSettings({ appIcon: JSON.stringify(choice) });
+		saveAppIcon(png);
+		return { iconOk: true };
 	},
 
 	removeBackground: async () => {

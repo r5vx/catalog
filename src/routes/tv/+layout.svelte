@@ -99,7 +99,7 @@
 	<nav class="tv-nav" data-tv-nav aria-label="Menu" inert={menuOpen}>
 		<!-- The logo: the pink dot while the menu is shut, the whole name once it opens. Not a stop for the remote. -->
 		<div class="brand" aria-hidden="true">
-			<span class="brand-dot"></span>
+			<span class="brand-dot" style:--logo-dot={page.data.logo?.dot || null}></span>
 			{#if page.data.altMode}
 				<span class="brand-full brand-words">{p('Catalog')}</span>
 			{:else}

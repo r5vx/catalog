@@ -54,6 +54,12 @@
 	let season = $state(0);
 	let episodes = $state<Episode[]>([]);
 	let loading = $state(false);
+	/**
+	 * TMDB has the show as one long season and the player's own list isn't known yet: its seasons
+	 * are waited for (8 s at most) rather than showing 60 episodes in a row that then turn into three
+	 * seasons (The Apothecary Diaries, 2026-11-16).
+	 */
+	let holding = $state(false);
 	let row: HTMLElement | undefined = $state();
 
 	// The show's seasons, then (a second later, as on the TV) the player's own list.
@@ -61,12 +67,17 @@
 		const params = new URLSearchParams({ source, id: sourceId, title, year: String(year ?? ''), alt: alt ?? '' });
 		let stale = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
+		let holdTimer: ReturnType<typeof setTimeout> | undefined;
 		show = null;
 		playerList = null;
 		episodes = [];
+		holding = false;
 
 		const useList = (list: PlayerList | null, base: Show) => {
-			if (stale || !list?.seasons?.length) return;
+			if (stale) return;
+			if (list && !list.retryIn) holding = false;
+			if (!list?.seasons?.length) return;
+			holding = false;
 			const same =
 				list.seasons.length === base.seasons.length &&
 				list.seasons.every((s, i) => s.number === base.seasons[i].number && Math.abs(s.count - base.seasons[i].count) <= 2);
@@ -87,6 +98,9 @@
 				playTitle = answer.playTitle;
 				playYear = answer.playYear;
 				continuing = answer.continuing;
+				const regular = base.seasons.filter((s) => s.number > 0);
+				holding = regular.length === 1 && regular[0].count > 30 && !answer.keptList?.seasons?.length;
+				if (holding) holdTimer = setTimeout(() => (holding = false), 8000);
 				show = base;
 				season = base.season;
 				useList(answer.keptList, base);
@@ -99,12 +113,13 @@
 					if (list?.retryIn && ++tries <= 4) timer = setTimeout(ask, Math.min(60, Math.max(5, list.retryIn)) * 1000);
 					useList(list, base);
 				};
-				timer = setTimeout(ask, 1000);
+				timer = setTimeout(ask, holding ? 0 : 1000);
 			})
 			.catch(() => {});
 		return () => {
 			stale = true;
 			clearTimeout(timer);
+			clearTimeout(holdTimer);
 		};
 	});
 
@@ -130,7 +145,10 @@
 		// TMDB has the whole show as one long season (Re:Zero's 85), counted on from the seasons before.
 		const base = untrack(() => show);
 		const same = base?.seasons.find((s) => s.number === wanted && Math.abs(s.count - eps.length) <= 2);
-		const whole = !same && base?.seasons.length === 1 && base.seasons[0].count >= before + eps.length ? base.seasons[0] : null;
+		// (Specials don't count: The Apothecary Diaries is TMDB's one season of 60 plus 57 specials, and
+		// had no pictures at all.)
+		const regular = base?.seasons.filter((s) => s.number > 0) ?? [];
+		const whole = !same && regular.length === 1 && regular[0].count >= before + eps.length ? regular[0] : null;
 		const from = same ?? whole;
 		const tmdb: Episode[] = from
 			? await fetch(`/api/tv/season?${new URLSearchParams({ show: String(base!.showId), season: String(from.number) })}`)
@@ -157,7 +175,7 @@
 		const base = show;
 		const wanted = season;
 		const list = playerList;
-		if (!base || !wanted) return;
+		if (!base || !wanted || holding) return;
 		let stale = false;
 		loading = true;
 		const got = list
@@ -211,7 +229,7 @@
 			{/if}
 		</div>
 
-		{#if seasons.length > 1}
+		{#if seasons.length > 1 && !holding}
 			<div class="seasons">
 				{#each seasons as one (one.number)}
 					<button type="button" class="chip" class:on={season === one.number} onclick={() => (season = one.number)}>
@@ -221,7 +239,7 @@
 			</div>
 		{/if}
 
-		{#if episodes.length}
+		{#if episodes.length && !holding}
 			<ul class="row" bind:this={row}>
 				{#each episodes as ep (ep.episode)}
 					<li data-episode={ep.episode}>
@@ -257,7 +275,7 @@
 					</li>
 				{/each}
 			</ul>
-		{:else if loading}
+		{:else if loading || holding}
 			<p class="note faint">Loading episodes…</p>
 		{/if}
 	</section>

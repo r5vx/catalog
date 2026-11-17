@@ -8,6 +8,7 @@
 const { app, BrowserWindow, shell, Menu, session } = require('electron');
 const { openMini, closeMini } = require('./miniPlayer.cjs');
 const { openYouTube, prepareYouTube, youTubeOpen } = require('./youtubeWindow.cjs');
+const { iconPath, useAppIcon } = require('./appIcon.cjs');
 const { captureYouTube } = require('./youtubeHelper.cjs');
 const { signInWithBrowser, signOutOf, youtubePartition } = require('./youtubeSignIn.cjs');
 const { captureLive } = require('./liveCapture.cjs');
@@ -658,7 +659,6 @@ async function youTubeAccountFor(message) {
 	try { server.send({ type: 'youtube-account-done', profile, result }); } catch {}
 }
 
-const YOUTUBE_ICON = path.join(__dirname, '..', 'build', 'client', 'icon.ico');
 function tellYouTubeState(open) {
 	// Closing Catalog closes YouTube's window after the server has stopped: nobody to tell then.
 	// (Sending anyway was the "JavaScript error" on every close, 2026-11-06.)
@@ -706,6 +706,9 @@ function startServer() {
 			app.quit();
 		}
 
+		// The app icon chosen in Settings → Personalization (electron/appIcon.cjs).
+		if (message?.type === 'app-icon') useAppIcon(message.file ? String(message.file) : null);
+
 		if (message?.type === 'print-pdf') makePdf(message.id, message.path);
 
 		if (message?.type === 'make-strip') makeStrip(String(message.path));
@@ -717,14 +720,14 @@ function startServer() {
 
 		// The mini player (miniPlayer.cjs): opened from the player, and back again.
 		if (message?.type === 'mini-open') {
-			openMini(window, ORIGIN, String(message.path ?? ''), path.join(__dirname, '..', 'build', 'client', 'icon.ico'));
+			openMini(window, ORIGIN, String(message.path ?? ''), iconPath());
 		}
 		if (message?.type === 'mini-back') closeMini(message);
 
 		// YouTube (youtubeWindow.cjs), from Catalog's YouTube page, which is
 		// told when it opens and closes (and asks once when the server starts).
 		// `inside`: over all of Catalog's window instead (the switch on Catalog's YouTube page).
-		if (message?.type === 'youtube-open') openYouTube(YOUTUBE_ICON, tellYouTubeState, { inside: message.inside === true, host: window });
+		if (message?.type === 'youtube-open') openYouTube(iconPath(), tellYouTubeState, { inside: message.inside === true, host: window });
 		if (message?.type === 'youtube-ask') tellYouTubeState(youTubeOpen());
 		if (message?.type === 'youtube-cookies-ask') {
 			for (const profile of Array.isArray(message.profiles) ? message.profiles : [0]) tellYouTubeCookies(profile).catch(() => {});
@@ -1556,7 +1559,7 @@ function createWindow() {
 		autoHideMenuBar: true,
 		// A multi-size .ico so Windows picks the right one instead of
 		// squashing a 512px image down to taskbar size.
-		icon: path.join(__dirname, '..', 'build', 'client', 'icon.ico'),
+		icon: iconPath(),
 		webPreferences: {
 			nodeIntegration: false,
 			contextIsolation: true,
@@ -1602,7 +1605,7 @@ function createWindow() {
 	// Electron gives a window the page opens the page's own cookie store whatever it's told, so the
 	// "other" account signed in over the main one and was saved as it (2026-11-08).
 	window.webContents.setWindowOpenHandler(({ url }) => {
-		const signIn = { width: 500, height: 700, autoHideMenuBar: true, icon: path.join(__dirname, '..', 'build', 'client', 'icon.ico') };
+		const signIn = { width: 500, height: 700, autoHideMenuBar: true, icon: iconPath() };
 		if (isFebbox(url) && url.includes('#catalog-more')) {
 			const own = new BrowserWindow({ ...signIn, parent: window, webPreferences: { partition: 'febbox-signin' } });
 			watchSignIn(own, url);
@@ -1944,7 +1947,7 @@ if (!app.requestSingleInstanceLock()) {
 
 		createWindow();
 		// YouTube's window, loaded hidden for someone who uses it, so it opens at once (youtubeWindow.cjs).
-		setTimeout(() => prepareYouTube(YOUTUBE_ICON, tellYouTubeState, window), 15000);
+		setTimeout(() => prepareYouTube(iconPath(), tellYouTubeState, window), 15000);
 
 		// Quietly, in the background — a new version downloads itself and is
 		// installed when the app next closes. Nothing interrupts you. Looked for again every four

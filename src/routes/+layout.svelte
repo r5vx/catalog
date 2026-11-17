@@ -22,7 +22,8 @@
 	import { applyCustomTheme } from '$lib/customTheme';
 	import { backgroundPreview } from '$lib/backgroundPreview.svelte';
 	import { sendKeptPlaces } from '$lib/phoneKeep.svelte';
-	import { startSwaps, stopSwaps } from '$lib/altSwap';
+	import { peekSwaps, startSwaps, stopSwaps } from '$lib/altSwap';
+	import { listenForPeek, peek } from '$lib/altPeek.svelte';
 	import type { Snippet } from 'svelte';
 	import type { LayoutData } from './$types';
 
@@ -57,12 +58,31 @@
 		document.documentElement.classList.toggle('has-background', Boolean(background));
 	});
 
+	/** Written to the stop log (Settings → Playback) and sent as a problem report, to be looked into. */
+	function playerCrashed(error: unknown) {
+		const err = error instanceof Error ? error : new Error(String(error));
+		console.error('Player crashed', err);
+		fetch('/api/watch/playback-log', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: document.title.replace(/ · .*$/, ''), what: `Player crashed: ${err.message}`.slice(0, 300), stack: String(err.stack ?? '').slice(0, 2000), page: page.url.pathname + page.url.search })
+		}).catch(() => {});
+	}
+
 	// The code's wording on every line, not only the ones a page asks for (src/lib/altSwap.ts).
 	$effect(() => {
 		if (page.data.altMode) startSwaps();
 		else stopSwaps();
 	});
 	onMount(() => stopSwaps);
+	// Holding Ctrl shows the usual words while the code is on (src/lib/altPeek.svelte.ts).
+	$effect(() => {
+		if (page.data.altMode) return listenForPeek();
+	});
+	$effect(() => {
+		const held = peek.held;
+		untrack(() => peekSwaps(held));
+	});
 
 	// On a TV (the Fire TV app), the remote's arrows move around the page.
 	onMount(startTv);
@@ -162,7 +182,22 @@
 	{#if hostedId !== null}
 		{#key hostedId}
 			<div class="kept-player" class:away={!onWatch} inert={!onWatch}>
-				<WatchPlayer away={!onWatch} />
+				<!-- A crash inside the player stays inside it: a friend's Catalog stopped answering every
+				     click while switching Digger's copies (2026-11-16), and needed a restart. -->
+				<svelte:boundary onerror={playerCrashed}>
+					<WatchPlayer away={!onWatch} />
+					{#snippet failed(_error, reset)}
+						{#if onWatch}
+							<div class="player-crashed">
+								<p>The player ran into a problem.</p>
+								<div>
+									<button type="button" class="btn btn-primary" onclick={reset}>Reload the player</button>
+									<a class="btn" href="/">Back to the library</a>
+								</div>
+							</div>
+						{/if}
+					{/snippet}
+				</svelte:boundary>
 			</div>
 		{/key}
 	{/if}
@@ -233,6 +268,24 @@
 	/* On /watch the player is part of the page as before; elsewhere it's kept, out of sight. */
 	.kept-player {
 		display: contents;
+	}
+
+.player-crashed {
+		position: fixed;
+		inset: 0;
+		z-index: 100;
+		display: grid;
+		place-content: center;
+		gap: 14px;
+		text-align: center;
+		background: #000;
+		color: #fff;
+	}
+
+	.player-crashed div {
+		display: flex;
+		gap: 10px;
+		justify-content: center;
 	}
 
 	.kept-player.away {

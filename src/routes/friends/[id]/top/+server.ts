@@ -1,8 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { cloud, onlineConnected } from '$lib/server/online';
 import { currentProfile } from '$lib/server/profile';
-import { tmdbGet } from '$lib/server/metadata/tmdb';
-import { getOrderCache, saveOrderCache } from '$lib/server/db/queries';
+import { isFriendAnime } from '$lib/server/friendAnime';
 import type { Titled } from '../+page.server';
 import type { RequestHandler } from './$types';
 
@@ -15,21 +14,10 @@ import type { RequestHandler } from './$types';
  * ask this: it has the library's own categories (+page.server.ts).
  */
 type Kind = 'movie' | 'tv' | 'anime';
-const MONTH = 30 * 24 * 60 * 60 * 1000;
 const MOST = 12;
 
-async function isAnime(key: string): Promise<boolean> {
-	if (key.startsWith('anilist:')) return true;
-	const m = key.match(/^tmdb:tv:(\d+)$/);
-	if (!m) return false;
-	const kept = getOrderCache(`friend-anime|${key}`);
-	if (kept && Date.now() - kept.at < MONTH) return Boolean(kept.value);
-	const show = await tmdbGet<{ original_language?: string; genres?: { id: number }[] }>(`/tv/${m[1]}`).catch(() => null);
-	if (!show) return false;
-	const anime = show.original_language === 'ja' && Boolean(show.genres?.some((g) => g.id === 16));
-	saveOrderCache(`friend-anime|${key}`, anime, Date.now());
-	return anime;
-}
+/** Marked by a newer Catalog, else looked up (friendAnime.ts). */
+const isAnime = async (item: Titled & { anime?: boolean }) => item.anime ?? (await isFriendAnime(item.key));
 
 export const GET: RequestHandler = async ({ params, url }) => {
 	const kind = url.searchParams.get('kind') as Kind;
@@ -42,7 +30,7 @@ export const GET: RequestHandler = async ({ params, url }) => {
 
 	const items: Titled[] = [];
 	for (const item of rated) {
-		if ((await isAnime(item.key)) === (kind === 'anime')) items.push(item);
+		if ((await isAnime(item)) === (kind === 'anime')) items.push(item);
 		if (items.length >= MOST) break;
 	}
 	return json({ items });

@@ -87,6 +87,15 @@
 		Boolean(data.filters.q || data.filters.cat || data.filters.status || data.filters.tags.length > 0 || data.filters.yearFrom || data.filters.yearTo)
 	);
 
+	/** The filters narrowing the library, in words ("Want to watch", "Comedy", "2010–2019"). */
+	const narrowedBy = $derived(
+		[
+			data.filters.status ? statusLabel(data.filters.status) : '',
+			...data.tags.filter((tag) => data.filters.tags.includes(tag.id)).map((tag) => tag.name),
+			data.filters.yearFrom || data.filters.yearTo ? `${data.filters.yearFrom ?? '…'}–${data.filters.yearTo ?? '…'}` : ''
+		].filter(Boolean)
+	);
+
 	let dismissed = $state<Set<string>>(new Set());
 
 	/** Where a Continue Watching card opens: the player at its place, or a sports replay itself. */
@@ -387,6 +396,15 @@
 		/>
 	</div>
 
+	<!-- A status, tag or year filter on: said plainly, with the way out (a status picked once and
+	     forgotten hid a friend's new titles, 2026-11-16). -->
+	{#if narrowedBy.length && data.entries.length > 0}
+		<p class="narrowed">
+			Showing only {narrowedBy.join(' · ')}
+			<a href="/?status=&tag=&yearFrom=&yearTo={data.filters.cat ? `&cat=${data.filters.cat}` : ''}">Show everything</a>
+		</p>
+	{/if}
+
 	{#if data.entries.length === 0}
 		<div class="empty">
 			{#if isFiltered}
@@ -520,6 +538,20 @@
 
 
 
+
+.narrowed {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 4px 12px;
+		margin: -6px 0 14px;
+		color: var(--ink-soft);
+		font-size: 0.9rem;
+	}
+
+	.narrowed a {
+		color: var(--accent);
+	}
 
 	.toolbar {
 		display: flex;

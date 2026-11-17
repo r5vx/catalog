@@ -254,7 +254,7 @@
 					<li class="line" class:whisper={!message.room} oncontextmenu={(e) => messageMenu(e, message)}>
 						<span class="where">{message.room ? 'Group' : 'Whisper'}</span>
 						<strong>{message.name}:</strong>
-						<span class="text">{message.text}</span>
+						<span class="text" data-plain>{message.text}</span>
 					</li>
 				{/each}
 			</ul>
@@ -266,7 +266,7 @@
 						{#each lines as message (message.id)}
 							<li class="line" class:whisper={!message.room} class:mine={message.mine}>
 								<strong>{message.mine ? 'You' : message.name}:</strong>
-								<span class="text">{message.text}</span>
+								<span class="text" data-plain>{message.text}</span>
 							</li>
 						{/each}
 					</ul>

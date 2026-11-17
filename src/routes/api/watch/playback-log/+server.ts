@@ -18,7 +18,7 @@ const REPORT_FROM_SECONDS = 4;
  * quality change or resume) and "reloaded by itself".
  */
 function worthReporting(seen: Record<string, unknown>): boolean {
-	if (typeof seen.what === 'string') return seen.what.startsWith('Picture froze');
+	if (typeof seen.what === 'string') return seen.what.startsWith('Picture froze') || seen.what.startsWith('Player crashed');
 	const seconds = Number(seen.stoppedSeconds);
 	return seen.ended === 'still' || (Number.isFinite(seconds) && seconds >= REPORT_FROM_SECONDS);
 }

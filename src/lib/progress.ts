@@ -11,6 +11,8 @@ export type ProgressInput = {
 	episodesTotal: number | null;
 	seasonCounts: string | null;
 	showStatus: string | null;
+	/** Caught up means every episode out so far was watched, whatever the counts say. */
+	status?: string | null;
 };
 
 /** Episodes per season, as recorded at the last refresh. */
@@ -30,6 +32,9 @@ function parseCounts(json: string | null): Record<string, number> | null {
  */
 export function episodesBehind(entry: ProgressInput): number | null {
 	const { lastSeason, lastEpisode, episodesTotal } = entry;
+
+	// TMDB counts announced episodes that haven't aired (Dungeon Meshi's season 2 said "1 waiting").
+	if (entry.status === 'caught_up') return 0;
 
 	if (!episodesTotal) return null;
 	if (lastSeason === null && lastEpisode === null) return null;

@@ -33,8 +33,13 @@
 					if (current && Array.isArray(answer?.friends)) take(answer.friends);
 				})
 				.catch(() => {});
-		ask(`/api/online/c/seen?${new URLSearchParams({ key: `${asked.source}:${asked.sourceId}`, title: asked.title })}`, (list) => (online = list));
-		ask(`/api/shared/seen?${new URLSearchParams({ source: asked.source, id: asked.sourceId, title: asked.title, year: String(asked.year ?? '') })}`, (list) => (fromFiles = list));
+		// Online first: a file that is one of those friends under another name is left out by the
+		// computer (a friend's old "Merk" file beside the same person online as "Alex").
+		ask(`/api/online/c/seen?${new URLSearchParams({ key: `${asked.source}:${asked.sourceId}`, title: asked.title })}`, (list) => (online = list)).then(() => {
+			if (!current) return;
+			const params = new URLSearchParams({ source: asked.source, id: asked.sourceId, title: asked.title, year: String(asked.year ?? ''), online: online.map((o) => o.id).join(',') });
+			return ask(`/api/shared/seen?${params}`, (list) => (fromFiles = list));
+		});
 		return () => (current = false);
 	});
 

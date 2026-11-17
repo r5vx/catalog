@@ -437,7 +437,7 @@
 							<li class:mine={message.mine}>
 								<span class="faint small">{clock(message.at)}</span>
 								<strong>{message.mine ? t('You') : message.name}</strong>
-								<span>{message.text}</span>
+								<span data-plain>{message.text}</span>
 							</li>
 						{:else}
 							<li class="faint small">{t('Nothing said yet. Press Enter anywhere, even in the player, to say something.')}</li>

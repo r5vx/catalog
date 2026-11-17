@@ -145,7 +145,7 @@
 					{#if more}<li class="older"><button type="button" class="link" onclick={() => loadConversation(withId, messages[0]?.id ?? 0)}>{t('Older messages')}</button></li>{/if}
 					{#each messages as message (message.id)}
 						<li class:mine={message.from !== picked.id}>
-							<span class="bubble">{message.text}</span>
+							<span class="bubble" data-plain>{message.text}</span>
 							<span class="faint small">{when(message.at)}</span>
 						</li>
 					{:else}

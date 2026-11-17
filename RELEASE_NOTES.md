@@ -12,6 +12,53 @@ without both.
 
 ## Unreleased
 
+## 4.5.1 — 2026-11-17 — Your own logo and app icon
+
+### New
+
+**Settings**
+- Personalization can change the logo: Catalog's own with a dot in any color, your own words, or a picture
+- Personalization can change Catalog's icon on the desktop, the Start menu, the taskbar and its windows: the pink circle, a circle in another color, or a picture
+- With a code on, holding Ctrl shows the usual words until you let go
+
+**Friends**
+- A friend's library has an Anime tab, and can show their Want to watch, Watching, On hold and Dropped
+
+**Titles**
+- A film's page shows the day it came out
+
+### Improved
+
+**Player**
+- Skip Intro and Skip Recap fade away after a few seconds with nothing on screen, and come back when the mouse moves
+- Next Episode waits for the closing credits; with none known, it shows only in the last 40 seconds
+
+**Browse**
+- Random never gives the same title again soon, picks from far more than the most popular few, and the box is a new color every roll
+
+**Settings**
+- The code's wording covers many more lines: profiles, friends, messages, Settings and the player's buttons
+
+### Fixed
+
+**Friends**
+- Profiles open again late in the day, after the online server has had a busy day
+- A friend's library file no longer shows them twice under two names in "watched this"
+- A name in the banner's own color is no longer drawn over the banner
+- Your picture in the top bar comes back by itself after the server didn't answer once
+
+**Player**
+- Skip Intro uses the time most people agree on (Dungeon Meshi's lasted ten seconds too long)
+- A problem inside the player no longer stops every button in Catalog; it offers to reload the player
+
+**Library**
+- A show you're caught up on no longer says "1 episode waiting" for an episode that's only announced, and it counts as just finished
+- A status picked in the library no longer stays on for good, hiding titles added since; it lasts until Catalog closes, says "Showing only …" with Show everything, and the sort is still remembered
+- Titles past the first 1,000 in a big library show up
+
+**Titles**
+- Shows that TMDB keeps as one long season (The Apothecary Diaries) have their episode pictures, and their seasons show without first listing every episode in one row
+
 ## 4.5.0 — 2026-11-16 — Friends on the TV and a steadier title page
 
 ### New

@@ -278,11 +278,28 @@ const SEEN_KEY = /^[a-z]+:[\w:-]+$/;
 const seenSent = new Map<number, string>();
 
 /**
+ * Whether the meeting point keeps every status and the Anime category (`seenAll`, 2026-11-17).
+ * An older one would count a Want to watch title as watched, so until it says so only watched
+ * titles go, as film or show. Asked at most every 10 minutes.
+ */
+let seenAllKnown: { at: number; yes: boolean } | null = null;
+export async function serverKeepsAll(): Promise<boolean> {
+	if (seenAllKnown && Date.now() - seenAllKnown.at < 10 * 60_000) return seenAllKnown.yes;
+	const answer = await cloud<{ seenAll?: number }>('/v1/info', { open: true, timeout: 10_000 });
+	if (!answer.ok) return seenAllKnown?.yes ?? false;
+	seenAllKnown = { at: Date.now(), yes: answer.data?.seenAll === 1 };
+	return seenAllKnown.yes;
+}
+
+/**
  * Every profile's watched titles, for their friends' "watched this" on a title's page. The owner's
  * come from the library, anyone else's from their own list. Sent whole, and only when changed.
  */
 export async function shareSeen(): Promise<void> {
 	if (!onlineConnected() || !onlineSwitches().share) return;
+	// Every status (friends can see Want to watch, Watching…) once the server keeps them apart.
+	const keepsAll = await serverKeepsAll();
+	const which = keepsAll ? '' : `AND status IN ${WATCHED_SQL}`;
 	for (const { id: profile } of listProfiles()) {
 		const rows = (
 			profile === 0
@@ -290,13 +307,13 @@ export async function shareSeen(): Promise<void> {
 						.prepare(
 							`SELECT e.source, e.source_id AS id, e.title, e.rating, e.year, c.slug AS category, e.poster_url AS poster, e.status
 							 FROM entries e LEFT JOIN categories c ON c.id = e.category_id
-							 WHERE e.source != 'manual' AND e.source_id IS NOT NULL AND e.status IN ${WATCHED_SQL} ORDER BY e.id LIMIT 6000`
+							 WHERE e.source != 'manual' AND e.source_id IS NOT NULL ${which.replace('status', 'e.status')} ORDER BY e.id LIMIT 6000`
 						)
 						.all()
 				: db
 						.prepare(
 							`SELECT source, source_id AS id, title, NULL AS rating, year, category, poster_url AS poster, status
-							 FROM profile_titles WHERE profile = ? AND status IN ${WATCHED_SQL} ORDER BY id LIMIT 6000`
+							 FROM profile_titles WHERE profile = ? ${which} ORDER BY id LIMIT 6000`
 						)
 						.all(profile)
 		) as { source: string; id: string; title: string; rating: number | null; year: number | null; category: string | null; poster: string | null; status: string }[];
@@ -307,7 +324,7 @@ export async function shareSeen(): Promise<void> {
 				title: r.title,
 				rating: r.rating,
 				year: r.year ? String(r.year) : '',
-				type: r.category === 'movies' ? 'movie' : r.category ? 'tv' : '',
+				type: r.category === 'movies' ? 'movie' : r.category === 'anime' && keepsAll ? 'anime' : r.category ? 'tv' : '',
 				poster: ACTIVITY_POSTER.test(r.poster ?? '') ? r.poster : '',
 				status: r.status
 			}))
@@ -316,8 +333,12 @@ export async function shareSeen(): Promise<void> {
 		// (A profile with nothing watched that never sent anything has nothing to take back either.)
 		if (seenSent.get(profile) === now || (!items.length && !seenSent.has(profile) && profile !== 0)) continue;
 		let ok = true;
+		// (The server writes only what changed. `all`, with the first part, tells it which titles left
+		// the list, which it can't tell by itself when the list comes in more than one part.)
+		const all = items.length > 300 ? items.map((i) => i.key) : undefined;
 		for (let at = 0; (at < items.length || at === 0) && ok; at += 300) {
-			ok = (await cloud('/v1/seen', { method: 'PUT', profile, body: { reset: at === 0, add: items.slice(at, at + 300) }, timeout: 30_000 })).ok;
+			const body = { reset: at === 0, add: items.slice(at, at + 300), ...(at === 0 && all ? { all } : {}) };
+			ok = (await cloud('/v1/seen', { method: 'PUT', profile, body, timeout: 30_000 })).ok;
 		}
 		if (ok) seenSent.set(profile, now);
 	}

@@ -13,8 +13,11 @@
  */
 import { swapFor } from '$lib/altText';
 
-/** Never touched: typing, the notes editor, code, and anything marked `data-plain`. */
-const LEAVE_ALONE = 'script, style, textarea, input, [contenteditable], [data-plain], code, pre';
+/**
+ * Never touched: typing, the notes editor, code, and anything marked `data-plain`; and what people
+ * wrote or said (subtitles, chat, notes), where a "No" is somebody's line, not a button.
+ */
+const LEAVE_ALONE = 'script, style, textarea, input, [contenteditable], [data-plain], code, pre, .subtitle-display';
 /** Longer than this is somebody's writing, not a button. */
 const LONGEST = 160;
 
@@ -81,6 +84,18 @@ export function stopSwaps(): void {
 export function pauseSwaps(on: boolean): void {
 	paused = on;
 	if (!on && observer) swapAll(document.body);
+}
+
+/** Ctrl held (altPeek.svelte.ts): the swapped lines show their usual words until it's let go. */
+export function peekSwaps(on: boolean): void {
+	if (!observer) return;
+	if (on) {
+		paused = true;
+		for (const node of swapped) {
+			const was = written.get(node);
+			if (was && node.isConnected && node.nodeValue === was.to) node.nodeValue = was.from;
+		}
+	} else pauseSwaps(false);
 }
 
 /** Whether this line was ever swapped here (the scramble leaves those to this). */

@@ -4,11 +4,13 @@
 	import BackBar from '$lib/BackBar.svelte';
 	import TitleShelf from '$lib/TitleShelf.svelte';
 	import { wording } from '$lib/altText';
+	import { STATUSES, isWatched } from '$lib/constants';
 
 	/**
-	 * Everything a friend has watched (their Catalog shares it while "Friends see what's being
-	 * watched" is on), 120 at a time: films or shows, by rating, name or year, and a search.
-	 * Right-click a title to add it to Want to watch.
+	 * A friend's library (their Catalog shares it while "Friends see what's being watched" is on),
+	 * 120 at a time: films, shows or anime; watched, Want to watch or another status (when their
+	 * Catalog and the server are new enough to send them); by rating, name or year, and a search.
+	 * Right-click a title to add it to your Want to watch.
 	 */
 	let { data } = $props();
 	const t = (text: string) => wording(page.data.altMode, text);
@@ -17,7 +19,10 @@
 
 	let items = $state<Item[]>([]);
 	let total = $state(0);
-	let kind = $state<'' | 'movie' | 'tv'>('');
+	let kind = $state<'' | 'movie' | 'tv' | 'anime'>('');
+	let status = $state('watched');
+	/** Whether the server keeps statuses apart (else only watched titles are there). */
+	let statuses = $state(false);
 	let sort = $state<'rating' | 'title' | 'year'>('rating');
 	let search = $state('');
 	let loading = $state(true);
@@ -28,10 +33,10 @@
 	async function load(more = false) {
 		const mine = ++asked;
 		loading = true;
-		const params = new URLSearchParams({ sort, offset: String(more ? items.length : 0) });
-		if (kind) params.set('type', kind);
+		const params = new URLSearchParams({ sort, status, offset: String(more ? items.length : 0) });
+		if (kind) params.set('kind', kind);
 		if (search.trim()) params.set('q', search.trim());
-		const answer = await fetch(`/api/online/c/people/${data.person.id}/library?${params}`)
+		const answer = await fetch(`/friends/${data.person.id}/titles?${params}`)
 			.then((r) => (r.ok ? r.json() : null))
 			.catch(() => null);
 		if (mine !== asked) return;
@@ -39,11 +44,13 @@
 		if (!answer) return;
 		items = more ? [...items, ...answer.items] : answer.items;
 		total = answer.total;
+		statuses = Boolean(answer.statuses);
 	}
 
 	$effect(() => {
 		void kind;
 		void sort;
+		void status;
 		void data.person.id;
 		void load();
 	});
@@ -72,7 +79,17 @@
 		<button type="button" role="tab" aria-selected={kind === ''} class:on={kind === ''} onclick={() => (kind = '')}>{t('All')}</button>
 		<button type="button" role="tab" aria-selected={kind === 'movie'} class:on={kind === 'movie'} onclick={() => (kind = 'movie')}>{t('Films')}</button>
 		<button type="button" role="tab" aria-selected={kind === 'tv'} class:on={kind === 'tv'} onclick={() => (kind = 'tv')}>{t('Shows')}</button>
+		<button type="button" role="tab" aria-selected={kind === 'anime'} class:on={kind === 'anime'} onclick={() => (kind = 'anime')}>{t('Anime')}</button>
 	</div>
+	{#if statuses}
+		<select bind:value={status} aria-label="Status">
+			<option value="watched">{t('alt:Watched')}</option>
+			{#each STATUSES.filter((s) => !isWatched(s.value)) as option (option.value)}
+				<option value={option.value}>{t(option.label)}</option>
+			{/each}
+			<option value="all">{t('Everything')}</option>
+		</select>
+	{/if}
 	<select bind:value={sort} aria-label="Sort">
 		<option value="rating">{t('Highest rated')}</option>
 		<option value="title">{t('Name')}</option>

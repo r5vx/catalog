@@ -88,7 +88,15 @@
 		open = false;
 	}
 
+	/** The box's own color, another one every roll (owner, 2026-11-16): a hue well away from the last. */
+	let boxHue = $state(Math.floor(Math.random() * 360));
+	const boxColor = $derived(`hsl(${boxHue} 68% 56%)`);
+	function newBoxColor() {
+		boxHue = (boxHue + 60 + Math.floor(Math.random() * 240)) % 360;
+	}
+
 	function reset() {
+		newBoxColor();
 		phase = 'idle';
 		pick = null;
 		problem = '';
@@ -229,6 +237,7 @@
 					<button
 						type="button"
 						class="crate"
+						style:--box={boxColor}
 						class:shaking={phase === 'shaking'}
 						class:opening={phase === 'opening'}
 						bind:this={crateEl}
@@ -455,19 +464,19 @@
 	}
 
 	.body-top {
-		stop-color: color-mix(in srgb, var(--accent) 88%, white);
+		stop-color: color-mix(in srgb, var(--box, var(--accent)) 88%, white);
 	}
 
 	.body-bottom {
-		stop-color: color-mix(in srgb, var(--accent) 62%, black);
+		stop-color: color-mix(in srgb, var(--box, var(--accent)) 62%, black);
 	}
 
 	.lid-top {
-		stop-color: color-mix(in srgb, var(--accent) 70%, white);
+		stop-color: color-mix(in srgb, var(--box, var(--accent)) 70%, white);
 	}
 
 	.lid-bottom {
-		stop-color: color-mix(in srgb, var(--accent) 80%, black);
+		stop-color: color-mix(in srgb, var(--box, var(--accent)) 80%, black);
 	}
 
 	.ribbon,

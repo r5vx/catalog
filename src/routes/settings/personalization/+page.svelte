@@ -8,6 +8,8 @@
 	import { codeBox } from '$lib/codeBox.svelte';
 	import WordScramble from '$lib/WordScramble.svelte';
 	import { SORTS, SORT_GROUPS } from '$lib/constants';
+	import { LOGO_WORDS_MOST, PINK } from '$lib/logo';
+	import Wordmark from '$lib/Wordmark.svelte';
 	import type { PageData, ActionData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -203,6 +205,135 @@
 		await invalidateAll();
 	}
 
+	/* ---------------------------------------------------------------- logo (src/lib/logo.ts) */
+
+	let logoKind = $state(untrack(() => data.logo.kind));
+	let logoWords = $state(untrack(() => data.logo.words));
+	let logoDot = $state(untrack(() => data.logo.dot || PINK));
+	let logoError = $state('');
+	let logoUploading = $state(false);
+
+	/** Saves the logo with any of its parts changed, then every page shows it. */
+	async function saveLogo(change: { kind?: string; words?: string; image?: string; dot?: string }) {
+		logoError = '';
+		const body = new FormData();
+		body.set('kind', change.kind ?? logoKind);
+		body.set('words', change.words ?? logoWords);
+		body.set('image', change.image ?? data.logo.image);
+		body.set('dot', change.dot ?? data.logo.dot);
+		const resp = await fetch('?/saveLogo', { method: 'POST', body, headers: { 'x-sveltekit-action': 'true' } });
+		const answer = await resp.json().catch(() => null);
+		if (answer?.type !== 'success') logoError = "That logo couldn't be saved.";
+		await invalidateAll();
+	}
+
+	function chooseLogoKind(kind: 'catalog' | 'words' | 'picture') {
+		logoKind = kind;
+		// Words and a picture are saved once there are words or a picture to show.
+		if (kind === 'catalog' || (kind === 'words' && logoWords.trim()) || (kind === 'picture' && data.logo.image)) void saveLogo({ kind });
+	}
+
+	/** A picture of your own, stored on this computer like the background. */
+	async function uploadPicture(event: Event): Promise<string | null> {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		input.value = '';
+		if (!file || file.size > 20 * 1024 * 1024) return null;
+		const body = new FormData();
+		body.set('file', file);
+		const resp = await fetch('/api/media', { method: 'POST', body }).catch(() => null);
+		if (!resp?.ok) return null;
+		return ((await resp.json()) as { url: string }).url;
+	}
+
+	async function chooseLogoPicture(event: Event) {
+		logoUploading = true;
+		const url = await uploadPicture(event);
+		logoUploading = false;
+		if (url) await saveLogo({ kind: 'picture', image: url });
+		else logoError = 'That picture could not be used.';
+	}
+
+	/* ---------------------------------------------------------------- app icon (desktop app only) */
+
+	let iconKind = $state(untrack(() => data.appIcon.kind));
+	let iconColor = $state(untrack(() => data.appIcon.color));
+	let iconImage = $state(untrack(() => data.appIcon.image));
+	let iconRound = $state(untrack(() => data.appIcon.round));
+	let iconError = $state('');
+	let iconBusy = $state(false);
+	let iconSaved = $state(false);
+
+	/** The icon drawn at 256 px: a circle in the color, or the picture cut to a square (round or not). */
+	async function drawIcon(): Promise<string> {
+		const canvas = document.createElement('canvas');
+		canvas.width = canvas.height = 256;
+		const ctx = canvas.getContext('2d')!;
+		if (iconKind === 'color') {
+			ctx.fillStyle = iconColor;
+			ctx.beginPath();
+			ctx.arc(128, 128, 126, 0, Math.PI * 2);
+			ctx.fill();
+		} else {
+			const picture = new Image();
+			picture.src = iconImage;
+			await picture.decode();
+			const width = picture.naturalWidth || 256;
+			const height = picture.naturalHeight || 256;
+			const side = Math.min(width, height);
+			if (iconRound) {
+				ctx.beginPath();
+				ctx.arc(128, 128, 126, 0, Math.PI * 2);
+				ctx.clip();
+			}
+			ctx.drawImage(picture, (width - side) / 2, (height - side) / 2, side, side, 0, 0, 256, 256);
+		}
+		return canvas.toDataURL('image/png');
+	}
+
+	async function saveIcon() {
+		iconBusy = true;
+		iconError = '';
+		iconSaved = false;
+		try {
+			const body = new FormData();
+			body.set('kind', iconKind);
+			if (iconKind !== 'pink') {
+				body.set('png', await drawIcon());
+				body.set('color', iconColor);
+				body.set('image', iconImage);
+				body.set('round', iconRound ? '1' : '0');
+			}
+			const resp = await fetch('?/saveAppIcon', { method: 'POST', body, headers: { 'x-sveltekit-action': 'true' } });
+			const answer = await resp.json().catch(() => null);
+			if (answer?.type === 'success') iconSaved = true;
+			else iconError = "That icon couldn't be saved.";
+		} catch {
+			iconError = 'That picture could not be used.';
+		} finally {
+			iconBusy = false;
+		}
+	}
+
+	function chooseIconKind(kind: 'pink' | 'color' | 'picture') {
+		iconKind = kind;
+		// A picture is saved once there is one.
+		if (kind !== 'picture' || iconImage) void saveIcon();
+	}
+
+	async function chooseIconPicture(event: Event) {
+		iconBusy = true;
+		const url = await uploadPicture(event);
+		iconBusy = false;
+		if (!url) {
+			iconError = 'That picture could not be used.';
+			return;
+		}
+		iconImage = url;
+		iconKind = 'picture';
+		await saveIcon();
+	}
+
 	const isHex = (v: string) => /^#[0-9a-f]{6}$/i.test(v.trim());
 
 	function pick(value: string) {
@@ -346,6 +477,100 @@
 		</div>
 	{/if}
 </section>
+
+<section>
+	<div class="head"><h2>Logo</h2></div>
+	<p class="muted">At the top of the sidebar, the library and the TV menu.</p>
+
+	{#if logoError}<p class="msg bad" role="alert">{logoError}</p>{/if}
+
+	<div class="layout-options">
+		<button type="button" class="layout-card" class:picked={logoKind === 'catalog'} onclick={() => chooseLogoKind('catalog')}>
+			<span class="logo-preview"><Wordmark height="1.4rem" catalog dot={logoDot} /></span>
+			<span class="layout-label">Catalog</span>
+		</button>
+		<button type="button" class="layout-card" class:picked={logoKind === 'words'} onclick={() => chooseLogoKind('words')}>
+			<span class="logo-preview logo-words">{logoWords.trim() || 'Your words'}</span>
+			<span class="layout-label">Words</span>
+		</button>
+		<button type="button" class="layout-card" class:picked={logoKind === 'picture'} onclick={() => chooseLogoKind('picture')}>
+			<span class="logo-preview">
+				{#if data.logo.image}<img src={data.logo.image} alt="" />{:else}<span class="faint">No picture yet</span>{/if}
+			</span>
+			<span class="layout-label">Picture</span>
+		</button>
+	</div>
+
+	{#if logoKind === 'catalog'}
+		<div class="logo-row">
+			<input type="color" aria-label="Pick the dot's color" bind:value={logoDot} onchange={() => saveLogo({ dot: logoDot })} />
+			<span>Dot color</span>
+			{#if data.logo.dot}
+				<button type="button" class="btn" onclick={() => { logoDot = PINK; void saveLogo({ dot: '' }); }}>Reset</button>
+			{/if}
+		</div>
+	{:else if logoKind === 'words'}
+		<form class="logo-row" onsubmit={(e) => { e.preventDefault(); if (logoWords.trim()) void saveLogo({ kind: 'words' }); }}>
+			<input type="text" bind:value={logoWords} maxlength={LOGO_WORDS_MOST} placeholder="Your words" aria-label="The logo's words" />
+			<button type="submit" class="btn" disabled={!logoWords.trim()}>Use these words</button>
+		</form>
+	{:else}
+		<div class="logo-row">
+			<label class="btn" class:disabled={logoUploading}>
+				{logoUploading ? 'Uploading…' : data.logo.image ? 'Change picture' : 'Choose picture'}
+				<input type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.avif,.svg" onchange={chooseLogoPicture} disabled={logoUploading} hidden />
+			</label>
+			<span class="faint">A wide picture with a see-through background looks best.</span>
+		</div>
+	{/if}
+</section>
+
+{#if data.desktopApp}
+	<section>
+		<div class="head"><h2>App icon</h2></div>
+		<p class="muted">On the desktop shortcut, the Start menu, the taskbar and Catalog's windows.</p>
+
+		{#if iconError}<p class="msg bad" role="alert">{iconError}</p>{/if}
+
+		<div class="layout-options">
+			<button type="button" class="layout-card" class:picked={iconKind === 'pink'} onclick={() => chooseIconKind('pink')}>
+				<span class="icon-preview"><span class="icon-circle" style:background={PINK}></span></span>
+				<span class="layout-label">Pink circle</span>
+			</button>
+			<button type="button" class="layout-card" class:picked={iconKind === 'color'} onclick={() => chooseIconKind('color')}>
+				<span class="icon-preview"><span class="icon-circle" style:background={iconColor}></span></span>
+				<span class="layout-label">Color</span>
+			</button>
+			<button type="button" class="layout-card" class:picked={iconKind === 'picture'} onclick={() => chooseIconKind('picture')}>
+				<span class="icon-preview">
+					{#if iconImage}<img src={iconImage} alt="" class:round={iconRound} />{:else}<span class="faint">No picture yet</span>{/if}
+				</span>
+				<span class="layout-label">Picture</span>
+			</button>
+		</div>
+
+		{#if iconKind === 'color'}
+			<div class="logo-row">
+				<input type="color" aria-label="Pick the icon's color" bind:value={iconColor} onchange={saveIcon} />
+				<span>Circle color</span>
+			</div>
+		{:else if iconKind === 'picture'}
+			<div class="logo-row">
+				<label class="btn" class:disabled={iconBusy}>
+					{iconBusy ? 'Saving…' : iconImage ? 'Change picture' : 'Choose picture'}
+					<input type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.avif,.svg" onchange={chooseIconPicture} disabled={iconBusy} hidden />
+				</label>
+				{#if iconImage}
+					<label class="logo-check">
+						<input type="checkbox" bind:checked={iconRound} onchange={saveIcon} />
+						Round
+					</label>
+				{/if}
+			</div>
+		{/if}
+		{#if iconSaved}<p class="faint hint" role="status">The taskbar can take a moment to change.</p>{/if}
+	</section>
+{/if}
 
 <section>
 	<div class="head"><h2>Layout</h2></div>
@@ -862,6 +1087,71 @@
 
 	.theme-desc {
 		font-size: 0.72rem;
+	}
+
+	/* Logo and app icon */
+	.logo-preview,
+	.icon-preview {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		height: 44px;
+		max-width: 100%;
+		overflow: hidden;
+	}
+
+	.logo-preview img {
+		max-height: 36px;
+		max-width: 140px;
+		object-fit: contain;
+	}
+
+	.logo-words {
+		font-weight: 800;
+		letter-spacing: -0.03em;
+		font-size: 1.15rem;
+		white-space: nowrap;
+		text-overflow: ellipsis;
+	}
+
+	.icon-circle {
+		width: 36px;
+		height: 36px;
+		border-radius: 50%;
+	}
+
+	.icon-preview img {
+		width: 36px;
+		height: 36px;
+		object-fit: cover;
+		border-radius: 6px;
+	}
+
+	.icon-preview img.round {
+		border-radius: 50%;
+	}
+
+	.logo-row {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		flex-wrap: wrap;
+		margin-top: 12px;
+	}
+
+	.logo-row input[type='text'] {
+		width: min(100%, 16em);
+	}
+
+	.logo-row .disabled {
+		opacity: 0.6;
+		pointer-events: none;
+	}
+
+	.logo-check {
+		display: flex;
+		align-items: center;
+		gap: 6px;
 	}
 
 	.background-row {

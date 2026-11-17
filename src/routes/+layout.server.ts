@@ -4,6 +4,7 @@ import { currentProfile, onThisComputer } from '$lib/server/profile';
 import { countNotes } from '$lib/server/db/notes';
 import { DEFAULT_ACCENT, isHexColour } from '$lib/accent';
 import { backgroundFrom } from '$lib/background';
+import { logoFrom } from '$lib/logo';
 import { readCustomTheme } from '$lib/customTheme';
 import { warmBrowseCache, hasTmdbKey } from '$lib/server/metadata';
 import { showboxSignin } from '$lib/server/showboxSignin';
@@ -81,6 +82,8 @@ export const load: LayoutServerLoad = async ({ request, getClientAddress }) => {
 		sideNav,
 		altMode: settings.altMode === '1',
 		background: backgroundFrom(settings),
+		// Your own logo, or Catalog's (Settings → Personalization → Logo).
+		logo: logoFrom(settings),
 		showboxSignin: showboxSignin(),
 		whoIsWatching: whoIsWatching(request, getClientAddress)
 	};

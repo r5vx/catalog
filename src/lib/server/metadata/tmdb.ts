@@ -504,6 +504,22 @@ function seriesGenreParams(genre: number, anime = false, without = ''): Record<s
  * rated, a random page of TMDB's most popular, so it's something the sources will have, not a
  * 1920s film nobody streams. `skip` (keys already in the library) is left out when it can be.
  */
+/**
+ * What Random gave lately, never given again soon (owner, 2026-11-16: a friend rolling fast got
+ * Frieren three times). The last 60 picks, any kind.
+ */
+const recentPicks: string[] = [];
+function notedPick(pick: SearchResult | null): SearchResult | null {
+	if (pick) {
+		recentPicks.push(pick.key);
+		if (recentPicks.length > 60) recentPicks.shift();
+	}
+	return pick;
+}
+const pickedLately = (one: SearchResult) => recentPicks.includes(one.key);
+/** How many pages a Random search has, by its parameters. */
+const normalPages = new Map<string, number>();
+
 /** How many pages each "really random" search has (TMDB says on the first one), kept a day. */
 const deepPages = new Map<string, { pages: number; at: number }>();
 
@@ -552,8 +568,8 @@ async function deepPick(kind: 'movies' | 'tv' | 'anime', genre: number | undefin
 		const page = 1 + Math.floor(Math.random() * pages.pages);
 		const answer = await tmdbGet<{ results?: TmdbItem[] }>(path, { ...params, page: String(page) });
 		const all = (answer?.results ?? []).filter((item) => item.poster_path).map((item) => toResult({ ...item, media_type: asMovie ? 'movie' : 'tv' }));
-		const fresh = all.filter((one) => !skip.has(one.key) && !skip.has(`tmdb:${one.sourceId}`));
-		if (fresh.length) return fresh[Math.floor(Math.random() * fresh.length)];
+		const fresh = all.filter((one) => !skip.has(one.key) && !skip.has(`tmdb:${one.sourceId}`) && !pickedLately(one));
+		if (fresh.length) return notedPick(fresh[Math.floor(Math.random() * fresh.length)]);
 	}
 	return null;
 }
@@ -571,41 +587,48 @@ export async function randomPick(kind: 'movies' | 'tv' | 'anime', genre: number 
 		include_adult: 'false',
 		without_keywords: NOT_FOR_BROWSING
 	};
-	let pages = 10;
+	// (Pages of 20, most popular first, each page as likely as another: wide enough that the same
+	// few hits don't keep coming back.)
+	let pages = 20;
 	if (kind === 'movies') {
-		params['vote_count.gte'] = '1500';
-		pages = 15;
+		params['vote_count.gte'] = '1000';
+		pages = 25;
 		if (genre) params.with_genres = String(genre);
 	} else if (kind === 'tv') {
-		params['vote_count.gte'] = '400';
+		params['vote_count.gte'] = '300';
 		// Not cartoons, children's, news, reality or talk shows.
 		params.without_genres = '16,10762,10763,10764,10767';
 		if (genre) Object.assign(params, seriesGenreParams(genre, false, params.without_genres) ?? { with_genres: String(genre) });
 	} else {
-		params['vote_count.gte'] = '150';
+		params['vote_count.gte'] = '80';
 		params.with_original_language = 'ja';
 		params.without_genres = KIDS_SERIES;
 		params.with_genres = '16';
 		if (genre) Object.assign(params, seriesGenreParams(genre, true, params.without_genres) ?? {});
-		pages = 8;
+		pages = 20;
 	}
 	const path = asMovie ? '/discover/movie' : '/discover/tv';
-	let lastPages = pages;
+	// A genre with only a few pages: how many it has, as TMDB said last time (a page past the end
+	// used to fall back to page 1, the most popular few, every time).
+	const known = `${path}|${JSON.stringify(params)}`;
+	let lastPages = normalPages.get(known) ?? pages;
 	for (let tries = 0; tries < 3; tries++) {
 		const page = 1 + Math.floor(Math.random() * Math.max(1, Math.min(pages, lastPages)));
 		const answer = await tmdbGet<{ results?: TmdbItem[]; total_pages?: number }>(path, { ...params, page: String(page) });
+		if (answer?.total_pages) normalPages.set(known, answer.total_pages);
 		if (!answer?.results?.length) {
-			// A genre with only a few pages: ask the first one next.
-			lastPages = 1;
+			lastPages = Math.max(1, Math.min(lastPages - 1, answer?.total_pages ?? 1));
 			continue;
 		}
 		lastPages = answer.total_pages ?? pages;
 		const all = answer.results
 			.filter((item) => item.poster_path)
 			.map((item) => toResult({ ...item, media_type: asMovie ? 'movie' : 'tv' }));
-		const fresh = all.filter((one) => !skip.has(one.key) && !skip.has(`tmdb:${one.sourceId}`));
-		const from = fresh.length ? fresh : tries === 2 ? all : [];
-		if (from.length) return from[Math.floor(Math.random() * from.length)];
+		const fresh = all.filter((one) => !skip.has(one.key) && !skip.has(`tmdb:${one.sourceId}`) && !pickedLately(one));
+		// (Last try: anything not just given, then anything at all.)
+		const notLately = all.filter((one) => !pickedLately(one));
+		const from = fresh.length ? fresh : tries === 2 ? (notLately.length ? notLately : all) : [];
+		if (from.length) return notedPick(from[Math.floor(Math.random() * from.length)]);
 	}
 	return null;
 }

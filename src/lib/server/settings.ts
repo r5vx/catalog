@@ -98,6 +98,16 @@ export type Settings = {
 	backgroundDim?: string;
 	/** How blurred the picture is, 0–20 (px). 0 when unset. */
 	backgroundBlur?: string;
+	/** The logo (Settings → Personalization → Logo, src/lib/logo.ts): 'words' or 'picture'; unset is Catalog's own. */
+	logoKind?: string;
+	/** The logo's own words, when logoKind is 'words'. */
+	logoWords?: string;
+	/** The logo picture's "/media/…" address, when logoKind is 'picture'. */
+	logoImage?: string;
+	/** The pink circle's color in Catalog's own logo, #rrggbb; unset keeps the theme's pink. */
+	logoDot?: string;
+	/** The app icon (Settings → Personalization → App icon), as JSON (src/lib/logo.ts AppIconChoice). */
+	appIcon?: string;
 	/** SubDL's key and its "seen" mark: no longer used (SubDL dropped 2026-10-20), cleared at start-up. */
 	subdlApiKey?: string;
 	subdlSeen?: string;

@@ -223,8 +223,11 @@ export function listEntries(options: ListOptions = {}): EntryCard[] {
 		JOIN categories c ON c.id = e.category_id
 		${where.length ? `WHERE ${where.join(' AND ')}` : ''}
 		ORDER BY ${ordering}
-		LIMIT 1000
+		LIMIT 20000
 	`;
+	// (It was 1,000: in a bigger library sorted by Recently finished or My rating, a new title with
+	// neither sorted past the end and was nowhere to be seen until marked Completed. A friend's
+	// VisionQuest, 2026-11-16. Posters load as they scroll into view, so all of them is fine.)
 
 	const rows = plainAll<Stored<EntryCard>>(db.prepare(sql).all(...params));
 	return rows.map((row) => ({ ...row, favorite: Boolean(row.favorite) }));
@@ -648,7 +651,7 @@ export function setEntryFields(id: number, fields: QuickFields): { finishedOn: s
 		values.push(typeof value === 'boolean' ? toInt(value) : (value ?? null));
 	}
 	// Finishing it dates it, as "Mark as completed" does (a date already there is kept).
-	if (fields.status === 'completed') {
+	if (fields.status === 'completed' || fields.status === 'caught_up') {
 		sets.push('finished_on = COALESCE(finished_on, ?)');
 		values.push(localToday());
 	}
@@ -692,6 +695,12 @@ export function updateEntryDetails(
 export function markEntryCompleted(id: number): void {
 	db.prepare('UPDATE entries SET status = ?, finished_on = ?, updated_at = ? WHERE id = ?')
 		.run('completed', localToday(), new Date().toISOString(), id);
+}
+
+/** Every episode out so far watched: dated today, so it's the most recently finished. */
+export function markEntryCaughtUp(id: number): void {
+	db.prepare('UPDATE entries SET status = ?, finished_on = ?, updated_at = ? WHERE id = ?')
+		.run('caught_up', localToday(), new Date().toISOString(), id);
 }
 
 export function incrementRewatches(id: number): void {

@@ -10,6 +10,7 @@ import { redirect } from '@sveltejs/kit';
 import { currentProfile, MAIN_PROFILE } from '$lib/server/profile';
 import { isWatched } from '$lib/constants';
 import type { EntryCard } from '$lib/server/db/types';
+import { savedView } from '$lib/server/libraryView';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -23,7 +24,7 @@ import type { PageServerLoad } from './$types';
  * Pictures" (2026-10-23).
  */
 function keptView(url: URL): { view: URLSearchParams; remember: string | null } {
-	const saved = new URLSearchParams(readSettings().libraryView ?? '');
+	const saved = savedView();
 	const view = new URLSearchParams();
 	let changed = false;
 	for (const key of KEPT_FILTERS) {

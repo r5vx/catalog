@@ -21,6 +21,7 @@
 	import FriendsSeen from '$lib/FriendsSeen.svelte';
 	import { progressSummary } from '$lib/progress';
 	import { money } from '$lib/format';
+	import { fullDate } from '$lib/airs';
 	import { p } from '$lib/altText';
 	import { confirmAction } from '$lib/confirm.svelte';
 	import type { SearchResult } from '$lib/server/metadata/types';
@@ -155,10 +156,25 @@
 	/** Scores are as complete as they'll get (looked up, or nothing to look up): "why none" may show. */
 	let scoresSettled = $state(false);
 
+	/** A film's release day (owner, 2026-11-16: "the exact date a movie was released"). */
+	let released = $state<{ id: number; day: string } | null>(null);
+	$effect(() => {
+		const { id, source, sourceId } = data.entry;
+		if (source !== 'tmdb' || !sourceId?.startsWith('movie:')) return;
+		let current = true;
+		fetch(`/api/release-date?${new URLSearchParams({ source, id: sourceId })}`)
+			.then((r) => (r.ok ? r.json() : null))
+			.then((answer) => {
+				if (current && answer?.releaseDate) released = { id, day: answer.releaseDate };
+			})
+			.catch(() => {});
+		return () => (current = false);
+	});
+
 	// Declared after `scores` because box office only arrives with them.
 	const facts = $derived(
 		[
-			entry.year ? String(entry.year) : null,
+			released?.id === entry.id ? fullDate(released.day) : entry.year ? String(entry.year) : null,
 			category?.name ?? null,
 			entry.episodesTotal ? `${entry.episodesTotal} episodes` : null,
 			entry.runtimeMinutes ? `${entry.runtimeMinutes} min` : null,

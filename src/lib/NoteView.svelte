@@ -13,7 +13,7 @@
 
 <div class="wrap">
 	<h1 class="title">{title}</h1>
-	<div class="page" bind:this={page}>
+	<div class="page" data-plain bind:this={page}>
 		{#if body.trim()}
 			{@html body}
 		{:else}

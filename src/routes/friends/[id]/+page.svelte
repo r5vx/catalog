@@ -667,7 +667,18 @@
 		flex-direction: column;
 		gap: 4px;
 		min-width: 0;
+		/* Below the band (it reaches 56 px down beside the picture): a name in the banner's own color
+		   read as nothing on it. */
+		padding-top: 62px;
 		padding-bottom: 6px;
+		align-self: flex-start;
+	}
+
+	/* Narrow: the names wrap under the picture, already clear of the band. */
+	@media (max-width: 560px) {
+		.names {
+			padding-top: 0;
+		}
 	}
 
 	h1 {

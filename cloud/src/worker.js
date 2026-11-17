@@ -131,7 +131,9 @@ async function houseOf(request, env) {
 	const id = sent.slice(0, dot);
 	const house = await env.DB.prepare('SELECT id, key_hash, name, seen FROM houses WHERE id = ?').bind(id).first();
 	if (!house || !same(house.key_hash, await sha256(sent.slice(dot + 1)))) throw new Problem(401, 'Not signed in');
-	if (Date.now() - house.seen > HOUR) await env.DB.prepare('UPDATE houses SET seen = ? WHERE id = ?').bind(Date.now(), id).run();
+	// (Only a note of when it was last here: a refused write, as when the free plan's daily writes
+	// run out, mustn't fail the request. On 2026-11-16 it made every profile page a 502.)
+	if (Date.now() - house.seen > HOUR) await env.DB.prepare('UPDATE houses SET seen = ? WHERE id = ?').bind(Date.now(), id).run().catch(() => {});
 	return house;
 }
 
@@ -158,6 +160,15 @@ async function accountOf(request, env, house, name = '') {
 }
 
 /** `avatar`: 0 with no picture, else a number that changes with each new one (GET /v1/avatar/<id>). */
+/**
+ * A title counts as watched (friends who've seen it, profile counts, best rated, a library's default)
+ * unless its status says otherwise: since 2026-11-17 Catalogs send Want to watch and the rest too.
+ * Rows with no status are older Catalogs', which sent watched titles only. Needs `seen_info i`.
+ */
+const WATCHED = "(i.status IS NULL OR i.status IN ('', 'completed', 'rewatching', 'caught_up'))";
+const STATUS = /^(watched|watching|rewatching|caught_up|completed|planned|paused|dropped)$/;
+/** Kept as 'anime', answered as film or show (what every Catalog's Watch links take) plus `anime`. */
+const typeOut = (r) => (r.type === 'anime' ? { type: String(r.key).startsWith('tmdb:movie:') ? 'movie' : 'tv', anime: true } : { type: r.type || '' });
 const publicAccount = (account) => ({ id: account.id, name: account.name, google: Boolean(account.google_sub), email: account.email ?? null, avatar: account.avatar ?? 0 });
 
 /** A picture as Catalog sends it: a small JPEG, PNG or WebP as a data address. */
@@ -284,7 +295,7 @@ async function answer(request, env, ctx) {
 	if (Math.random() < 0.02) ctx.waitUntil(tidy(env).catch(() => {}));
 
 	// `library`: this server keeps library rows (kind "entry", up to ENTRY_MOST characters each) and can list one kind.
-	if (is('GET', '') || is('GET', '/v1/info')) return json({ ok: true, name: 'Catalog meeting point', google: googleOn(env), library: 1 });
+	if (is('GET', '') || is('GET', '/v1/info')) return json({ ok: true, name: 'Catalog meeting point', google: googleOn(env), library: 1, seenAll: 1 });
 
 	// A TV with only a short code: where its computer is. Open to anyone, so it's limited per address.
 	const pairCode = path.match(/^\/v1\/pair\/(\d{6})$/);
@@ -615,33 +626,58 @@ async function answer(request, env, ctx) {
 				rating: Number.isFinite(Number(i?.rating)) && i.rating !== null ? Number(i.rating) : null,
 				// (Newer Catalogs send these too, for the friend's library and profile.)
 				year: text(String(i?.year ?? ''), 4),
-				type: i?.type === 'tv' || i?.type === 'movie' ? i.type : '',
+				// ('anime' since 2026-11-17: the library's Anime category, films and shows.)
+				type: i?.type === 'tv' || i?.type === 'movie' || i?.type === 'anime' ? i.type : '',
 				poster: POSTER.test(i?.poster ?? '') ? text(i.poster, 200) : '',
 				status: text(i?.status, 20)
 			}))
 			.filter((i) => SEEN_KEY.test(i.key));
-		if (sent.reset === true) await env.DB.batch([env.DB.prepare('DELETE FROM seen WHERE account = ?').bind(account.id), env.DB.prepare('DELETE FROM seen_info WHERE account = ?').bind(account.id)]);
-		for (let at = 0; at < items.length; at += 25) {
-			const part = items.slice(at, at + 25);
+		// Only what changed is written. Catalogs send the whole list on every start and every library
+		// change, and wiping and rewriting it each time (~2,000 rows for a 500-title library) used up the
+		// free plan's 100,000 written rows a day on 2026-11-16. Reading it first costs reads, which are
+		// 50 times more plentiful.
+		const kept = new Map();
+		const had = await env.DB.prepare(
+			'SELECT s.tkey, s.title, s.rating, i.tkey AS info, i.year, i.type, i.poster, i.status FROM seen s LEFT JOIN seen_info i ON i.account = s.account AND i.tkey = s.tkey WHERE s.account = ?'
+		)
+			.bind(account.id)
+			.all();
+		for (const row of had.results ?? []) kept.set(row.tkey, row);
+		const seenSame = (i, row) => row && row.title === i.title && (row.rating ?? null) === i.rating;
+		const infoSame = (i, row) => row && (row.info ? row.year === i.year && row.type === i.type && row.poster === i.poster && row.status === i.status : !(i.year || i.type || i.poster || i.status));
+		// The whole list (a reset that fits in one part, or a newer Catalog's `all`): titles not in it are gone.
+		const whole = Array.isArray(sent.all) ? new Set(sent.all.slice(0, 6000).map((k) => text(k, 40))) : sent.reset === true && items.length < 300 ? new Set(items.map((i) => i.key)) : null;
+		const left = whole ? [...kept.keys()].filter((key) => !whole.has(key)) : [];
+		for (let at = 0; at < left.length; at += 90) {
+			const part = left.slice(at, at + 90);
+			const marks = part.map(() => '?').join(', ');
+			await env.DB.batch([
+				env.DB.prepare(`DELETE FROM seen WHERE account = ? AND tkey IN (${marks})`).bind(account.id, ...part),
+				env.DB.prepare(`DELETE FROM seen_info WHERE account = ? AND tkey IN (${marks})`).bind(account.id, ...part)
+			]);
+		}
+		const titles = items.filter((i) => !seenSame(i, kept.get(i.key)));
+		for (let at = 0; at < titles.length; at += 25) {
+			const part = titles.slice(at, at + 25);
 			await env.DB.prepare(`INSERT INTO seen (account, tkey, title, rating) VALUES ${part.map(() => '(?, ?, ?, ?)').join(', ')} ON CONFLICT (account, tkey) DO UPDATE SET title = excluded.title, rating = excluded.rating`)
 				.bind(...part.flatMap((i) => [account.id, i.key, i.title, i.rating]))
 				.run();
-			// (In parts of 16: 6 values each, and D1 takes at most 100 in one query. 25 at once failed
-			// "too many SQL variables" for anyone with more than 16 titles, 4.4.0 to 2026-11-15.)
-			const extra = part.filter((i) => i.year || i.type || i.poster || i.status);
-			for (let from = 0; from < extra.length; from += 16) {
-				const more = extra.slice(from, from + 16);
-				await env.DB.prepare(
-					`INSERT INTO seen_info (account, tkey, year, type, poster, status) VALUES ${more.map(() => '(?, ?, ?, ?, ?, ?)').join(', ')} ` +
-						'ON CONFLICT (account, tkey) DO UPDATE SET year = excluded.year, type = excluded.type, poster = excluded.poster, status = excluded.status'
-				)
-					.bind(...more.flatMap((i) => [account.id, i.key, i.year, i.type, i.poster, i.status]))
-					.run();
-			}
+		}
+		// (In parts of 16: 6 values each, and D1 takes at most 100 in one query. 25 at once failed
+		// "too many SQL variables" for anyone with more than 16 titles, 4.4.0 to 2026-11-15.)
+		const extra = items.filter((i) => (i.year || i.type || i.poster || i.status) && !infoSame(i, kept.get(i.key)));
+		for (let from = 0; from < extra.length; from += 16) {
+			const more = extra.slice(from, from + 16);
+			await env.DB.prepare(
+				`INSERT INTO seen_info (account, tkey, year, type, poster, status) VALUES ${more.map(() => '(?, ?, ?, ?, ?, ?)').join(', ')} ` +
+					'ON CONFLICT (account, tkey) DO UPDATE SET year = excluded.year, type = excluded.type, poster = excluded.poster, status = excluded.status'
+			)
+				.bind(...more.flatMap((i) => [account.id, i.key, i.year, i.type, i.poster, i.status]))
+				.run();
 		}
 		const gone = (Array.isArray(sent.remove) ? sent.remove : []).slice(0, 20).map((k) => text(k, 40));
 		for (const key of gone) await env.DB.batch([env.DB.prepare('DELETE FROM seen WHERE account = ? AND tkey = ?').bind(account.id, key), env.DB.prepare('DELETE FROM seen_info WHERE account = ? AND tkey = ?').bind(account.id, key)]);
-		return json({ ok: true, kept: items.length });
+		return json({ ok: true, kept: items.length, written: titles.length + extra.length, gone: left.length });
 	}
 	if (is('GET', '/v1/seen')) {
 		// Which friends have watched a title: by its key ("tmdb:movie:550"), or, for a friend who has
@@ -651,7 +687,8 @@ async function answer(request, env, ctx) {
 		const site = key.split(':')[0];
 		const rows = await env.DB.prepare(
 			'SELECT a.id, a.name, v.rev AS avatar, max(s.rating) AS rating FROM seen s JOIN friends f ON f.b = s.account JOIN accounts a ON a.id = s.account LEFT JOIN avatars v ON v.account = a.id ' +
-				"WHERE f.a = ?1 AND s.account NOT IN (SELECT account FROM privacy WHERE hide_profile = 1) AND (s.tkey = ?2 OR (?3 != '' AND s.title = ?3 COLLATE NOCASE AND s.tkey NOT LIKE ?4)) GROUP BY a.id ORDER BY a.name"
+				'LEFT JOIN seen_info i ON i.account = s.account AND i.tkey = s.tkey ' +
+				`WHERE f.a = ?1 AND ${WATCHED} AND s.account NOT IN (SELECT account FROM privacy WHERE hide_profile = 1) AND (s.tkey = ?2 OR (?3 != '' AND s.title = ?3 COLLATE NOCASE AND s.tkey NOT LIKE ?4)) GROUP BY a.id ORDER BY a.name`
 		)
 			.bind(account.id, key, title, `${site}:%`)
 			.all();
@@ -748,11 +785,11 @@ async function answer(request, env, ctx) {
 				).bind(them),
 				env.DB.prepare('SELECT bio, favorites, color FROM profiles WHERE account = ?').bind(them),
 				env.DB.prepare(
-					"SELECT count(*) AS total, sum(CASE WHEN i.type = 'movie' THEN 1 ELSE 0 END) AS films, sum(CASE WHEN i.type = 'tv' THEN 1 ELSE 0 END) AS shows, sum(CASE WHEN s.rating IS NOT NULL THEN 1 ELSE 0 END) AS rated " +
-						'FROM seen s LEFT JOIN seen_info i ON i.account = s.account AND i.tkey = s.tkey WHERE s.account = ?'
+					"SELECT count(*) AS total, sum(CASE WHEN i.type = 'movie' OR (i.type = 'anime' AND s.tkey LIKE 'tmdb:movie:%') THEN 1 ELSE 0 END) AS films, sum(CASE WHEN i.type = 'tv' OR (i.type = 'anime' AND s.tkey NOT LIKE 'tmdb:movie:%') THEN 1 ELSE 0 END) AS shows, sum(CASE WHEN i.type = 'anime' THEN 1 ELSE 0 END) AS anime, sum(CASE WHEN s.rating IS NOT NULL THEN 1 ELSE 0 END) AS rated " +
+						`FROM seen s LEFT JOIN seen_info i ON i.account = s.account AND i.tkey = s.tkey WHERE s.account = ? AND ${WATCHED}`
 				).bind(them),
 				env.DB.prepare(
-					'SELECT s.tkey AS key, s.title, s.rating, i.year, i.type, i.poster FROM seen s LEFT JOIN seen_info i ON i.account = s.account AND i.tkey = s.tkey WHERE s.account = ? AND s.rating IS NOT NULL ORDER BY s.rating DESC, s.title LIMIT 12'
+					`SELECT s.tkey AS key, s.title, s.rating, i.year, i.type, i.poster FROM seen s LEFT JOIN seen_info i ON i.account = s.account AND i.tkey = s.tkey WHERE s.account = ? AND ${WATCHED} AND s.rating IS NOT NULL ORDER BY s.rating DESC, s.title LIMIT 12`
 				).bind(them),
 				env.DB.prepare('SELECT items FROM activity WHERE account = ?').bind(them),
 				env.DB.prepare('SELECT what FROM presence WHERE account = ? AND at > ?').bind(them, Date.now() - 3 * MINUTE),
@@ -804,8 +841,8 @@ async function answer(request, env, ctx) {
 				nameStyle: lookOf(row.name_style),
 				banner: row.banner_rev ?? 0,
 				favorites,
-				counts: { total: count.total ?? 0, films: count.films ?? 0, shows: count.shows ?? 0, rated: count.rated ?? 0 },
-				top: top.results.map((r) => ({ key: r.key, title: r.title, rating: r.rating, year: r.year ?? '', type: r.type || '', poster: r.poster ?? '' })),
+				counts: { total: count.total ?? 0, films: count.films ?? 0, shows: count.shows ?? 0, anime: count.anime ?? 0, rated: count.rated ?? 0 },
+				top: top.results.map((r) => ({ key: r.key, title: r.title, rating: r.rating, year: r.year ?? '', ...typeOut(r), poster: r.poster ?? '' })),
 				recent,
 				watching: now.results[0] ? JSON.parse(now.results[0].what) : null,
 				mutual: them === account.id ? 0 : (mutual.results[0]?.n ?? 0)
@@ -814,16 +851,26 @@ async function answer(request, env, ctx) {
 		// Their library: everything they've watched, a page at a time.
 		const sort = url.searchParams.get('sort');
 		const order = sort === 'title' ? 's.title COLLATE NOCASE' : sort === 'year' ? "i.year DESC, s.title COLLATE NOCASE" : 's.rating IS NULL, s.rating DESC, s.title COLLATE NOCASE';
+		// type: movie, tv (shows and anime, as before anime had its own), show (not anime), anime.
+		// status: watched (the default, as before), all, or one of the library's own.
 		const type = url.searchParams.get('type');
-		const kind = type === 'tv' || type === 'movie' ? type : '';
+		const kind = ['tv', 'movie', 'show', 'anime'].includes(type) ? type : '';
+		const status = url.searchParams.get('status') ?? '';
 		const find = text(url.searchParams.get('q'), 60);
 		const offset = whole(url.searchParams.get('offset'), 0, 100000);
 		let where = 's.account = ?';
 		const params = [them];
-		if (kind) {
+		if (kind === 'tv') where += " AND i.type IN ('tv', 'anime')";
+		else if (kind) {
 			where += ' AND i.type = ?';
-			params.push(kind);
+			params.push(kind === 'show' ? 'tv' : kind);
 		}
+		if (status === 'all') {
+			// everything they keep
+		} else if (STATUS.test(status) && status !== 'watched') {
+			where += ' AND i.status = ?';
+			params.push(status);
+		} else where += ` AND ${WATCHED}`;
 		if (find) {
 			where += ' AND s.title LIKE ?';
 			params.push(`%${find.replace(/[%_]/g, '')}%`);
@@ -834,7 +881,7 @@ async function answer(request, env, ctx) {
 		]);
 		return json({
 			total: total.results[0]?.n ?? 0,
-			items: rows.results.map((r) => ({ key: r.key, title: r.title, rating: r.rating, year: r.year ?? '', type: r.type || '', poster: r.poster ?? '', status: r.status ?? '' }))
+			items: rows.results.map((r) => ({ key: r.key, title: r.title, rating: r.rating, year: r.year ?? '', ...typeOut(r), poster: r.poster ?? '', status: r.status ?? '' }))
 		});
 	}
 

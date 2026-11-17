@@ -1,4 +1,3 @@
-import { error } from '@sveltejs/kit';
 import { cloudPicture } from '$lib/server/online';
 import type { RequestHandler } from './$types';
 
@@ -9,7 +8,8 @@ import type { RequestHandler } from './$types';
  */
 export const GET: RequestHandler = async ({ params }) => {
 	const picture = await cloudPicture(params.id);
-	if (!picture) error(404, 'No picture');
+	// (Not kept by the browser: it may only be the server not answering this once.)
+	if (!picture) return new Response('No picture', { status: 404, headers: { 'Cache-Control': 'no-store' } });
 	return new Response(picture.bytes, {
 		headers: { 'Content-Type': picture.type, 'Cache-Control': 'private, max-age=604800', 'X-Content-Type-Options': 'nosniff' }
 	});

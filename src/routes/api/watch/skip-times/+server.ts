@@ -5,11 +5,13 @@ import { introDbTimes } from '$lib/server/metadata/introdb';
 import { theIntroDbTimes } from '$lib/server/metadata/theintrodb';
 import type { RequestHandler } from './$types';
 
+/** What an AniSkip or Anime Skip part counts as against IntroDB/TheIntroDB's sender counts. */
+const ANIME_VOTES = 5;
+
 /**
  * Intro, recap and credits from the community databases at once: AniSkip and Anime Skip (anime,
- * each checks the cut), then IntroDB and TheIntroDB (any show). Each kind of part comes from the
- * first anime one that has it; otherwise from whichever of IntroDB and TheIntroDB more people sent
- * it to (TheIntroDB on a tie: it checks the cut). When TheIntroDB says people timed another cut
+ * each checks the cut), then IntroDB and TheIntroDB (any show). Each kind of part comes from
+ * whichever more people sent it to (an anime one counts as ANIME_VOTES and wins ties). When TheIntroDB says people timed another cut
  * than this copy (another length), neither of the two is used (theintrodb.ts says why).
  * ?title=&episode=<counted from the show's first>&duration=, and the player's own
  * &season=&number= when known (Anime Skip often goes by season).
@@ -32,11 +34,14 @@ export const GET: RequestHandler = async ({ url }) => {
 		theIntroDbTimes(title, season, number, duration).catch(() => ({ segments: [] as SkipSegment[], otherCut: false })),
 		animeSkipMixed(title, season, number, episode).catch(() => [] as SkipSegment['type'][])
 	]);
-	// Each kind of part from the first that has it: the two that check the cut's length, then the
-	// one of IntroDB and TheIntroDB more people agree on.
+	// Each kind of part from the one more people agree on. The anime databases don't say how many
+	// sent a part, so each counts as ANIME_VOTES and wins ties: Dungeon Meshi E23's AniSkip intro was
+	// 0:00–1:40 from one entry while 13 people on TheIntroDB had the song end at 1:30.
 	const segments: SkipSegment[] = [];
-	const crowd = theIntroDb.otherCut ? [] : [...theIntroDb.segments, ...introDb].sort((a, b) => (b.votes ?? 1) - (a.votes ?? 1));
-	const all = [...aniSkip, ...animeSkip, ...crowd];
+	const crowd = theIntroDb.otherCut ? [] : [...theIntroDb.segments, ...introDb];
+	const anime = [...aniSkip, ...animeSkip].map((s) => ({ ...s, votes: s.votes ?? ANIME_VOTES }));
+	// (sort keeps the order of equals, so anime first on a tie)
+	const all = [...anime, ...crowd].sort((a, b) => (b.votes ?? 1) - (a.votes ?? 1));
 	for (const s of all) if (!segments.some((t) => t.type === s.type)) segments.push({ ...s });
 	// Story over the song, by any of them (Anime Skip in any cut of the episode), wins: IntroDB had
 	// Re:Zero S2E16's ending as a plain outro, Anime Skip as Mixed Credits, and auto-skip jumped

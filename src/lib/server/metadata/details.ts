@@ -30,6 +30,8 @@ export type TitleDetails = {
 	title: string | null;
 	altTitle: string | null;
 	year: number | null;
+	/** The day it came out (YYYY-MM-DD; a series' first episode), when the site says. */
+	releaseDate?: string | null;
 	overview: string | null;
 	tagline: string | null;
 	posterUrl: string | null;
@@ -303,6 +305,7 @@ async function fromTmdb(sourceId: string): Promise<TitleDetails> {
 		title: data.title ?? data.name ?? null,
 		altTitle: (data.original_title ?? data.original_name ?? null) || null,
 		year: Number(releaseDate.slice(0, 4)) || null,
+		releaseDate: /^\d{4}-\d{2}-\d{2}$/.test(releaseDate) ? releaseDate : null,
 		overview: data.overview || null,
 		tagline: data.tagline || null,
 		posterUrl: data.poster_path ? `https://image.tmdb.org/t/p/w500${data.poster_path}` : null,
@@ -323,7 +326,7 @@ async function fromTmdb(sourceId: string): Promise<TitleDetails> {
 			data.last_episode_to_air?.runtime ??
 			data.next_episode_to_air?.runtime ??
 			null,
-		episodesTotal: data.number_of_episodes ?? null,
+		episodesTotal: isSeries ? airedEpisodes(data) : (data.number_of_episodes ?? null),
 		seasons: data.number_of_seasons ?? null,
 		externalRating: data.vote_average || null,
 		externalVotes: data.vote_count || null,
@@ -335,6 +338,22 @@ async function fromTmdb(sourceId: string): Promise<TitleDetails> {
 		unreleased: releaseDate.length > 0 && releaseDate > new Date().toISOString().slice(0, 10),
 		...(isSeries ? {} : cinemaOnly(onlyInCinemas(allDates(data.release_dates))))
 	};
+}
+
+/**
+ * Episodes out so far. TMDB's number_of_episodes counts announced ones too (Dungeon Meshi: 25, with
+ * season 2's first only announced), so a caught-up show read "1 episode waiting". Counted up to
+ * the last aired one; TMDB's own count when the seasons don't add up (numbering across seasons).
+ */
+function airedEpisodes(data: Record<string, any>): number | null {
+	const total: number | null = data.number_of_episodes ?? null;
+	const last = data.last_episode_to_air;
+	if (!last?.season_number || !last.episode_number || !Array.isArray(data.seasons)) return total;
+	let aired = Number(last.episode_number);
+	for (const season of data.seasons) {
+		if (season.season_number > 0 && season.season_number < last.season_number) aired += Number(season.episode_count) || 0;
+	}
+	return total !== null && aired > total ? total : aired;
 }
 
 const cinemaOnly = (homeFrom: string | null) => (homeFrom === null ? {} : { inCinemas: true, homeFrom });

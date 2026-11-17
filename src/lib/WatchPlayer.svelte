@@ -1431,8 +1431,11 @@
 	const inEndCredits = $derived(
 		skipSegments.some((s) => s.type === 'credits' && s.end >= duration - 20 && currentTime >= s.start)
 	);
+	// Known closing credits bring Next Episode when they start. Unknown ones: only the last 40 s, so an
+	// episode with no closing song (Dungeon Meshi E23) doesn't get it over its last scene.
+	const endCreditsKnown = $derived(skipSegments.some((s) => s.type === 'credits' && s.end >= duration - 20));
 	const nearEnd = $derived(
-		showType === 'tv' && duration > 0 && ((duration - currentTime) < 90 || inEndCredits) && !loadingEpisode
+		showType === 'tv' && duration > 0 && (inEndCredits || (!endCreditsKnown && duration - currentTime < 40)) && !loadingEpisode
 	);
 	const nextEp = $derived(nearEnd ? nextEpisode() : null);
 
@@ -1463,6 +1466,17 @@
 		if (seg.type === 'credits' && nextEp && seg.end >= duration - 20) return null;
 		return seg;
 	});
+	// Left alone for 8 s, the skip button steps aside with the controls and comes back with them (a
+	// mouse move). Not on a TV, where it's highlighted to be pressed.
+	const activeSkipKey = $derived(activeSkip ? `${activeSkip.type}-${activeSkip.start}` : '');
+	let skipQuietKey = $state('');
+	$effect(() => {
+		const key = activeSkipKey;
+		if (!key || tvMode) return;
+		const timer = setTimeout(() => (skipQuietKey = key), 8000);
+		return () => clearTimeout(timer);
+	});
+	const skipTucked = $derived(activeSkipKey !== '' && skipQuietKey === activeSkipKey && !showControls);
 
 	/* Subtitle languages. Sites name them differently ("Brazillian-portuguese", "European
 	   Spanish", "spa", "es"), so each is grouped under a plain name. Only English shows unless
@@ -7914,7 +7928,7 @@
 						<div class="next-ep-overlay">
 							{#if activeSkip}
 								{@const seg = activeSkip}
-								<button type="button" class="skip-btn" bind:this={skipButton} onclick={() => skipSegment(seg)}>{SKIP_LABELS[seg.type]}</button>
+								<button type="button" class="skip-btn" class:tucked={skipTucked} tabindex={skipTucked ? -1 : undefined} bind:this={skipButton} onclick={() => skipSegment(seg)}>{SKIP_LABELS[seg.type]}</button>
 							{/if}
 							{#if nextEp}
 								<button type="button" class="next-ep-btn" bind:this={nextEpButton} onclick={() => playEpisode(nextEp)}>
@@ -8890,9 +8904,10 @@
 	.scan-badge { position: absolute; top: 50%; left: 50%; z-index: 9; transform: translate(-50%, -50%); padding: 14px 26px; border-radius: 10px; background: rgba(0, 0, 0, 0.7); color: #fff; font-size: 2rem; font-weight: 700; pointer-events: none; }
 	:global(html.tv) .next-ep-btn:focus { border-color: #fff; background: #fff; color: #000; outline: none; }
 	.next-ep-overlay { position: absolute; bottom: 100px; right: 24px; z-index: 8; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; animation: fadeSlideIn 0.4s ease; }
-	.skip-btn { padding: 11px 22px; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 6px; background: rgba(0, 0, 0, 0.75); color: #fff; font-size: 0.95rem; font-weight: 600; cursor: pointer; transition: background 0.2s, border-color 0.2s; }
+	.skip-btn { padding: 11px 22px; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 6px; background: rgba(0, 0, 0, 0.75); color: #fff; font-size: 0.95rem; font-weight: 600; cursor: pointer; transition: background 0.2s, border-color 0.2s, opacity 0.3s; }
 	.skip-btn:hover { background: rgba(30, 30, 30, 0.95); border-color: var(--accent); }
-	.next-ep-btn { display: flex; flex-direction: column; gap: 4px; padding: 14px 22px; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px; background: rgba(0, 0, 0, 0.75); color: #fff; cursor: pointer; transition: background 0.2s, border-color 0.2s; }
+	.skip-btn.tucked { opacity: 0; pointer-events: none; transition: opacity 0.6s; }
+	.next-ep-btn { display: flex; flex-direction: column; gap: 4px; padding: 14px 22px; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px; background: rgba(0, 0, 0, 0.75); color: #fff; cursor: pointer; transition: background 0.2s, border-color 0.2s, opacity 0.3s; }
 	.next-ep-btn:hover { background: rgba(30, 30, 30, 0.95); border-color: var(--accent); }
 	.next-ep-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: rgba(255, 255, 255, 0.6); }
 	.next-ep-title { font-size: 0.95rem; font-weight: 600; }

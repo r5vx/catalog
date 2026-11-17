@@ -16,6 +16,7 @@
 	import { STATUSES } from '$lib/constants';
 	import BackBar from '$lib/BackBar.svelte';
 	import { money } from '$lib/format';
+	import { fullDate } from '$lib/airs';
 	import { untrack } from 'svelte';
 	import type { PageData } from './$types';
 	import { warmUpTitle, warmWhenResting } from '$lib/watch';
@@ -91,7 +92,8 @@
 
 	const facts = $derived(
 		[
-			details.year ? String(details.year) : null,
+			// A film: the day it came out (owner, 2026-11-16).
+			details.kind === 'Movie' && details.releaseDate ? fullDate(details.releaseDate) : details.year ? String(details.year) : null,
 			details.kind,
 			details.seasons ? `${details.seasons} season${details.seasons === 1 ? '' : 's'}` : null,
 			details.episodesTotal ? `${details.episodesTotal} episodes` : null,

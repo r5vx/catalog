@@ -27,6 +27,7 @@ import { linkUnmatchedSoon } from '$lib/server/linkEntry';
 import { customThemeCss, readCustomTheme } from '$lib/customTheme';
 import { startYouTubeForPhones } from '$lib/server/youtubePhone';
 import { noteFireTv } from '$lib/server/fireTvInstall';
+import { tellDesktopIcon } from '$lib/server/appIcon';
 
 // Before anything asks another site for something: a time limit for every outside request,
 // and a note of the slow ones (on /api/diagnostics).
@@ -48,6 +49,9 @@ setTimeout(() => {
 		.then((report) => report.moved.length && console.log(`[off-anilist] moved ${report.moved.length}, left ${report.left.length}`))
 		.catch((error) => console.error('[off-anilist]', error));
 }, 60_000).unref?.();
+
+// The app icon chosen in Settings → Personalization, for the desktop app's windows and shortcuts.
+tellDesktopIcon();
 
 // What's kept to load faster stays within the limit in Settings → Library: now, and every hour.
 tellAppItsShare();

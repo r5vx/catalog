@@ -31,3 +31,9 @@ export function airsText(airDate: string, now = new Date()): string {
 	const day = new Date(`${airDate}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 	return days < 14 ? `Airs ${day} · ${whenText(airDate, now)}` : `Airs ${shortDate(airDate)}`;
 }
+
+/** "July 21, 2023" from 2023-07-21 (a film's release day on its page). */
+export function fullDate(day: string): string {
+	const date = new Date(`${day}T12:00:00`);
+	return Number.isNaN(date.getTime()) ? day : date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}
