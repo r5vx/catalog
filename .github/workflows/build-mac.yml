@@ -16,7 +16,10 @@ jobs:
   mac:
     runs-on: macos-latest
     steps:
+      # The release's own code, also when run by hand for a tag (as the Linux build does).
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.event.release.tag_name }}
 
       - uses: actions/setup-node@v4
         with:
