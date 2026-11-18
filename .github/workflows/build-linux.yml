@@ -28,7 +28,12 @@ jobs:
         with:
           node-version: 22
 
+      # onnxruntime-node (pulled in by a dependency) downloads its Linux GPU add-on during install; that
+      # download answered 404 on 2026-11-18 and failed the 4.6.0 build. Catalog doesn't use the GPU
+      # add-on, so it's skipped.
       - run: npm ci
+        env:
+          npm_config_onnxruntime_node_install_cuda: skip
 
       - run: npm run build
 
