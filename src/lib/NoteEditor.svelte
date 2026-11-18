@@ -173,6 +173,10 @@
 			event.preventDefault();
 			pushUndoState();
 			document.execCommand('insertText', false, text);
+			// (The paste is its own step for Ctrl+Z at once, not 400 ms later: owner, 2026-11-18, a
+			// long pasted chain that Ctrl+Z wouldn't take back.)
+			clearTimeout(undoTimer);
+			pushUndoState();
 			queueSave();
 		}
 	}

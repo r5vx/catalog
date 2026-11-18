@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import { createFromResult } from '$lib/server/entries';
 import { findOnTmdb } from '$lib/server/linkEntry';
-import { entryIdForSource, entryBasics, setEntryStatus, markEntryCompleted, markEntryCaughtUp, incrementRewatches, updateSeasonEpisodeReached, deleteEntry, completeProfileTitle, hideCompletedFromContinueWatching, profileTitleReached, deleteProfileTitle, setEntryFields, type QuickFields } from '$lib/server/db/queries';
+import { entryIdForSource, entryBasics, setEntryStatus, markEntryCompleted, markEntryCaughtUp, markEntryStarted, incrementRewatches, updateSeasonEpisodeReached, deleteEntry, completeProfileTitle, hideCompletedFromContinueWatching, profileTitleReached, deleteProfileTitle, setEntryFields, type QuickFields } from '$lib/server/db/queries';
 import { STATUSES } from '$lib/constants';
 import { showStillAiring } from '$lib/server/stillAiring';
 import { currentProfile, MAIN_PROFILE } from '$lib/server/profile';
@@ -59,7 +59,7 @@ export const PATCH: RequestHandler = async ({ request }) => {
 			completeProfileTitle(body.id);
 			// Marked completed by hand: out of Continue Watching too.
 			if (body.action === 'complete') hideCompletedFromContinueWatching(body.id);
-		} else if (body.action === 'status') return json({ ok: true });
+		} else if (body.action === 'status' || body.action === 'started') return json({ ok: true });
 		else if (body.action === 'update_progress' && body.season != null && body.episode != null) profileTitleReached(body.id, body.season, body.episode);
 		else return error(403, 'Not on this profile');
 		return json({ ok: true });
@@ -86,6 +86,9 @@ export const PATCH: RequestHandler = async ({ request }) => {
 	} else if (body.action === 'status' && (body.status === 'rewatching' || body.status === 'watching')) {
 		// The player: a watched show started again from earlier on, or a new episode of one.
 		setEntryStatus(body.id, body.status);
+	} else if (body.action === 'started') {
+		// The player: a minute of it played. Started today when it has no date; Want to watch → Watching.
+		return json({ ok: true, ...markEntryStarted(body.id) });
 	} else if (body.action === 'rewatch') incrementRewatches(body.id);
 	else if (body.action === 'set') {
 		// The clicks on an entry's page, and the player's "Rate it": only the fields sent change.

@@ -697,6 +697,23 @@ export function markEntryCompleted(id: number): void {
 		.run('completed', localToday(), new Date().toISOString(), id);
 }
 
+/**
+ * Started watching it (a minute played): today as the Started date when there's none yet, and
+ * Want to watch becomes Watching. Says the status and date it has now. (Not dated once it's
+ * finished: watching a Completed one again would have started it after it was finished.)
+ */
+export function markEntryStarted(id: number): { status: string | null; startedOn: string | null } {
+	db.prepare(
+		`UPDATE entries SET
+			started_on = CASE WHEN started_on IS NULL AND (finished_on IS NULL OR status = 'planned') THEN ? ELSE started_on END,
+			status = CASE WHEN status = 'planned' THEN 'watching' ELSE status END,
+			updated_at = ?
+		 WHERE id = ? AND ((started_on IS NULL AND (finished_on IS NULL OR status = 'planned')) OR status = 'planned')`
+	).run(localToday(), new Date().toISOString(), id);
+	const row = db.prepare('SELECT status, started_on AS startedOn FROM entries WHERE id = ?').get(id) as { status: string | null; startedOn: string | null } | undefined;
+	return { status: row?.status ?? null, startedOn: row?.startedOn ?? null };
+}
+
 /** Every episode out so far watched: dated today, so it's the most recently finished. */
 export function markEntryCaughtUp(id: number): void {
 	db.prepare('UPDATE entries SET status = ?, finished_on = ?, updated_at = ? WHERE id = ?')

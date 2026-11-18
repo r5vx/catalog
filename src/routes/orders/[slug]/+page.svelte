@@ -706,6 +706,8 @@
 
 	.toggle {
 		display: inline-flex;
+		align-self: flex-start;
+		max-width: 100%;
 		align-items: center;
 		gap: 6px;
 		font-size: 0.85rem;

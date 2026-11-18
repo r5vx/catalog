@@ -12,6 +12,46 @@ without both.
 
 ## Unreleased
 
+## 4.6.0 — 2026-11-18 — Quicker messages and dates that fill themselves
+
+### New
+
+**Messages**
+- The message box shows who to talk to at the top, unread first, with an All messages link
+- Opening the box goes straight to whoever sent the newest unread message, with your earlier messages
+- A message that comes while another window is in front also shows as a Windows notification
+- Settings → Online can hide the chat button
+
+**Library**
+- Starting something sets its Started date, and Want to watch becomes Watching
+
+**Friends**
+- A title's page says which friends are watching it now, not only who watched it
+
+### Improved
+
+**Online**
+- Messages, profiles and syncing reach the server much faster on lines where looking up its address was slow
+- Messages are checked every minute while a video plays, even with another window in front
+- Progress goes to your other computers a few seconds after you pause or stop, and a show picks up from your other computer's newest episode
+- Friends' profile pictures and banners open at once the second time
+
+**Settings**
+- Problem reports say when they were last looked at
+
+**Player**
+- A picture that stalls with plenty loaded ahead goes on after about a second and a half, not six
+
+**Subtitles**
+- Translator thanks, "Subtitle translation by" lines and subtitles with a web address in them are left out
+
+### Fixed
+
+- No chat button when you have no friends yet
+- The Friends page no longer shows someone watching something from hours ago for a moment
+- Settings check boxes only change when you click the box or its words, not anywhere on the row
+- Undo in Notes takes back a paste in one step
+
 ## 4.5.1 — 2026-11-17 — Your own logo and app icon
 
 ### New

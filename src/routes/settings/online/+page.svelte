@@ -5,6 +5,7 @@
 	import { wording } from '$lib/altText';
 	import Profile from './Profile.svelte';
 	import ServerUse from '$lib/ServerUse.svelte';
+	import { chat } from '$lib/chat.svelte';
 
 	/** A line in the alternate wording when it's on (Settings → Personalization → Code), else as it is. */
 	const t = (text: string) => wording(page.data.altMode, text);
@@ -22,7 +23,7 @@
 		account: Account | null;
 		computers: number;
 		google: boolean;
-		switches: { reports: boolean; share: boolean; shared: boolean; along: boolean; autoJoin: boolean };
+		switches: { reports: boolean; share: boolean; shared: boolean; along: boolean; autoJoin: boolean; chatButton: boolean };
 		sync: boolean;
 		lastSync: { at: number; sent: number; got: number; error: string } | null;
 		library: { on: boolean; last: LibraryRound | null; nameOnly: number };
@@ -47,6 +48,9 @@
 	let linkProblem = $state('');
 	let reports = $state<Report[]>([]);
 	let reportsProblem = $state('');
+	/** When the reports were last asked for, and whether they're being asked now ("Look again" showed nothing, 2026-11-18). */
+	let reportsAt = $state(0);
+	let reportsLooking = $state(false);
 	let open = $state<number | null>(null);
 	let openBody = $state('');
 	let waitingForGoogle = $state(false);
@@ -123,9 +127,11 @@
 	}
 
 
-	async function setSwitch(which: 'reports' | 'share' | 'shared' | 'along' | 'autoJoin', on: boolean) {
+	async function setSwitch(which: 'reports' | 'share' | 'shared' | 'along' | 'autoJoin' | 'chatButton', on: boolean) {
 		if (!status) return;
 		status.switches[which] = on;
+		// (The corner's button, drawn by the root layout, goes or comes at once.)
+		if (which === 'chatButton') chat.button = on;
 		await post({ action: 'switches', ...status.switches });
 	}
 
@@ -255,11 +261,14 @@
 	}
 
 	async function loadReports() {
+		reportsLooking = true;
 		const answer = await fetch('/api/online/reports')
 			.then(async (r) => ({ ok: r.ok, data: await r.json().catch(() => null) }))
 			.catch(() => null);
+		reportsLooking = false;
 		reportsProblem = answer?.ok ? '' : (answer?.data?.error ?? "The reports couldn't be read");
 		reports = answer?.ok ? (answer.data.reports ?? []) : [];
+		if (answer?.ok) reportsAt = Date.now();
 	}
 
 	async function openReport(report: Report) {
@@ -433,6 +442,10 @@
 			{t('Play what others start in a watch-together room')}
 		</label>
 		<label class="toggle">
+			<input type="checkbox" checked={status.switches.chatButton !== false} onchange={(e) => setSwitch('chatButton', e.currentTarget.checked)} />
+			Show the chat button
+		</label>
+		<label class="toggle">
 			<input type="checkbox" checked={status.switches.shared} onchange={(e) => setSwitch('shared', e.currentTarget.checked)} />
 			Share Skip Intro and credits times
 		</label>
@@ -455,6 +468,7 @@
 			<h2>Problem reports</h2>
 			{#if reportsProblem}<p class="msg bad">{reportsProblem}</p>{/if}
 			{#if !reports.length && !reportsProblem}<p class="muted">None.</p>{/if}
+			<p class="faint small">Stops of 4 seconds or more are sent. Shorter ones stay in that computer's stop log (Settings → Playback).</p>
 			<ul class="reports">
 				{#each reports as report (report.id)}
 					<li>
@@ -468,7 +482,8 @@
 				{/each}
 			</ul>
 			<div class="row">
-				<button type="button" class="btn" onclick={loadReports}>Look again</button>
+				<button type="button" class="btn" onclick={loadReports} disabled={reportsLooking}>{reportsLooking ? 'Looking…' : 'Look again'}</button>
+				{#if reportsAt && !reportsLooking}<span class="faint small">Looked at {new Date(reportsAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' })}</span>{/if}
 				<button type="button" class="btn" onclick={forgetOwnerKey}>Forget the owner's key</button>
 			</div>
 		</section>
@@ -525,6 +540,9 @@
 
 	.toggle {
 		display: inline-flex;
+		/* Only the box and its words take a click (a stretched row turned "Keep my friends list private" off from the far right, 2026-11-18). */
+		align-self: flex-start;
+		max-width: 100%;
 		align-items: center;
 		gap: 8px;
 		font-size: 0.95rem;

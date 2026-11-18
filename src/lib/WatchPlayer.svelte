@@ -15,7 +15,7 @@
 	import { StyledSubs, isStyledLine, onlyStyledLines } from '$lib/styledSubs';
 	import { padActive } from '$lib/gamepad';
 	import { airsText } from '$lib/airs';
-	import { isAdvert, isCredit } from '$lib/subtitleAds';
+	import { isCredit, keptLines, srtBlocks } from '$lib/subtitleAds';
 	import { PreviewStrip, keepPictures, keptPictures, askComputerForPictures, type StripVideo } from '$lib/previewStrip';
 	import { SubtitleSync } from '$lib/subtitleSync';
 	import { subtitleText } from '$lib/subtitleText';
@@ -1203,6 +1203,8 @@
 	let stallTimer: ReturnType<typeof setInterval> | null = null;
 	let stallSince = 0;
 	let stallNudged = false;
+	/** Steps taken past a stalled picture with plenty loaded (checkStall): 0–3. */
+	let stallSteps = 0;
 	let stallReloaded = false;
 	let lastBytesAt = 0;
 	let mediaRecoveredAt = 0;
@@ -3516,11 +3518,8 @@
 			.replace(/\\[Nn]/g, '\n')
 			.replace(/\\h/g, ' ');
 		if (isCredit(plainSubText(text.replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim())) return null;
-		const kept = text
-			.split('\n')
-			.map((line) => line.trim())
-			.filter((line) => line.replace(/<[^>]*>/g, '').trim() && !isAdvert(line.replace(/<[^>]*>/g, '')))
-			.join('\n');
+		// (A subtitle with an advert line in it goes whole: subtitleAds.ts keptLines.)
+		const kept = keptLines(text.split('\n')).join('\n');
 		return kept ? { text: safeSubHtml(kept), top } : null;
 	}
 
@@ -3528,7 +3527,7 @@
 		if (text.includes('[Events]') || text.includes('Dialogue:')) return parseAss(text);
 
 		const cues: Cue[] = [];
-		const blocks = text.replace(/^﻿/, '').replace(/\r\n?/g, '\n').trim().split(/\n\n+/);
+		const blocks = srtBlocks(text);
 		for (const block of blocks) {
 			const lines = block.split('\n');
 			const timeIdx = lines.findIndex((l) => l.includes('-->'));
@@ -4072,8 +4071,10 @@
 	function watchForStall() {
 		stallSince = performance.now();
 		stallNudged = false;
+		stallSteps = 0;
 		stallReloaded = false;
-		if (!stallTimer) stallTimer = setInterval(checkStall, 2000);
+		// (Every half second, so a stalled picture with plenty loaded is stepped past at 1.5 s.)
+		if (!stallTimer) stallTimer = setInterval(checkStall, 500);
 	}
 
 	function clearStallWatch() {
@@ -4098,10 +4099,31 @@
 		// Silence on the wire, not slowness: a slow download still delivers bytes.
 		const quietFor = now - Math.max(lastBytesAt, stallSince);
 
-		if (!stallNudged && stuckFor > 6000 && bufferedAhead() > 3) {
-			stallNudged = true;
-			videoEl.currentTime = videoEl.currentTime + 0.1;
-			return;
+		// Stuck with plenty loaded ahead: the picture's decoder stalled, not the download (Warrior on
+		// Movy, a friend 2026-11-18: 138 s loaded, stopped 6.7 s until the nudge, which used to wait
+		// 6 s; that copy's pieces there were checked and are sound). A small step at 1.5 s, a bigger
+		// one at 3.5 s, then the decoder rebuilt where it is.
+		if (bufferedAhead() > 3 && !videoEl.seeking) {
+			if (stallSteps === 0 && stuckFor > 1500) {
+				stallSteps = 1;
+				stallNudged = true;
+				notePlayerEvent('stepped 0.1 s past a stalled picture');
+				videoEl.currentTime = videoEl.currentTime + 0.1;
+				return;
+			}
+			if (stallSteps === 1 && stuckFor > 3500) {
+				stallSteps = 2;
+				notePlayerEvent('stepped 0.5 s past a stalled picture');
+				videoEl.currentTime = videoEl.currentTime + 0.5;
+				return;
+			}
+			if (stallSteps === 2 && stuckFor > 6000 && hlsInstance && performance.now() - mediaRecoveredAt > 10_000) {
+				stallSteps = 3;
+				mediaRecoveredAt = performance.now();
+				notePlayerEvent('decoder rebuilt after a stalled picture');
+				hlsInstance.recoverMediaError();
+				return;
+			}
 		}
 		if (!stallReloaded && quietFor > 10_000 && hlsInstance) {
 			stallReloaded = true;
@@ -4348,6 +4370,23 @@
 		const step = t - playedFrom;
 		if (playedFrom >= 0 && step > 0 && step < 3) playedSeconds += step;
 		playedFrom = t;
+		if (playedSeconds >= 60) noteStarted();
+	}
+
+	/**
+	 * A minute really played: the library entry gets today as its Started date when it has none,
+	 * and Want to watch becomes Watching (owner, 2026-11-18). With Autosync on, once per title.
+	 */
+	let startedFor: number | null = null;
+	function noteStarted() {
+		if (!autosync || !libraryEntryId || startedFor === libraryEntryId) return;
+		startedFor = libraryEntryId;
+		fetch('/api/entries', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: libraryEntryId, action: 'started' }) })
+			.then((r) => (r.ok ? r.json() : null))
+			.then((answer) => {
+				if (answer?.status) libraryEntryStatus = answer.status;
+			})
+			.catch(() => {});
 	}
 
 	/*

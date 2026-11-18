@@ -10,7 +10,8 @@
  * Television…", "Press play. Subtitles appear. / 200+ languages. One app: tryray.app"). Found by
  * going through 209 English subtitle files of 32 films and shows (2026-10-22).
  */
-export function isCredit(cue: string): boolean {
+export function isCredit(text: string): boolean {
+	const cue = bare(text);
 	return (
 		/^[-–=[\s]*(english |closed )?(subtit\w*|captions?|synch?(ed|ro\w*)?|titles( re[- ]?edited)?)( (and|&) \w+)?\s*(by\b|:)/i.test(cue) ||
 		/\bcaption(ing|ed)( (made possible|provided|performed))? by\b|\bcaptioning institute\b/i.test(cue) ||
@@ -29,7 +30,8 @@ export function isCredit(cue: string): boolean {
  * one keeps its own times, so the timing isn't touched. Found by going through the English
  * subtitles of 20 films and shows; ordinary lines like "...to the real world" don't match.
  */
-export function isAdvert(line: string): boolean {
+export function isAdvert(text: string): boolean {
+	const line = bare(text);
 	return (
 		// Not "Awww.. Hey.."
 		/(https?:\/\/|\bwww\.)\S+/i.test(line) ||
@@ -49,6 +51,42 @@ export function isAdvert(line: string): boolean {
 		// "Watch Online Movies and Series for FREE" (the only line it caught in 56,120 kept ones)
 		/\bwatch\b.{0,25}\b(movies?|series|tv shows?|anime)\b.{0,25}\bfree\b|\bfree\b.{0,15}\b(movies?|series)\b.{0,15}\bonline\b/i.test(line) ||
 		// …and "Edited by BugZ" (Ice Age, 2026-11-04), "Proofread by …", "Re-edited by …"
-		/^[-–=[\s]*(subtitles?|subs|captions?|synch?(ed|roni[sz]ed)?|resynch?(ed)?|corrected|ripped|translated|transcribed|subtitled|timing|encoded|(re-?)?edited|proof-?read|conformed|tweaked)( (and|&) \w+)? by\b/i.test(line)
+		/^[-–=[\s]*(subtitles?|subs|captions?|synch?(ed|roni[sz]ed)?|resynch?(ed)?|corrected|ripped|translated|transcribed|subtitled|timing|encoded|(re-?)?edited|proof-?read|conformed|tweaked)( (and|&) \w+)? by\b/i.test(line) ||
+		// "Subtitle translation by: Ai Matsuoka" (Netflix anime), "extract subs by misterN",
+		// "especially at translators: kvrle (Serbia)…", "(from HorribleSubs, cheers)" (Erased, 2026-11-18)
+		/^[-–=[\s]*((subtitles?|subs?) (translation|translated|extract(ed|ion)?|ripped|timing)|translation|extract(ed)?( subs| subtitles)?) (by\b|:)/i.test(line) ||
+		/\btranslators?\s*:|\bthanks\b.{0,40}\btranslat(ors?|ion)\b/i.test(line) ||
+		/\((from|by|via|thanks to) [^)]*\b\w*subs\b[^)]*\)/i.test(line)
 	);
+}
+
+/**
+ * A subtitle file's parts, one per subtitle, also where the file left out the blank line before
+ * the next one's number and time (one Erased file ran its first subtitle into the second).
+ */
+export function srtBlocks(text: string): string[] {
+	return text
+		// (Every byte-order mark: that Erased file was two files joined, the second's mark mid-text.)
+		.replace(/\uFEFF/g, '')
+		.replace(/\r\n?/g, '\n')
+		.trim()
+		.replace(/\n(\d+)\n(?=[ \t]*\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}\s*-->)/g, '\n\n$1\n')
+		.split(/\n{2,}/);
+}
+
+/** Without tags: HTML (<i>) and the placing ones some SRT files carry from ASS ({\an8}). */
+function bare(text: string): string {
+	return text.replace(/<[^>]*>/g, '').replace(/\{[^}]*\}/g, '').trim();
+}
+
+/**
+ * The lines of one subtitle worth showing, or none when it's an advert or a credit. A subtitle
+ * with any advert line in it goes whole: the lines beside one are part of it ("To the most
+ * beautiful smile in the world:" above a Facebook address, "extract subs by …" above a site's).
+ * In 37,196 kept subtitles (86 files, 2026-11-18) none had an advert line beside a spoken one.
+ */
+export function keptLines(lines: string[]): string[] {
+	const said = lines.map((line) => line.trim()).filter((line) => bare(line));
+	if (!said.length || said.some((line) => isAdvert(line)) || isCredit(said.join(' '))) return [];
+	return said;
 }

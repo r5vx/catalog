@@ -21,6 +21,9 @@ const os = require('node:os');
 const { moveToThisAccount } = require('./moveInstall.cjs');
 
 app.commandLine.appendSwitch('enable-features', 'PlatformHEVCDecoderSupport,PlatformHEVCEncoderSupport');
+// Windows shows a page's notices (a whisper while a game is in front) only for a named app: the
+// installer's shortcuts carry this same name (package.json build.appId).
+if (process.platform === 'win32') app.setAppUserModelId('com.blura.catalog');
 
 // The app's own cache of pictures and video pieces, kept to its share of the limit in Settings →
 // Storage (written by the server, src/lib/server/storage.ts; read here, as it has to be set

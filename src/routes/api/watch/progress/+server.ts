@@ -1,5 +1,5 @@
 import { json, error, type RequestHandler } from '@sveltejs/kit';
-import { noteWatching, notePaused } from '$lib/server/online';
+import { noteWatching, notePaused, freshenProgress } from '$lib/server/online';
 import { currentProfile } from '$lib/server/profile';
 import { markEpisodes, saveWatchProgress, getWatchProgress, listAllWatchProgress, listAllWatchProgressFull, clearAllWatchProgress, deleteWatchProgress, deleteTitleProgress, hideFromContinueWatching, watchedEpisodesForTitle } from '$lib/server/db/queries';
 
@@ -20,6 +20,8 @@ export const GET: RequestHandler = async ({ url }) => {
 	if (!title) return error(400, 'Missing title');
 
 	if (url.searchParams.get('episodes') === '1') {
+		// (The player is choosing where the show was left: places from the other computers first.)
+		await freshenProgress(currentProfile());
 		return json(watchedEpisodesForTitle(title));
 	}
 

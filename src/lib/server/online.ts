@@ -83,7 +83,26 @@ function profileName(profile: number): string {
  * Someone's picture from the meeting point (Settings → Online), as the image itself.
  * Null when they have none or the server can't be reached.
  */
-export async function cloudPicture(account: string, kind: 'avatar' | 'banner' = 'avatar', profile = 0): Promise<{ bytes: ArrayBuffer; type: string } | null> {
+/**
+ * Pictures already fetched, by person, kind and version (the `?v=` the page asks with): a profile
+ * opened again shows its banner at once instead of asking the server (owner, 2026-11-18: a banner
+ * profile took 4 s). The newest 40 are kept.
+ */
+const pictures = new Map<string, { bytes: ArrayBuffer; type: string }>();
+
+export async function cloudPicture(account: string, kind: 'avatar' | 'banner' = 'avatar', profile = 0, version = ''): Promise<{ bytes: ArrayBuffer; type: string } | null> {
+	const key = version ? `${kind}|${account}|${version}|${kind === 'banner' ? profile : ''}` : '';
+	const kept = key ? pictures.get(key) : undefined;
+	if (kept) return kept;
+	const picture = await fetchPicture(account, kind, profile);
+	if (picture && key) {
+		pictures.set(key, picture);
+		if (pictures.size > 40) pictures.delete(pictures.keys().next().value!);
+	}
+	return picture;
+}
+
+async function fetchPicture(account: string, kind: 'avatar' | 'banner', profile: number): Promise<{ bytes: ArrayBuffer; type: string } | null> {
 	const who = saved();
 	if (!who || !/^[A-Z0-9]{16}$/.test(account)) return null;
 	try {
@@ -133,7 +152,7 @@ export function disconnectOnline(): void {
 
 /* ------------------------------------------------------------ the switches (Settings → Online) */
 
-export type OnlineSwitches = { reports: boolean; share: boolean; shared: boolean; along: boolean; autoJoin: boolean };
+export type OnlineSwitches = { reports: boolean; share: boolean; shared: boolean; along: boolean; autoJoin: boolean; chatButton: boolean };
 
 /**
  * On unless turned off: problem reports, sharing what's watched with friends, shared timings, and
@@ -141,7 +160,7 @@ export type OnlineSwitches = { reports: boolean; share: boolean; shared: boolean
  */
 export function onlineSwitches(): OnlineSwitches {
 	const s = readSettings();
-	return { reports: s.onlineReports !== '0', share: s.onlineShare !== '0', shared: s.onlineShared !== '0', along: s.onlineAlong !== '0', autoJoin: s.onlineAutoJoin === '1' };
+	return { reports: s.onlineReports !== '0', share: s.onlineShare !== '0', shared: s.onlineShared !== '0', along: s.onlineAlong !== '0', autoJoin: s.onlineAutoJoin === '1', chatButton: s.onlineChatButton !== '0' };
 }
 
 /** A JSON list of profile numbers from a setting ([] when there's none or it can't be read). */
@@ -245,6 +264,7 @@ export function noteWatchingMore(profile: number, more: { title: string; year: s
 export function noteStopped(profile: number): void {
 	said.delete(profile);
 	playingNow.delete(profile);
+	syncSoon(profile);
 	if (!onlineConnected() || !onlineSwitches().share) return;
 	void cloud('/v1/presence', { method: 'DELETE', profile });
 }
@@ -254,7 +274,14 @@ export function noteStopped(profile: number): void {
  * watching (owner, 2026-11-16). Said once (a save comes every 10 s while paused); the year and
  * room are kept, so pressing play says it all again at the next save.
  */
+/** Profiles whose pause already sent their places (a save comes every 10 s while paused). */
+const pauseSynced = new Set<number>();
+
 export function notePaused(profile: number): void {
+	if (!pauseSynced.has(profile)) {
+		pauseSynced.add(profile);
+		syncSoon(profile);
+	}
 	if (!said.has(profile)) return;
 	said.delete(profile);
 	if (!onlineConnected() || !onlineSwitches().share) return;
@@ -262,6 +289,7 @@ export function notePaused(profile: number): void {
 }
 
 export function noteWatching(profile: number, what: { title: string; type: string; season: number; episode: number; poster?: string }): void {
+	pauseSynced.delete(profile);
 	const switches = onlineSwitches();
 	if (!onlineConnected() || !switches.share) return;
 	const now = Date.now();
@@ -450,13 +478,24 @@ export async function shareActivity(): Promise<void> {
  * The last answers about friends, per profile, so the Friends page shows them the moment it
  * opens (it was blank for a second while the meeting point was asked), then asks again.
  */
-const friendsKept = new Map<number, { friends?: unknown; activity?: unknown }>();
+const friendsKept = new Map<number, { friends?: unknown; activity?: unknown; friendsAt?: number }>();
 export function keepFriendsAnswer(profile: number, what: 'friends' | 'activity', data: unknown): void {
-	friendsKept.set(profile, { ...friendsKept.get(profile), [what]: data });
+	friendsKept.set(profile, { ...friendsKept.get(profile), [what]: data, ...(what === 'friends' ? { friendsAt: Date.now() } : {}) });
 }
+/**
+ * "Watching now" is only shown from a kept answer of the last 2 minutes: an older one showed a
+ * friend watching what they'd watched 12 hours before, for a moment (owner, 2026-11-18). Names
+ * and pictures still show at once; the fresh answer brings who's watching.
+ */
+const WATCHING_KEPT_FOR = 2 * 60_000;
 export function friendsSnapshot(profile: number): { friends: unknown; activity: unknown } {
 	const kept = friendsKept.get(profile);
-	return { friends: kept?.friends ?? null, activity: kept?.activity ?? null };
+	let friends = kept?.friends ?? null;
+	const answer = friends as { friends?: { watching?: unknown }[] } | null;
+	if (answer && Array.isArray(answer.friends) && Date.now() - (kept?.friendsAt ?? 0) > WATCHING_KEPT_FOR) {
+		friends = { ...answer, friends: answer.friends.map((friend) => ({ ...friend, watching: null })) };
+	}
+	return { friends, activity: kept?.activity ?? null };
 }
 
 /**
@@ -628,6 +667,34 @@ export async function syncNow(profile: number): Promise<{ sent: number; got: num
 	}
 }
 
+/**
+ * The player stopped or paused: this profile's places go out in a few seconds, not at the next
+ * two-minute round (friend, 2026-11-18: watched Teacup to E6 on the PC, the MacBook was back at E3:
+ * a computer shut or put to sleep soon after watching never sent the last episodes).
+ */
+const syncTimers = new Map<number, ReturnType<typeof setTimeout>>();
+export function syncSoon(profile: number, after = 5000): void {
+	if (!onlineConnected() || !syncProfiles().includes(profile)) return;
+	clearTimeout(syncTimers.get(profile));
+	const timer = setTimeout(() => {
+		syncTimers.delete(profile);
+		void syncNow(profile);
+	}, after);
+	timer.unref?.();
+	syncTimers.set(profile, timer);
+}
+
+/**
+ * Before the player picks where a show was left: the other computers' places brought in first
+ * (at most 4 s waited), unless a sync finished in the last minute. A computer just opened or woken
+ * showed the episode it knew of before.
+ */
+export async function freshenProgress(profile: number): Promise<void> {
+	if (!onlineConnected() || !syncProfiles().includes(profile)) return;
+	if (Date.now() - (lastSync.get(profile)?.at ?? 0) < 60_000) return;
+	await Promise.race([syncNow(profile).catch(() => {}), new Promise((done) => setTimeout(done, 4000))]);
+}
+
 /* ------------------------------------------------------------ work shared between houses */
 
 /** Something another house worked out (intro and credit times, say), or null. */
@@ -758,7 +825,7 @@ export function startOnline(): void {
 	// Progress in step: every 2 minutes while in use, every 10 when not (everyRound above).
 	everyRound(() => {
 		for (const profile of syncProfiles()) void syncNow(profile);
-	}, 30_000);
+	}, 3_000);
 	// Libraries kept in step, by their own switch (librarySync.ts).
 	void import('./librarySync').then((m) => m.startLibrarySync()).catch(() => {});
 }

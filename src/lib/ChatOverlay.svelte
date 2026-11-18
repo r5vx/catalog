@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import Avatar from '$lib/Avatar.svelte';
 	import ContextMenu, { menuAt, type MenuItem } from '$lib/ContextMenu.svelte';
-	import { chat, startChat, sendMessage, openChat, type Message } from '$lib/chat.svelte';
+	import { chat, startChat, sendMessage, openChat, markRead, chatNoticeClick, type Message } from '$lib/chat.svelte';
 	import { together, leaveRoom, rejoinKeptRoom, type RoomState } from '$lib/watchTogether.svelte';
 	import { watchHref, wantToWatch } from '$lib/friendLinks';
 	import { isTv } from '$lib/tv';
@@ -19,9 +19,14 @@
 	 */
 
 	type Friend = { id: string; name: string; avatar: number };
+	type Thread = { id: string; name: string; avatar: number; unread: number; last: { text: string; at: number; mine: boolean } | null };
 
 	let friends = $state<Friend[]>([]);
-	let friendsAsked = false;
+	let friendsAskedAt = 0;
+	/** Each friend's conversation and unread count (asked as the box opens), for the row of people. */
+	let threads = $state<Thread[]>([]);
+	/** Earlier whispers with the friend the box is open to (from before this screen opened). */
+	let earlier = $state<{ id: string; messages: Message[] }>({ id: '', messages: [] });
 	let typed = $state('');
 	let sending = $state(false);
 	let problem = $state('');
@@ -40,16 +45,33 @@
 	const offer = $derived(together.offer && offerKey(together.offer) !== answered ? together.offer : null);
 
 	/** What the box shows above where you type: the room's lines, or the whispers with that friend. */
-	const lines = $derived(
-		chat.to === 'room'
-			? chat.room.slice(-8)
-			: chat.whispers.filter((m) => m.from === chat.to || m.to === chat.to).slice(-8)
+	const lines = $derived.by(() => {
+		if (chat.to === 'room') return chat.room.slice(-8);
+		const here = chat.whispers.filter((m) => m.from === chat.to || m.to === chat.to);
+		const before = earlier.id === chat.to ? earlier.messages.filter((m) => !here.some((one) => one.id === m.id)) : [];
+		return [...before, ...here].sort((a, b) => a.id - b.id).slice(-8);
+	});
+
+	/**
+	 * The people row at the top of the box (owner, 2026-11-18: pressing Tab through every friend to
+	 * find a new message was annoying): who has unread whispers first, then the latest conversations.
+	 */
+	const people = $derived(
+		[...threads]
+			.filter((one) => one.unread || one.last)
+			.sort((a, b) => (b.unread ? 1 : 0) - (a.unread ? 1 : 0) || (b.last?.at ?? 0) - (a.last?.at ?? 0))
+			.slice(0, 6)
 	);
+
+	/** No chat button with nobody to talk to (owner, 2026-11-18), or when turned off in Settings → Online. */
+	const showButton = $derived(chat.button && (chat.friends !== 0 || Boolean(together.code)));
 
 	onMount(() => {
 		tv = isTv();
 		void startChat();
 		rejoinKeptRoom();
+		// (A click on a whisper's Windows notice: the box, open to them.)
+		chatNoticeClick((message) => void open({ id: message.from, name: message.name, avatar: message.avatar }));
 		fetch('/api/online?light=1')
 			.then((r) => (r.ok ? r.json() : null))
 			.then((status) => (autoJoin = Boolean(status?.switches?.autoJoin)))
@@ -62,11 +84,28 @@
 		if (state && (together.following || autoJoin)) void join(state);
 	});
 
+	// Online: whether there's anyone to talk to (the chat button waits for it).
+	$effect(() => {
+		if (chat.online) untrack(() => void loadFriends());
+	});
+
 	// Opened from anywhere (a friend's card, a profile's Whisper): the list of friends, and the cursor in the box.
 	$effect(() => {
 		if (!chat.open) return;
-		void loadFriends();
+		untrack(() => {
+			void loadFriends();
+			void loadThreads();
+		});
 		void tick().then(() => inputEl?.focus());
+	});
+
+	// The box is open to a friend: their earlier whispers, and the new ones marked read.
+	$effect(() => {
+		const id = chat.to;
+		if (!chat.open || !id || id === 'room') return;
+		// (Untracked: the loader reads and writes `earlier` before its first await, which made this
+		// effect run itself again and again.)
+		untrack(() => void loadEarlier(id));
 	});
 
 	// A click anywhere but the box (or its button) closes it (owner, 2026-11-15). What was typed stays.
@@ -81,20 +120,54 @@
 		return () => document.removeEventListener('pointerdown', away, true);
 	});
 
+	/** Friends, asked again at most every 5 minutes (so a friend added since shows up). */
 	async function loadFriends() {
-		if (friendsAsked) return;
-		friendsAsked = true;
+		if (Date.now() - friendsAskedAt < 5 * 60_000) return;
+		friendsAskedAt = Date.now();
 		const answer = await fetch('/api/online/c/friends')
 			.then((r) => (r.ok ? r.json() : null))
 			.catch(() => null);
-		friends = answer?.friends ?? [];
+		if (!answer) {
+			friendsAskedAt = 0;
+			return;
+		}
+		friends = answer.friends ?? [];
+		chat.friends = friends.length;
+	}
+
+	async function loadThreads() {
+		const answer = await fetch('/api/online/c/messages/threads')
+			.then((r) => (r.ok ? r.json() : null))
+			.catch(() => null);
+		if (!answer) return;
+		threads = answer.threads ?? [];
+		if (typeof answer.unread === 'number') chat.unread = answer.unread;
+	}
+
+	async function loadEarlier(id: string) {
+		if (earlier.id !== id) earlier = { id, messages: [] };
+		const answer = await fetch(`/api/online/c/messages/with/${id}`)
+			.then((r) => (r.ok ? r.json() : null))
+			.catch(() => null);
+		if (!answer || chat.to !== id) return;
+		earlier = { id, messages: (answer.messages ?? []).slice(-8) };
+		const newest = [...earlier.messages, ...chat.whispers].filter((m) => m.from === id).reduce((top, m) => Math.max(top, m.id), 0);
+		if (newest && threads.find((one) => one.id === id)?.unread !== 0) {
+			await markRead(id, newest);
+			threads = threads.map((one) => (one.id === id ? { ...one, unread: 0 } : one));
+		}
 	}
 
 	/** The box opens: to the room when in one, else to whoever whispered last, else the first friend. */
 	async function open(to?: Friend | 'room') {
 		await loadFriends();
 		if (to) openChat(to);
-		else if (!chat.to || (chat.to === 'room' && !together.code)) {
+		else if (chat.unread && !together.code) {
+			// Something unread: the box opens to whoever sent the newest of it.
+			await loadThreads();
+			const waiting = threads.filter((one) => one.unread).sort((a, b) => (b.last?.at ?? 0) - (a.last?.at ?? 0))[0];
+			openChat(waiting ?? undefined);
+		} else if (!chat.to || (chat.to === 'room' && !together.code)) {
 			const lastFrom = [...chat.whispers].reverse().find((m) => !m.mine);
 			if (together.code) openChat('room');
 			else if (lastFrom) openChat({ id: lastFrom.from, name: lastFrom.name });
@@ -129,7 +202,7 @@
 	function pickTo(value: string) {
 		if (value === 'room') openChat('room');
 		else {
-			const friend = friends.find((one) => one.id === value);
+			const friend = friends.find((one) => one.id === value) ?? threads.find((one) => one.id === value);
 			if (friend) openChat(friend);
 		}
 		inputEl?.focus();
@@ -143,7 +216,7 @@
 	}
 
 	function onKey(event: KeyboardEvent) {
-		if (tv || hidden || !chat.online) return;
+		if (tv || hidden || !chat.online || (chat.friends === 0 && !together.code)) return;
 		if (event.key !== 'Enter' || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || chat.open) return;
 		const focused = document.activeElement as HTMLElement | null;
 		// (Enter in a box, on a button or a link is theirs.)
@@ -261,6 +334,16 @@
 			{#if chat.shown.length && !tv}<p class="hint">Enter to reply</p>{/if}
 		{:else}
 			<div class="box" bind:this={boxEl}>
+				<div class="people">
+					{#each people as person (person.id)}
+						<button type="button" class="person" class:on={chat.to === person.id} onclick={() => pickTo(person.id)}>
+							<Avatar name={person.name} rev={person.avatar} id={person.id} size={20} />
+							<span class="who">{person.name}</span>
+							{#if person.unread && chat.to !== person.id}<span class="count">{person.unread}</span>{/if}
+						</button>
+					{/each}
+					<a class="all" href={chat.to && chat.to !== 'room' ? `/messages?with=${chat.to}` : '/messages'} onclick={close}>All messages</a>
+				</div>
 				{#if lines.length}
 					<ul class="history">
 						{#each lines as message (message.id)}
@@ -293,7 +376,7 @@
 			</div>
 		{/if}
 
-		{#if !onPlayer && !tv}
+		{#if !onPlayer && !tv && showButton}
 			<button type="button" class="chat-button" bind:this={buttonEl} onclick={() => (chat.open ? close() : open())} aria-label="Messages" title="Chat (Enter)">
 				<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 					<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z" />
@@ -426,6 +509,58 @@
 	.box form {
 		display: flex;
 		gap: 6px;
+	}
+
+	/* Who to talk to, one press each, with their new whispers counted. */
+	.people {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.person {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		max-width: 11rem;
+		padding: 3px 8px 3px 3px;
+		border: 1px solid var(--rule);
+		border-radius: 999px;
+		background: var(--surface-2);
+		color: var(--ink);
+		font-size: 0.8rem;
+		cursor: pointer;
+	}
+
+	.person:hover,
+	.person.on {
+		border-color: var(--accent);
+	}
+
+	.person .who {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.person .count {
+		min-width: 16px;
+		height: 16px;
+		padding: 0 4px;
+		border-radius: 8px;
+		background: var(--accent);
+		color: var(--accent-ink);
+		font-size: 0.68rem;
+		font-weight: 700;
+		line-height: 16px;
+		text-align: center;
+	}
+
+	.people .all {
+		margin-left: auto;
+		font-size: 0.8rem;
+		color: var(--accent);
 	}
 
 	.box select {

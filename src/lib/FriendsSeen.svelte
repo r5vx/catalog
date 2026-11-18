@@ -1,6 +1,8 @@
 <script lang="ts">
 	/**
-	 * "Ann and 3 others watched this", on a title's page: which of your friends have watched it.
+	 * "Ann and 3 others watched this", on a title's page: which of your friends have watched it, and
+	 * "Ben is watching this" for friends partway through (owner, 2026-11-18). Both kinds at once:
+	 * "Ann watched this · Ben is watching".
 	 * Friends online (src/lib/server/online.ts `shareSeen` sends each person's watched titles; the
 	 * meeting point answers for your friends only), and friends who shared their library as a file
 	 * (src/lib/server/sharedSeen.ts), which needs nothing online. Click it for everyone and what
@@ -12,13 +14,17 @@
 	type Props = { source: string; sourceId: string; title: string; year?: number | null; tv?: boolean };
 	let { source, sourceId, title, year = null, tv = false }: Props = $props();
 
-	type Friend = { id: string; name: string; avatar: number; rating: number | null };
+	type Friend = { id: string; name: string; avatar: number; rating: number | null; watching?: boolean };
 	/** Friends online, and friends whose shared library file is kept here (the library's Friends). */
 	let online = $state<Friend[]>([]);
 	let fromFiles = $state<Friend[]>([]);
 	let open = $state(false);
 	// One person once: a friend online who also sent a file is the online one (it's the newer word).
-	const friends = $derived([...online, ...fromFiles.filter((f) => !online.some((o) => o.name.trim().toLowerCase() === f.name.trim().toLowerCase()))]);
+	const friends = $derived(
+		[...online, ...fromFiles.filter((f) => !online.some((o) => o.name.trim().toLowerCase() === f.name.trim().toLowerCase()))].sort(
+			(a, b) => Number(Boolean(a.watching)) - Number(Boolean(b.watching))
+		)
+	);
 
 	$effect(() => {
 		const asked = { source, sourceId, title, year };
@@ -35,7 +41,7 @@
 				.catch(() => {});
 		// Online first: a file that is one of those friends under another name is left out by the
 		// computer (a friend's old "Merk" file beside the same person online as "Alex").
-		ask(`/api/online/c/seen?${new URLSearchParams({ key: `${asked.source}:${asked.sourceId}`, title: asked.title })}`, (list) => (online = list)).then(() => {
+		ask(`/api/online/c/seen?${new URLSearchParams({ key: `${asked.source}:${asked.sourceId}`, title: asked.title, watching: '1' })}`, (list) => (online = list)).then(() => {
 			if (!current) return;
 			const params = new URLSearchParams({ source: asked.source, id: asked.sourceId, title: asked.title, year: String(asked.year ?? ''), online: online.map((o) => o.id).join(',') });
 			return ask(`/api/shared/seen?${params}`, (list) => (fromFiles = list));
@@ -43,11 +49,16 @@
 		return () => (current = false);
 	});
 
+	/** "Ann", "Ann and Ben", "Ann and 3 others". */
+	const who = (names: string[]) =>
+		names.length === 1 ? names[0] : names.length === 2 ? `${names[0]} and ${names[1]}` : `${names[0]} and ${names.length - 1} others`;
 	const line = $derived.by(() => {
-		const names = friends.map((f) => f.name);
-		if (names.length === 1) return `${names[0]} watched this`;
-		if (names.length === 2) return `${names[0]} and ${names[1]} watched this`;
-		return `${names[0]} and ${names.length - 1} others watched this`;
+		const done = friends.filter((f) => !f.watching).map((f) => f.name);
+		const going = friends.filter((f) => f.watching).map((f) => f.name);
+		const one = (names: string[]) => names.length === 1;
+		if (!going.length) return `${who(done)} watched this`;
+		if (!done.length) return `${who(going)} ${one(going) ? 'is' : 'are'} watching this`;
+		return `${who(done)} watched this · ${who(going)} ${one(going) ? 'is' : 'are'} watching`;
 	});
 	// Ratings are out of 10; a whole number shows without ".0".
 	const rated = (rating: number) => `${Number.isInteger(rating) ? rating : rating.toFixed(1)}/10`;
@@ -78,7 +89,7 @@
 					<li>
 						<Avatar id={friend.id} name={friend.name} rev={friend.avatar} size={26} />
 						<span class="name">{friend.name}</span>
-						<span class="faint tabular">{friend.rating === null ? 'Not rated' : rated(friend.rating)}</span>
+						<span class="faint tabular">{friend.watching ? 'Watching' : friend.rating === null ? 'Not rated' : rated(friend.rating)}</span>
 					</li>
 				{/each}
 			</ul>

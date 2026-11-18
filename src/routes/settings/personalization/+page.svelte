@@ -854,6 +854,9 @@
 
 	.toggle {
 		display: inline-flex;
+		/* Only the box and its words take a click (a stretched row turned "Keep my friends list private" off from the far right, 2026-11-18). */
+		align-self: flex-start;
+		max-width: 100%;
 		align-items: center;
 		gap: 8px;
 		font-size: 0.9rem;

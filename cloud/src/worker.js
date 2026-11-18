@@ -685,14 +685,22 @@ async function answer(request, env, ctx) {
 		const key = text(url.searchParams.get('key'), 40);
 		const title = text(url.searchParams.get('title'), 120);
 		const site = key.split(':')[0];
+		// `watching=1` (Catalog 4.6+, 2026-11-18): friends partway through it too, said as "is watching
+		// this". Older Catalogs don't ask, so they never call someone two episodes in "watched".
+		const alsoWatching = url.searchParams.get('watching') === '1';
+		const which = alsoWatching ? `(${WATCHED} OR i.status = 'watching')` : WATCHED;
 		const rows = await env.DB.prepare(
-			'SELECT a.id, a.name, v.rev AS avatar, max(s.rating) AS rating FROM seen s JOIN friends f ON f.b = s.account JOIN accounts a ON a.id = s.account LEFT JOIN avatars v ON v.account = a.id ' +
+			'SELECT a.id, a.name, v.rev AS avatar, max(s.rating) AS rating, ' +
+				`max(CASE WHEN ${WATCHED} THEN 1 ELSE 0 END) AS done ` +
+				'FROM seen s JOIN friends f ON f.b = s.account JOIN accounts a ON a.id = s.account LEFT JOIN avatars v ON v.account = a.id ' +
 				'LEFT JOIN seen_info i ON i.account = s.account AND i.tkey = s.tkey ' +
-				`WHERE f.a = ?1 AND ${WATCHED} AND s.account NOT IN (SELECT account FROM privacy WHERE hide_profile = 1) AND (s.tkey = ?2 OR (?3 != '' AND s.title = ?3 COLLATE NOCASE AND s.tkey NOT LIKE ?4)) GROUP BY a.id ORDER BY a.name`
+				`WHERE f.a = ?1 AND ${which} AND s.account NOT IN (SELECT account FROM privacy WHERE hide_profile = 1) AND (s.tkey = ?2 OR (?3 != '' AND s.title = ?3 COLLATE NOCASE AND s.tkey NOT LIKE ?4)) GROUP BY a.id ORDER BY a.name`
 		)
 			.bind(account.id, key, title, `${site}:%`)
 			.all();
-		return json({ friends: rows.results.map((r) => ({ id: r.id, name: r.name, avatar: r.avatar ?? 0, rating: r.rating ?? null })) });
+		return json({
+			friends: rows.results.map((r) => ({ id: r.id, name: r.name, avatar: r.avatar ?? 0, rating: r.rating ?? null, ...(alsoWatching && !r.done ? { watching: true } : {}) }))
+		});
 	}
 
 	/* ---- profiles: what a person says about themselves, their best rated, their library */

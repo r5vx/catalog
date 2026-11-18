@@ -6,8 +6,8 @@ import type { RequestHandler } from './$types';
  * computer's key and handed to the page as the image. The address carries `?v=<number>`, which
  * changes with each new picture, so the browser can keep one for a long time.
  */
-export const GET: RequestHandler = async ({ params }) => {
-	const picture = await cloudPicture(params.id);
+export const GET: RequestHandler = async ({ params, url }) => {
+	const picture = await cloudPicture(params.id, 'avatar', 0, url.searchParams.get('v') ?? '');
 	// (Not kept by the browser: it may only be the server not answering this once.)
 	if (!picture) return new Response('No picture', { status: 404, headers: { 'Cache-Control': 'no-store' } });
 	return new Response(picture.bytes, {

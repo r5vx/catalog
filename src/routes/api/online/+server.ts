@@ -83,7 +83,8 @@ export const POST: RequestHandler = async ({ request }) => {
 			onlineShared: flag(body.shared),
 			onlineAlong: flag(body.along),
 			// (Sent alone by the "Join?" box; left as it is when a page sends only the others.)
-			...('autoJoin' in body ? { onlineAutoJoin: body.autoJoin === true ? '1' : undefined } : {})
+			...('autoJoin' in body ? { onlineAutoJoin: body.autoJoin === true ? '1' : undefined } : {}),
+			...('chatButton' in body ? { onlineChatButton: body.chatButton === false ? '0' : undefined } : {})
 		});
 		if (body.share === false) void cloud('/v1/presence', { method: 'DELETE', profile });
 		return json({ ok: true });

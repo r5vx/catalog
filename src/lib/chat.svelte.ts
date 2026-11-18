@@ -40,9 +40,14 @@ const TALKING_FOR = 5 * 60_000;
 let lastTalk = 0;
 let lastLook = 0;
 
+/** A video is playing on this screen: someone is looking at it, even with another window in front (a game, 2026-11-18). */
+function videoPlaying(): boolean {
+	return [...document.querySelectorAll('video')].some((video) => !video.paused && !video.ended);
+}
+
 function askEvery(): number {
 	if (chat.open || Date.now() - lastTalk < TALKING_FOR) return ASK_TALKING;
-	return document.hasFocus() ? ASK_QUIET : ASK_AWAY;
+	return document.hasFocus() || videoPlaying() ? ASK_QUIET : ASK_AWAY;
 }
 
 export const chat = $state({
@@ -66,7 +71,11 @@ export const chat = $state({
 	to: '' as string,
 	toName: '',
 	/** This computer is online (asked once at the start). */
-	online: false
+	online: false,
+	/** The round chat button shows (Settings → Online, "Show the chat button"). */
+	button: true,
+	/** Friends this person has: -1 until known. With none (and no room) there's no chat button. */
+	friends: -1
 });
 
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -101,6 +110,7 @@ export function takeChat(answer: ChatAnswer, fromRoom = false): void {
 			if (fromRoom) chat.unread++;
 		}
 		show(message);
+		if (!message.room) notify(message);
 		lastTalk = Date.now();
 	}
 	chat.last = Math.max(chat.last, answer.last ?? 0);
@@ -109,6 +119,30 @@ export function takeChat(answer: ChatAnswer, fromRoom = false): void {
 function show(message: Message): void {
 	chat.shown = [...chat.shown, message].slice(-5);
 	setTimeout(() => (chat.shown = chat.shown.filter((one) => one !== message && one.id !== message.id)), SHOWN_FOR);
+}
+
+/** What a click on a whisper's notice does (the corner opens the box to them). */
+let onNoticeClick: (message: Message) => void = () => {};
+export function chatNoticeClick(run: (message: Message) => void): void {
+	onNoticeClick = run;
+}
+
+/**
+ * A whisper while Catalog isn't the window in front (a game over it, 2026-11-18): a Windows notice
+ * too, since the corner can't be seen. Not where there's no Notification (TVs), and one per whisper.
+ */
+function notify(message: Message): void {
+	if (message.mine || document.hasFocus() || typeof Notification === 'undefined') return;
+	try {
+		if (Notification.permission === 'default') void Notification.requestPermission();
+		if (Notification.permission !== 'granted') return;
+		const notice = new Notification(message.name, { body: message.text, tag: `whisper-${message.id}` });
+		notice.onclick = () => {
+			window.focus();
+			onNoticeClick(message);
+			notice.close();
+		};
+	} catch {}
 }
 
 async function look(): Promise<void> {
@@ -142,6 +176,7 @@ async function checkOnline(): Promise<void> {
 	try {
 		const status = await fetch('/api/online?light=1').then((r) => (r.ok ? r.json() : null));
 		chat.online = Boolean(status?.connected);
+		if (status?.switches) chat.button = status.switches.chatButton !== false;
 	} catch {}
 }
 

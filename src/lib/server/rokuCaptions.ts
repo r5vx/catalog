@@ -1,4 +1,4 @@
-import { isAdvert, isCredit } from '$lib/subtitleAds';
+import { keptLines, srtBlocks } from '$lib/subtitleAds';
 import { delayAt, fitDelays, spoken, type DelayPlan, type TimedCue } from '$lib/subtitleAlign';
 import { readSpeech, speechIsPartial, type SpeechKey } from './heardSpeech';
 
@@ -23,14 +23,13 @@ export function toVtt(text: string): string {
 
 /** Drops advert lines and credit cues (the same ones the computer's and Fire TV's player drop). */
 function withoutAdverts(vtt: string): string {
-	return vtt
-		.split(/\n{2,}/)
+	return srtBlocks(vtt)
 		.map((block) => {
 			const lines = block.split('\n');
 			const at = lines.findIndex((l) => l.includes('-->'));
 			if (at < 0) return block;
-			const said = lines.slice(at + 1).filter((l) => l.replace(/<[^>]*>/g, '').trim() && !isAdvert(l.replace(/<[^>]*>/g, '')));
-			if (!said.length || isCredit(said.map((l) => l.replace(/<[^>]*>/g, '')).join(' '))) return '';
+			const said = keptLines(lines.slice(at + 1));
+			if (!said.length) return '';
 			return [...lines.slice(0, at + 1), ...said].join('\n');
 		})
 		.filter(Boolean)

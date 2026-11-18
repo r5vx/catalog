@@ -142,6 +142,8 @@ export type Settings = {
 	onlineAlong?: string;
 	/** '1': when someone in this screen's room starts something, it opens here by itself (no "Join?" first). */
 	onlineAutoJoin?: string;
+	/** '0': no round chat button in the corner (owner, 2026-11-18). Messages still pop up. */
+	onlineChatButton?: string;
 	/** This computer's key for Fire TVs' developer connection (fireTvInstall.ts). Never leaves the computer. */
 	fireTvKey?: string;
 	/** Fire TVs seen opening Catalog, and their names once installed on (JSON: address → { seen, name }). */

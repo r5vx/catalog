@@ -10,7 +10,7 @@
  * English talking only (Whisper's English model); anime in Japanese keeps the listening.
  */
 import type { DelayPlan } from './subtitleAlign';
-import { isAdvert, isCredit } from './subtitleAds';
+import { keptLines, srtBlocks } from './subtitleAds';
 
 export type Cue = { start: number; end: number; text: string };
 export type HeardWord = { w: string; at: number };
@@ -36,13 +36,13 @@ export function parseCues(text: string): Cue[] {
 		}
 		return cues;
 	}
-	for (const block of text.split(/\n{2,}/)) {
+	for (const block of srtBlocks(text)) {
 		const lines = block.split('\n');
 		const at = lines.findIndex((l) => l.includes('-->'));
 		if (at < 0) continue;
 		const [a, b] = lines[at].split('-->');
-		const said = lines.slice(at + 1).map((l) => l.replace(/<[^>]*>/g, '')).filter((l) => l.trim() && !isAdvert(l));
-		if (!said.length || isCredit(said.join(' '))) continue;
+		const said = keptLines(lines.slice(at + 1)).map((l) => l.replace(/<[^>]*>/g, '').replace(/\{[^}]*\}/g, ''));
+		if (!said.length) continue;
 		const start = clock(a);
 		const end = clock(b);
 		if (Number.isFinite(start) && Number.isFinite(end)) cues.push({ start, end, text: said.join(' ') });
