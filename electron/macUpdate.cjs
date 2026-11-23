@@ -15,6 +15,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
+const { pipeline } = require('node:stream/promises');
 
 const RELEASES = 'https://github.com/r5vx/catalog/releases';
 
@@ -98,16 +99,17 @@ function createMacUpdater({ app, send, log }) {
 			let got = 0;
 			let shown = -1;
 			send({ status: 'downloading', version, percent: 0 });
-			for await (const piece of download.body) {
-				got += piece.length;
-				if (!out.write(piece)) await new Promise((resolve) => out.once('drain', resolve));
-				const percent = total ? Math.floor((got / total) * 100) : 0;
-				if (percent !== shown) {
-					shown = percent;
-					send({ status: 'downloading', version, percent });
+			await pipeline(download.body, async function* (pieces) {
+				for await (const piece of pieces) {
+					got += piece.length;
+					yield piece;
+					const percent = total ? Math.floor((got / total) * 100) : 0;
+					if (percent !== shown) {
+						shown = percent;
+						send({ status: 'downloading', version, percent });
+					}
 				}
-			}
-			await new Promise((resolve, reject) => out.end((error) => (error ? reject(error) : resolve())));
+			}, out);
 
 			// ditto keeps everything a Mac app needs (its signature, links inside) as it was.
 			await run('ditto', ['-x', '-k', zip, workDir()]);

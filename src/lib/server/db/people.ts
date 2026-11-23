@@ -144,11 +144,6 @@ export function allTitleKeys(): Set<string> {
 	return keys;
 }
 
-/** Cheap check so the entry page can hide an empty cast section. */
-export function hasAnyCast(): boolean {
-	return Boolean((db.prepare('SELECT 1 FROM entry_cast LIMIT 1').get() as unknown));
-}
-
 /**
  * Which of these people are already in your library, by provider id.
  *

@@ -8,7 +8,7 @@
 	import LibraryHeader from '$lib/LibraryHeader.svelte';
 	import type { PageData } from './$types';
 
-	type Hit = { id: string; name: string; kind: 'list' | 'collection'; posterUrl: string | null; count: number | null };
+	type Hit = { id: string; name: string; kind: 'list' | 'collection'; posterUrl: string | null; count: number | null; finished?: boolean };
 
 	let { data }: { data: PageData } = $props();
 	const pm = $derived(page.data.altMode);
@@ -26,7 +26,10 @@
 		searching = true;
 		try {
 			const resp = await fetch(`/api/orders?q=${encodeURIComponent(q)}`);
-			if (resp.ok && q === query) hits = await resp.json();
+			if (resp.ok) {
+				const found = await resp.json();
+				if (q === query) hits = found;
+			}
 		} catch {}
 		if (q === query) searching = false;
 	}
@@ -131,7 +134,8 @@
 							<div class="hit-poster">
 								{#if hit.posterUrl}<img src={hit.posterUrl} alt="" loading="lazy" />{/if}
 								<span class="hit-action">{mine ? 'Open' : '+ Add'}</span>
-								{#if mine}<span class="hit-added">Added</span>{/if}
+								{#if hit.finished}<span class="hit-added">Finished</span>
+								{:else if mine}<span class="hit-added">Added</span>{/if}
 							</div>
 							<span class="hit-name">{hit.name}</span>
 							<span class="faint small">
@@ -178,7 +182,11 @@
 								</div>
 							{/if}
 							<MoreButton onopen={(e) => onCardMenu(e, f.id)} />
-							<span class="pct tabular">{f.released ? Math.round((f.watched / f.released) * 100) : 0}%</span>
+							{#if f.finished}
+								<span class="pct finished">Finished</span>
+							{:else}
+								<span class="pct tabular">{f.released ? Math.round((f.watched / f.released) * 100) : 0}%</span>
+							{/if}
 						</div>
 						<div class="info">
 							<h2>{f.name}</h2>
@@ -190,7 +198,7 @@
 									{f.upNext.title}{f.upNext.season ? ` · Season ${f.upNext.season}` : ''}
 								</p>
 							{:else if f.released}
-								<p class="next done">All caught up</p>
+								<p class="next done">{f.finished ? 'Finished' : 'All caught up'}</p>
 							{/if}
 						</div>
 					</a>
@@ -473,6 +481,17 @@
 
 	.next.done {
 		color: var(--good);
+	}
+
+	.pct.finished {
+		padding: 2px 9px;
+		border-radius: 999px;
+		background: var(--good);
+		color: var(--paper);
+		font-size: 0.72rem;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		text-shadow: none;
 	}
 
 	.ctx-backdrop {

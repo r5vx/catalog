@@ -16,6 +16,9 @@ end sub
 
 ' Waits for a pause in typing, so it doesn't search every letter.
 sub onTyping()
+    m.searchAsk = invalid
+    m.results.visible = false
+    m.status.visible = true
     m.pause.control = "stop"
     m.pause.control = "start"
 end sub
@@ -30,10 +33,11 @@ sub search()
     end if
     m.asked = words
     m.status.text = "Searching…"
-    api("/api/search", { q: words }, "onResults")
+    m.searchAsk = api("/api/search", { q: words }, "onResults")
 end sub
 
 sub onResults(event as Object)
+    if not isCurrentRequest(event, m.searchAsk) then return
     answer = event.getData()
     ' (A slower answer to something typed before.)
     if m.keyboard.text.Trim() <> m.asked then return

@@ -7,6 +7,7 @@ import { addFebboxAccount, febboxAccounts, removeFebboxAccount } from '$lib/serv
 import { febboxFlow } from '$lib/server/febboxFlow';
 import { DEBRID_SERVICES, checkDebridKey, debridSetting, serviceName } from '$lib/server/sources/debrid';
 import { addAddon, addonSite, raiseAddon, readAddon, removeAddon, savedAddons } from '$lib/server/sources/addons';
+import { checkNyaaWishes, nyaaWishes, removeNyaaWish } from '$lib/server/sources/nyaa';
 import type { PageServerLoad, Actions } from './$types';
 
 /** Whether the date Febbox wrote into a sign-in says it has run out. */
@@ -49,6 +50,9 @@ export const load: PageServerLoad = async () => {
 		},
 		// Stremio addons: never their links, which can hold someone's keys; only the site.
 		addons: savedAddons().map((a) => ({ key: a.key, name: a.name, site: addonSite(a), movies: a.streams !== false && a.movies, shows: a.streams !== false && a.shows, lists: (a.catalogs ?? []).length })),
+		nyaa: settings.nyaa === '1',
+		// Episodes picked on Nyaa while nobody was sharing them, looked for again every 6 hours.
+		nyaaWishes: nyaaWishes().map((w) => ({ shareKey: w.shareKey, name: w.name, season: w.season, episode: w.episode, state: w.state, note: w.note })),
 		region: settings.watchRegion ?? '',
 		regionInUse: watchRegion(),
 		detectedRegion: detectedRegion()
@@ -158,6 +162,22 @@ export const actions: Actions = {
 		return {};
 	},
 
+	// Nyaa's torrents (sources/nyaa.ts): on or off. Only through a debrid service: never torrented from here.
+	saveNyaa: async ({ request }) => {
+		const on = (await request.formData()).get('nyaa') === '1';
+		if (on && !debridSetting()) return { nyaaOk: 'Nyaa needs a debrid service first.' };
+		updateSettings({ nyaa: on ? '1' : undefined });
+		return { nyaaOk: on ? 'Nyaa is on.' : 'Nyaa is off.' };
+	},
+	removeNyaaWish: async ({ request }) => {
+		removeNyaaWish(String((await request.formData()).get('shareKey') ?? ''));
+		return {};
+	},
+	checkNyaaWishes: async () => {
+		// Waited on for up to a minute; a longer check carries on and shows next time.
+		await Promise.race([checkNyaaWishes(true), new Promise((r) => setTimeout(r, 60_000))]);
+		return { nyaaOk: 'Looked again.' };
+	},
 	removeDebrid: async () => {
 		updateSettings({ debridService: undefined, debridKey: undefined });
 		return { debridOk: 'Debrid key removed.' };

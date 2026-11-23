@@ -1,4 +1,4 @@
-import { error, redirect, type Handle, type RequestEvent } from '@sveltejs/kit';
+import { error, redirect, type Handle, type HandleServerError, type RequestEvent } from '@sveltejs/kit';
 import { pinIsSet, sessionToken, setupNeeded, readSettings, updateSettings } from '$lib/server/settings';
 // Imported for its side effect: it starts listening for update progress from
 // the desktop app at boot, not the first time someone opens Settings.
@@ -14,7 +14,8 @@ import { clearOldStrips } from '$lib/server/previewStrips';
 import { keepWithinLimit, tellAppItsShare } from '$lib/server/storage';
 import { moveOffAniList } from '$lib/server/offAniList';
 import { scheduleNewEpisodeChecks } from '$lib/server/newEpisodes';
-import { startOnline, noteInUse } from '$lib/server/online';
+import { startOnline, noteInUse, reportProblem } from '$lib/server/online';
+import { reportScreen } from '$lib/server/reportScreen';
 import { scheduleNextAirs } from '$lib/server/nextAirs';
 import { installSecureDns } from '$lib/server/secureDns';
 import { noteOwnAddress } from '$lib/server/ownFetch';
@@ -28,6 +29,7 @@ import { customThemeCss, readCustomTheme } from '$lib/customTheme';
 import { startYouTubeForPhones } from '$lib/server/youtubePhone';
 import { noteFireTv } from '$lib/server/fireTvInstall';
 import { tellDesktopIcon } from '$lib/server/appIcon';
+import { checkNyaaWishes } from '$lib/server/sources/nyaa';
 
 // Before anything asks another site for something: a time limit for every outside request,
 // and a note of the slow ones (on /api/diagnostics).
@@ -93,6 +95,10 @@ startYouTubeForPhones();
 // A renewed Showbox sign-in in the app's window is saved, shortly after opening and twice a day.
 setTimeout(keepShowboxSigninFresh, 30 * 1000).unref?.();
 setInterval(keepShowboxSigninFresh, 12 * 60 * 60 * 1000).unref?.();
+
+// Nyaa's wishlist (sources/nyaa.ts): episodes nobody was sharing, looked for again every 6 hours.
+setTimeout(() => void checkNyaaWishes().catch(() => {}), 2 * 60 * 1000).unref?.();
+setInterval(() => void checkNyaaWishes().catch(() => {}), 60 * 60 * 1000).unref?.();
 
 // Started by the desktop app: when that app goes — closed, updated, crashed — go with it.
 // A server left behind keeps port 4173, so the next Catalog either can't start its own or
@@ -300,9 +306,30 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 
 	if (mustPickProfile(event)) {
-		const next = event.url.pathname.replace(/\/__data\.json$/, '') + event.url.search;
+		let next = event.url.pathname.replace(/\/__data\.json$/, '') + event.url.search;
+		if (next === '/' && readSettings().openOn !== 'library') next = '/new';
 		redirect(303, `/profiles?next=${encodeURIComponent(next)}`);
 	}
 
 	return resolveWith(event);
+};
+
+/**
+ * A page or request that failed on the server (what a TV or phone shows as an error page): sent
+ * to the owner as a problem report too, saying which screen asked. Only unexpected failures come
+ * here; ones Catalog answers on purpose (not found, a refused PIN) don't, and nor do 404s.
+ */
+export const handleError: HandleServerError = ({ error: err, event, status }) => {
+	console.error(err);
+	if (status < 500) return;
+	const message = err instanceof Error ? err.message : String(err);
+	try {
+		reportProblem('error', `Server error: ${event.route.id ?? event.url.pathname}`.slice(0, 160), {
+			...reportScreen(event.request),
+			status,
+			error: message.slice(0, 500),
+			stack: err instanceof Error ? String(err.stack ?? '').slice(0, 1500) : '',
+			page: event.url.pathname
+		});
+	} catch {}
 };

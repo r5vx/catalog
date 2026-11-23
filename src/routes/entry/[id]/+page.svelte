@@ -5,6 +5,7 @@
 	import { watchTypeOf } from '$lib/watchType';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
+	import { invalidateAll } from '$app/navigation';
 	import BackBar from '$lib/BackBar.svelte';
 	import EntryForm from '$lib/EntryForm.svelte';
 	import QuickEdit from '$lib/QuickEdit.svelte';
@@ -50,6 +51,15 @@
 		}
 	});
 
+	// The saved details show first; when the check meanwhile finds the entry pointed at the wrong
+	// title and fixes it, the page reloads its details once (the check isn't repeated).
+	$effect(() => {
+		const id = data.entry.id;
+		data.rechecked.then((fixed) => {
+			if (fixed && data.entry.id === id) invalidateAll();
+		});
+	});
+
 	/** What's been changed at the top of the page since it loaded (QuickEdit saves it at once). */
 	let changed = $state<Partial<typeof data.entry>>({});
 	let changedFor = 0;
@@ -67,6 +77,9 @@
 	);
 
 	const isAnime = $derived(category?.slug === 'anime' || entry.source === 'anilist');
+	const musicLink = $derived(entry.sourceId && (entry.source === 'tmdb' || entry.source === 'anilist')
+		? { source: entry.source, sourceId: entry.sourceId }
+		: { source: 'manual' });
 
 	const watchType = $derived(watchTypeOf({ categorySlug: category?.slug, sourceId: entry.sourceId, episodesTotal: entry.episodesTotal }));
 	// (Its own copy of the title, so a click below doesn't ask again whether it can be watched.)
@@ -386,7 +399,7 @@
 	<CastRow
 		{cast}
 		back={page.url.pathname + page.url.search}
-		music={entry.sourceId && (entry.source === 'tmdb' || entry.source === 'anilist') ? { source: entry.source, sourceId: entry.sourceId, title: entry.title, year: entry.year, type: watchType === 'movie' ? 'movie' : 'tv', anime: isAnime } : null}
+		music={{ ...musicLink, title: entry.title, year: entry.year, type: watchType, anime: isAnime }}
 	/>
 
 	{#if watchType === 'tv' && entry.sourceId && (entry.source === 'tmdb' || entry.source === 'anilist')}

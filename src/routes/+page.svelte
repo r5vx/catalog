@@ -4,7 +4,7 @@
 	import { watchTypeOf } from '$lib/watchType';
 	import MoreButton from '$lib/MoreButton.svelte';
 	import { goto, invalidateAll } from '$app/navigation';
-	import { warmUpTitle } from '$lib/watch';
+	import ContinueCard from '$lib/ContinueCard.svelte';
 	import { STATUSES, statusLabel, sortBadge, KEPT_FILTERS } from '$lib/constants';
 	import { whenText } from '$lib/airs';
 	import SortPicker from '$lib/SortPicker.svelte';
@@ -107,16 +107,6 @@
 			.filter((w, i, arr) => arr.findIndex(x => x.title === w.title && x.type === w.type) === i)
 	);
 
-	// A short pause so sweeping the mouse across the row doesn't look up every card.
-	let warmTimer: ReturnType<typeof setTimeout> | null = null;
-	function scheduleWarm(item: { title: string; type: string; season: number; episode: number }) {
-		cancelWarm();
-		warmTimer = setTimeout(() => warmUpTitle(item), 250);
-	}
-	function cancelWarm() {
-		if (warmTimer) { clearTimeout(warmTimer); warmTimer = null; }
-	}
-
 	/** The "New episode" mark goes; the show stays, at the new episode. */
 	async function dismissNew(title: string) {
 		await fetch('/api/watch/caught-up', {
@@ -181,13 +171,6 @@
 	}
 
 	function closeCwCtx() { cwCtx = null; }
-
-	function formatProgress(current: number, total: number): string {
-		if (total <= 0) return 'Up next';
-		const pct = Math.round((current / total) * 100);
-		const left = Math.max(0, Math.floor((total - current) / 60));
-		return `${pct}% · ${left}m left`;
-	}
 
 	/* --------------------------------------------------------------- context menu */
 
@@ -273,30 +256,7 @@
 			{#each continueItems as item (`${item.title}:${item.type}`)}
 				<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 				<li class="watching-item" oncontextmenu={(e) => onWatchingContext(e, item)}>
-					<a
-						href={resumeHref(item)}
-						class="card"
-						onpointerenter={() => scheduleWarm(item)}
-						onpointerleave={cancelWarm}
-						onfocus={() => scheduleWarm(item)}
-					>
-						<div class="poster">
-							{#if item.posterUrl}
-								<img src={item.posterUrl} srcset={posterSrcset(item.posterUrl)} sizes={POSTER_SIZES} alt="" loading="lazy" />
-							{:else}
-								<span class="poster-fallback" aria-hidden="true">▶</span>
-							{/if}
-							<span class="watching-progress-overlay">
-								<span class="watching-fill" style="width: {item.duration > 0 ? Math.min(100, Math.round((item.currentTime / item.duration) * 100)) : 0}%"></span>
-							</span>
-						</div>
-						<div class="meta">
-							<h3 class="card-title">{item.title}</h3>
-							<p class="sub faint tabular">
-								{item.type === 'tv' ? `S${item.season}E${item.episode} · ` : ''}{formatProgress(item.currentTime, item.duration)}
-							</p>
-						</div>
-					</a>
+					<ContinueCard {item} href={resumeHref(item)} />
 					{#if item.newEpisode}
 						<div class="new-badge">
 							New episode
@@ -791,21 +751,6 @@
 
 	.watching-item {
 		position: relative;
-	}
-
-	.watching-progress-overlay {
-		position: absolute;
-		bottom: 0;
-		left: 0;
-		right: 0;
-		height: 4px;
-		background: rgb(0 0 0 / 40%);
-	}
-
-	.watching-fill {
-		display: block;
-		height: 100%;
-		background: var(--accent);
 	}
 
 	/* A new episode came out of a show that was caught up. */

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
+	import { enhance } from '$app/forms';
 	import { ACCENT_PRESETS } from '$lib/accent';
 	import { CUSTOM_COLOURS, THEME_COLOURS, applyCustomTheme, type CustomTheme } from '$lib/customTheme';
 	import { DEFAULT_DIM, MAX_DIM, MAX_BLUR } from '$lib/background';
@@ -8,8 +9,10 @@
 	import { codeBox } from '$lib/codeBox.svelte';
 	import WordScramble from '$lib/WordScramble.svelte';
 	import { SORTS, SORT_GROUPS } from '$lib/constants';
-	import { LOGO_WORDS_MOST, PINK } from '$lib/logo';
+	import { LOGO_MOVE_MOST, LOGO_SIZE, LOGO_WORDS_MOST, PINK } from '$lib/logo';
 	import Wordmark from '$lib/Wordmark.svelte';
+	import PictureAdjust from '$lib/PictureAdjust.svelte';
+	import { DEFAULT_FIT, drawFitted } from '$lib/pictureFit';
 	import type { PageData, ActionData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -156,6 +159,16 @@
 
 	let dim = $state(untrack(() => data.background?.dim ?? DEFAULT_DIM));
 	let blur = $state(untrack(() => data.background?.blur ?? 0));
+	// Which part of the picture shows, and how zoomed: the page behind follows as it's dragged.
+	let bgFit = $state(untrack(() => data.background?.fit ?? { ...DEFAULT_FIT }));
+	let screenAspect = $state(16 / 9);
+	$effect(() => {
+		screenAspect = window.innerWidth / Math.max(1, window.innerHeight);
+	});
+	$effect(() => {
+		if (data.background) backgroundPreview.fit = { ...bgFit };
+		return () => (backgroundPreview.fit = null);
+	});
 	let uploading = $state(false);
 	let backgroundError = $state('');
 
@@ -190,7 +203,9 @@
 				return;
 			}
 			const { url } = await resp.json();
-			await saveBackground({ image: url, dim: String(dim), blur: String(blur) });
+			// A new picture starts in the middle, not zoomed.
+			bgFit = { ...DEFAULT_FIT };
+			await saveBackground({ image: url, dim: String(dim), blur: String(blur), fit: JSON.stringify(bgFit) });
 		} catch {
 			backgroundError = 'That picture could not be used.';
 		} finally {
@@ -212,6 +227,11 @@
 	let logoDot = $state(untrack(() => data.logo.dot || PINK));
 	let logoError = $state('');
 	let logoUploading = $state(false);
+	// A picture's size and place in the logo's spot, for one that doesn't fit well as it is.
+	let logoSize = $state(untrack(() => data.logo.size));
+	let logoX = $state(untrack(() => data.logo.x));
+	let logoY = $state(untrack(() => data.logo.y));
+	let logoDrag: { x: number; y: number; fromX: number; fromY: number; width: number; height: number } | null = null;
 
 	/** Saves the logo with any of its parts changed, then every page shows it. */
 	async function saveLogo(change: { kind?: string; words?: string; image?: string; dot?: string }) {
@@ -221,6 +241,9 @@
 		body.set('words', change.words ?? logoWords);
 		body.set('image', change.image ?? data.logo.image);
 		body.set('dot', change.dot ?? data.logo.dot);
+		body.set('size', String(logoSize));
+		body.set('x', String(logoX));
+		body.set('y', String(logoY));
 		const resp = await fetch('?/saveLogo', { method: 'POST', body, headers: { 'x-sveltekit-action': 'true' } });
 		const answer = await resp.json().catch(() => null);
 		if (answer?.type !== 'success') logoError = "That logo couldn't be saved.";
@@ -250,7 +273,13 @@
 		logoUploading = true;
 		const url = await uploadPicture(event);
 		logoUploading = false;
-		if (url) await saveLogo({ kind: 'picture', image: url });
+		if (url) {
+			// A new picture starts at its usual size and place.
+			logoSize = 100;
+			logoX = 0;
+			logoY = 0;
+			await saveLogo({ kind: 'picture', image: url });
+		}
 		else logoError = 'That picture could not be used.';
 	}
 
@@ -260,6 +289,7 @@
 	let iconColor = $state(untrack(() => data.appIcon.color));
 	let iconImage = $state(untrack(() => data.appIcon.image));
 	let iconRound = $state(untrack(() => data.appIcon.round));
+	let iconFit = $state(untrack(() => data.appIcon.fit));
 	let iconError = $state('');
 	let iconBusy = $state(false);
 	let iconSaved = $state(false);
@@ -278,15 +308,13 @@
 			const picture = new Image();
 			picture.src = iconImage;
 			await picture.decode();
-			const width = picture.naturalWidth || 256;
-			const height = picture.naturalHeight || 256;
-			const side = Math.min(width, height);
 			if (iconRound) {
 				ctx.beginPath();
 				ctx.arc(128, 128, 126, 0, Math.PI * 2);
 				ctx.clip();
 			}
-			ctx.drawImage(picture, (width - side) / 2, (height - side) / 2, side, side, 0, 0, 256, 256);
+			// Moved and zoomed as picked (src/lib/PictureAdjust.svelte).
+			drawFitted(ctx, picture, 256, 256, iconFit);
 		}
 		return canvas.toDataURL('image/png');
 	}
@@ -303,6 +331,7 @@
 				body.set('color', iconColor);
 				body.set('image', iconImage);
 				body.set('round', iconRound ? '1' : '0');
+				body.set('fit', JSON.stringify(iconFit));
 			}
 			const resp = await fetch('?/saveAppIcon', { method: 'POST', body, headers: { 'x-sveltekit-action': 'true' } });
 			const answer = await resp.json().catch(() => null);
@@ -331,6 +360,8 @@
 		}
 		iconImage = url;
 		iconKind = 'picture';
+		// A new picture starts in the middle, not zoomed.
+		iconFit = { ...DEFAULT_FIT };
 		await saveIcon();
 	}
 
@@ -475,6 +506,9 @@
 				<span class="faint tabular">{blur}</span>
 			</label>
 		</div>
+		<div class="adjust-row">
+			<PictureAdjust src={data.background.image} bind:fit={bgFit} aspect={screenAspect} width={280} onchange={(fit) => saveBackground({ fit: JSON.stringify(fit) })} />
+		</div>
 	{/if}
 </section>
 
@@ -522,6 +556,53 @@
 			</label>
 			<span class="faint">A wide picture with a see-through background looks best.</span>
 		</div>
+		{#if data.logo.image}
+			<!-- As it shows at the top of the sidebar: drag it to move it, the slider for its size. -->
+			<div class="logo-adjust">
+				<div
+					class="logo-stage"
+					role="slider"
+					tabindex="-1"
+					aria-label="Drag to move the logo"
+					aria-valuenow={logoX}
+					onpointerdown={(e) => {
+						const img = (e.currentTarget as HTMLElement).querySelector('img');
+						(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+						logoDrag = { x: e.clientX, y: e.clientY, fromX: logoX, fromY: logoY, width: img?.offsetWidth || 100, height: img?.offsetHeight || 30 };
+					}}
+					onpointermove={(e) => {
+						if (!logoDrag) return;
+						const clamp = (n: number) => Math.round(Math.min(LOGO_MOVE_MOST, Math.max(-LOGO_MOVE_MOST, n)));
+						logoX = clamp(logoDrag.fromX + ((e.clientX - logoDrag.x) / logoDrag.width) * 100);
+						logoY = clamp(logoDrag.fromY + ((e.clientY - logoDrag.y) / logoDrag.height) * 100);
+					}}
+					onpointerup={() => {
+						if (!logoDrag) return;
+						logoDrag = null;
+						void saveLogo({});
+					}}
+				>
+					<img
+						src={data.logo.image}
+						alt=""
+						draggable="false"
+						style:height="calc(1.75rem * {logoSize / 100})"
+						style:transform="translate({logoX}%, {logoY}%)"
+					/>
+				</div>
+				<label class="logo-size">
+					Size
+					<input type="range" min={LOGO_SIZE.least} max={LOGO_SIZE.most} step="5" bind:value={logoSize} onchange={() => saveLogo({})} />
+					<span class="faint tabular">{logoSize}%</span>
+				</label>
+				<div class="logo-row">
+					<span class="faint">Drag it to move it.</span>
+					{#if logoSize !== 100 || logoX || logoY}
+						<button type="button" class="btn" onclick={() => { logoSize = 100; logoX = 0; logoY = 0; void saveLogo({}); }}>Reset</button>
+					{/if}
+				</div>
+			</div>
+		{/if}
 	{/if}
 </section>
 
@@ -567,10 +648,28 @@
 					</label>
 				{/if}
 			</div>
+			{#if iconImage}
+				<div class="adjust-row">
+					<PictureAdjust src={iconImage} bind:fit={iconFit} round={iconRound} width={160} onchange={saveIcon} />
+				</div>
+			{/if}
 		{/if}
 		{#if iconSaved}<p class="faint hint" role="status">The taskbar can take a moment to change.</p>{/if}
 	</section>
 {/if}
+
+<section>
+	<div class="head"><h2>Open on</h2></div>
+	<form method="POST" action="?/saveOpenOn" use:enhance>
+		<label for="open-on">Open on</label>
+		<select id="open-on" name="openOn" value={data.openOn}>
+			<option value="new">Home</option>
+			<option value="library">Library</option>
+		</select>
+		<button class="btn" type="submit">Save</button>
+		{#if form?.openOnError}<p class="error">{form.openOnError}</p>{/if}
+	</form>
+</section>
 
 <section>
 	<div class="head"><h2>Layout</h2></div>
@@ -1144,6 +1243,56 @@
 
 	.logo-row input[type='text'] {
 		width: min(100%, 16em);
+	}
+
+	/* The logo picture's size and place, in a strip like the sidebar's top. */
+	.logo-adjust {
+		margin-top: 14px;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		max-width: 320px;
+	}
+
+	.logo-stage {
+		display: flex;
+		align-items: center;
+		height: 64px;
+		padding: 0 16px;
+		overflow: hidden;
+		border: 1px dashed var(--rule-firm);
+		border-radius: var(--radius);
+		background: var(--surface);
+		cursor: grab;
+		touch-action: none;
+		user-select: none;
+	}
+
+	.logo-stage:active {
+		cursor: grabbing;
+	}
+
+	.logo-stage img {
+		display: block;
+		width: auto;
+		max-width: 100%;
+		pointer-events: none;
+	}
+
+	.logo-size {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+	}
+
+	.logo-size input {
+		flex: 1;
+		accent-color: var(--accent);
+	}
+
+	/* The app icon's picture, moved and zoomed in its square. */
+	.adjust-row {
+		margin-top: 14px;
 	}
 
 	.logo-row .disabled {

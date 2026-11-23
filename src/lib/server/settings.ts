@@ -69,6 +69,8 @@ export type Settings = {
 	febboxToken?: string;
 	/** A debrid service (src/lib/server/sources/debrid.ts): which one, and its API key (Settings → Services). */
 	debridService?: string;
+	/** '1': Nyaa's anime torrents as a copy of every anime episode and film (sources/nyaa.ts, Settings → Services). */
+	nyaa?: string;
 	debridKey?: string;
 	/** Stremio addons (src/lib/server/sources/addons.ts), as a JSON list. Their links can hold someone's keys. */
 	stremioAddons?: string;
@@ -104,6 +106,12 @@ export type Settings = {
 	logoWords?: string;
 	/** The logo picture's "/media/…" address, when logoKind is 'picture'. */
 	logoImage?: string;
+	/** The background picture's place and zoom, as JSON (src/lib/pictureFit.ts). */
+	backgroundFit?: string;
+	/** The logo picture's size (percent) and how far it's moved (percent of its size): src/lib/logo.ts. */
+	logoSize?: string;
+	logoX?: string;
+	logoY?: string;
 	/** The pink circle's color in Catalog's own logo, #rrggbb; unset keeps the theme's pink. */
 	logoDot?: string;
 	/** The app icon (Settings → Personalization → App icon), as JSON (src/lib/logo.ts AppIconChoice). */
@@ -113,8 +121,10 @@ export type Settings = {
 	subdlSeen?: string;
 	/** '1' when YouTube on the computer opens over all of Catalog's window instead of its own (the YouTube page's switch). */
 	youtubeInside?: string;
+	youtubeWall?: string;
 	/** 'full' when the TV app shows the normal layout instead of the TV one (Settings → TV and phones). */
 	tvLayout?: string;
+	openOn?: 'new' | 'library';
 	/** '1' to install a downloaded update by itself at night (Settings → Updates). Off unless turned on. */
 	nightUpdate?: string;
 	/** The hour (0–23) it's installed at; 4 when unset. */
@@ -131,6 +141,10 @@ export type Settings = {
 	onlineUrl?: string;
 	onlineName?: string;
 	onlineAdminKey?: string;
+	/** The problem reports the owner has looked through: a JSON list of their numbers (kept on this computer). */
+	onlineReportsReviewed?: string;
+	/** The version whose What's new card was last shown and closed (whatsNewCard.ts). */
+	whatsNewSeen?: string;
 	/** '0' turns each off: problem reports, sharing what's watched with friends, timings shared between houses. */
 	onlineReports?: string;
 	onlineShare?: string;

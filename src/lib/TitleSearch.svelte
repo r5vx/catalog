@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import { searchTitles } from '$lib/searchClient';
 	import type { SearchResult } from '$lib/server/metadata/types';
 
@@ -30,6 +30,10 @@
 
 	let timer: ReturnType<typeof setTimeout>;
 	let sequence = 0;
+	onDestroy(() => {
+		sequence++;
+		clearTimeout(timer);
+	});
 
 	async function run() {
 		const mine = ++sequence;
@@ -50,6 +54,7 @@
 
 	function onInput(event: Event) {
 		query = (event.target as HTMLInputElement).value;
+		sequence++;
 		clearTimeout(timer);
 
 		if (query.trim().length < 2) {

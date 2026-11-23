@@ -16,6 +16,8 @@ type Overrides = {
 	/** Where you left off, e.g. from "(S1E23)" in an imported list. */
 	lastSeason?: number | null;
 	lastEpisode?: number | null;
+	/** Your rating out of 10, brought from another site's list (src/lib/server/listImport.ts). */
+	rating?: number | null;
 };
 
 /**
@@ -44,6 +46,7 @@ export function createFromResult(result: SearchResult, overrides: Overrides = {}
 		externalVotes: result.externalVotes,
 		lastSeason: overrides.lastSeason ?? null,
 		lastEpisode: overrides.lastEpisode ?? null,
+		rating: overrides.rating ?? null,
 		// Always Completed. A season/episode marker often just records where a
 		// finished show ended, not that you're partway through — so it's yours
 		// to change, not ours to guess.

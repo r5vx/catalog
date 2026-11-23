@@ -21,6 +21,8 @@ const os = require('node:os');
 const { moveToThisAccount } = require('./moveInstall.cjs');
 
 app.commandLine.appendSwitch('enable-features', 'PlatformHEVCDecoderSupport,PlatformHEVCEncoderSupport');
+app.commandLine.appendSwitch('enable-blink-features', 'AudioVideoTracks');
+app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 // Windows shows a page's notices (a whisper while a game is in front) only for a named app: the
 // installer's shortcuts carry this same name (package.json build.appId).
 if (process.platform === 'win32') app.setAppUserModelId('com.blura.catalog');
@@ -423,6 +425,196 @@ function findOnVidfastNow(pageUrl, onStop) {
 	});
 }
 
+/* ------------------------------------------------- AllAnime (mkissa.to): its own page finds the video */
+
+const MKISSA_OWN = /(^|\.)mkissa\.to$/;
+let mkissaSessionReady = false;
+
+function mkissaSession() {
+	const mkissa = session.fromPartition('persist:mkissa');
+	if (mkissaSessionReady) return mkissa;
+	mkissaSessionReady = true;
+	mkissa.setUserAgent(mkissa.getUserAgent().replace(/\s*Electron\/\S+/, '').replace(/\s*catalog\/\S+/i, ''));
+	mkissa.setPermissionRequestHandler((_contents, _permission, done) => done(false));
+	return mkissa;
+}
+
+const mkissaLogPath = path.join(os.tmpdir(), 'catalog-mkissa-debug.log');
+function mkLog(msg) { try { fs.appendFileSync(mkissaLogPath, new Date().toISOString() + ' ' + msg + '\n'); } catch {} }
+
+/** Opens the episode page, auto-solves Turnstile via CDP, and captures the
+ *  episode API response. The window stays hidden unless Turnstile needs manual
+ *  intervention (shown after several failed auto-clicks). */
+function findOnMkissaNow(pageUrl, onStop) {
+	mkLog('findOnMkissaNow called: ' + pageUrl);
+	return new Promise((resolve) => {
+		let win = null;
+		let finished = false;
+		const ses = mkissaSession();
+		ses.webRequest.onHeadersReceived({ urls: ['*://*/*'] }, (details, cb) => {
+			const headers = { ...details.responseHeaders };
+			delete headers['content-security-policy'];
+			delete headers['Content-Security-Policy'];
+			delete headers['content-security-policy-report-only'];
+			delete headers['Content-Security-Policy-Report-Only'];
+			cb({ responseHeaders: headers });
+		});
+		const finish = (result) => {
+			if (finished) return;
+			finished = true;
+			mkLog('finish: url=' + (result.url || '(none)') + ' error=' + (result.error || '(none)') + ' sources=' + (result.sources ? result.sources.length : 0));
+			clearTimeout(timer);
+			if (clickInterval) clearInterval(clickInterval);
+			ses.webRequest.onHeadersReceived(null);
+			try { if (win && !win.isDestroyed()) win.destroy(); } catch {}
+			resolve(result);
+		};
+		const timer = setTimeout(() => finish({ url: '', error: 'timeout' }), 90000);
+		let clickInterval = null;
+		onStop(() => finish({ url: '', error: 'cancelled' }));
+		try {
+			win = new BrowserWindow({
+				show: false, width: 900, height: 650, title: 'AllAnime',
+				webPreferences: { partition: 'persist:mkissa', contextIsolation: false, nodeIntegration: false, backgroundThrottling: false, preload: path.join(__dirname, 'mkissa-preload.cjs') }
+			});
+			win.setMenuBarVisibility(false);
+			win.webContents.setAudioMuted(true);
+			win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+			win.on('closed', () => finish({ url: '', error: 'closed' }));
+
+			const dbg = win.webContents.debugger;
+			try { dbg.attach('1.3'); } catch (e) { mkLog('debugger attach failed: ' + e.message); }
+
+			// Inject Turnstile auto-solver before any page scripts run
+			dbg.sendCommand('Page.enable').catch(e => mkLog('Page.enable failed: ' + e.message));
+			dbg.sendCommand('Page.addScriptToEvaluateOnNewDocument', { source: `(${turnstileAutoSolverSource})()` }).catch(e => mkLog('addScript failed: ' + e.message));
+
+			const pendingRequests = new Map();
+			let clickAttempts = 0;
+
+			dbg.on('message', (_e, method, params) => {
+				if (method === 'Network.requestWillBeSent') {
+					const url = params.request?.url || '';
+					const body = params.request?.postData || '';
+					const isEpisode = url.includes('episodeString') || body.includes('episodeString');
+					if (url.includes('api.mkissa.net') && isEpisode) {
+						mkLog('CDP: episode request ' + params.requestId + ' method=' + (params.request?.method || '?') + ' hasCaptcha=' + (body + url).includes('captcha'));
+						pendingRequests.set(params.requestId, url);
+					}
+				}
+				if (method === 'Network.responseReceived') {
+					if (pendingRequests.has(params.requestId)) {
+						mkLog('CDP: episode response ' + params.requestId + ' status=' + params.response?.status);
+					}
+				}
+				if (method === 'Network.loadingFinished') {
+					if (pendingRequests.has(params.requestId) && !finished) {
+						mkLog('CDP: loading finished for ' + params.requestId);
+						dbg.sendCommand('Network.getResponseBody', { requestId: params.requestId }).then(body => {
+							if (finished) return;
+							mkLog('CDP: got response body, length=' + (body.body || '').length + ' body=' + (body.body || '').slice(0, 500));
+							try {
+								const data = JSON.parse(body.body);
+								const ep = data?.data?.episode;
+								if (ep?.sourceUrls?.length) {
+									mkLog('CDP: found ' + ep.sourceUrls.length + ' sources');
+									finish({ url: '', sources: ep.sourceUrls });
+								} else {
+									mkLog('CDP: no sourceUrls in response, keys=' + JSON.stringify(Object.keys(data?.data || {})));
+								}
+							} catch (e) {
+								mkLog('CDP: parse error: ' + e.message);
+							}
+						}).catch(e => mkLog('CDP: getResponseBody error: ' + e.message));
+					}
+				}
+			});
+			dbg.sendCommand('Network.enable').catch(e => mkLog('Network.enable failed: ' + e.message));
+
+			mkLog('loading episode page: ' + pageUrl);
+
+			win.loadURL(pageUrl).then(() => {
+				mkLog('episode page loaded, Turnstile auto-solver active');
+				// Periodically try to click the Turnstile widget via CDP
+				clickInterval = setInterval(async () => {
+					if (finished) return;
+					try {
+						const state = await dbg.sendCommand('Runtime.evaluate', {
+							expression: 'JSON.stringify({ token: (document.querySelector("input[name=cf-turnstile-response]") || {}).value || "", visible: !!document.querySelector(".captcha-overlay--visible"), url: location.href })',
+							returnByValue: true
+						});
+						const info = JSON.parse(state.result?.value || '{}');
+						mkLog('turnstile poll: visible=' + info.visible + ' token=' + (info.token ? info.token.length + ' chars' : 'none') + ' url=' + (info.url || ''));
+						if (info.token) {
+							mkLog('turnstile solved! Token length: ' + info.token.length);
+							return; // Page will retry the API call automatically
+						}
+						if (!info.visible) return; // No captcha dialog yet
+						clickAttempts++;
+						// After 15 failed auto-clicks, show the window for manual solving
+						if (clickAttempts === 15) {
+							mkLog('turnstile: showing window for manual solve');
+							if (win && !win.isDestroyed()) win.show();
+						}
+						// Find and click the Turnstile iframe checkbox
+						const box = await dbg.sendCommand('Runtime.evaluate', {
+							expression: `(function() {
+								var iframe = document.querySelector('[id^="cf-chl-widget"] iframe, .captcha-body iframe');
+								if (!iframe) return null;
+								var rect = iframe.getBoundingClientRect();
+								return JSON.stringify({ x: Math.round(rect.x + 25), y: Math.round(rect.y + rect.height / 2) });
+							})()`,
+							returnByValue: true
+						});
+						const coords = box.result?.value ? JSON.parse(box.result.value) : null;
+						if (coords) {
+							mkLog('turnstile click at ' + coords.x + ',' + coords.y + ' (attempt ' + clickAttempts + ')');
+							await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', x: coords.x, y: coords.y, button: 'left', clickCount: 1 });
+							await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', x: coords.x, y: coords.y, button: 'left', clickCount: 1 });
+						}
+					} catch (e) {
+						mkLog('turnstile poll error: ' + e.message);
+					}
+				}, 2000);
+			}).catch((err) => {
+				mkLog('loadURL error: ' + err);
+				finish({ url: '', error: 'load: ' + err.message });
+			});
+		} catch (e) {
+			mkLog('exception: ' + e.message);
+			finish({ url: '', error: e.message });
+		}
+	});
+}
+
+function turnstileAutoSolverSource() {
+	// Injected into every new document before page scripts run.
+	// Monitors Turnstile widget state and reports via console so CDP can track.
+	var POLL_MS = 1000;
+	function poll() {
+		var input = document.querySelector('input[name="cf-turnstile-response"]');
+		if (input && input.value) {
+			console.log('[turnstile-auto] solved, token length: ' + input.value.length);
+			return;
+		}
+		// Try turnstile.execute() if the API is available and widget exists
+		if (typeof turnstile !== 'undefined' && turnstile.execute) {
+			var widgetEl = document.querySelector('[id$="_response"]');
+			if (widgetEl) {
+				var widgetId = widgetEl.id.replace('_response', '');
+				try { turnstile.execute(widgetId); } catch (e) {}
+			}
+		}
+		setTimeout(poll, POLL_MS);
+	}
+	if (document.readyState === 'loading') {
+		document.addEventListener('DOMContentLoaded', function() { setTimeout(poll, 2000); });
+	} else {
+		setTimeout(poll, 2000);
+	}
+}
+
+
 /** Lookups that can still be called off, by the server's id for them. */
 const movyStops = new Map();
 
@@ -441,7 +633,7 @@ function findOnMovy(pageUrl, id, site, dub) {
 			// Called off while waiting: the next one goes instead.
 			if (stopped) return void movyWaiting.shift()?.();
 			movyRunning++;
-			(site === 'vidfast' ? findOnVidfastNow : findOnMovyNow)(pageUrl, (stop) => (stopRunning = stop), dub).then((result) => {
+			(site === 'allanime' ? findOnMkissaNow : site === 'vidfast' ? findOnVidfastNow : findOnMovyNow)(pageUrl, (stop) => (stopRunning = stop), dub).then((result) => {
 				movyRunning--;
 				movyStops.delete(id);
 				resolve(result);
@@ -765,7 +957,8 @@ function startServer() {
 		}
 
 		if (message?.type === 'movy-find') {
-			findOnMovy(String(message.url), message.id, message.site === 'vidfast' ? 'vidfast' : 'movy', typeof message.dub === 'string' ? message.dub : undefined).then((result) => server?.send({ type: 'movy-find-result', id: message.id, ...result }));
+			const site = message.site === 'vidfast' ? 'vidfast' : message.site === 'allanime' ? 'allanime' : 'movy';
+			findOnMovy(String(message.url), message.id, site, typeof message.dub === 'string' ? message.dub : undefined).then((result) => server?.send({ type: 'movy-find-result', id: message.id, ...result }));
 		}
 
 		if (message?.type === 'movy-stop') movyStops.get(message.id)?.();
@@ -1122,70 +1315,6 @@ function startServer() {
 						dlText: '',
 						capturedUrl: '',
 						videoInfo: '',
-						error: e?.message || String(e)
-					});
-				} catch {}
-			}
-		}
-
-		if (message?.type === 'get-subtitles') {
-			let hidden;
-			try {
-				hidden = new BrowserWindow({
-					show: false,
-					width: 400,
-					height: 300,
-					webPreferences: { nodeIntegration: false, contextIsolation: true }
-				});
-
-				const ready = new Promise((resolve) => {
-					hidden.webContents.on('dom-ready', resolve);
-					setTimeout(resolve, 10000);
-				});
-				hidden.loadURL('https://www.febbox.com');
-				await ready;
-
-				const fid = Number(message.fid);
-				const shareKey = String(message.shareKey);
-
-				const raw = await withTimeout(hidden.webContents.executeJavaScript(`
-					(async function() {
-						var endpoints = [
-							{ url: '/file/subtitle_list', method: 'POST', body: 'fid=${fid}&share_key=${shareKey}' },
-							{ url: '/file/subtitle/list', method: 'POST', body: 'fid=${fid}&share_key=${shareKey}' },
-							{ url: '/file/subtitle?fid=${fid}&share_key=${shareKey}', method: 'GET' }
-						];
-						for (var i = 0; i < endpoints.length; i++) {
-							try {
-								var ep = endpoints[i];
-								var opts = { method: ep.method, credentials: 'include' };
-								if (ep.body) {
-									opts.headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
-									opts.body = ep.body;
-								}
-								var resp = await fetch(ep.url, opts);
-								if (resp.ok) {
-									var text = await resp.text();
-									if (text && text.length > 2 && text[0] === '{') return text;
-								}
-							} catch(e) {}
-						}
-						return '';
-					})()
-				`), 12000, '');
-
-				hidden.destroy();
-				hidden = null;
-				try {
-					server.send({ type: 'get-subtitles-result', id: message.id, data: raw || '' });
-				} catch {}
-			} catch (e) {
-				if (hidden) try { hidden.destroy(); } catch {}
-				try {
-					server.send({
-						type: 'get-subtitles-result',
-						id: message.id,
-						data: '',
 						error: e?.message || String(e)
 					});
 				} catch {}

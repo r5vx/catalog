@@ -2,7 +2,7 @@ import { json } from '@sveltejs/kit';
 import { secureDnsStats } from '$lib/server/secureDns';
 import { existsSync, statSync } from 'node:fs';
 import { dbPath, dataDir } from '$lib/server/db';
-import { settingsPath, readSettings } from '$lib/server/settings';
+import { readSettings } from '$lib/server/settings';
 import type { RequestHandler } from './$types';
 import { slowRequests } from '$lib/server/slowRequests';
 import { liveListingState } from '$lib/server/sources/daddylive';
@@ -28,6 +28,7 @@ const describe = (path: string) => {
  * misbehaving.
  */
 export const GET: RequestHandler = async () => {
+	const { torrentStats } = await import('$lib/server/torrents');
 	const settings = readSettings();
 
 	return json({
@@ -53,6 +54,8 @@ export const GET: RequestHandler = async () => {
 		youtubePhone: youtubePhoneStatus(),
 		// Libraries kept in step between one person's computers (librarySync.ts): which profiles, and each one's last round.
 		librarySync: { profiles: libraryProfiles(), last: Object.fromEntries(lastLibrarySync) },
+		// Nyaa (sources/nyaa.ts): only through a debrid service, so `torrents` (opened here) should stay empty.
+		nyaa: { on: settings.nyaa === '1', throughDebrid: Boolean(settings.debridService && settings.debridKey), torrents: torrentStats() },
 		settingsStoredIn: 'settings table inside library.db',
 		cwd: process.cwd(),
 		appdata: process.env.APPDATA ?? null,

@@ -1,4 +1,5 @@
 import Hls from 'hls.js';
+import { RELAY_PIECE_TIMEOUT_MS } from './relayTimeout';
 import type { FragmentLoaderConstructor, FragmentLoaderContext, Loader, LoaderCallbacks, LoaderConfiguration, LoaderContext } from 'hls.js';
 
 /**
@@ -370,6 +371,8 @@ async function fetchInParts(url: string, stop: AbortSignal): Promise<ArrayBuffer
 const isRelayed = (url: string) => url.includes('/api/watch/relay?');
 /** The page is open on the computer Catalog runs on (its relay is next door, not over Wi-Fi). */
 const onTheComputer = () => /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/.test(location.hostname);
+const relayRequests = new Map<object, number>();
+export const waitingForRelayPiece = () => [...relayRequests.values()].some((since) => performance.now() - since < RELAY_PIECE_TIMEOUT_MS);
 
 type Base = new (config: unknown) => Loader<LoaderContext>;
 
@@ -382,6 +385,18 @@ export function fetchAheadLoader(hls: () => Hls | null, onBytes: () => void = ()
 	const Plain = Hls.DefaultConfig.loader as unknown as Base;
 
 	class FetchAheadLoader extends Plain {
+		private relayRequest: object | null = null;
+
+		private clearRelayRequest() {
+			if (this.relayRequest) relayRequests.delete(this.relayRequest);
+			this.relayRequest = null;
+		}
+
+		destroy() {
+			this.clearRelayRequest();
+			super.destroy();
+		}
+
 		private waiting = false;
 		/** The download ahead it took over (and its address), until it's handed to the player. */
 		private handed: Fetched | null = null;
@@ -477,6 +492,7 @@ export function fetchAheadLoader(hls: () => Hls | null, onBytes: () => void = ()
 		}
 
 		abort() {
+			this.clearRelayRequest();
 			// A jump elsewhere: the piece it was taking over goes back with the others fetched
 			// ahead, still coming. Asked for again (a jump back near it), it carries on from where it
 			// was; no longer wanted, dropUnwanted stops it.
@@ -570,6 +586,12 @@ export function fetchAheadLoader(hls: () => Hls | null, onBytes: () => void = ()
 		/** Asked for the usual way (one at a time), and noted. `after`: once it's here. */
 		private plain(context: LoaderContext, config: LoaderConfiguration, callbacks: LoaderCallbacks<LoaderContext>, kind: PieceNote['kind'], after?: () => void) {
 			const start = performance.now();
+			this.clearRelayRequest();
+			if (isRelayed(context.url) && onTheComputer()) {
+				this.relayRequest = {};
+				relayRequests.set(this.relayRequest, start);
+				config = { ...config, loadPolicy: { ...config.loadPolicy, maxTimeToFirstByteMs: RELAY_PIECE_TIMEOUT_MS } };
+			}
 			// hls.js's loader refuses a second start ("Loader can only be used once") once its start
 			// time is set, and it was, by the handover from memory. So a piece fetched ahead that
 			// failed threw here, the player's request was never answered, and that track stopped
@@ -579,10 +601,23 @@ export function fetchAheadLoader(hls: () => Hls | null, onBytes: () => void = ()
 			super.load(context, config, {
 				...callbacks,
 				onSuccess: (response, stats, ctx, details) => {
+					this.clearRelayRequest();
 					const bytes = response.data instanceof ArrayBuffer ? response.data.byteLength : 0;
-					if (bytes) note({ at: performance.now(), host: hostOf(context.url), bytes, ms: performance.now() - start, ahead: false, kind, seconds: (context as FragmentLoaderContext).frag?.duration ?? 0 });
+					if (bytes && typeof (context as FragmentLoaderContext).frag?.sn === 'number') note({ at: performance.now(), host: hostOf(context.url), bytes, ms: performance.now() - start, ahead: false, kind, seconds: (context as FragmentLoaderContext).frag?.duration ?? 0 });
 					after?.();
 					callbacks.onSuccess(response, stats, ctx, details);
+				},
+				onError: (...args) => {
+					this.clearRelayRequest();
+					callbacks.onError(...args);
+				},
+				onTimeout: (...args) => {
+					this.clearRelayRequest();
+					callbacks.onTimeout(...args);
+				},
+				onAbort: (...args) => {
+					this.clearRelayRequest();
+					callbacks.onAbort?.(...args);
 				}
 			});
 		}

@@ -24,14 +24,25 @@ export const GET: RequestHandler = async ({ url }) => {
 	if (target.protocol !== 'https:' || !SHOWBOX_VIDEO.test(target.hostname)) return error(403, 'Not a Showbox playlist');
 	const resp = await fetch(target, { headers: { Referer: 'https://www.febbox.com/' }, signal: AbortSignal.timeout(15_000) }).catch(() => null);
 	if (!resp?.ok) return error(502, "Showbox's video server didn't answer");
-	const text = await resp.text();
+	const text = absolutePlaylist(await resp.text(), new URL(resp.url || target.href));
 	// &all=1: every quality with AAC sound (the Roku chooses): the fallback when it can't play the top one.
 	const all = url.searchParams.get('all') === '1';
-	return new Response(all ? aacOnly(text, target) : plainPlaylist(text, target), { headers: { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' } });
+	return new Response(all ? aacOnly(text) : plainPlaylist(text), { headers: { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' } });
 };
 
+/** The Roku reads the result at Catalog's URL, not the playlist's original URL. */
+function absolutePlaylist(text: string, base: URL): string {
+	const address = (uri: string) => URL.parse(uri, base)?.href ?? uri;
+	return text.replace(/\r/g, '').split('\n').map((line) => {
+		const trimmed = line.trim();
+		if (!trimmed) return line;
+		if (!trimmed.startsWith('#')) return address(trimmed);
+		return line.replace(/URI="([^"]+)"/g, (_, uri: string) => `URI="${address(uri)}"`);
+	}).join('\n');
+}
+
 /** The playlist with one quality (the top with AAC sound) and its sound track; unchanged when it has no qualities to choose. */
-function plainPlaylist(text: string, base: URL): string {
+function plainPlaylist(text: string): string {
 	const lines = text.replace(/\r/g, '').split('\n');
 	type Quality = { info: string; address: string; bandwidth: number; audio: string };
 	const qualities: Quality[] = [];
@@ -43,16 +54,16 @@ function plainPlaylist(text: string, base: URL): string {
 		const codecs = /CODECS="([^"]*)"/.exec(info)?.[1] ?? '';
 		// AAC sound and H.264 picture only (no ec-3/ac-3 sound, no HEVC).
 		if (/ec-3|ac-3|hvc1|hev1/i.test(codecs) || (codecs && !/mp4a/i.test(codecs))) continue;
-		qualities.push({ info, address: new URL(address.trim(), base).href, bandwidth: Number(/[:,]BANDWIDTH=(\d+)/.exec(info)?.[1] ?? 0), audio: /AUDIO="([^"]*)"/.exec(info)?.[1] ?? '' });
+		qualities.push({ info, address, bandwidth: Number(/[:,]BANDWIDTH=(\d+)/.exec(info)?.[1] ?? 0), audio: /AUDIO="([^"]*)"/.exec(info)?.[1] ?? '' });
 	}
 	if (!qualities.length) return text;
 	const top = qualities.reduce((best, q) => (q.bandwidth > best.bandwidth ? q : best));
 	const out = ['#EXTM3U'];
 	for (const line of lines) {
 		if (/^#EXT-X-(VERSION|INDEPENDENT-SEGMENTS)/.test(line)) out.push(line);
-		// Only the chosen quality's sound track, its address made whole.
+		// Only the chosen quality's sound track.
 		if (line.startsWith('#EXT-X-MEDIA:') && /TYPE=AUDIO/.test(line) && top.audio && line.includes(`GROUP-ID="${top.audio}"`)) {
-			out.push(line.replace(/URI="([^"]*)"/, (_, uri: string) => `URI="${new URL(uri, base).href}"`));
+			out.push(line);
 		}
 	}
 	out.push(top.info, top.address);
@@ -60,7 +71,7 @@ function plainPlaylist(text: string, base: URL): string {
 }
 
 /** The playlist with every H.264 quality that has AAC sound (and only their sound tracks); unchanged when there are none. */
-function aacOnly(text: string, base: URL): string {
+function aacOnly(text: string): string {
 	const lines = text.replace(/\r/g, '').split('\n');
 	const out = ['#EXTM3U'];
 	const groups = new Set<string>();
@@ -73,14 +84,14 @@ function aacOnly(text: string, base: URL): string {
 		if (!address) continue;
 		const group = /AUDIO="([^"]*)"/.exec(lines[i])?.[1];
 		if (group) groups.add(group);
-		kept.push(lines[i], new URL(address.trim(), base).href);
+		kept.push(lines[i], address);
 	}
 	if (!kept.length) return text;
 	for (const line of lines) {
 		if (/^#EXT-X-(VERSION|INDEPENDENT-SEGMENTS)/.test(line)) out.push(line);
 		const group = /GROUP-ID="([^"]*)"/.exec(line)?.[1];
 		if (line.startsWith('#EXT-X-MEDIA:') && /TYPE=AUDIO/.test(line) && group && groups.has(group)) {
-			out.push(line.replace(/URI="([^"]*)"/, (_, uri: string) => `URI="${new URL(uri, base).href}"`));
+			out.push(line);
 		}
 	}
 	return [...out, ...kept].join('\n') + '\n';

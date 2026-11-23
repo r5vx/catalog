@@ -1,5 +1,6 @@
 /**
- * Episodes downloaded ahead, for 7Movies and Movy.
+ * Episodes downloaded ahead, for 7Movies and Movy, and for Showbox on the computer itself while
+ * Febbox's daily allowance has plenty left (streamLink.ts, showboxDownloadRoom.ts).
  *
  * Their servers are slow over pieces they haven't got yet (2026-10-24, AHS S13E9 and SVU): most
  * pieces come in a second or two, but some take 20 s to 4 minutes, trickling all the while, and
@@ -29,10 +30,11 @@ import { readSettings } from './settings';
 import { fetchSteadily } from './relayPieces';
 import { noteRelayPiece } from './playbackLog';
 
-export type DownloadKind = 'vidrift' | 'movy';
+export type DownloadKind = 'vidrift' | 'movy' | 'showbox';
 
 /** Downloads at once, for all viewers together. Movy refuses a sixth; one is left for the rest. */
-const AT_ONCE: Record<DownloadKind, number> = { vidrift: 10, movy: 4 };
+// (Febbox gives each download 2.5-5 Mbps: four at once are well ahead of a 1080p copy's ~3.4 Mbps.)
+const AT_ONCE: Record<DownloadKind, number> = { vidrift: 10, movy: 4, showbox: 4 };
 const KEEP_MS = 6 * 60 * 60 * 1000;
 /** How much the episodes downloaded ahead may take (Settings → Library), in GB. */
 export const DOWNLOAD_LIMITS_GB = [5, 10, 20, 50, 100] as const;
@@ -72,7 +74,7 @@ type Job = {
 const jobs = new Map<string, Job>();
 /** Which copy and number each piece address is (for the relay's long-piece parts). */
 const addresses = new Map<string, { copy: string; n: number }>();
-const running: Record<DownloadKind, number> = { vidrift: 0, movy: 0 };
+const running: Record<DownloadKind, number> = { vidrift: 0, movy: 0, showbox: 0 };
 
 const root = () => join(dataDir, 'downloads-ahead');
 const dirOf = (copy: string) => join(root(), createHash('sha1').update(copy).digest('hex').slice(0, 16));
@@ -90,6 +92,7 @@ function keptUntil(dir: string): number {
 export function downloadKindOf(copy: string): DownloadKind | null {
 	if (copy.startsWith('vidrift:')) return 'vidrift';
 	if (copy.startsWith('movy:')) return 'movy';
+	if (copy.startsWith('showbox:')) return 'showbox';
 	return null;
 }
 
@@ -312,7 +315,7 @@ let knownBytes: number | null = null;
 
 function pump(): void {
 	cleanUp();
-	for (const kind of ['vidrift', 'movy'] as const) {
+	for (const kind of ['vidrift', 'movy', 'showbox'] as const) {
 		while (running[kind] < AT_ONCE[kind]) {
 			const next = nextPiece(kind);
 			if (!next) break;

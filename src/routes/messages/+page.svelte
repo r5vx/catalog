@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import Avatar from '$lib/Avatar.svelte';
@@ -23,6 +23,9 @@
 	let messages = $state<Message[]>([]);
 	let more = $state(false);
 	let typed = $state('');
+	/** Each conversation keeps its own unsent text. */
+	const drafts: Record<string, string> = {};
+	let draftFor = '';
 	let problem = $state('');
 	let listEl = $state<HTMLUListElement | null>(null);
 	let inputEl = $state<HTMLInputElement | null>(null);
@@ -69,6 +72,11 @@
 	// The friend picked: their conversation.
 	$effect(() => {
 		const id = withId;
+		untrack(() => {
+			if (draftFor) drafts[draftFor] = typed;
+			typed = drafts[id] ?? '';
+			draftFor = id;
+		});
 		messages = [];
 		void loadConversation(id);
 		void tick().then(() => inputEl?.focus());
@@ -85,19 +93,25 @@
 	async function send(event: SubmitEvent) {
 		event.preventDefault();
 		if (!typed.trim() || !withId) return;
-		const sent = await sendMessage(typed, { friend: withId });
+		const id = withId;
+		const text = typed;
+		const sent = await sendMessage(text, { friend: id });
 		if (!sent) {
-			problem = t("Couldn't send it");
+			if (withId === id) problem = t("Couldn't send it");
+			return;
+		}
+		threads = threads
+			.map((one) => (one.id === id ? { ...one, last: { text: sent.text, at: sent.at, mine: true } } : one))
+			.sort((a, b) => (b.last?.at ?? 0) - (a.last?.at ?? 0));
+		if (withId !== id) {
+			if (drafts[id] === text) delete drafts[id];
 			return;
 		}
 		problem = '';
-		typed = '';
+		if (typed === text) typed = '';
 		messages = [...messages, sent];
-		threads = threads
-			.map((one) => (one.id === withId ? { ...one, last: { text: sent.text, at: sent.at, mine: true } } : one))
-			.sort((a, b) => (b.last?.at ?? 0) - (a.last?.at ?? 0));
 		await tick();
-		if (listEl) listEl.scrollTop = listEl.scrollHeight;
+		if (withId === id && listEl) listEl.scrollTop = listEl.scrollHeight;
 	}
 
 	function when(at: number): string {

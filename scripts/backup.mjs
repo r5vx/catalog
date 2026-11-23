@@ -12,11 +12,11 @@
  *   3. git push       — the offsite copy, for when the PC itself is gone.
  *                       Only runs once you've set up a remote (see below).
  */
-import { DatabaseSync } from 'node:sqlite';
+import { backup, DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
 import {
 	mkdirSync,
-	copyFileSync,
+	renameSync,
 	writeFileSync,
 	existsSync,
 	readdirSync,
@@ -40,13 +40,23 @@ if (!existsSync(source)) {
 
 mkdirSync(snapshotDir, { recursive: true });
 
-/* ------------------------------------------------------- 1. readable export */
+/* ----------------------------------------------------- database snapshot */
 
-const db = new DatabaseSync(source);
+const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+const snapshotPath = join(snapshotDir, `library-${stamp}.db`);
+const pendingPath = `${snapshotPath}.${process.pid}.tmp`;
+const live = new DatabaseSync(source, { readOnly: true });
+try {
+	await backup(live, pendingPath);
+	renameSync(pendingPath, snapshotPath);
+} finally {
+	live.close();
+	if (existsSync(pendingPath)) unlinkSync(pendingPath);
+}
 
-// Fold the write-ahead log back into the main file so the copy we take below is
-// a complete, self-contained database.
-db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+/* ------------------------------------------------------- readable export */
+
+const db = new DatabaseSync(snapshotPath, { readOnly: true });
 
 const rows = (sql) => db.prepare(sql).all().map((row) => ({ ...row }));
 /** For tables an older library may not have yet. */
@@ -63,6 +73,8 @@ const snapshot = {
 	notes: rows('SELECT * FROM notes ORDER BY id'),
 	noteTags: rowsIfAny('note_tags', 'SELECT * FROM note_tags ORDER BY id'),
 	noteTagLinks: rowsIfAny('note_tag_links', 'SELECT * FROM note_tag_links ORDER BY note_id, tag_id'),
+	noteVersions: rowsIfAny('note_versions', 'SELECT * FROM note_versions ORDER BY id'),
+	watchOrders: rowsIfAny('my_watch_orders', 'SELECT * FROM my_watch_orders ORDER BY added_at'),
 	people: rows('SELECT * FROM people ORDER BY id'),
 	entryCast: rows('SELECT * FROM entry_cast ORDER BY entry_id, ord')
 	// NOTE: the `settings` table is deliberately NOT exported — it holds your
@@ -73,17 +85,12 @@ db.close();
 
 writeFileSync(join(dest, 'library.json'), JSON.stringify(snapshot, null, 2) + '\n', 'utf8');
 
-/* ----------------------------------------------------- 2. database snapshot */
-
 // Note images are files, not rows, so they're copied alongside the snapshot.
 const mediaSrc = join(source, '..', 'media');
 if (existsSync(mediaSrc)) {
 	cpSync(mediaSrc, join(dest, 'media'), { recursive: true });
 	console.log('Copied note images');
 }
-
-const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 16);
-copyFileSync(source, join(snapshotDir, `library-${stamp}.db`));
 
 // Keep the most recent few, drop the rest.
 const snapshots = readdirSync(snapshotDir)

@@ -25,12 +25,13 @@ import { fetchRomajiTitle } from '$lib/server/metadata/anilist';
 import { combineEpisodes, tmdbShow, unasked, unaskedSetup, type EpisodeList } from '$lib/server/combinedEpisodes';
 import { aniwaveFilm } from '$lib/server/sources';
 import { aniwaveStream, parseAniwaveShareKey } from '$lib/server/sources/aniwave';
-import { vidriftCopies, vidriftStream } from '$lib/server/sources/vidrift';
-import { movyCopy, movyStream } from '$lib/server/sources/movy';
-import { vidfastCopy } from '$lib/server/sources/vidfast';
+import { vidriftStream } from '$lib/server/sources/vidrift';
+import { movyStream } from '$lib/server/sources/movy';
 import { movyDubCopy, parseMovyShareKey } from '$lib/server/sources/movy';
 import { audioLanguage, audioLanguageName } from '$lib/server/audioLanguage';
 import type { FileOption } from '$lib/server/showbox';
+import { nyaaCopy, nyaaOn } from '$lib/server/sources/nyaa';
+import { isAnimeFilm } from '$lib/server/animeFilm';
 import { measureFilmAhead } from '$lib/server/copySharpness';
 import { downloadLikelyAhead } from '$lib/server/downloadAheadAsk';
 import type { RequestHandler } from './$types';
@@ -76,7 +77,9 @@ async function filmCopies(title: string, year: string): Promise<FileOption[]> {
 	if (!id) return [];
 	const what = { type: 'movie' as const, id, season: 0, episode: 0 };
 	// (Not a source's that said lately it hasn't got the film: picked, it failed at once.)
-	return unasked(what);
+	// Nyaa's copy last, for an anime film, when it's turned on (sources/nyaa.ts).
+	const anime = nyaaOn() ? await Promise.race([isAnimeFilm(title, year).catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), 3000))]) : null;
+	return [...unasked(what), ...(anime ? nyaaCopy(what) : [])];
 }
 
 async function findOnShowbox(title: string, type: string, year: string) {
@@ -413,7 +416,9 @@ async function lookUp(url: URL): Promise<Response> {
 	const withDub = (list: FileOption[]): FileOption[] => {
 		if (!dub) return list;
 		const movy = list.map((file) => parseMovyShareKey(file.shareKey ?? '')).find((what) => what && !what.dub);
-		return movy ? [movyDubCopy(movy, dub), ...list] : list;
+		if (!movy) return list;
+		const copy = movyDubCopy(movy, dub);
+		return [copy, ...list.filter((file) => file.shareKey !== copy.shareKey)];
 	};
 	const libraryEntry = findEntryByTitle(matchTitle);
 	// The library's poster, else TMDB's (Showbox's can be missing or broken, and a show only
@@ -428,8 +433,8 @@ async function lookUp(url: URL): Promise<Response> {
 	const posterUrl = libraryEntry?.posterUrl || tmdbPoster || matchPosterUrl || '';
 
 	if (matchType === 'tv') {
-		const epData = episodeData as EpisodeList;
-		if (dub) epData.episodes = epData.episodes.map((ep) => ({ ...ep, files: withDub(ep.files) }));
+		const original = episodeData as EpisodeList;
+		const epData = dub ? { ...original, episodes: original.episodes.map((ep) => ({ ...ep, files: withDub(ep.files) })) } : original;
 		// The first episode that can be played, specials aside.
 		const playable = epData.episodes.filter((ep) => ep.available !== false && ep.files.length > 0);
 		let targetEp = playable.find((ep) => ep.season > 0) ?? playable[0];

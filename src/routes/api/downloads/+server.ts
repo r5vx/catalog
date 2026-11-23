@@ -5,6 +5,11 @@ import { parseHianimeShareKey } from '$lib/server/sources/hianime';
 import { parseVidriftShareKey } from '$lib/server/sources/vidrift';
 import { parseMovyShareKey } from '$lib/server/sources/movy';
 import { parseVidfastShareKey } from '$lib/server/sources/vidfast';
+import { parseDebridShareKey } from '$lib/server/sources/debrid';
+import { parseAddonShareKey } from '$lib/server/sources/addons';
+import { parseNyaaShareKey } from '$lib/server/sources/nyaa';
+import { parseChannelShareKey } from '$lib/server/sources/channels';
+import { parseAllanimeShareKey } from '$lib/server/sources/allanime';
 import { noteShowboxDownload, showboxDownloadRoom } from '$lib/server/showboxDownloadRoom';
 import type { RequestHandler } from './$types';
 
@@ -26,7 +31,9 @@ export const POST: RequestHandler = async ({ request }) => {
 	if (kind === 'replay' ? !body.replayId : !body.shareKey || !body.fid) return error(400, 'Which copy?');
 	// Showbox's copy: only while it can't use up Febbox's daily allowance (showboxDownloadRoom.ts).
 	const key = String(body.shareKey ?? '');
-	const showbox = kind !== 'replay' && !parseAniwaveShareKey(key) && !parseHianimeShareKey(key) && !parseVidriftShareKey(key) && !parseMovyShareKey(key) && !parseVidfastShareKey(key);
+	const showbox = kind !== 'replay' && Number.isInteger(Number(body.fid)) && Number(body.fid) > 0
+		&& !parseAniwaveShareKey(key) && !parseHianimeShareKey(key) && !parseVidriftShareKey(key) && !parseMovyShareKey(key) && !parseVidfastShareKey(key)
+		&& !parseDebridShareKey(key) && !parseAddonShareKey(key) && !parseNyaaShareKey(key) && !parseChannelShareKey(key) && !parseAllanimeShareKey(key);
 	if (showbox) {
 		const size = Number(body.estimate) || 0;
 		const room = await showboxDownloadRoom();

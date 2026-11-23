@@ -272,22 +272,31 @@ async function streamIdOf(addon: Addon, what: What): Promise<string | null> {
 	return what.type === 'tv' ? `${imdb}:${what.season}:${what.episode}` : imdb;
 }
 
+const streamRequests = new Map<string, Promise<AddonStream[] | null>>();
+
 /** The addon's streams for a film or episode (null: it couldn't be asked). */
 export async function addonStreams(addon: Addon, what: What): Promise<AddonStream[] | null> {
 	const id = await streamIdOf(addon, what);
 	if (!id) return null;
-	try {
-		const response = await fetch(`${addon.base}/stream/${what.type === 'tv' ? 'series' : 'movie'}/${encodeURIComponent(id)}.json`, {
-			headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0' },
-			// (Addons that gather from many others, like AIOStreams, can take a while.)
-			signal: AbortSignal.timeout(30_000)
-		});
-		if (!response.ok) return null;
-		const answer = (await response.json()) as { streams?: AddonStream[] };
-		return Array.isArray(answer?.streams) ? answer.streams : [];
-	} catch {
-		return null;
-	}
+	const url = `${addon.base}/stream/${what.type === 'tv' ? 'series' : 'movie'}/${encodeURIComponent(id)}.json`;
+	const under = streamRequests.get(url);
+	if (under) return under;
+	const result = (async () => {
+		try {
+			const response = await fetch(url, {
+				headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0' },
+				// (Addons that gather from many others, like AIOStreams, can take a while.)
+				signal: AbortSignal.timeout(30_000)
+			});
+			if (!response.ok) return null;
+			const answer = (await response.json()) as { streams?: AddonStream[] };
+			return Array.isArray(answer?.streams) ? answer.streams : [];
+		} catch {
+			return null;
+		}
+	})().finally(() => streamRequests.delete(url));
+	streamRequests.set(url, result);
+	return result;
 }
 
 /* ------------------------------------------------ a copy's link */

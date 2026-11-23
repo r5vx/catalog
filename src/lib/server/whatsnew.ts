@@ -51,18 +51,33 @@ function sorted(body: string): Change[] {
 	const changes: Change[] = [];
 	let kind: Kind = 'new';
 	let current: Change | null = null;
+	/** "**Messages**" on a line of its own (the notes since 4.x): the bullets after it are that part's. */
+	let part: Change | null = null;
 	for (const line of body.split('\n')) {
 		const heading = line.match(/^###\s+(.+)/);
 		if (heading) {
 			kind = KINDS.find(([test]) => test.test(heading[1].trim()))?.[1] ?? 'new';
 			current = null;
+			part = null;
+			continue;
+		}
+		const named = line.match(/^\*\*([^*]+)\*\*:?\s*$/);
+		if (named) {
+			// (Not a line running on from the bullet before: "…hide the chat button Library".)
+			part = { kind, area: named[1].trim(), items: [] };
+			changes.push(part);
+			current = null;
 			continue;
 		}
 		const top = line.match(/^- (.*)/);
 		const under = line.match(/^\s+- (.*)/);
-		if (top) {
+		if (top && part && !/^\*\*([^*]+)\*\*:?\s*$/.test(top[1])) {
+			part.items.push(plain(top[1]));
+			current = part;
+		} else if (top) {
 			// "- **Player**" alone names a part of the app; its changes are indented under it.
 			const area = top[1].match(/^\*\*([^*]+)\*\*:?\s*$/);
+			part = null;
 			current = area ? { kind, area: area[1].trim(), items: [] } : { kind, area: null, items: [plain(top[1])] };
 			changes.push(current);
 		} else if (under && current?.area) {

@@ -25,7 +25,7 @@ final class SetupViewController: UIViewController, UITextFieldDelegate {
 		name.textColor = .label
 
 		let how = UILabel()
-		how.text = "On the computer, open Catalog, then Settings, then Phones. Scan the code shown there, or type the address under it."
+		how.text = "On the computer, open Catalog, then Settings, then TV and phones. Scan the code shown there, or type the address under it."
 		how.numberOfLines = 0
 		how.textColor = .secondaryLabel
 		how.font = .preferredFont(forTextStyle: .body)

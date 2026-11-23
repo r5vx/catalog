@@ -1,6 +1,6 @@
 import { febboxListing, FebboxRefused } from './febboxList';
 export { FebboxRefused };
-import { electronFetch, electronGetVideoUrl, electronGetSubtitles } from './electron-fetch';
+import { electronFetch, electronGetVideoUrl } from './electron-fetch';
 import { withoutQualifier } from './metadata/types';
 import { onFebboxAccountChange } from './settings';
 import { accountsToUse, noteHeldBack, type FebboxAccount } from './febboxAccounts';
@@ -393,9 +393,13 @@ export async function listMovieFiles(shareUrl: string): Promise<FileOption[]> {
 	let videos = root.filter((f) => !f.isDir && VIDEO_EXTS.test(f.name));
 
 	if (!videos.length) {
-		for (const dir of root.filter((f) => f.isDir)) {
-			const contents = await listFebboxFiles(shareUrl, dir.fid);
-			videos.push(...contents.filter((f) => !f.isDir && VIDEO_EXTS.test(f.name)));
+		const listings = root.filter((f) => f.isDir).map((dir) =>
+			listFebboxFiles(shareUrl, dir.fid).then((value) => ({ value }), (error: unknown) => ({ error }))
+		);
+		for (const listing of listings) {
+			const result = await listing;
+			if ('error' in result) throw result.error;
+			videos.push(...result.value.filter((f) => !f.isDir && VIDEO_EXTS.test(f.name)));
 		}
 	}
 
@@ -498,7 +502,7 @@ async function probeAndUpgrade(url: string, debug: string[]): Promise<string> {
 			parent + '/master.m3u8' + query,
 			parent + '/index.m3u8' + query
 		];
-		const results = await Promise.allSettled(candidates.map(async (c) => {
+		const results = candidates.map(async (c) => {
 			const r = await fetch(c, {
 				headers: { Referer: 'https://www.febbox.com/', Origin: 'https://www.febbox.com' },
 				signal: AbortSignal.timeout(5000)
@@ -507,11 +511,12 @@ async function probeAndUpgrade(url: string, debug: string[]): Promise<string> {
 			const t = await r.text();
 			if (!t.includes('#EXT-X-STREAM-INF')) throw new Error();
 			return c;
-		}));
-		const found = results.find((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled');
-		if (found) {
-			debug.push(`found master at ${found.value.replace(/[?].*/, '?...')}`);
-			return found.value;
+		}).map((result) => result.catch(() => null));
+		for (const result of results) {
+			const found = await result;
+			if (!found) continue;
+			debug.push(`found master at ${found.replace(/[?].*/, '?...')}`);
+			return found;
 		}
 		debug.push('no master found');
 	} catch (e: unknown) {
@@ -731,162 +736,6 @@ export function prefetchStreamUrls(shareKey: string, fids: number[], token: stri
 		const cached = streamCache.get(fid);
 		if (cached && Date.now() - cached.ts < STREAM_CACHE_TTL) continue;
 		chain = chain.then(() => getStreamUrl(shareKey, fid, token).catch(() => {}));
-	}
-}
-
-/* -------------------------------------------------------- subtitles */
-
-const SUBTITLE_EXTS = /\.(srt|ass|sub|vtt|ssa)$/i;
-
-export interface SubtitleOption {
-	fid: number;
-	name: string;
-	language: string;
-}
-
-const LANG_MAP: Record<string, string> = {
-	eng: 'English', en: 'English', english: 'English',
-	spa: 'Spanish', es: 'Spanish', spanish: 'Spanish',
-	fre: 'French', fr: 'French', french: 'French',
-	ger: 'German', de: 'German', german: 'German',
-	ita: 'Italian', it: 'Italian', italian: 'Italian',
-	por: 'Portuguese', pt: 'Portuguese', portuguese: 'Portuguese',
-	jpn: 'Japanese', ja: 'Japanese', japanese: 'Japanese',
-	kor: 'Korean', ko: 'Korean', korean: 'Korean',
-	chi: 'Chinese', zh: 'Chinese', chinese: 'Chinese',
-	ara: 'Arabic', ar: 'Arabic', arabic: 'Arabic',
-	rus: 'Russian', ru: 'Russian', russian: 'Russian',
-	hin: 'Hindi', hi: 'Hindi', hindi: 'Hindi',
-	dut: 'Dutch', nl: 'Dutch', dutch: 'Dutch',
-	pol: 'Polish', pl: 'Polish', polish: 'Polish',
-	tur: 'Turkish', tr: 'Turkish', turkish: 'Turkish',
-	swe: 'Swedish', sv: 'Swedish', swedish: 'Swedish',
-	nor: 'Norwegian', no: 'Norwegian', norwegian: 'Norwegian',
-	dan: 'Danish', da: 'Danish', danish: 'Danish',
-	fin: 'Finnish', fi: 'Finnish', finnish: 'Finnish',
-	gre: 'Greek', el: 'Greek', greek: 'Greek',
-	heb: 'Hebrew', he: 'Hebrew', hebrew: 'Hebrew',
-	hun: 'Hungarian', hu: 'Hungarian', hungarian: 'Hungarian',
-	cze: 'Czech', cs: 'Czech', czech: 'Czech',
-	rum: 'Romanian', ro: 'Romanian', romanian: 'Romanian',
-};
-
-function detectLanguage(filename: string): string {
-	const base = filename.replace(SUBTITLE_EXTS, '');
-	const parts = base.split(/[.\-_\s]/);
-	for (let i = parts.length - 1; i >= 0; i--) {
-		const lower = parts[i].toLowerCase();
-		if (LANG_MAP[lower]) return LANG_MAP[lower];
-	}
-	return 'Unknown';
-}
-
-export async function findSubtitles(
-	shareUrl: string,
-	parentId = 0
-): Promise<SubtitleOption[]> {
-	// Subtitles kept in the folder are a bonus: Febbox not listing just now means none this time.
-	const files = await listFebboxFiles(shareUrl, parentId).catch(() => [] as FebboxFile[]);
-	const subs: SubtitleOption[] = [];
-
-	for (const f of files) {
-		if (!f.isDir && SUBTITLE_EXTS.test(f.name)) {
-			subs.push({ fid: f.fid, name: f.name, language: detectLanguage(f.name) });
-		}
-	}
-
-	if (!subs.length) {
-		const subDirs = files.filter(
-			(f) => f.isDir && /^(subs?|subtitles?)$/i.test(f.name)
-		);
-		for (const dir of subDirs) {
-			const inner = await listFebboxFiles(shareUrl, dir.fid).catch(() => [] as FebboxFile[]);
-			for (const f of inner) {
-				if (!f.isDir && SUBTITLE_EXTS.test(f.name)) {
-					subs.push({ fid: f.fid, name: f.name, language: detectLanguage(f.name) });
-				}
-			}
-		}
-	}
-
-	return subs;
-}
-
-export async function fetchFebboxSubtitles(
-	shareKey: string,
-	fid: number
-): Promise<SubtitleOption[]> {
-	const result = await electronGetSubtitles(shareKey, fid);
-	if (result.error || !result.data) return [];
-
-	try {
-		const data = JSON.parse(result.data);
-		const list = data?.data?.list ?? data?.data ?? [];
-		if (!Array.isArray(list) || !list.length) return [];
-
-		return list
-			.map((s: Record<string, unknown>) => ({
-				fid: Number(s.sid ?? s.id ?? s.fid ?? 0),
-				name: String(s.file_name ?? s.name ?? s.title ?? ''),
-				language: String(
-					s.language ?? s.lang ?? detectLanguage(String(s.file_name ?? s.name ?? ''))
-				)
-			}))
-			.filter((s: SubtitleOption) => s.name);
-	} catch {
-		return [];
-	}
-}
-
-export async function downloadSubtitleContent(
-	shareKey: string,
-	fid: number,
-	token: string
-): Promise<string> {
-	let downloadUrl = '';
-
-	const eResp = await electronFetch(
-		`https://www.febbox.com/file/share_download?share_key=${shareKey}&fid=${fid}`
-	);
-	if (!eResp.error && eResp.status === 200) {
-		try {
-			const data = JSON.parse(eResp.body);
-			downloadUrl = data?.data?.download_url ?? data?.data?.url ?? data?.data?.link ?? '';
-		} catch {}
-	}
-
-	if (!downloadUrl && token) {
-		try {
-			const resp = await fetch(
-				`https://www.febbox.com/file/share_download?share_key=${shareKey}&fid=${fid}`,
-				{
-					headers: {
-						Cookie: token,
-						'User-Agent':
-							'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-						Referer: 'https://www.febbox.com/'
-					},
-					signal: AbortSignal.timeout(10000)
-				}
-			);
-			if (resp.ok) {
-				const data = await resp.json();
-				downloadUrl = data?.data?.download_url ?? data?.data?.url ?? data?.data?.link ?? '';
-			}
-		} catch {}
-	}
-
-	if (!downloadUrl) return '';
-
-	try {
-		const resp = await fetch(downloadUrl, {
-			headers: { Referer: 'https://www.febbox.com/' },
-			signal: AbortSignal.timeout(10000)
-		});
-		if (!resp.ok) return '';
-		return await resp.text();
-	} catch {
-		return '';
 	}
 }
 

@@ -1,5 +1,6 @@
 import { downloadSubtitleWhole } from '$lib/server/showbox-subs';
 import { hasStyledLines, keepStyled, readStyled } from '$lib/server/styledSubtitles';
+import { fileSubtitleText } from '$lib/server/sources/nyaa';
 import type { RequestHandler } from './$types';
 
 /**
@@ -15,12 +16,18 @@ export const GET: RequestHandler = async ({ url }) => {
 	const lang = url.searchParams.get('lang')?.trim() || undefined;
 	const key = season && episode ? `${subUrl}#${season}x${episode}` : subUrl;
 
+	// A track inside a Nyaa file: what's been read of it so far (sources/nyaa.ts).
+	if (subUrl.startsWith('torrent:')) {
+		const whole = (await fileSubtitleText(subUrl))?.text ?? '';
+		if (!hasStyledLines(whole)) return new Response(null, { status: 204 });
+		return new Response(whole, { headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } });
+	}
+
 	let text = readStyled(key);
 	if (text === null) {
 		// Kept by subtitle-content as it downloaded, unless that was before this existed.
 		const whole = await downloadSubtitleWhole(subUrl, season, episode, lang);
-		if (!hasStyledLines(whole)) return new Response(null, { status: 204 });
-		keepStyled(key, whole);
+		if (!keepStyled(key, whole)) return new Response(null, { status: 204 });
 		text = whole;
 	}
 	return new Response(text, { headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } });

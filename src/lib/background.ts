@@ -1,3 +1,5 @@
+import { fitFrom, type Fit } from './pictureFit';
+
 /**
  * The picture behind the pages (Settings → Personalization → Background). Kept on this computer
  * only: it's in the settings, which are never exported or shared.
@@ -9,6 +11,8 @@ export type Background = {
 	dim: number;
 	/** How blurred, 0–20 (px). */
 	blur: number;
+	/** Which part of it shows, and how zoomed (src/lib/pictureFit.ts). */
+	fit: Fit;
 };
 
 export const DEFAULT_DIM = 55;
@@ -25,12 +29,13 @@ export const clampTo = (value: unknown, max: number, fallback: number) => {
 };
 
 /** The saved settings as a background, or null when there's none. */
-export function backgroundFrom(settings: { backgroundImage?: string; backgroundDim?: string; backgroundBlur?: string }): Background | null {
+export function backgroundFrom(settings: { backgroundImage?: string; backgroundDim?: string; backgroundBlur?: string; backgroundFit?: string }): Background | null {
 	const image = settings.backgroundImage ?? '';
 	if (!isOwnPicture(image)) return null;
 	return {
 		image,
 		dim: clampTo(settings.backgroundDim ?? DEFAULT_DIM, MAX_DIM, DEFAULT_DIM),
-		blur: clampTo(settings.backgroundBlur ?? 0, MAX_BLUR, 0)
+		blur: clampTo(settings.backgroundBlur ?? 0, MAX_BLUR, 0),
+		fit: fitFrom(settings.backgroundFit ?? null)
 	};
 }

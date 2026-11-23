@@ -45,8 +45,6 @@
 		});
 	}
 
-	const hourName = (h: number) => `${h % 12 || 12} ${h < 12 ? 'AM' : 'PM'}`;
-
 	async function install() {
 		installing = true;
 		await fetch('/api/update?action=install', { method: 'POST' }).catch(() => {});

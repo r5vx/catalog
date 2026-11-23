@@ -6,6 +6,7 @@ import { SORTS } from '$lib/constants';
 import { appIconFrom, logoFrom, LOGO_WORDS_MOST, type AppIconChoice } from '$lib/logo';
 import { inDesktopApp, saveAppIcon } from '$lib/server/appIcon';
 import { fail } from '@sveltejs/kit';
+import { fitFrom, isDefaultFit } from '$lib/pictureFit';
 import { createHash } from 'node:crypto';
 import type { PageServerLoad, Actions } from './$types';
 
@@ -18,6 +19,7 @@ export const load: PageServerLoad = async () => {
 	const settings = readSettings();
 
 	return {
+		openOn: settings.openOn ?? 'new',
 		accent: (() => {
 			const saved = settings.accentColor ?? '';
 			return isHexColour(saved) ? saved : DEFAULT_ACCENT;
@@ -49,6 +51,11 @@ function pngFrom(address: string): Buffer | null {
 }
 
 export const actions: Actions = {
+	saveOpenOn: async ({ request }) => {
+		const openOn = String((await request.formData()).get('openOn') ?? '');
+		if (openOn !== 'new' && openOn !== 'library') return fail(400, { openOnError: 'Choose Home or Library.' });
+		updateSettings({ openOn });
+	},
 	saveAccent: async ({ request }) => {
 		const colour = String((await request.formData()).get('accentColor') ?? '').trim();
 
@@ -121,6 +128,10 @@ export const actions: Actions = {
 		}
 		if (form.has('dim')) patch.backgroundDim = String(clampTo(form.get('dim'), MAX_DIM, DEFAULT_DIM));
 		if (form.has('blur')) patch.backgroundBlur = String(clampTo(form.get('blur'), MAX_BLUR, 0));
+		if (form.has('fit')) {
+			const fit = fitFrom(String(form.get('fit')));
+			patch.backgroundFit = isDefaultFit(fit) ? undefined : JSON.stringify(fit);
+		}
 		updateSettings(patch);
 		return { backgroundOk: true };
 	},
@@ -139,7 +150,11 @@ export const actions: Actions = {
 			logoKind: kind === 'words' || kind === 'picture' ? kind : undefined,
 			logoWords: words || undefined,
 			logoImage: isOwnPicture(image) ? image : undefined,
-			logoDot: dot || undefined
+			logoDot: dot || undefined,
+			// (Kept only when moved or resized: src/lib/logo.ts keeps them in bounds.)
+			logoSize: form.has('size') && Number(form.get('size')) !== 100 ? String(Math.round(Number(form.get('size')) || 100)) : undefined,
+			logoX: form.has('x') && Number(form.get('x')) ? String(Math.round(Number(form.get('x')))) : undefined,
+			logoY: form.has('y') && Number(form.get('y')) ? String(Math.round(Number(form.get('y')))) : undefined
 		});
 		return { logoOk: true };
 	},
@@ -156,7 +171,7 @@ export const actions: Actions = {
 		const png = pngFrom(String(form.get('png') ?? ''));
 		if (!png) return fail(400, { iconError: 'That icon could not be made.' });
 		const choice: AppIconChoice = appIconFrom(
-			JSON.stringify({ kind, color: String(form.get('color') ?? ''), image: String(form.get('image') ?? ''), round: form.get('round') !== '0' })
+			JSON.stringify({ kind, color: String(form.get('color') ?? ''), image: String(form.get('image') ?? ''), round: form.get('round') !== '0', fit: String(form.get('fit') ?? '') })
 		);
 		updateSettings({ appIcon: JSON.stringify(choice) });
 		saveAppIcon(png);
@@ -164,7 +179,7 @@ export const actions: Actions = {
 	},
 
 	removeBackground: async () => {
-		updateSettings({ backgroundImage: undefined, backgroundDim: undefined, backgroundBlur: undefined });
+		updateSettings({ backgroundImage: undefined, backgroundDim: undefined, backgroundBlur: undefined, backgroundFit: undefined });
 		return { backgroundOk: true };
 	},
 

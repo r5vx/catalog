@@ -158,10 +158,6 @@ export function setNoteLocked(id: number, locked: boolean): void {
 	db.prepare('UPDATE notes SET locked = ? WHERE id = ?').run(locked ? 1 : 0, id);
 }
 
-export function anyNotesLocked(): boolean {
-	return Boolean(db.prepare('SELECT 1 FROM notes WHERE locked = 1 LIMIT 1').get());
-}
-
 export function createNote(title = 'Untitled'): number {
 	const now = new Date().toISOString();
 	const result = db

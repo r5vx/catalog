@@ -391,7 +391,9 @@ once('subtitles-slimmed', () => {
 // Watch-list titles found only by a partial name: "The Fantastic Four: First Steps" had picked the
 // World Premiere special (TMDB calls the film "The Fantastic 4"). Those are looked up again, once,
 // with numbers counted either way and the most-voted partial match (watchOrders.ts).
-once('watch-orders-partial-names', () => {
+// Again after 2026-11-19: TMDB's search never returned the film itself for that name, so the
+// lookup now also asks with the numbers swapped ("Four" → "4").
+const partialNamesAgain = () => {
 	const plain = (title: string) =>
 		title.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 	const rows = db.prepare("SELECT key, value FROM watch_order_cache WHERE key LIKE 'title|%'").all() as { key: string; value: string }[];
@@ -402,7 +404,9 @@ once('watch-orders-partial-names', () => {
 			if (found?.title && plain(found.title) !== row.key.split('|')[2]) remove.run(row.key);
 		} catch {}
 	}
-});
+};
+once('watch-orders-partial-names', partialNamesAgain);
+once('watch-orders-numbers-swapped', partialNamesAgain);
 
 once('subtitles-character-sets', () => db.exec('DELETE FROM saved_subtitles WHERE instr(content, char(65533)) > 0'));
 // Sound heard from fragmented-MP4 pieces before 2026-11-04 could be 4% short and smeared
@@ -413,6 +417,15 @@ once('sound-heard-again', () => {
 	const previews = join(dataDir, 'previews');
 	try {
 		for (const name of readdirSync(previews)) if (/^speech-.*\.bin(\.partial)?$/.test(name)) rmSync(join(previews, name), { force: true });
+	} catch {}
+});
+// Talking kept from the player's own downloads (copies kept by share key: "speech-c…") could hold
+// the episode before's sound after Next Episode, until 2026-11-19 (WatchPlayer's episodeKey). Those
+// are heard again as they play; Showbox's own sound tracks (kept by file number) weren't affected.
+once('sound-heard-episodes-mixed', () => {
+	const previews = join(dataDir, 'previews');
+	try {
+		for (const name of readdirSync(previews)) if (/^speech-c[0-9a-f]+-.*\.bin(\.partial)?$/.test(name)) rmSync(join(previews, name), { force: true });
 	} catch {}
 });
 

@@ -1,17 +1,25 @@
 import { error } from '@sveltejs/kit';
 import { isAniwaveVideo, VIDEO_HEADERS } from '$lib/server/sources/aniwave';
 import { isVidriftVideo, playsDirect, VIDRIFT_HEADERS } from '$lib/server/sources/vidrift';
-import { addonHeadersFor, liveHeadersFor, trustAddonHost, trustVideoHost, trustedVideoHost } from '$lib/server/relayHosts';
+import { addonHeadersFor, liveHeadersFor, trustAddonHost, trustLiveHost, trustVideoHost, trustedVideoHost } from '$lib/server/relayHosts';
 import { fetchSteadily, piecePart, splitLongPieces } from '$lib/server/relayPieces';
 import { MOVY_HEADERS } from '$lib/server/sources/movy';
 import { HIANIME_HEADERS } from '$lib/server/sources/hianime';
 import { VIDFAST_HEADERS } from '$lib/server/sources/vidfast';
+import { ALLANIME_HEADERS } from '$lib/server/sources/allanime';
 import { isNotedPiece, notePieces, pieceAhead } from '$lib/server/relayReadAhead';
 import { downloadKindOf, noteEpisode, storedPiece, wantedPiece } from '$lib/server/episodeDownloads';
 import { isPicture, videoFromPicture } from '$lib/server/pictureVideo';
 import { sharedLivePiece } from '$lib/server/liveShare';
 import { repairFrameTimes } from '$lib/server/pieceRepair';
 import { electronFetch } from '$lib/server/electron-fetch';
+import { readOpening } from '$lib/server/readOpening';
+
+/** Febbox's video servers (Showbox), when its copy plays through here to be downloaded ahead (streamLink.ts). */
+const FEBBOX_HEADERS = {
+	Referer: 'https://www.febbox.com/',
+	'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+};
 
 /** Video servers that only answer a browser (see below). */
 const BROWSER_ONLY = /(^|\.)cdndirector\.dailymotion\.com$/;
@@ -36,7 +44,7 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	const kind = isVidriftVideo(target) ? 'vidrift' : isAniwaveVideo(target) ? 'aniwave' : trustedVideoHost(target);
 	if (!kind) return error(403, 'Not a video server Catalog was sent to');
 	const askWith: Record<string, string> =
-		kind === 'vidrift' ? VIDRIFT_HEADERS : kind === 'movy' ? MOVY_HEADERS : kind === 'hianime' ? HIANIME_HEADERS : kind === 'vidfast' ? VIDFAST_HEADERS : kind === 'live' ? liveHeadersFor(target) : kind === 'addon' ? addonHeadersFor(target) : VIDEO_HEADERS;
+		kind === 'vidrift' ? VIDRIFT_HEADERS : kind === 'movy' ? MOVY_HEADERS : kind === 'hianime' ? HIANIME_HEADERS : kind === 'vidfast' ? VIDFAST_HEADERS : kind === 'allanime' ? ALLANIME_HEADERS : kind === 'live' ? liveHeadersFor(target) : kind === 'addon' ? addonHeadersFor(target) : kind === 'febbox' ? FEBBOX_HEADERS : VIDEO_HEADERS;
 	// Which copy of which episode, and which piece of it (episodeDownloads.ts): 7Movies' and Movy's
 	// episodes are downloaded ahead onto this computer, and kept by these rather than by address.
 	const copy = url.searchParams.get('copy') ?? '';
@@ -142,7 +150,7 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	} catch {
 		return error(502, 'The video server stopped answering');
 	}
-	const opening = first.value ?? new Uint8Array();
+	let opening = first.value ?? new Uint8Array();
 	// Live TV's pieces are pictures with the video inside (pictureVideo.ts): read whole, unwrapped.
 	if (kind === 'live' && isPicture(opening)) {
 		const whole = [opening];
@@ -176,6 +184,12 @@ export const GET: RequestHandler = async ({ url, request }) => {
 		headers.set('content-length', String(bytes.length));
 		return new Response(bytes, { status: response.status, headers });
 	}
+	try {
+		first = await readOpening(() => upstream.read(), 16, first);
+		opening = first.value ?? new Uint8Array();
+	} catch {
+		return error(502, 'The video server stopped answering');
+	}
 	if (!new TextDecoder().decode(opening.subarray(0, 16)).startsWith('#EXTM3U')) {
 		const rest = new ReadableStream<Uint8Array>({
 			start(controller) {
@@ -207,19 +221,20 @@ export const GET: RequestHandler = async ({ url, request }) => {
 		return error(502, 'The video server stopped answering');
 	}
 
-	return servePlaylist(Buffer.concat(parts).toString('utf8'));
+	return servePlaylist(Buffer.concat(parts).toString('utf8'), response.url ? new URL(response.url) : target);
 
 		// A playlist: every address in it pointed back here — except video servers that let any
 		// page play their pieces (7Movies' Orion), which the player fetches itself. Unless the copy
 		// is downloaded ahead (Orion too, since 2026-10-25: fast here doesn't mean fast on every TV),
 		// when its pieces come from here, off the disk once they're there.
-	async function servePlaylist(text: string): Promise<Response> {
+	async function servePlaylist(text: string, base = target): Promise<Response> {
 		const direct = (full: URL) => playsDirect(full) && !(copy && downloadKindOf(copy));
 		const point = (address: string) => {
-			const full = new URL(address, target);
+			const full = new URL(address, base);
 			if (direct(full)) return full.href;
 			// A server this playlist names is one the source sent us to as well.
 			if (kind === 'addon') trustAddonHost(full, addonHeadersFor(target));
+			else if (kind === 'live') trustLiveHost(full, liveHeadersFor(target));
 			else trustVideoHost(full, kind!);
 			// The progress-bar pictures' playlists keep saying so, down to each piece. 7Movies'
 			// pieces carry which mend they had (pieceRepair.ts), so a browser never plays one it
@@ -229,11 +244,11 @@ export const GET: RequestHandler = async ({ url, request }) => {
 		// The copy's name goes on down: each quality's playlist is "<copy>~v<n>" (each sound track
 		// "~a<n>"), and each piece carries its number.
 		const media = text.includes('#EXTINF');
-		const pieceUrls = media ? text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).map((l) => new URL(l, target).href) : [];
+		const pieceUrls = media ? text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).map((l) => new URL(l, base).href) : [];
 		const numbers = new Map(pieceUrls.map((piece, n) => [piece, n]));
-		const named = (address: string, which: string) => (copy && !direct(new URL(address, target)) ? `${point(address)}&copy=${encodeURIComponent(which)}` : point(address));
+		const named = (address: string, which: string) => (copy && !direct(new URL(address, base)) ? `${point(address)}&copy=${encodeURIComponent(which)}` : point(address));
 		const pointPiece = (address: string) => {
-			const full = new URL(address, target).href;
+			const full = new URL(address, base).href;
 			const n = numbers.get(full);
 			return copy && n !== undefined && !direct(new URL(full)) ? `${point(full)}&copy=${encodeURIComponent(copy)}&n=${n}` : point(full);
 		};
@@ -243,13 +258,13 @@ export const GET: RequestHandler = async ({ url, request }) => {
 		// Very long pieces are listed as short parts (relayPieces.ts says why) — except for the
 		// progress-bar pictures (?whole=1), which only want each piece's first picture.
 		const split = background ? async (lines: string[]) => lines : splitLongPieces;
-		const lines = await split(text.split('\n'), target, askWith, (address) => {
+		const lines = await split(text.split('\n'), base, askWith, (address) => {
 			const full = new URL(address);
 			return direct(full) ? null : pointPiece(address);
 		});
 		// A playlist of pieces: their order, so the next ones can be fetched ahead.
 		if (!background && text.includes('#EXTINF')) {
-			notePieces(text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).map((l) => new URL(l, target).href));
+			notePieces(text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).map((l) => new URL(l, base).href));
 		}
 		const pointed = lines
 			.map((line) => {

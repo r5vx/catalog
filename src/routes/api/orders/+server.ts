@@ -1,5 +1,5 @@
 import { json, error } from '@sveltejs/kit';
-import { searchFranchises } from '$lib/server/watchOrders';
+import { finishedOf, searchFranchises } from '$lib/server/watchOrders';
 import { addWatchOrder, removeWatchOrder, setExtraWatched, setTitleSkipped } from '$lib/server/db/queries';
 import type { RequestHandler } from './$types';
 
@@ -7,7 +7,10 @@ const VALID_ID = /^(?:[a-z0-9-]+|collection-\d+)$/;
 
 /** Franchises to add, by name. */
 export const GET: RequestHandler = async ({ url }) => {
-	return json(await searchFranchises(url.searchParams.get('q')?.trim() ?? ''));
+	const hits = await searchFranchises(url.searchParams.get('q')?.trim() ?? '');
+	// (Checked against the library each time, so it isn't kept with the search.)
+	const finished = await finishedOf(hits.map((hit) => hit.id));
+	return json(hits.map((hit) => ({ ...hit, finished: finished.has(hit.id) })));
 };
 
 export const POST: RequestHandler = async ({ request }) => {

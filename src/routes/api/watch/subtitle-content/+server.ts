@@ -3,6 +3,8 @@ import { downloadSubtitleWhole, isScrambled, joinsOf } from '$lib/server/showbox
 import { slimSubtitle } from '$lib/server/subtitleFonts';
 import { keepStyled } from '$lib/server/styledSubtitles';
 import { forgetSubtitle, savedSubtitle, saveSubtitle } from '$lib/server/db/queries';
+import { fileSubtitleText } from '$lib/server/sources/nyaa';
+import { kitsunekkoText } from '$lib/server/sources/kitsunekko';
 import type { RequestHandler } from './$types';
 
 /**
@@ -28,6 +30,22 @@ export const GET: RequestHandler = async ({ url }) => {
 	const show = url.searchParams.get('show')?.trim();
 	// Its language, for a file saved in an older character set (subtitleText.ts).
 	const lang = url.searchParams.get('lang')?.trim() || undefined;
+
+	// A subtitle track inside a Nyaa file (sources/nyaa.ts): read out of it as it downloads, so it
+	// may not be all there yet (`partial`: the player asks again). Kept only once it's whole.
+	if (subUrl.startsWith('torrent:')) {
+		const inFile = await fileSubtitleText(subUrl);
+		const content = slimSubtitle(inFile?.text ?? '');
+		return json({ content: isSubtitles(content) ? content : '', partial: !inFile?.complete });
+	}
+
+	// Kitsunekko (sources/kitsunekko.ts): picture subtitles are read into text, and what's read so
+	// far comes back with `partial` (the player asks again). Kept there once whole.
+	if (subUrl.startsWith('kitsunekko:')) {
+		const found = await kitsunekkoText(subUrl);
+		const content = slimSubtitle(found?.text ?? '');
+		return json({ content: isSubtitles(content) ? content : '', partial: Boolean(found) && !found?.complete });
+	}
 
 	// A season pack holds every episode, so its copy is only reused for the same episode.
 	const key = season && episode ? `${subUrl}#${season}x${episode}` : subUrl;

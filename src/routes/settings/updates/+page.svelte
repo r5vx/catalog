@@ -192,13 +192,6 @@
 
 	let expandedVersions = $state<Set<string>>(new Set());
 
-	function toggleVersion(version: string) {
-		const next = new Set(expandedVersions);
-		if (next.has(version)) next.delete(version);
-		else next.add(version);
-		expandedVersions = next;
-	}
-
 	function isOpen(version: string, index: number): boolean {
 		if (expandedVersions.has(version)) return true;
 		// Only the newest is open to start with (owner, 2026-11-15); the rest open with a click.

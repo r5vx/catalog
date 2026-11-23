@@ -18,7 +18,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
 		super.viewDidLoad()
 		view.backgroundColor = .black
 
-		note.text = "Point the camera at the code on the computer:\nCatalog, Settings, Phones"
+		note.text = "Point the camera at the code on the computer:\nCatalog, Settings, TV and phones"
 		note.numberOfLines = 0
 		note.textAlignment = .center
 		note.textColor = .white

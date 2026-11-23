@@ -277,6 +277,7 @@ export class SubtitleSync {
 	}
 
 	destroy(): void {
+		this.heardFor++;
 		this.stop();
 		this.trackStop?.abort();
 		clearInterval(this.liveFits);
@@ -424,11 +425,13 @@ export class SubtitleSync {
 	 */
 	async useKeptSoFar(fid: SpeechKey, language: string, partial = true): Promise<'all' | 'partial' | 'none'> {
 		if (this.track === `kept|${fid}|${language}`) return 'all';
+		const round = this.heardFor;
 		const resp = await fetch(`/api/watch/speech?${speechQuery(fid, language)}`).catch(() => null);
-		if (!resp?.ok) return 'none';
+		if (!resp?.ok || round !== this.heardFor) return 'none';
 		const unfinished = resp.headers.get('X-Speech-Partial') === '1';
 		if (unfinished && !partial) return 'none';
 		const bytes = new Uint8Array(await resp.arrayBuffer());
+		if (round !== this.heardFor) return 'none';
 		// The same as last time: nothing new to fit.
 		let heard = 0;
 		for (const b of bytes) if (b !== 255) heard++;

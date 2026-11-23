@@ -4,6 +4,8 @@ import { PREFERRED_QUALITY, pickFile } from '$lib/watch';
 import { readSettings } from '$lib/server/settings';
 import { seasonEpisodes } from '$lib/server/tvEpisodes';
 import { qualitiesAt, rokuScreen } from '$lib/server/rokuQualities';
+import { reportProblem } from '$lib/server/online';
+import { reportScreen } from '$lib/server/reportScreen';
 import type { RequestHandler } from './$types';
 
 /**
@@ -29,6 +31,13 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	const fresh = url.searchParams.get('refresh') === '1';
 	if (!title) return error(400, 'What to play?');
 
+	// Couldn't be played: said on the Roku, and sent to the owner as a problem report too.
+	const cantPlay = (message: string, why: Record<string, unknown> = {}) => {
+		const name = type === 'tv' && wanted.episode ? `${title} S${wanted.season}E${wanted.episode}` : title;
+		reportProblem('error', `Roku: ${name}`.slice(0, 160), { ...reportScreen(request), error: message, ...why });
+		return json({ error: message });
+	};
+
 	// Asked of this same Catalog as the Roku, so its PIN and profile carry over.
 	const forward: Record<string, string> = {};
 	for (const name of ['cookie', 'user-agent']) {
@@ -42,24 +51,23 @@ export const GET: RequestHandler = async ({ url, request }) => {
 
 	const params = new URLSearchParams({ title, type, nostream: '1' });
 	if (year) params.set('year', year);
-	if (wanted.season) params.set('resume_s', String(wanted.season));
-	if (wanted.season && wanted.episode) params.set('resume_e', String(wanted.episode));
+	if (wanted.season || wanted.episode) params.set('resume_s', String(wanted.season));
+	if (wanted.episode) params.set('resume_e', String(wanted.episode));
 	const [found, anime] = await Promise.all([
 		ask<{ title: string; shareKey?: string; files?: FileOption[]; episodes?: { episodes: Episode[] }; posterUrl?: string; error?: string; audioLanguage?: string }>(`/api/watch/resolve?${params}`),
 		ask<{ anime?: boolean }>(`/api/watch/is-anime?${new URLSearchParams({ title, type, year })}`)
 	]);
-	if (!found || found.error) return json({ error: "Couldn't find that to play." });
+	if (!found || found.error) return cantPlay("Couldn't find that to play.", { why: found?.error ?? 'no answer from the title lookup' });
 
-	// The episode: the one asked for, else the first that plays (specials aside).
+	// Only an unspecific Play request can fall back to the first episode.
 	const playable = (found.episodes?.episodes ?? []).filter((ep) => ep.available !== false && ep.files.length > 0);
 	const episode =
 		type === 'tv'
-			? (playable.find((ep) => ep.season === wanted.season && ep.episode === wanted.episode) ??
-				playable.find((ep) => ep.season > 0) ??
-				playable[0] ??
-				null)
+			? wanted.episode > 0
+				? playable.find((ep) => ep.season === wanted.season && ep.episode === wanted.episode)
+				: playable.find((ep) => ep.season > 0) ?? playable[0]
 			: null;
-	if (type === 'tv' && !episode) return json({ error: 'No episode of that can be played right now.' });
+	if (type === 'tv' && !episode) return cantPlay(wanted.episode > 0 ? 'That episode can’t be played right now.' : 'No episode of that can be played right now.');
 	const listed = (type === 'tv' ? episode!.files : (found.files ?? [])).filter((f) => !f.hevc);
 	// Showbox is optional: not signed in to Febbox, its copies go whenever another source has it
 	// (the same as the computer's and Fire TV's player).
@@ -80,27 +88,30 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	// Movy answered The Odyssey (1968)'s 50-minute first episode with a 2-hour film (2026-11-08).
 	const tmdbShow = Number(/:tv:(\d+):/.exec(listed.find((f) => /:tv:\d+:/.test(f.shareKey ?? ''))?.shareKey ?? '')?.[1] ?? 0);
 	const runtime = type === 'tv' && episode && tmdbShow ? ((await seasonEpisodes(tmdbShow, episode.season).catch(() => [])).find((e) => e.episode === episode.episode)?.runtime ?? 0) : 0;
-	let chosen: { file: FileOption; url: string } | null = null;
+	const headersAt = (address: URL) => address.origin === url.origin ? forward : { 'user-agent': forward['user-agent'] ?? '' };
+	let chosen: { file: FileOption; url: URL; format: StreamFormat } | null = null;
 	let wrongVideo = false;
 	for (const file of order.slice(0, 4)) {
 		const share = file.shareKey || episode?.shareKey || found.shareKey || '';
 		if (!share) continue;
-		const stream = await ask<{ url?: string }>(`/api/watch/stream?share_key=${encodeURIComponent(share)}&fid=${file.fid}${fresh && file === first ? '&refresh=1' : ''}`);
+		const stream = await ask<{ url?: string; debug?: string }>(`/api/watch/stream?share_key=${encodeURIComponent(share)}&fid=${file.fid}${fresh && file === first ? '&refresh=1' : ''}`);
 		if (stream?.url) {
-			const address = new URL(stream.url, url.origin).href;
+			const address = URL.parse(stream.url, url.origin);
+			if (!address || !['http:', 'https:'].includes(address.protocol)) continue;
+			const format = formatOf(address.pathname) ?? (address.origin !== url.origin ? formatOf(stream.debug ?? '') : undefined) ?? 'hls';
 			// Far longer than the episode (more than double, and 10 minutes over): another video.
-			if (runtime > 0 && file.source) {
-				const length = await playlistLength(address, forward);
+			if (runtime > 0 && file.source && format === 'hls') {
+				const length = await playlistLength(address, headersAt);
 				if (length > runtime * 60 * 2 + 600) {
 					wrongVideo = true;
 					continue;
 				}
 			}
-			chosen = { file, url: address };
+			chosen = { file, url: address, format };
 			break;
 		}
 	}
-	if (!chosen) return json({ error: wrongVideo ? "The only copy found of this episode is a different video." : "That can't be played right now." });
+	if (!chosen) return cantPlay(wrongVideo ? 'The only copy found of this episode is a different video.' : "That can't be played right now.", { copiesTried: order.slice(0, 4).map((f) => `${f.source ?? 'Showbox'} ${f.quality}`) });
 
 	const season = episode?.season ?? 0;
 	const number = episode?.episode ?? 0;
@@ -115,19 +126,17 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	}
 	const next = at >= 0 ? (playable.slice(at + 1).find((ep) => ep.season > 0 || episode!.season === 0) ?? null) : null;
 	// Showbox's own video server wants Febbox's Referer (what the desktop app and the TV app add).
-	const fromShowbox = !new URL(chosen.url).pathname.startsWith('/api/');
+	const fromShowbox = !chosen.file.source && chosen.url.origin !== url.origin;
 	const shareKey = chosen.file.shareKey || episode?.shareKey || found.shareKey || '';
-	// Only the copy's top quality: the Roku's player would otherwise start lower and change quality
-	// by itself, which Catalog never does (the player's holdLevel). In kbps, for MinBandwidth.
-	const format = /\.mp4(\?|$)/i.test(chosen.url) ? 'mp4' : 'hls';
+	const { format } = chosen;
 	// Showbox's own playlist goes through /api/roku/hls: its top quality with AAC sound only (the
 	// ec-3 one it was held to played on no Roku: every title "finished" at once). One quality, so
 	// no MinBandwidth for it.
 	const plainShowbox = fromShowbox && format === 'hls';
-	const address = plainShowbox ? new URL(`/api/roku/hls?${new URLSearchParams({ u: chosen.url })}`, url.origin).href : chosen.url;
+	const address = plainShowbox ? new URL(`/api/roku/hls?${new URLSearchParams({ u: chosen.url.href })}`, url.origin).href : chosen.url.href;
 	// The qualities it can show, best first (server/rokuQualities.ts): held at the first, the rest to
 	// step down to if that won't start.
-	const qualities = format === 'hls' && !plainShowbox ? await qualitiesAt(chosen.url, forward, rokuScreen(request)) : [];
+	const qualities = format === 'hls' && !plainShowbox ? await qualitiesAt(chosen.url.href, headersAt(chosen.url), rokuScreen(request)) : [];
 	const minBandwidth = qualities.length > 1 ? qualities[0] : 0;
 	// English subtitles (/api/roku/subtitles), unless they're part of the picture.
 	const subtitles = new URLSearchParams({ title: found.title, type, year, share: chosen.file.source ? shareKey : '' });
@@ -139,7 +148,7 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	// Preview pictures while fast-forwarding (/api/roku/bif, from the computer's for this copy):
 	// the computer is asked to make them now if it hasn't, without waiting, so nothing starts later.
 	const which = { title: found.title, type, season: String(season), episode: String(number), fid: String(chosen.file.fid), share: shareKey };
-	const bif = /\.mp4(\?|$)/i.test(chosen.url) ? null : new URL(`/api/roku/bif?${new URLSearchParams(which)}`, url.origin).href;
+	const bif = format === 'hls' ? new URL(`/api/roku/bif?${new URLSearchParams(which)}`, url.origin).href : null;
 	if (bif) {
 		fetch(new URL('/api/watch/strip/prepare', url.origin), {
 			method: 'POST',
@@ -188,17 +197,26 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	});
 };
 
+type StreamFormat = 'hls' | 'mp4' | 'mkv' | 'dash';
+
+function formatOf(name: string): StreamFormat | undefined {
+	if (/\.m3u8$/i.test(name)) return 'hls';
+	if (/\.(mp4|m4v|mov)$/i.test(name)) return 'mp4';
+	if (/\.mkv$/i.test(name)) return 'mkv';
+	if (/\.mpd$/i.test(name)) return 'dash';
+}
+
 /** A playlist's length in seconds (its first quality's pieces added up); 0 when it can't be read. */
-async function playlistLength(address: string, headers: Record<string, string>): Promise<number> {
+async function playlistLength(address: URL, headersAt: (url: URL) => Record<string, string>): Promise<number> {
 	try {
-		const read = async (at: string) => {
-			const r = await fetch(at, { headers, signal: AbortSignal.timeout(15_000) });
-			return r.ok ? r.text() : '';
+		const read = async (at: URL) => {
+			const r = await fetch(at, { headers: headersAt(at), signal: AbortSignal.timeout(15_000) });
+			return { text: r.ok ? await r.text() : '', base: r.url || at.href };
 		};
-		let text = await read(address);
+		let { text, base } = await read(address);
 		if (/#EXT-X-STREAM-INF/.test(text)) {
 			const next = text.split('\n').find((l) => l.trim() && !l.startsWith('#'));
-			text = next ? await read(new URL(next.trim(), address).href) : '';
+			text = next ? (await read(new URL(next.trim(), base))).text : '';
 		}
 		return [...text.matchAll(/#EXTINF:([\d.]+)/g)].reduce((sum, m) => sum + Number(m[1]), 0);
 	} catch {

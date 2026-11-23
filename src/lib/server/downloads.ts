@@ -25,6 +25,7 @@ import { streamLink } from './streamLink';
 import { replayAnswer } from './replayAnswer';
 import { ownFetch } from './ownFetch';
 import { flattenToMp4, type Series } from './mp4Flatten';
+import { readOpening } from './readOpening';
 
 export const DOWNLOADS_DIR = join(dataDir, 'downloads');
 const AT_ONCE = 4;
@@ -197,7 +198,7 @@ function mediaPlaylist(text: string, base: string): Track & { duration: number }
 async function playlistText(resp: Response): Promise<string | null> {
 	const reader = resp.body!.getReader();
 	const chunks: Uint8Array[] = [];
-	const first = await reader.read();
+	const first = await readOpening(() => reader.read(), 32);
 	if (first.value) chunks.push(first.value);
 	if (!new TextDecoder().decode(first.value?.subarray(0, 32)).trimStart().startsWith('#EXTM3U')) {
 		reader.cancel().catch(() => {});
@@ -355,8 +356,10 @@ async function download(row: DownloadRow, signal: AbortSignal): Promise<void> {
 	let gotThisTime = 0;
 	let lastSave = 0;
 	let at = 0;
+	let failed = false;
+	let firstError: unknown;
 	const worker = async () => {
-		while (at < todo.length && !signal.aborted) {
+		while (at < todo.length && !signal.aborted && !failed) {
 			const job = todo[at++];
 			let tries = 0;
 			for (;;) {
@@ -381,7 +384,14 @@ async function download(row: DownloadRow, signal: AbortSignal): Promise<void> {
 			}
 		}
 	};
-	await Promise.all(Array.from({ length: AT_ONCE }, worker));
+	await Promise.allSettled(Array.from({ length: AT_ONCE }, () => worker().catch((error: unknown) => {
+		if (!failed) {
+			failed = true;
+			firstError = error;
+		}
+		throw error;
+	})));
+	if (failed) throw firstError;
 	if (signal.aborted) return;
 
 	updateDownload(row.id, { state: 'finishing', donePieces: progress.done, bytes: progress.bytes });
@@ -427,18 +437,34 @@ async function downloadWhole(row: DownloadRow, address: string, signal: AbortSig
 	const part = `${out}.part`;
 	const progress = running!.progress;
 	const head = await get(address, signal, [0, 1]);
-	const total = Number(head.headers.get('content-range')?.split('/')[1] ?? 0);
+	const total = head.status === 206 ? Number(/^bytes 0-0\/(\d+)$/.exec(head.headers.get('content-range') ?? '')?.[1] ?? 0) : 0;
 	head.body?.cancel().catch(() => {});
-	if (!total) throw new Error("The video's server won't say how big it is");
+	if (!Number.isSafeInteger(total) || total <= 0) throw new Error("The video's server won't say how big it is");
 	const STEP = 8 * 1024 ** 2;
 	progress.total = Math.ceil(total / STEP);
 	let have = existsSync(part) ? statSync(part).size : 0;
+	if (have > total) throw new Error('The unfinished file is larger than the video');
 	const fd = openSync(part, have ? 'r+' : 'w');
 	try {
 		while (have < total && !signal.aborted) {
-			const resp = await get(address, signal, [have, Math.min(STEP, total - have)]);
-			if (!resp.ok) throw new Error(`The video's server answered ${resp.status}`);
+			const length = Math.min(STEP, total - have);
+			const resp = await get(address, signal, [have, length]);
+			if (resp.status === 200) {
+				// The server ignored the range and sent the whole video: start the file over.
+				const bytes = new Uint8Array(await resp.arrayBuffer());
+				if (bytes.length !== total) throw new Error('The video arrived incomplete');
+				have = 0;
+				writeSync(fd, bytes, 0, bytes.length, have);
+				have += bytes.length;
+				progress.bytes = have;
+				continue;
+			}
+			if (resp.status !== 206 || resp.headers.get('content-range') !== `bytes ${have}-${have + length - 1}/${total}`) {
+				await resp.body?.cancel();
+				throw new Error("The video's server didn't send the requested part");
+			}
 			const bytes = new Uint8Array(await resp.arrayBuffer());
+			if (bytes.length !== length) throw new Error("The video's server sent an incomplete part");
 			writeSync(fd, bytes, 0, bytes.length, have);
 			have += bytes.length;
 			progress.bytes = have;

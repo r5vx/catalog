@@ -43,6 +43,7 @@
 	let adding = $state(false);
 	let crateEl = $state<HTMLButtonElement | null>(null);
 	let saved: { kinds: Kind[]; deep: boolean; library: boolean; quick: boolean } | null = null;
+	let rollAsked = 0;
 
 	const t = (text: string) => wording(page.data.altMode, text);
 	const here = $derived(page.url.pathname + page.url.search);
@@ -85,6 +86,7 @@
 	}
 
 	function close() {
+		rollAsked++;
 		open = false;
 	}
 
@@ -96,6 +98,7 @@
 	}
 
 	function reset() {
+		rollAsked++;
 		newBoxColor();
 		phase = 'idle';
 		pick = null;
@@ -130,6 +133,7 @@
 	async function roll() {
 		if (phase === 'shaking' || phase === 'opening') return;
 		reset();
+		const mine = rollAsked;
 		phase = 'shaking';
 		// One of the kinds on, each as likely as the others.
 		const kind = kinds[Math.floor(Math.random() * kinds.length)] ?? 'movies';
@@ -147,7 +151,7 @@
 			.catch(() => null);
 		// (It shakes at least this long, so the opening is worth watching even when TMDB is quick.)
 		const [found] = await Promise.all([asked, quick ? null : wait(1100)]);
-		if (!open) return;
+		if (!open || mine !== rollAsked) return;
 		if (!found) {
 			phase = 'failed';
 			problem = t('Nothing came back. Try again in a moment.');
@@ -160,7 +164,7 @@
 		}
 		phase = 'opening';
 		await wait(950);
-		if (open && pick === found) phase = 'shown';
+		if (open && mine === rollAsked && pick === found) phase = 'shown';
 	}
 
 	async function addAs(status: 'planned' | 'completed') {

@@ -270,7 +270,7 @@
 		</div>
 	</section>
 {:else if counted.length}
-	<p class="all-done">All caught up{upcoming.length ? ` — ${upcoming.length} more on the way` : ''}.</p>
+	<p class="all-done">{upcoming.length ? `All caught up — ${upcoming.length} more on the way.` : 'Finished.'}</p>
 {/if}
 
 <div class="controls">

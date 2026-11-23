@@ -13,7 +13,8 @@ const bob = async () => (await ask(A, '/api/online/c/friends')).data?.friends?.f
 const progress = (title) => ask(B, '/api/watch/progress', 'POST', { title, type: 'movie', season: 0, episode: 0, currentTime: 60, duration: 6000, posterUrl: '' });
 
 let r = await ask(B, '/api/online?light=1');
-check('the light answer: connected, watching along off to begin with', r.data.connected === true && r.data.switches.along === false, JSON.stringify(r.data));
+check('the light answer: connected, watching along on to begin with', r.data.connected === true && r.data.switches.along === true, JSON.stringify(r.data));
+await ask(B, '/api/online', 'POST', { action: 'switches', reports: true, share: true, shared: true, along: false });
 
 // Along off: friends get the year, never the room.
 const room = (await ask(B, '/api/online/c/rooms', 'POST', { title: 'Along Film', type: 'movie', year: '1999', playing: true, position: 60 })).data.code;

@@ -118,12 +118,13 @@ export function listEntries(options: ListOptions = {}): EntryCard[] {
 	const params: (string | number)[] = [];
 
 	if (options.search) {
-		const needle = `%${options.search}%`;
+		const like = (value: string) => `%${value.replace(/[!%_]/g, '!$&')}%`;
+		const needle = like(options.search);
 
 		const words = options.search.trim().split(/\s+/).filter(Boolean);
-		const nameMatch = words.map(() => 'p.name LIKE ?').join(' AND ') || '1 = 0';
+		const nameMatch = words.map(() => "p.name LIKE ? ESCAPE '!'").join(' AND ') || '1 = 0';
 
-		const stripped = options.search.replace(/[^a-zA-Z0-9\s]/g, '');
+		const stripped = /[%_]/.test(options.search) ? '' : options.search.replace(/[^a-zA-Z0-9\s]/g, '');
 		const strippedNeedle = stripped ? `%${stripped.toLowerCase()}%` : null;
 		const spacelessNeedle = stripped ? `%${stripped.replace(/\s+/g, '').toLowerCase()}%` : null;
 		// The same with numbers written the other way: "fantastic four" finds "The Fantastic 4: First Steps".
@@ -133,7 +134,7 @@ export function listEntries(options: ListOptions = {}): EntryCard[] {
 		const spacelessTitle = "lower(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(e.title, '-', ''), ':', ''), '.', ''), '''', ''), ' ', ''))";
 
 		where.push(`(
-			e.title LIKE ? OR e.notes LIKE ? OR e.other_titles LIKE ?
+			e.title LIKE ? ESCAPE '!' OR e.notes LIKE ? ESCAPE '!' OR e.other_titles LIKE ? ESCAPE '!'
 			${strippedNeedle ? `OR ${spacelessTitle} LIKE ?` : ''}
 			${swappedNeedles.map(() => `OR ${spacelessTitle} LIKE ?`).join(' ')}
 			OR e.id IN (
@@ -145,7 +146,7 @@ export function listEntries(options: ListOptions = {}): EntryCard[] {
 		params.push(needle, needle, needle);
 		if (spacelessNeedle) params.push(spacelessNeedle);
 		params.push(...swappedNeedles);
-		params.push(...words.map((w) => `%${w}%`));
+		params.push(...words.map(like));
 	}
 
 	if (options.categoryId) {
@@ -587,32 +588,6 @@ export function insertEntry(input: EntryInput): number {
 	return Number(result.lastInsertRowid);
 }
 
-export function updateEntry(id: number, input: EntryInput): void {
-	db.prepare(
-		`UPDATE entries SET
-			category_id = ?, title = ?, year = ?, status = ?, rating = ?, rewatches = ?,
-			favorite = ?, notes = ?, started_on = ?, finished_on = ?, poster_url = ?,
-			last_season = ?, last_episode = ?, updated_at = ?
-		WHERE id = ?`
-	).run(
-		input.categoryId,
-		input.title,
-		input.year ?? null,
-		input.status ?? 'completed',
-		input.rating ?? null,
-		input.rewatches ?? 0,
-		toInt(input.favorite ?? false),
-		input.notes ?? '',
-		input.startedOn ?? null,
-		input.finishedOn ?? null,
-		input.posterUrl ?? null,
-		input.lastSeason ?? null,
-		input.lastEpisode ?? null,
-		new Date().toISOString(),
-		id
-	);
-}
-
 /**
  * Today's date where the computer is (YYYY-MM-DD). The UTC date ran a day ahead from 5 pm in
  * California: finished "tomorrow" (2026-10-23).
@@ -733,8 +708,15 @@ export function updateEntrySource(id: number, source: string, sourceId: string):
 /** Removed by hand (its page, or Remove from library): noted for library sync first (`noteRemoved`). */
 export function deleteEntry(id: number): void {
 	const row = db.prepare('SELECT source, source_id AS sourceId, title, year FROM entries WHERE id = ?').get(id) as RemovedTitle | undefined;
-	if (row) noteRemoved(MAIN_PROFILE, row, Date.now());
-	db.prepare('DELETE FROM entries WHERE id = ?').run(id);
+	db.exec('BEGIN');
+	try {
+		if (row) noteRemoved(MAIN_PROFILE, row, Date.now());
+		db.prepare('DELETE FROM entries WHERE id = ?').run(id);
+		db.exec('COMMIT');
+	} catch (error) {
+		db.exec('ROLLBACK');
+		throw error;
+	}
 }
 
 type RemovedTitle = { source: string; sourceId: string | null; title: string; year: number | null };
@@ -1086,13 +1068,6 @@ export function forgetShowboxMatch(lookup: string) {
 	db.prepare('DELETE FROM showbox_matches WHERE lookup = ?').run(lookup);
 }
 
-export function getCachedStreamInfo(title: string, type: string): { shareKey: string; fid: number } | null {
-	const row = db
-		.prepare("SELECT share_key AS shareKey, fid FROM watch_progress WHERE title = ? AND type = ? AND share_key != '' AND fid != 0 ORDER BY updated_at DESC LIMIT 1")
-		.get(title, type) as { shareKey: string; fid: number } | undefined;
-	return row ?? null;
-}
-
 export function listAllWatchProgress(): (WatchProgress & { updatedAt: string })[] {
 	return db
 		.prepare('SELECT title, type, season, episode, "current_time" AS currentTime, duration, updated_at AS updatedAt FROM watch_progress WHERE profile = ? ORDER BY updated_at DESC LIMIT 50')
@@ -1385,6 +1360,18 @@ export type TvItem = {
 	lastSeason: number | null;
 	lastEpisode: number | null;
 };
+
+export function playedFilmTitles(): Set<string> {
+	return new Set((db.prepare(`SELECT DISTINCT title FROM watch_progress
+		WHERE profile = ? AND type = 'movie' AND "current_time" > 0`).all(currentProfile()) as { title: string }[]).map((row) => row.title.trim().toLowerCase()));
+}
+
+export function olderLibraryFilmKeys(before: number): Set<string> {
+	if (currentProfile() !== MAIN_PROFILE) return new Set();
+	return new Set((db.prepare(`SELECT source_id AS sourceId FROM entries
+		WHERE source = 'tmdb' AND source_id LIKE 'movie:%'
+		AND julianday(created_at) < julianday(?, 'unixepoch')`).all(before / 1000) as { sourceId: string }[]).map((row) => `tmdb:${row.sourceId}`));
+}
 
 /** The whole library, most recently touched first; for someone else's profile, their own list. */
 export function tvLibrary(): TvItem[] {
@@ -1762,4 +1749,23 @@ export function caughtUpShows(): { title: string; year: string }[] {
 			SELECT title, COALESCE(CAST(year AS TEXT), '') AS year FROM profile_titles WHERE status = 'caught_up'
 		`)
 		.all() as { title: string; year: string }[];
+}
+
+/**
+ * Library shows that could have a new episode this week (This week, thisWeek.ts): TMDB shows not
+ * dropped, the ones being followed first (watching, caught up, rewatching, paused, planned), then
+ * finished ones by when they were last touched. At most 80, as each costs TMDB an ask.
+ */
+export function followedShows(): { id: number; title: string; tmdb: number }[] {
+	return (
+		db
+			.prepare(`
+				SELECT id, title, CAST(substr(source_id, 4) AS INTEGER) AS tmdb FROM entries
+				WHERE source = 'tmdb' AND source_id LIKE 'tv:%' AND status != 'dropped'
+				ORDER BY CASE status WHEN 'watching' THEN 0 WHEN 'caught_up' THEN 0 WHEN 'rewatching' THEN 1
+					WHEN 'paused' THEN 2 WHEN 'planned' THEN 3 ELSE 4 END, updated_at DESC
+				LIMIT 80
+			`)
+			.all() as { id: number; title: string; tmdb: number }[]
+	).filter((s) => s.tmdb > 0);
 }

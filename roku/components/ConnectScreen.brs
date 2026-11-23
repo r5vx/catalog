@@ -14,7 +14,7 @@ end sub
 sub start()
     if m.global.server <> "" then
         m.status.text = "Connecting to Catalog…"
-        api("/api/roku/hello", {}, "onHello")
+        m.helloAsk = api("/api/roku/hello", {}, "onHello")
     else
         discover()
     end if
@@ -59,12 +59,16 @@ sub onChoice()
 end sub
 
 sub connectTo(address as String)
+    if address <> m.global.server then m.global.token = ""
     m.global.server = address
     m.status.text = "Connecting to Catalog…"
-    api("/api/roku/hello", {}, "onHello")
+    m.profilesAsk = invalid
+    m.loginAsk = invalid
+    m.helloAsk = api("/api/roku/hello", {}, "onHello")
 end sub
 
 sub onHello(event as Object)
+    if not isCurrentRequest(event, m.helloAsk) then return
     answer = event.getData()
     if not answer.ok or answer.data.app <> "catalog" then
         m.status.text = "Catalog didn't answer at " + m.global.server + "."
@@ -73,11 +77,13 @@ sub onHello(event as Object)
         return
     end if
     m.needsPin = answer.data.pin = true
+    if not m.needsPin then m.global.token = ""
     ' Whether the PIN sign-in kept from before still works (asked for who's watching).
-    api("/api/roku/profiles", {}, "onProfiles")
+    m.profilesAsk = api("/api/roku/profiles", {}, "onProfiles")
 end sub
 
 sub onProfiles(event as Object)
+    if not isCurrentRequest(event, m.profilesAsk) then return
     answer = event.getData()
     if answer.signIn or (m.needsPin and not answer.ok) then
         askPin("")
@@ -153,15 +159,16 @@ sub onPin()
         discover()
         return
     end if
-    api("/api/roku/login", {}, "onLogin", "POST", { pin: pin })
+    m.loginAsk = api("/api/roku/login", {}, "onLogin", "POST", { pin: pin })
 end sub
 
 sub onLogin(event as Object)
+    if not isCurrentRequest(event, m.loginAsk) then return
     answer = event.getData()
     if not answer.ok then
         askPin("That PIN is not right. Try again.")
         return
     end if
     m.global.token = answer.data.token
-    api("/api/roku/profiles", {}, "onProfiles")
+    m.profilesAsk = api("/api/roku/profiles", {}, "onProfiles")
 end sub

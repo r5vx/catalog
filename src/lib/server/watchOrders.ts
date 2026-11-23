@@ -10,7 +10,7 @@ import { db } from './db/index';
 import { watchedExtras, skippedTitles, getOrderCache, saveOrderCache, myWatchOrders } from './db/queries';
 import { tmdbGet } from './metadata/tmdb';
 import { normalizeTitle } from './metadata/types';
-import { numbersAsDigits } from '$lib/numberWords';
+import { digitsAsWords, hasNumberToSwap, numbersAsDigits } from '$lib/numberWords';
 import { WATCH_ORDERS, POPULAR_COLLECTIONS, orderBySlug, type OrderItem } from '$lib/watchOrders';
 
 export type OrderStatus = 'watched' | 'watching' | 'listed' | 'dropped' | 'none';
@@ -121,10 +121,12 @@ async function askTmdb(item: OrderItem): Promise<Found | null | undefined> {
 		overview?: string;
 		vote_count?: number;
 	};
-	const search = await tmdbGet<{ results: Hit[] }>(`/search/${item.type}`, {
-		query: item.title,
-		...(item.type === 'movie' ? { year: String(item.year) } : { first_air_date_year: String(item.year) })
-	});
+	const ask = (query: string) =>
+		tmdbGet<{ results: Hit[] }>(`/search/${item.type}`, {
+			query,
+			...(item.type === 'movie' ? { year: String(item.year) } : { first_air_date_year: String(item.year) })
+		});
+	const search = await ask(item.title);
 	if (!search) return undefined; // couldn't ask — try again next time
 
 	// Only a real name match. Falling back to "the first result" would quietly put the wrong film in.
@@ -132,6 +134,15 @@ async function askTmdb(item: OrderItem): Promise<Found | null | undefined> {
 	// the next best; of those, the most voted for, so a premiere special never stands in for the film.
 	const want = comparable(item.title);
 	const named = (r: Hit) => comparable(r.title ?? r.name ?? '');
+	// TMDB's search doesn't count "Four" and "4" as one word: "The Fantastic Four: First Steps"
+	// never finds the film (TMDB: "The Fantastic 4"), only its World Premiere special, which the
+	// lists showed (owner, 2026-11-19). So with no exact match, ask again with the numbers swapped.
+	const lower = item.title.toLowerCase();
+	if (!search.results.some((r) => named(r) === want) && hasNumberToSwap(lower)) {
+		const swapped = numbersAsDigits(lower) !== lower ? numbersAsDigits(lower) : digitsAsWords(lower);
+		const again = swapped !== lower ? await ask(swapped) : null;
+		if (again) search.results = [...search.results, ...again.results.filter((r) => !search.results.some((s) => s.id === r.id))];
+	}
 	const hit =
 		search.results.find((r) => named(r) === want) ??
 		search.results
@@ -261,6 +272,8 @@ async function askCollection(id: number): Promise<Collection | null | undefined>
 	};
 	const data = await tmdbGet<{ name: string; poster_path: string | null; parts: Part[] }>(`/collection/${id}`);
 	if (!data) return undefined; // couldn't ask — try again next time
+	// An answer missing its name or films is unusable: not kept, asked again next time.
+	if (typeof data.name !== 'string' || !Array.isArray(data.parts)) return undefined;
 	const value: Collection = {
 		name: data.name.replace(/ Collection$/, ''),
 		posterUrl: data.poster_path ? POSTER + data.poster_path : null,
@@ -365,3 +378,25 @@ export async function warmWatchOrders(): Promise<void> {
 
 /** Counts towards "x of y watched": out, not an extra, not skipped. */
 export const counts = (item: ResolvedItem) => item.released && !item.extra && !item.skipped;
+
+/**
+ * Every title watched and nothing more on the way: "Finished" on the watch list (owner,
+ * 2026-11-19). With more still to come out it's only "All caught up".
+ */
+export function isFinished(items: ResolvedItem[]): boolean {
+	const released = items.filter(counts);
+	return released.length > 0 && released.every((i) => i.status === 'watched') && !items.some((i) => !i.released && !i.extra && !i.skipped);
+}
+
+/** Which franchises are finished, for the add panel; any not looked up within `ms` are left out. */
+export async function finishedOf(ids: string[], ms = 1500): Promise<Set<string>> {
+	const finished = new Set<string>();
+	const all = Promise.all(
+		ids.map(async (id) => {
+			const order = await resolveOrder(id).catch(() => null);
+			if (order && isFinished(order.items)) finished.add(id);
+		})
+	);
+	await Promise.race([all, new Promise((resolve) => setTimeout(resolve, ms))]);
+	return new Set(finished);
+}

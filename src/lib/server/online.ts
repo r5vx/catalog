@@ -499,6 +499,29 @@ export function friendsSnapshot(profile: number): { friends: unknown; activity: 
 }
 
 /**
+ * Each profile page's last answer (src/routes/friends/[id]/+page.server.ts), so it opens at once
+ * and the fresh one follows: opening My profile waited ~0.2 s on the meeting point every time and
+ * showed the loading bar (owner, 2026-11-19). Forgotten whenever this profile changes something
+ * there (the page's own saves), so an edit never shows the old one first.
+ */
+const profilesKept = new Map<string, { profile: unknown; at: number }>();
+const PROFILE_KEPT_FOR = 60 * 60_000;
+export function keepProfileAnswer(profile: number, id: string, answer: unknown): void {
+	profilesKept.set(`${profile}|${id}`, { profile: answer, at: Date.now() });
+	if (profilesKept.size > 40) profilesKept.delete(profilesKept.keys().next().value!);
+}
+export function keptProfileAnswer<T extends { watching?: unknown }>(profile: number, id: string): T | null {
+	const kept = profilesKept.get(`${profile}|${id}`);
+	if (!kept || Date.now() - kept.at > PROFILE_KEPT_FOR) return null;
+	const answer = kept.profile as T;
+	// (The same 2 minutes as the Friends page: an old "watching" isn't shown.)
+	return Date.now() - kept.at > WATCHING_KEPT_FOR ? { ...answer, watching: null } : answer;
+}
+export function forgetProfileAnswers(profile: number): void {
+	for (const key of [...profilesKept.keys()]) if (key.startsWith(`${profile}|`)) profilesKept.delete(key);
+}
+
+/**
  * Who each profile is online (id, name, picture), remembered from any answer that said so, for the
  * My profile button in the library's top bar and the sidebar (src/lib/MyProfileButton.svelte).
  */

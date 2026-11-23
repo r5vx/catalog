@@ -10,9 +10,9 @@ async function ask(base, path, method = 'GET', body, extra = {}) {
   return { status: r.status, data };
 }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-let r = await ask(A, '/api/online', 'POST', { action: 'connect', join: 'testjoin' });
+let r = await ask(A, '/api/online', 'POST', { action: 'connect', join: 'testjoin', name: 'Ann' });
 check('A connects (local meeting point)', r.status === 200, JSON.stringify(r.data));
-r = await ask(B, '/api/online', 'POST', { action: 'connect', join: 'TESTJOIN' });
+r = await ask(B, '/api/online', 'POST', { action: 'connect', join: 'TESTJOIN', name: 'Bob' });
 check('B connects', r.status === 200);
 const started = Date.now();
 const dad = (await ask(A, '/api/online', 'GET', undefined, DAD)).data;

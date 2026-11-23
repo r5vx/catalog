@@ -14,6 +14,13 @@ export type NameStyle = {
 	effect: 'solid' | 'gradient' | 'glow';
 	/** One or two #rrggbb colors ([] = the normal text color). */
 	colors: string[];
+	/**
+	 * Lit up, on top of one color or a gradient (owner, 2026-11-20: "combine stuff like gradient and
+	 * glow"). A name saved as `effect: 'glow'` before is one color, lit up.
+	 */
+	glow?: boolean;
+	/** A shine passing across the letters now and then. */
+	shimmer?: boolean;
 };
 
 export const NO_STYLE: NameStyle = { font: '', effect: 'solid', colors: [] };
@@ -62,10 +69,20 @@ export function readNameStyle(value: unknown): NameStyle {
 	const effect = o.effect === 'gradient' || o.effect === 'glow' ? o.effect : 'solid';
 	const colors = (Array.isArray(o.colors) ? o.colors : []).filter((c): c is string => typeof c === 'string' && HEX.test(c)).slice(0, 2);
 	const font = typeof o.font === 'string' && FONTS.some((f) => f.id === o.font) ? o.font : '';
-	return { font, effect, colors };
+	const style: NameStyle = { font, effect, colors };
+	if (o.glow === true || effect === 'glow') style.glow = true;
+	if (o.shimmer === true) style.shimmer = true;
+	return style;
 }
 
-export const hasStyle = (s: NameStyle) => Boolean(s.font || s.colors.length);
+/**
+ * Saved so an older Catalog shows the nearest it can: one color lit up is still `glow`, a gradient
+ * stays `gradient` (it just shows it without the extras).
+ */
+export function nameStyleToSave(s: NameStyle): NameStyle {
+	const effect = s.effect === 'gradient' ? 'gradient' : s.glow ? 'glow' : 'solid';
+	return { font: s.font, effect, colors: s.colors, ...(s.glow ? { glow: true } : {}), ...(s.shimmer ? { shimmer: true } : {}) };
+}
 
 /** The inline style for a name drawn with `s`. */
 export function nameCss(s: NameStyle): string {
@@ -73,18 +90,28 @@ export function nameCss(s: NameStyle): string {
 	const font = FONTS.find((f) => f.id === s.font);
 	if (font?.family) parts.push(`font-family: ${font.family}`);
 	const [a, b] = s.colors;
-	if (s.effect === 'gradient' && a) {
+	if (!a) return parts.join('; ');
+	const gradient = s.effect === 'gradient';
+	if (gradient || s.shimmer) {
+		// Drawn across the letters themselves. A shine is a light band in the colors, moved along.
+		const colors = gradient ? `${a}, ${b ?? a}` : `${a}, ${a}`;
+		const image = s.shimmer
+			? `linear-gradient(100deg, ${colors.split(', ')[0]} 0%, ${colors.split(', ')[1]} 40%, color-mix(in srgb, ${b ?? a} 35%, white) 50%, ${colors.split(', ')[1]} 60%, ${colors.split(', ')[0]} 100%)`
+			: `linear-gradient(90deg, ${colors})`;
 		parts.push(
-			`background-image: linear-gradient(90deg, ${a}, ${b ?? a})`,
+			`background-image: ${image}`,
 			'-webkit-background-clip: text',
 			'background-clip: text',
 			'color: transparent',
 			'-webkit-text-fill-color: transparent'
 		);
-	} else if (a) {
+		if (s.shimmer) parts.push('background-size: 250% 100%', 'animation: name-shimmer 3.5s ease-in-out infinite');
+	} else {
 		parts.push(`color: ${a}`);
-		if (s.effect === 'glow') parts.push(`text-shadow: 0 0 6px ${a}, 0 0 16px color-mix(in srgb, ${a} 60%, transparent)`);
 	}
+	// A glow as a shadow of the drawn letters (a text-shadow would show through a gradient's
+	// see-through letters and muddy it): the first color, and the second for a gradient.
+	if (s.glow) parts.push(`filter: drop-shadow(0 0 4px ${a}) drop-shadow(0 0 10px color-mix(in srgb, ${b ?? a} 70%, transparent))`);
 	return parts.join('; ');
 }
 

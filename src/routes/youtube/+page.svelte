@@ -73,7 +73,7 @@
 	const COLUMNS = 7;
 	// Enough that one copy of a column is taller than the page, so the loop's seam never shows.
 	const PER_COLUMN = 10;
-	let thumbs = $state<string[]>([]);
+	let thumbs = $state<string[]>(untrack(() => data.thumbs));
 	const columns = $derived(
 		Array.from({ length: COLUMNS }, (_, c) =>
 			Array.from({ length: PER_COLUMN }, (_, r) => (thumbs.length ? thumbs[(c * PER_COLUMN + r) % thumbs.length] : null))
@@ -86,7 +86,7 @@
 		timer = setInterval(check, 1000);
 		fetch('/api/youtube/wall')
 			.then((r) => (r.ok ? r.json() : null))
-			.then((answer) => (thumbs = answer?.thumbs ?? []))
+			.then((answer) => { if (answer?.thumbs?.length) thumbs = answer.thumbs; })
 			.catch(() => {});
 	});
 	onDestroy(() => clearInterval(timer));
@@ -261,7 +261,7 @@
 		object-fit: cover;
 		opacity: 0;
 		filter: saturate(0.85) brightness(0.9);
-		transition: opacity 0.8s ease;
+		transition: opacity 0.2s ease;
 	}
 
 	.tile img:global(.in) {

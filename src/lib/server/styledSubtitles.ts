@@ -30,10 +30,11 @@ export function readStyled(key: string): string | null {
 }
 
 /** Keeps `text` for `key` if it has something to draw. */
-export function keepStyled(key: string, text: string): void {
-	if (!hasStyledLines(text)) return;
+export function keepStyled(key: string, text: string): boolean {
+	if (!hasStyledLines(text)) return false;
 	try {
 		mkdirSync(dir, { recursive: true });
 		writeFileSync(fileFor(key), text);
 	} catch {}
+	return true;
 }

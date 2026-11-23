@@ -30,7 +30,6 @@
 		scoreText,
 		sendTeam,
 		matches,
-		replayDay,
 		replayHref,
 		sendSaved,
 		sportLabel,

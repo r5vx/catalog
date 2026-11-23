@@ -1,18 +1,21 @@
 <script lang="ts">
 	import MoreButton from '$lib/MoreButton.svelte';
+	import { fitOnScreen } from '$lib/fitOnScreen';
 	import { page } from '$app/state';
 	import { afterNavigate, beforeNavigate, goto, replaceState } from '$app/navigation';
 	import { onMount, onDestroy, tick, untrack } from 'svelte';
 	import Hls from 'hls.js';
-	import { fetchAheadLoader, fetchNextStart, recentPieces, stopFetchingAhead } from '$lib/fetchAhead';
+	import { sendProblemReport } from '$lib/problemReport';
+	import { fetchAheadLoader, fetchNextStart, recentPieces, stopFetchingAhead, waitingForRelayPiece } from '$lib/fetchAhead';
 	import { keptVideo } from '$lib/phoneKeep.svelte';
 	import BackBar from '$lib/BackBar.svelte';
 	import { p, pRandom } from '$lib/altText';
 	import { bothLanguages, bytesOf, isCinemaRecording, isFourK, pickFile, playableHere, PREFERRED_QUALITY } from '$lib/watch';
 	import { isTv, tvPlayer } from '$lib/tv';
-	import { together, attachTogether, rejoinKeptRoom, nowPlaying, holdRoom, playerClosed } from '$lib/watchTogether.svelte';
+	import { together, attachTogether, rejoinKeptRoom, nowPlaying, holdRoom, playerClosed, roomPaused } from '$lib/watchTogether.svelte';
 	import { matchTvFrameRate } from '$lib/tvFrameRate';
 	import { StyledSubs, isStyledLine, onlyStyledLines } from '$lib/styledSubs';
+	import { splitSigns } from '$lib/subtitleSigns';
 	import { padActive } from '$lib/gamepad';
 	import { airsText } from '$lib/airs';
 	import { isCredit, keptLines, srtBlocks } from '$lib/subtitleAds';
@@ -230,6 +233,14 @@
 	 * A streaming playlist rather than a whole file. Everything through Catalog's relay is one —
 	 * 7Movies' H.264 copy has no ".m3u8" in its address.
 	 */
+	/*
+	 * The computer's own player (Catalog's window, not a TV or a phone): its Showbox copy is
+	 * downloaded ahead onto the computer while Febbox's allowance has room (streamLink.ts), as
+	 * 7Movies and Movy are. A TV or phone plays Showbox straight from Febbox, so the house Wi-Fi doesn't
+	 * carry it twice.
+	 */
+	const aheadHere = () => typeof location !== 'undefined' && !isTv() && (location.hostname === '127.0.0.1' || location.hostname === 'localhost');
+	const aheadParam = () => (aheadHere() ? '&ahead=1' : '');
 	const isPlaylist = (url: string) => url.includes('.m3u8') || url.startsWith('/api/watch/relay') || url.startsWith('/api/live/playlist');
 
 	/** Where a file plays from: its own source, or the episode's Showbox share. */
@@ -427,19 +438,21 @@
 	const PROFILE_CODES: Record<string, string> = { Spanish: 'es', French: 'fr', German: 'de', Hindi: 'hi' };
 	/** The languages a copy may be in, as two-letter codes. */
 	const fineLanguages = () => new Set([originalLanguage, 'en', PROFILE_CODES[profileAudio] ?? ''].filter(Boolean));
+	const unknownLanguage = (code: string) => !code || /^(und|unk|unknown)$/i.test(code);
 	/** Known (from before) to be only in other languages: its tracks' names, as noted by noteCopyAudio. */
 	function knownForeign(f: FileOption): boolean {
 		if (foreignOnly.has(copyKey(f))) return true;
 		const known = copyAudio[copyKey(f)];
 		if (!known?.length || !originalLanguage || f.audio) return false;
 		const fine = [...fineLanguages()].map((code) => languageName(code, '').toLowerCase());
-		return !known.some((name) => fine.includes(name.toLowerCase()) || name === 'Unknown');
+		return !known.some((name) => fine.includes(name.toLowerCase()) || unknownLanguage(name));
 	}
 	function leaveForeignOnly(tracks: { lang?: string; name?: string }[]): boolean {
 		const file = activeFile;
+		if (handPickedSwitch === episodeSwitch) return false;
 		if (!file || file.audio || !originalLanguage || liveMode || replayMode || !tracks.length) return false;
 		const codes = tracks.map((t) => (t.lang ?? '').split(/[-_]/)[0].toLowerCase());
-		if (codes.some((code) => !code || code === 'und')) return false;
+		if (codes.some(unknownLanguage)) return false;
 		const fine = fineLanguages();
 		// (Three-letter codes too: "eng", "rus".)
 		if (codes.some((code) => fine.has(code) || fine.has(code.slice(0, 2)))) return false;
@@ -690,6 +703,23 @@
 		}
 	}
 
+	/*
+	 * Copies whose picture glitches (smeared or torn frames), marked by hand from the Files menu.
+	 * Nothing finds these by itself: Re:Zero S3E4's "dual" Showbox file decoded with no errors and was
+	 * still smeared (2026-11-18). Kept in the library (/api/watch/glitchy) for every screen.
+	 */
+	type Glitchy = { fid: number; kind: string; season: number; source: string };
+	let glitchy = $state<Glitchy[]>([]);
+	let glitchySaid = false;
+	/** Marked itself, or a Showbox file of the same kind (name without its numbers) in the same season. */
+	function isGlitchy(f: FileOption): boolean {
+		const season = activeEpisode?.season ?? 0;
+		return glitchy.some((g) =>
+			g.source === (f.source ?? '') &&
+			(f.source ? g.fid === f.fid && g.season === season : g.fid === f.fid || (g.season === season && g.kind === nameKind(f.name)))
+		);
+	}
+
 	/**
 	 * Showbox's best file; another source's only when Showbox has none for this episode — or
 	 * when that source is the one picked for this show last time (Aniwave with subtitles in the
@@ -699,6 +729,16 @@
 		// Copies known to be only in other languages, unless nothing else is left (leaveForeignOnly).
 		const notForeign = files.filter((f) => !knownForeign(f));
 		if (notForeign.length) files = notForeign;
+		// Copies marked "Picture glitching" (and that kind of file for the rest of its season), unless
+		// nothing else is left. Said once per visit, so it's clear why the usual copy isn't playing.
+		const notGlitchy = files.filter((f) => !isGlitchy(f));
+		if (notGlitchy.length && notGlitchy.length < files.length) {
+			files = notGlitchy;
+			if (!glitchySaid) {
+				glitchySaid = true;
+				setTimeout(() => showQualityToast('Skipping the copy marked as glitching'), 1500);
+			}
+		}
 		// The mini player starts on the copy the big player had.
 		if (startFid !== null) {
 			const start = files.find((f) => f.fid === startFid && playableHere(f));
@@ -802,6 +842,8 @@
 	const LANGUAGE_DUB_WAIT = 40_000;
 	/** No copy answered in this long: the player stops waiting and says it couldn't play (linkFor). */
 	const GIVE_UP_AFTER = 75_000;
+	/** A Nyaa copy picked by hand: the debrid service is asked for up to 3 releases, each checked (sources/nyaa.ts). */
+	const NYAA_WAIT = 70_000;
 	/*
 	 * Copies whose source had nothing for them when asked (by copyId), and when. "Keeps stopping to
 	 * load" offered "Play on 7Movies" for SVU S28E4 while 7Movies had nothing for it (2026-10-30), and
@@ -813,7 +855,7 @@
 	/** A link for this copy (empty `url` when its source has nothing), noting the empty ones. */
 	async function askCopy(copy: FileOption): Promise<{ url: string; debug?: string }> {
 		try {
-			const resp = await fetch(`/api/watch/stream?share_key=${encodeURIComponent(shareOf(copy))}&fid=${copy.fid}`);
+			const resp = await fetch(`/api/watch/stream?share_key=${encodeURIComponent(shareOf(copy))}&fid=${copy.fid}${aheadParam()}`);
 			const answer: { url: string; debug?: string } = resp.ok ? await resp.json() : { url: '' };
 			if (resp.ok && !answer.url) emptyCopies.set(copyId(copy), Date.now());
 			else if (answer.url) emptyCopies.delete(copyId(copy));
@@ -824,6 +866,8 @@
 	}
 	/** A source gave nothing: "couldn't play", or, when its site doesn't answer at all, that it couldn't be reached. */
 	function cantPlay(source: string, debug: string | undefined, what: string): string {
+		// A Nyaa copy the debrid service is still getting says how far along it is (sources/nyaa.ts).
+		if (source === 'Nyaa' && debug && /is getting it|looking for people|waiting for someone|keeps looking/.test(debug)) return `${debug}.`;
 		return debug === 'unreachable'
 			? `Couldn't reach ${source}. Your internet provider may be blocking it.`
 			: `${source} couldn't play ${what} right now.`;
@@ -838,10 +882,13 @@
 		// Showbox's best, the rest. (A Showbox pick used to have no Showbox copy to fall back on, so
 		// a slow Febbox start put Dungeon Meshi E8 on Aniwave, 2026-10-23.)
 		const showboxBest = file.source ? pickFile(sameAudio.filter((f) => !f.source), preferredQuality, '', fourKOk) : null;
+		// Nyaa's copy (through the debrid service, the slowest to answer: it may have to get the
+		// torrent first) is asked only when it was picked, or once every other copy has failed.
+		const lastResort = sameAudio.filter((f) => f.source === 'Nyaa' && file.source !== 'Nyaa');
 		const others = [
 			...sameAudio.filter((f) => (f.source ?? '') === (file.source ?? '')),
 			...(showboxBest ? [showboxBest] : []),
-			...sameAudio.filter((f) => f.source && f.source !== file.source)
+			...sameAudio.filter((f) => f.source && f.source !== file.source && f.source !== 'Nyaa')
 		];
 		// Subtitles in the picture can't be turned off or changed: such a copy only plays when
 		// nothing else has answered a few seconds after it did (unless one was picked).
@@ -873,7 +920,7 @@
 		let pickedGave = false;
 		const pickedDone = Promise.race([
 			first.then((data) => void (pickedGave = Boolean(data.url))),
-			new Promise<void>((r) => setTimeout(r, Math.max(0, (isLanguageDub(file) ? LANGUAGE_DUB_WAIT : PICKED_SOURCE_WAIT) - (Date.now() - started))))
+			new Promise<void>((r) => setTimeout(r, Math.max(0, (file.source === 'Nyaa' ? NYAA_WAIT : isLanguageDub(file) ? LANGUAGE_DUB_WAIT : PICKED_SOURCE_WAIT) - (Date.now() - started))))
 		]);
 		const sameSource = (copy: FileOption) => (copy.source ?? '') === (file.source ?? '');
 		const afterPicked = async (link: Promise<{ file: FileOption; url: string; debug?: string }>) => {
@@ -895,11 +942,20 @@
 				Promise.any(burnedInLater ? [...wanted, burnedInLater] : wanted),
 				new Promise<null>((r) => setTimeout(() => r(null), GIVE_UP_AFTER))
 			]);
-			if (!found) return { file, url: '', debug };
+			if (!found) return (await lastTry()) ?? { file, url: '', debug };
 			if (isLanguageDub(file) && found.file !== file) showQualityToast(`No ${file.audio} copy of this: playing it in its own language`);
 			return found;
 		} catch {
-			return { file, url: '', debug };
+			return (await lastTry()) ?? { file, url: '', debug };
+		}
+
+		async function lastTry(): Promise<{ file: FileOption; url: string; debug?: string } | null> {
+			for (const copy of lastResort) {
+				const answer = await ask(copy);
+				if (answer.url) return { file: copy, url: answer.url, debug: answer.debug };
+				debug = answer.debug ?? debug;
+			}
+			return null;
 		}
 	}
 
@@ -999,6 +1055,7 @@
 	let loggedIn = $state(false);
 	let watchPosterUrl = $state('');
 	let hlsInstance: Hls | null = null;
+	let lastPlayerLoad: { url: string; nonce: number; video: HTMLVideoElement } | null = null;
 
 	let movieFiles = $state<FileOption[]>([]);
 	let episodes = $state<Episode[]>([]);
@@ -1202,7 +1259,6 @@
 	let stalledOut = $state(false);
 	let stallTimer: ReturnType<typeof setInterval> | null = null;
 	let stallSince = 0;
-	let stallNudged = false;
 	/** Steps taken past a stalled picture with plenty loaded (checkStall): 0–3. */
 	let stallSteps = 0;
 	let stallReloaded = false;
@@ -1304,6 +1360,7 @@
 	let subtitleDelay = $state(0);
 
 	let hlsAudioTracks = $state<{ id: number; name: string; url: string }[]>([]);
+	type NativeAudioTrack = { language: string; label: string; enabled: boolean };
 	let hlsActiveAudio = $state(-1);
 	let hlsLevels = $state<{ index: number; height: number; bitrate: number }[]>([]);
 	let hlsActiveLevel = $state(-1);
@@ -1385,6 +1442,8 @@
 		const url = activeSubUrl;
 		const lang = activeSubLang;
 		const episode = activeEpisode;
+		// (A Nyaa file's own track is drawn again once all of it has been read: inFileRead.)
+		void inFileRead;
 		if (!video || isTv() || !subtitlesOn || !subLook.styled || !url || !hasStyledCues) return;
 		return untrack(() => {
 			const renderer = new StyledSubs(video, subTimeAt, () => shownFit);
@@ -1429,6 +1488,14 @@
 	// (The frame's time unless it's from before a jump or another video, then the plain one.)
 	const subClock = $derived(Math.abs(frameClock - currentTime) < 1 ? Math.max(frameClock, currentTime) : currentTime);
 	const activeSubs = $derived(subtitlesOn ? subsAt(subTimeAt(subClock)) : { top: '', bottom: '' });
+	/*
+	 * A caption placed at the top ({\an8}) is where the player's notes show ("Subtitles re-timed to
+	 * match", "Timing subtitles…"), and a note covered it (owner, 2026-11-19): while one is up, the
+	 * notes sit just below it instead.
+	 */
+	let topSubEl = $state<HTMLElement | null>(null);
+	let topSubHeight = $state(0);
+	const toastTop = $derived(activeSubs.top && topSubEl && topSubHeight ? `${topSubEl.offsetTop + topSubHeight + 10}px` : null);
 
 	const inEndCredits = $derived(
 		skipSegments.some((s) => s.type === 'credits' && s.end >= duration - 20 && currentTime >= s.start)
@@ -1697,8 +1764,16 @@
 	type AppendedSound = { data: Uint8Array; at: number; length: number; isInit: boolean };
 	let appendedSound: AppendedSound[] = [];
 
-	function noteAppendedSound(type: string, data: Uint8Array, frag: { start: number; duration: number } | null) {
-		if (sportsMode) return;
+	/*
+	 * Which episode the pieces are of. After Next Episode (or autoplay) the last episode's kept
+	 * pieces, and the ones its player still handed over before it closed, were heard as the new
+	 * episode's sound: auto-timing compared one episode's talking with the next one's subtitles and
+	 * said they didn't match (a friend's Reincarnated as a Sword, HiAnime, 2026-11-19).
+	 */
+	const episodeKey = (ep: Episode | null) => (ep ? `${ep.season}x${ep.episode}` : '');
+
+	function noteAppendedSound(type: string, data: Uint8Array, frag: { start: number; duration: number } | null, forEpisode: string) {
+		if (sportsMode || forEpisode !== episodeKey(activeEpisode)) return;
 		if ((type !== 'audio' && type !== 'audiovideo') || !frag || !data || data.length < 8) return;
 		const box = String.fromCharCode(data[4], data[5], data[6], data[7]);
 		const piece = { data, at: frag.start, length: frag.duration, isInit: box === 'ftyp' || box === 'moov' };
@@ -1744,41 +1819,77 @@
 	 * once. TVs ask too: the computer does the hearing.
 	 */
 	let wordAsked = '';
+	let wordRound = 0;
+	type WordReply = { state: string; answer?: { plan?: Parameters<SubtitleSync['useWordTiming']>[0] | null; finished?: boolean } | null };
+	const wordRequests = new Map<string, Promise<WordReply | null>>();
+	const wordEpisodeKey = () => JSON.stringify([lastResolveArgs?.title ?? videoTitle.replace(/ S\d+E\d+$/, ''), lastResolveArgs?.year, showType, episodeKey(activeEpisode)]);
+	let wordEpisode = '';
+	let wordSync: SubtitleSync | null = null;
 	$effect(() => {
 		const sub = activeSubUrl;
 		const on = subtitlesOn && subAutoSync;
 		void hlsActiveAudio;
-		if (!on || !sub) return;
+		if (!on || !sub) {
+			wordAsked = '';
+			wordSync = null;
+			wordRound++;
+			return;
+		}
 		untrack(() => void askWordTiming(sub));
 	});
 	async function askWordTiming(sub: string) {
+		const episode = wordEpisodeKey();
+		if (wordEpisode !== episode) {
+			wordRequests.clear();
+			wordEpisode = episode;
+			wordAsked = '';
+			wordRound++;
+		}
 		const sync = subSync;
 		const language = hlsInstance?.audioTracks[hlsActiveAudio]?.lang ?? '';
 		const english = /^en/i.test(language) || (!language && !isAnime);
 		const copy = activeFile ? (activeFile.source ? shareOf(activeFile) : String(activeFile.fid)) : '';
-		if (!sync || !english || !copy || !streamUrl || liveMode || replayMode || sub.startsWith('upload:')) return;
-		const key = `${copy}|${sub}`;
-		if (wordAsked === key) return;
+		if (!sync || !english || !copy || !streamUrl || liveMode || replayMode || sub.startsWith('upload:')) {
+			// An answer still coming for the track before (another language picked) no longer applies.
+			wordAsked = '';
+			wordSync = null;
+			wordRound++;
+			return;
+		}
+		const audio = hlsActiveAudio;
+		const key = JSON.stringify([copy, sub, audio, language]);
+		if (wordAsked === key && wordSync === sync) return;
 		wordAsked = key;
-		const asked = await fetch('/api/watch/word-timing', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ copy, sub, master: streamUrl, language, duration })
-		})
-			.then((r) => (r.ok ? r.json() : null))
-			.catch(() => null);
-		if (!asked || asked.state === 'none' || subSync !== sync) return;
+		wordSync = sync;
+		const round = ++wordRound;
+		const current = () => subSync === sync && activeSubUrl === sub && hlsActiveAudio === audio && wordRound === round && wordEpisodeKey() === episode && subtitlesOn && subAutoSync && (activeFile ? (activeFile.source ? shareOf(activeFile) : String(activeFile.fid)) : '') === copy;
+		let request = wordRequests.get(key);
+		if (!request) {
+			request = fetch('/api/watch/word-timing', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ copy, sub, master: streamUrl, language, duration })
+			})
+				.then((r): Promise<WordReply | null> | null => (r.ok ? r.json() : null))
+				.catch(() => null);
+			wordRequests.set(key, request);
+		}
+		const asked = await request;
+		if ((!asked || asked.state === 'none') && wordRequests.get(key) === request) wordRequests.delete(key);
+		if (!asked || asked.state === 'none' || !current()) return;
 		if (asked.answer?.plan) sync.useWordTiming(asked.answer.plan);
 		if (asked.answer?.finished) return;
 		if (!asked.answer?.plan) sync.waitForWords();
 		const query = `copy=${encodeURIComponent(copy)}&sub=${encodeURIComponent(sub)}`;
 		for (let i = 0; i < 60; i++) {
 			await new Promise((r) => setTimeout(r, 10_000));
-			if (subSync !== sync || activeSubUrl !== sub) return;
+			if (!current()) return;
 			const answer = await fetch(`/api/watch/word-timing?${query}`)
 				.then((r) => (r.ok ? r.json() : null))
 				.then((d) => d?.answer)
 				.catch(() => null);
+			if (!current()) return;
+			if (answer) wordRequests.set(key, Promise.resolve({ state: asked.state, answer }));
 			if (answer?.plan) sync.useWordTiming(answer.plan);
 			if (answer?.finished) return;
 		}
@@ -1819,8 +1930,10 @@
 	 */
 	const FEW_LINES = 15;
 	const isSignsTrack = (name: string) => /(^|[^a-z])(signs?|forced)([^a-z]|$)/i.test(name);
+	/** A Nyaa file's own subtitle track: made for this very file, so never retimed (sources/nyaa.ts). */
+	const inFileTrack = $derived(activeSubUrl.startsWith('torrent:'));
 	const signsOnly = $derived(
-		subtitlesOn && (isSignsTrack(activeSubFileName) || (subtitleCues.length > 0 && subtitleCues.length < FEW_LINES))
+		subtitlesOn && (isSignsTrack(activeSubFileName) || (subtitleCues.length > 0 && subtitleCues.length < FEW_LINES) || inFileTrack)
 	);
 
 	// Moving the subtitles while it plays; listening as it plays when there's no sound track.
@@ -1893,6 +2006,7 @@
 	$effect(() => {
 		void activeEpisode;
 		untrack(() => {
+			appendedSound = [];
 			subSync?.reset();
 			syncedOnce = false;
 			if (subtitlesOn && subAutoSync) timeSoundTrack(hlsAudioTracks.find((t) => t.id === hlsActiveAudio)?.url ?? '');
@@ -2096,20 +2210,33 @@
 		playbackRate = r;
 	}
 
+	function nativeAudioTracks(): NativeAudioTrack[] {
+		return Array.from((videoEl as (HTMLVideoElement & { audioTracks?: ArrayLike<NativeAudioTrack> }) | undefined)?.audioTracks ?? []);
+	}
+
+	function audioTracks() {
+		return hlsInstance?.audioTracks ?? nativeAudioTracks().map((t) => ({ lang: t.language, name: languageName(t.language, t.label) }));
+	}
+
+	function switchAudioTrack(id: number) {
+		if (hlsInstance) hlsInstance.audioTrack = id;
+		else nativeAudioTracks().forEach((track, i) => (track.enabled = i === id));
+		hlsActiveAudio = id;
+	}
+
 	function setAudioTrack(id: number) {
-		if (hlsInstance) {
-			hlsInstance.audioTrack = id;
-			hlsActiveAudio = id;
-			const track = hlsInstance.audioTracks[id];
-			if (track) preferredAudioName = track.name || track.lang || '';
-			// Japanese or the dub, picked on an anime: the next one starts the same way.
-			if (track && isAnime && hlsInstance.audioTracks.some(isJapaneseTrack)) {
-				const audio = isJapaneseTrack(track) ? 'Japanese' : isEnglishTrack(track) ? 'English' : '';
-				if (audio) try { localStorage.setItem(ANIME_AUDIO, audio); } catch {}
-				keepShowAudio(audio);
-			}
-			recheckSubsForAudio();
+		const tracks = audioTracks();
+		const track = tracks[id];
+		if (!track) return;
+		switchAudioTrack(id);
+		preferredAudioName = track.name || track.lang || '';
+		// Japanese or the dub, picked on an anime: the next one starts the same way.
+		if (isAnime && tracks.some(isJapaneseTrack)) {
+			const audio = isJapaneseTrack(track) ? 'Japanese' : isEnglishTrack(track) ? 'English' : '';
+			if (audio) try { localStorage.setItem(ANIME_AUDIO, audio); } catch {}
+			keepShowAudio(audio);
 		}
+		recheckSubsForAudio();
 	}
 
 	function setHlsLevel(index: number) {
@@ -2176,6 +2303,7 @@
 			height: videoEl?.videoHeight ?? 0,
 			tv: tvMode,
 			position: Math.round(currentTime),
+			mediaPosition: Math.round(videoEl?.currentTime ?? 0),
 			aheadSeconds: Math.round(bufferedAhead()),
 			needsMbps: level?.bitrate ? Math.round(level.bitrate / 100_000) / 10 : null,
 			piecesMbps: video.map((p) => mbps(p.bytes, p.ms)),
@@ -2204,6 +2332,9 @@
 	/** A stop to load under way: when it began and what was going on then. */
 	let stopOpen: { since: number; seen: Record<string, unknown>; waiting: PieceWait | null } | null = null;
 	let stopTimer: ReturnType<typeof setTimeout> | undefined;
+	let streamHasFrame = false;
+	let streamHasPlayed = false;
+	let streamSeekLoading = false;
 
 	/*
 	 * A stop to load, kept with what was going on (once every 20 seconds at most), once it's over:
@@ -2259,6 +2390,7 @@
 			...open.seen,
 			stoppedSeconds: Math.round((now - open.since) / 100) / 10,
 			ended: how,
+			resumedPosition: how === 'played' ? Math.round(videoEl?.currentTime ?? 0) : null,
 			pieceCameAfter: came && open.waiting ? Math.round((came - open.waiting.since) / 100) / 10 : null
 		};
 		fetch('/api/watch/playback-log', {
@@ -2304,12 +2436,26 @@
 	const piecesAsked = new Map<string, PieceWait>();
 	const pieceDone = new Map<string, number>();
 	let lastPieceAt = 0;
+	const firstPieces = new Set<string>();
+	const loadedMs = (stats: { loading: { start: number; end: number } }) => Math.round(stats.loading.end - stats.loading.start);
 	function pieceAsked(frag: { type: string; sn: number | string }) {
+		if (frag.sn === 'initSegment') {
+			notePlayerEvent(`init segment requested (${frag.type})`);
+			return;
+		}
 		if (typeof frag.sn !== 'number' || frag.type === 'subtitle') return;
+		if (!firstPieces.has(frag.type)) {
+			firstPieces.add(frag.type);
+			notePlayerEvent(`first fragment requested (${frag.type} #${frag.sn})`);
+		}
 		const kind = frag.type === 'audio' ? 'sound' : 'picture';
 		piecesAsked.set(kind, { key: `${kind}:${frag.sn}`, kind, n: frag.sn, since: performance.now() });
 	}
-	function pieceArrived(frag: { type: string; sn: number | string }) {
+	function pieceArrived(frag: { type: string; sn: number | string; stats: { loading: { start: number; end: number } } }) {
+		if (frag.sn === 'initSegment') {
+			notePlayerEvent(`init segment loaded (${frag.type}, ${loadedMs(frag.stats)} ms)`);
+			return;
+		}
 		if (typeof frag.sn !== 'number' || frag.type === 'subtitle') return;
 		const kind = frag.type === 'audio' ? 'sound' : 'picture';
 		const key = `${kind}:${frag.sn}`;
@@ -2363,6 +2509,7 @@
 		const level = hlsInstance?.levels[hlsInstance.currentLevel >= 0 ? hlsInstance.currentLevel : hlsInstance.loadLevel];
 		const waiting = waitedPiece();
 		return {
+			phase: !streamHasFrame || !streamHasPlayed ? 'starting' : streamSeekLoading ? 'seek-loading' : 'stalled after playing',
 			hevc: Boolean(activeFile?.hevc) || /^(hvc1|hev1)/.test(level?.videoCodec ?? ''),
 			framesDrawn: drawn,
 			framesDropped: dropped,
@@ -2818,6 +2965,70 @@
 	onMount(() => {
 		Object.assign(window, miniCalls);
 	});
+
+	/*
+	 * One video at a time: something started in Catalog's window pauses the mini player, which
+	 * otherwise played on over it (another episode opened from its title page).
+	 */
+	let playingChannel: BroadcastChannel | null = null;
+	onMount(() => {
+		if (typeof BroadcastChannel === 'undefined') return;
+		playingChannel = new BroadcastChannel('catalog:playing');
+		if (miniMode) {
+			playingChannel.onmessage = () => {
+				if (miniWaiting || !videoEl || videoEl.paused) return;
+				saveProgressSync();
+				userPaused = true;
+				videoEl.pause();
+			};
+		}
+	});
+	onDestroy(() => playingChannel?.close());
+
+	/*
+	 * A video that wouldn't play ("Could not get a link", "Failed to load episode"…): sent to the
+	 * owner as a problem report, with which copy it was and what the source said (debugInfo), so a
+	 * TV or phone that "isn't working" says why without anyone taking a photo of the screen.
+	 */
+	$effect(() => {
+		const said = problem;
+		if (!said) return;
+		untrack(() =>
+			sendProblemReport(videoTitle || startParams.get('title') || 'A video', {
+				error: said,
+				source: activeFile ? (activeFile.source ?? 'Showbox') : '',
+				copy: activeFile?.name ?? '',
+				quality: activeQuality,
+				why: debugInfo.slice(0, 800),
+				kind: liveMode ? 'live' : replayMode ? 'replay' : downloadMode ? 'download' : 'video'
+			})
+		);
+	});
+
+	/*
+	 * Still on the loading screen after a minute (2026-11-22: a TV that "just kept loading
+	 * forever"): sent as a problem report saying what it was waiting on. Nothing else is sent
+	 * before a video has its link; once it has one, a start that never plays is in the stop log.
+	 */
+	const STUCK_AFTER = 60_000;
+	$effect(() => {
+		if (!loading && !loadingEpisode) return;
+		const timer = setTimeout(
+			() =>
+				untrack(() => {
+					if ((!loading && !loadingEpisode) || problem) return;
+					sendProblemReport(videoTitle || startParams.get('title') || 'A video', {
+						error: 'Still loading after a minute',
+						waitingOn: loadingStatus || (loadingEpisode ? "the episode's link" : 'the first answer'),
+						source: activeFile ? (activeFile.source ?? 'Showbox') : '',
+						why: debugInfo.slice(0, 800),
+						kind: liveMode ? 'live' : replayMode ? 'replay' : downloadMode ? 'download' : 'video'
+					});
+				}),
+			STUCK_AFTER
+		);
+		return () => clearTimeout(timer);
+	});
 	onDestroy(() => {
 		if (typeof window !== 'undefined') for (const name of Object.keys(miniCalls)) delete (window as unknown as Record<string, unknown>)[name];
 	});
@@ -2969,7 +3180,7 @@
 		if (!file) return streamUrl;
 		const ask = async (copy: FileOption) => {
 			try {
-				const resp = await fetch(`/api/watch/stream?share_key=${shareOf(copy)}&fid=${copy.fid}`);
+				const resp = await fetch(`/api/watch/stream?share_key=${shareOf(copy)}&fid=${copy.fid}${aheadParam()}`);
 				return resp.ok ? ((await resp.json()).url ?? '') : '';
 			} catch {
 				return '';
@@ -3537,7 +3748,8 @@
 			const cue = cleanCue(lines.slice(timeIdx + 1).join('\n'));
 			if (cue) cues.push({ start: s, end: e, ...cue });
 		}
-		return cues;
+		// Signs that lost their place when the file was made go to the top, apart from the talking.
+		return splitSigns(cues);
 	}
 
 	function parseAss(text: string): Cue[] {
@@ -4017,7 +4229,7 @@
 		const savedTime = videoEl.currentTime || seekAfterLoad;
 		reloadingByItself('fresh link', savedTime);
 		try {
-			const resp = await fetch(`/api/watch/stream?share_key=${share}&fid=${fid}&refresh=1`);
+			const resp = await fetch(`/api/watch/stream?share_key=${share}&fid=${fid}&refresh=1${aheadParam()}`);
 			if (!resp.ok) throw new Error();
 			const result = await resp.json();
 			if (!result.url) throw new Error();
@@ -4070,7 +4282,6 @@
 	/** Watches a stall (or a start) and steps up: skip a gap, reopen the connection, then fetch a fresh link. */
 	function watchForStall() {
 		stallSince = performance.now();
-		stallNudged = false;
 		stallSteps = 0;
 		stallReloaded = false;
 		// (Every half second, so a stalled picture with plenty loaded is stepped past at 1.5 s.)
@@ -4106,7 +4317,6 @@
 		if (bufferedAhead() > 3 && !videoEl.seeking) {
 			if (stallSteps === 0 && stuckFor > 1500) {
 				stallSteps = 1;
-				stallNudged = true;
 				notePlayerEvent('stepped 0.1 s past a stalled picture');
 				videoEl.currentTime = videoEl.currentTime + 0.1;
 				return;
@@ -4125,9 +4335,11 @@
 				return;
 			}
 		}
+		if (waitingForRelayPiece()) return;
 		if (!stallReloaded && quietFor > 10_000 && hlsInstance) {
 			stallReloaded = true;
 			stallSince = now;
+			notePlayerEvent(`loading restarted at ${fmt(videoEl.currentTime)} after ${Math.round(quietFor / 1000)} s without bytes`);
 			hlsInstance.stopLoad();
 			hlsInstance.startLoad(videoEl.currentTime);
 			return;
@@ -4145,8 +4357,10 @@
 	/** Watched to the end: what the computer downloaded of it ahead can go (7Movies, Movy). */
 	let finishedCopy = '';
 	function finishedDownload(file: FileOption | null | undefined = activeFile) {
-		const copy = file?.source ? shareOf(file) : '';
-		if (!copy || copy === finishedCopy || !(file?.source === 'Movy' || file?.source === '7Movies')) return;
+		// (Showbox's, when it played through the computer to be downloaded ahead: streamLink.ts.)
+		const showbox = Boolean(file && !file.source && streamUrl.includes('copy=showbox'));
+		const copy = file?.source ? shareOf(file) : showbox && file ? `showbox:${file.fid}` : '';
+		if (!copy || copy === finishedCopy || !(showbox || file?.source === 'Movy' || file?.source === '7Movies')) return;
 		finishedCopy = copy;
 		fetch(`/api/watch/download-ahead?copy=${encodeURIComponent(copy)}`, { method: 'DELETE' }).catch(() => {});
 	}
@@ -4227,7 +4441,7 @@
 	 */
 	async function keepNextStart(share: string, file: FileOption) {
 		try {
-			const link = await fetch(`/api/watch/stream?share_key=${encodeURIComponent(share)}&fid=${file.fid}`).then((r) => (r.ok ? r.json() : null));
+			const link = await fetch(`/api/watch/stream?share_key=${encodeURIComponent(share)}&fid=${file.fid}${aheadParam()}`).then((r) => (r.ok ? r.json() : null));
 			const masterUrl: string = link?.url ?? '';
 			if (!masterUrl || !/^https?:/.test(masterUrl)) return;
 			const master = await fetch(masterUrl).then((r) => (r.ok ? r.text() : ''));
@@ -4294,7 +4508,10 @@
 		}
 		// 7Movies' and Movy's next episode is downloaded onto the computer while this one plays
 		// (episodeDownloads.ts), from a minute in: it then starts with nothing to wait for, on a TV too.
-		if (file.source && currentTime >= 60 && (file.source === 'Movy' || file.source === '7Movies')) {
+		// Showbox's too, on the computer's own player, when this one is being downloaded ahead (so
+		// Febbox's allowance had room), from halfway through.
+		const showboxAhead = !file.source && aheadHere() && streamUrl.includes('copy=showbox') && (currentTime >= duration * 0.5 || remaining <= 600);
+		if (showboxAhead || (file.source && currentTime >= 60 && (file.source === 'Movy' || file.source === '7Movies'))) {
 			const ahead = `${shareOf(file)}:${file.fid}`;
 			if (ahead !== downloadAheadKey) {
 				downloadAheadKey = ahead;
@@ -5580,11 +5797,14 @@
 	 * another was asked for while it downloaded (that one goes on, even if this one arrives last).
 	 */
 	let subLoads = 0;
+	let pendingSub: SubOption | null = null;
 	async function loadSub(sub: SubOption): Promise<boolean | null> {
 		showCaptions = false;
 		const asked = ++subLoads;
+		pendingSub = sub;
 		const cues = await downloadSub(sub);
 		if (asked !== subLoads) return null;
+		pendingSub = null;
 		if (!cues) return false;
 		subsAuto = false;
 		showSub(sub, cues);
@@ -5622,10 +5842,30 @@
 			const cues = data.content ? parseSrt(data.content) : [];
 			// A set joined from parts: where each later part begins, for auto-timing (`partsOf`).
 			if (cues.length && Array.isArray(data.joins) && data.joins.length) cueJoins.set(cues, data.joins);
+			// A Nyaa file's own track, read out of the file as it downloads (or Kitsunekko's picture subtitles,
+			// read into text): shown now (even with no lines yet), and the rest put in as it comes.
+			if (sub.url.startsWith('torrent:') || (sub.url.startsWith('kitsunekko:') && data.partial)) {
+				if (data.partial) fillInFileLater(sub);
+				else if (activeSubUrl === sub.url) inFileRead++;
+				return cues;
+			}
 			if (cues.length) return cues;
 		} catch {}
 		return null;
 	}
+
+	/** A Nyaa file's own subtitles fully read: counted, so the styled signs are fetched again whole. */
+	let inFileRead = $state(0);
+	let inFileTimer: ReturnType<typeof setTimeout> | undefined;
+	function fillInFileLater(sub: SubOption) {
+		clearTimeout(inFileTimer);
+		inFileTimer = setTimeout(async () => {
+			if (activeSubUrl !== sub.url) return;
+			const cues = await downloadSub(sub);
+			if (cues && activeSubUrl === sub.url && cues.length > subtitleCues.length) subtitleCues = cues;
+		}, 15_000);
+	}
+	onDestroy(() => clearTimeout(inFileTimer));
 	/** Downloaded subtitles joined from parts, and where their later parts begin. */
 	const cueJoins = new WeakMap<Cue[], number[]>();
 	/** The subtitles showing, if joined from parts: told apart by their line count and first line. */
@@ -5658,13 +5898,24 @@
 		if (key === lastCastKey) return;
 		lastCastKey = key;
 		loadingCast = true;
+		castMembers = [];
+		let loaded = false;
 		try {
 			let url = `/api/watch/cast?title=${encodeURIComponent(title)}&type=${type}`;
 			if (type === 'tv' && season > 0 && episode > 0) url += `&season=${season}&episode=${episode}`;
 			const resp = await fetch(url);
-			if (resp.ok && key === lastCastKey) castMembers = await resp.json();
+			if (resp.ok) {
+				const members = await resp.json();
+				if (key === lastCastKey) {
+					castMembers = members;
+					loaded = true;
+				}
+			}
 		} catch {}
-		if (key === lastCastKey) loadingCast = false;
+		if (key === lastCastKey) {
+			loadingCast = false;
+			if (!loaded) lastCastKey = '';
+		}
 	}
 
 	/** Japanese original and animated (TMDB, via /api/watch/is-anime): starts in Japanese. */
@@ -5677,8 +5928,7 @@
 	const isEnglishTrack = (t: { lang?: string; name?: string }) => /^en/i.test(t.lang ?? '') || /\b(eng|english)\b/i.test(t.name ?? '');
 
 	function applyPreferredAudio() {
-		if (!hlsInstance) return;
-		const tracks = hlsInstance.audioTracks;
+		const tracks = audioTracks();
 		// A copy with only Japanese (Dungeon Meshi E9's): the show is being watched in Japanese, so
 		// its next copy with both languages starts in Japanese too (unless the dub was picked for it).
 		if (isAnime && tracks.length && tracks.every(isJapaneseTrack) && !keptShowAudio()) keepShowAudio('Japanese');
@@ -5688,10 +5938,7 @@
 			const code = ({ Spanish: 'es', French: 'fr', German: 'de', Hindi: 'hi' } as Record<string, string>)[profileAudio] ?? '';
 			const inLanguage = tracks.findIndex((t) => (t.lang ?? '').toLowerCase().startsWith(code) || (t.name ?? '').toLowerCase() === profileAudio.toLowerCase());
 			if (inLanguage >= 0) {
-				if (inLanguage !== hlsInstance.audioTrack) {
-					hlsInstance.audioTrack = inLanguage;
-					hlsActiveAudio = inLanguage;
-				}
+				if (inLanguage !== (hlsInstance?.audioTrack ?? hlsActiveAudio)) switchAudioTrack(inLanguage);
 				return;
 			}
 		}
@@ -5704,10 +5951,7 @@
 		if (match < 0 && isAnime && tracks.some(isJapaneseTrack)) {
 			match = tracks.findIndex(animeAudio() === 'English' ? isEnglishTrack : isJapaneseTrack);
 		}
-		if (match >= 0 && match !== hlsInstance.audioTrack) {
-			hlsInstance.audioTrack = match;
-			hlsActiveAudio = match;
-		}
+		if (match >= 0 && match !== (hlsInstance?.audioTrack ?? hlsActiveAudio)) switchAudioTrack(match);
 	}
 
 	/*
@@ -6182,10 +6426,38 @@
 		}
 	});
 
+	function canPlayLoaded(stayPaused: boolean): boolean {
+		return untrack(() => {
+			if (away) {
+				if (!stayPaused) playOnReturn = true;
+				return false;
+			}
+			return !stayPaused;
+		});
+	}
+
 	$effect(() => {
 		if (!videoEl || !streamUrl) return;
 		void streamNonce;
+		clearTimeout(jumpLoadTimer);
 		clearStallWatch();
+		streamHasFrame = false;
+		streamHasPlayed = false;
+		streamSeekLoading = false;
+		firstPieces.clear();
+		notePlayerEvent('stream setup');
+		untrack(() => {
+			const previous = lastPlayerLoad;
+			const reasons: string[] = [];
+			if (previous) {
+				if (previous.url !== streamUrl) reasons.push('source changed');
+				if (previous.nonce !== streamNonce) reasons.push('reload requested');
+				if (previous.video !== videoEl) reasons.push('media element changed');
+				if (!reasons.length) reasons.push('effect reran');
+			}
+			notePlayerEvent(`${previous ? `player rebuilt (${reasons.join(', ')})` : 'player opened'} at ${fmt(videoEl!.currentTime)}; resume ${seekAfterLoad > 0 ? fmt(seekAfterLoad) : 'saved place'}`);
+			lastPlayerLoad = { url: streamUrl, nonce: streamNonce, video: videoEl! };
+		});
 
 		if (hlsInstance) {
 			hlsInstance.destroy();
@@ -6200,7 +6472,13 @@
 		bufferedEnd = 0;
 		playing = false;
 		// A fresh link fetched while paused stays paused.
-		const stayPaused = loadPaused;
+		const stayPaused = loadPaused || untrack(() => roomPaused({
+			title: videoTitle.replace(/ S\d+E\d+$/, ''),
+			type: showType === 'tv' ? 'tv' : 'movie',
+			year: String(lastResolveArgs?.year ?? ''),
+			season: activeEpisode?.season ?? 0,
+			episode: activeEpisode?.episode ?? 0
+		}));
 		loadPaused = false;
 		// The copy this video is, for noting its sound tracks (untracked: not a reason to reload).
 		const loadingCopy = untrack(() => activeFile);
@@ -6213,12 +6491,14 @@
 			holdRoom(reason);
 		});
 		copyLoadedLast = loadingCopy ? untrack(() => copyKey(loadingCopy)) : '';
-		videoEl.autoplay = !stayPaused;
+		videoEl.autoplay = canPlayLoaded(stayPaused);
 		videoEl.pause();
 		videoEl.removeAttribute('src');
 		videoEl.removeAttribute('crossorigin');
 		soundBlocked = false;
 		videoEl.load();
+		const frameVideo = videoEl;
+		const firstFrame = frameVideo.requestVideoFrameCallback?.(() => { streamHasFrame = true; });
 
 		if (isPlaylist(streamUrl) && Hls.isSupported()) {
 			// Where to start: the place a reload or a change of file was at, else where it was left
@@ -6293,6 +6573,11 @@
 			frameMarks = [];
 			hls.on(Hls.Events.FRAG_LOADING, (_e, data) => pieceAsked(data.frag));
 			hls.on(Hls.Events.FRAG_LOADED, (_e, data) => pieceArrived(data.frag));
+			hls.on(Hls.Events.MANIFEST_LOADED, (_e, data) => notePlayerEvent(`manifest loaded (${loadedMs(data.stats)} ms)`));
+			hls.on(Hls.Events.LEVEL_LOADED, (_e, data) => notePlayerEvent(`level ${data.level} loaded (${loadedMs(data.stats)} ms)`));
+			hls.on(Hls.Events.AUDIO_TRACK_LOADED, (_e, data) => notePlayerEvent(`audio track ${data.id} loaded (${loadedMs(data.stats)} ms)`));
+			hls.on(Hls.Events.SUBTITLE_TRACK_LOADED, (_e, data) => notePlayerEvent(`subtitle track ${data.id} loaded (${loadedMs(data.stats)} ms)`));
+			hls.on(Hls.Events.MEDIA_DETACHING, () => notePlayerEvent('hls media detached'));
 			hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, () => notePlayerEvent('sound track changed'));
 			// What was loaded being cleared (a quality or sound change does it): for the stop log.
 			hls.on(Hls.Events.BUFFER_FLUSHING, (_e, data) =>
@@ -6306,7 +6591,8 @@
 			// was picked, replaying the one before from its start under "Loading episode…".)
 			if (!sportsMode) untrack(() => hearDownloadsOf(activeFile));
 			else hls.on(Hls.Events.CUES_PARSED, (_e, data) => addLiveCues(data.cues as { startTime: number; endTime: number; text: string }[]));
-			hls.on(Hls.Events.BUFFER_APPENDING, (_e, data) => noteAppendedSound(data.type, data.data, data.frag ?? null));
+			const forEpisode = untrack(() => episodeKey(activeEpisode));
+			hls.on(Hls.Events.BUFFER_APPENDING, (_e, data) => noteAppendedSound(data.type, data.data, data.frag ?? null, forEpisode));
 			hls.loadSource(withPieces(streamUrl));
 			hls.attachMedia(videoEl);
 			hls.on(Hls.Events.FRAG_LOADED, markBytes);
@@ -6351,7 +6637,7 @@
 				videoEl?.addEventListener('loadedmetadata', checkLowQuality, { once: true });
 				switchingEpisode = false;
 				autoplayFired = false;
-				if (!stayPaused) videoEl?.play().catch(() => {});
+				if (canPlayLoaded(stayPaused)) videoEl?.play().catch(() => {});
 				hlsAudioTracks = hls.audioTracks.map((t, i) => ({
 					id: i,
 					name: t.name || t.lang || `Track ${i + 1}`,
@@ -6364,6 +6650,7 @@
 				placeSoon.then((place) => {
 					if (hlsInstance !== hls) return; // another video took its place meanwhile
 					const at = place?.at ?? 0;
+					notePlayerEvent(`source starts at ${fmt(at)}`);
 					hls.startLoad(at > 0 ? at : -1);
 					if (at > 0 && videoEl) videoEl.currentTime = at;
 					if (place) restoreSavedSubs(place);
@@ -6391,8 +6678,12 @@
 					((data as any).reason ? ` reason=${(data as any).reason}` : '') +
 					(data.url ? ` url=${data.url.substring(0, 120)}` : '');
 				if (!data.fatal) {
-					notePlayerEvent(`player: ${PLAYER_WARNINGS[data.details] ?? data.details}`);
-					if (data.details === 'bufferStalledError') {
+					const failed = data.details === 'fragLoadError' ? 'error' : data.details === 'fragLoadTimeOut' ? 'timeout' : data.details === 'aborted' ? 'abort' : '';
+					const piece = data.frag;
+					const status = data.response?.code;
+					const detail = failed ? ` (${failed}${piece ? ` ${piece.type} #${piece.sn}` : ''}${status ? ` HTTP ${status}` : ''})` : '';
+					notePlayerEvent(`player: ${PLAYER_WARNINGS[data.details] ?? data.details}${detail}`);
+					if (data.details === 'bufferStalledError' && !waitingForRelayPiece()) {
 						hls.startLoad(-1);
 					}
 					if (data.type === 'networkError' && (data.details === 'fragLoadError' || data.details === 'fragLoadTimeOut')) {
@@ -6417,6 +6708,7 @@
 					if (qualityTimer) { clearTimeout(qualityTimer); qualityTimer = null; }
 					showQualityToast('That file could not be played. Try a different one.');
 					const t = videoEl?.currentTime ?? 0;
+					notePlayerEvent(`copy failed (${data.details}): returning to previous copy at ${fmt(t)}`);
 					seekAfterLoad = t;
 					streamUrl = prevStreamUrl;
 					activeFileFid = prevFileFid;
@@ -6457,7 +6749,7 @@
 			const crossSite = new URL(url, location.href).origin !== location.origin;
 			if (crossSite) videoEl.crossOrigin = 'anonymous';
 			videoEl.src = url;
-			if (!stayPaused) videoEl.play().catch(() => {});
+			if (canPlayLoaded(stayPaused)) videoEl.play().catch(() => {});
 			hlsAudioTracks = [];
 			if (crossSite) {
 				videoEl.addEventListener('error', () => {
@@ -6465,10 +6757,13 @@
 					soundBlocked = true;
 					videoEl.removeAttribute('crossorigin');
 					videoEl.src = url;
-					if (!stayPaused) videoEl.play().catch(() => {});
+					if (canPlayLoaded(stayPaused)) videoEl.play().catch(() => {});
 				}, { once: true });
 			}
 			videoEl.addEventListener('loadedmetadata', () => {
+				hlsAudioTracks = audioTracks().map((t, i) => ({ id: i, name: t.name || t.lang || `Track ${i + 1}`, url: '' }));
+				hlsActiveAudio = nativeAudioTracks().findIndex((t) => t.enabled);
+				applyPreferredAudio();
 				switchingEpisode = false;
 				autoplayFired = false;
 				// (Its length came just before, while still switching, so it wasn't taken then:
@@ -6487,6 +6782,9 @@
 		watchForStall();
 		startProgressSaving();
 		window.addEventListener('beforeunload', handleBeforeUnload);
+		return () => {
+			if (firstFrame !== undefined) frameVideo.cancelVideoFrameCallback(firstFrame);
+		};
 	});
 
 	$effect(() => {
@@ -6569,6 +6867,7 @@
 
 	onDestroy(() => {
 		if (typeof window === 'undefined') return;
+		episodeSwitch++;
 		if (hlsInstance) {
 			hlsInstance.destroy();
 			hlsInstance = null;
@@ -6767,6 +7066,15 @@
 			.then((r) => (r.ok ? r.json() : {}))
 			.then((r: { audio?: string }) => {
 				if (lastResolveArgs?.title === title) serverShowAudio = r.audio ?? '';
+			})
+			.catch(() => {});
+		// Copies marked "Picture glitching" before (on any screen): not picked again.
+		glitchy = [];
+		glitchySaid = false;
+		fetch(`/api/watch/glitchy?${new URLSearchParams({ title })}`)
+			.then((r) => (r.ok ? r.json() : { copies: [] }))
+			.then((r: { copies?: Glitchy[] }) => {
+				if (lastResolveArgs?.title === title) glitchy = r.copies ?? [];
 			})
 			.catch(() => {});
 		originalLanguage = '';
@@ -7076,12 +7384,14 @@
 
 	async function changeToFile(file: FileOption, byItself = false) {
 		// (Other sources' copies share one fid across episodes: the episode before's isn't this one's.)
-		if (!file || (file.fid === activeFileFid && !oldPicture)) return;
+		if (!file || (file.fid === activeFileFid && !oldPicture && !changingQuality)) return;
+		const mine = ++episodeSwitch;
+		const forEpisode = activeEpisode;
+		const stale = () => mine !== episodeSwitch || forEpisode !== activeEpisode;
 		// Picked while the episode is still loading (waiting on a slow source): this takes over, and
 		// the load's answer is dropped. The source menu used to do nothing then.
 		const takingOver = loadingEpisode;
 		if (takingOver) {
-			episodeSwitch++;
 			loadingEpisode = false;
 		}
 		if (!byItself) preferredQuality = file.quality;
@@ -7091,7 +7401,10 @@
 
 		// Picking another source's copy remembers it (and its audio) for the next episodes.
 		if (!byItself) keepSource(file);
-		if (!byItself) handPickedFid = file.fid;
+		if (!byItself) {
+			handPickedFid = file.fid;
+			handPickedSwitch = mine;
+		}
 		// Subtitles in the picture: Catalog's own would sit on top of them.
 		if (file.burnedIn) subtitlesOn = false;
 		// Only a copy picked by hand says which language you want.
@@ -7101,7 +7414,10 @@
 			} catch {}
 		}
 
+		if (qualityTimer) { clearTimeout(qualityTimer); qualityTimer = null; }
 		if (useIframe && !file.source) {
+			changingQuality = false;
+			prevStreamUrl = '';
 			iframeFid = file.fid;
 			activeQuality = file.quality;
 			activeFileFid = file.fid;
@@ -7110,7 +7426,6 @@
 		}
 		useIframe = false;
 
-		if (qualityTimer) { clearTimeout(qualityTimer); qualityTimer = null; }
 		// Nothing to go back to, or carry on from, while the video still holds the episode before.
 		const fresh = oldPicture;
 		prevStreamUrl = fresh ? '' : streamUrl;
@@ -7119,13 +7434,17 @@
 		changingQuality = true;
 		const savedTime = fresh ? 0 : (videoEl?.currentTime ?? 0);
 		try {
-			const resp = await fetch(`/api/watch/stream?share_key=${shareOf(file)}&fid=${file.fid}`);
+			const resp = await fetch(`/api/watch/stream?share_key=${shareOf(file)}&fid=${file.fid}${aheadParam()}`);
+			if (stale()) return;
 			if (!resp.ok) throw new Error();
 			const data = await resp.json();
+			if (stale()) return;
 			if (data.url) {
 				oldPicture = false;
 				seekAfterLoad = savedTime;
+				loadPaused = !fresh && (videoEl?.paused ?? userPaused);
 				if (!fresh) timeNewCopy(activeFile ?? null, file);
+				notePlayerEvent(`copy changed${byItself ? ' automatically' : ' by you'} to ${file.source ?? 'Showbox'} ${file.quality} at ${fmt(savedTime)}`);
 				streamUrl = data.url;
 				streamNonce++;
 				activeQuality = file.quality;
@@ -7136,11 +7455,13 @@
 				// (What's said about this copy, not about one tried before.)
 				debugInfo = data.debug ?? '';
 				qualityTimer = setTimeout(() => {
+					if (stale()) return;
 					qualityTimer = null;
 					if (!prevStreamUrl) return;
 					// Playing, or loaded and paused by hand: it works.
 					if ((playing && !buffering) || userPaused || (videoEl?.readyState ?? 0) >= 2) { prevStreamUrl = ''; return; }
 					showQualityToast('That file could not be played. Try a different one.');
+					notePlayerEvent(`copy did not start in 20 s: returning to previous copy at ${fmt(savedTime)}`);
 					seekAfterLoad = savedTime;
 					streamUrl = prevStreamUrl;
 					activeFileFid = prevFileFid;
@@ -7165,23 +7486,32 @@
 				} else showQualityToast(said);
 			}
 		} catch {
+			if (stale()) return;
 			prevStreamUrl = '';
 			if (fresh) problem = 'Failed to switch quality.';
 			else showQualityToast('Could not switch to that one.');
 		} finally {
-			changingQuality = false;
-			if (takingOver) fetchWatchedEpisodes();
+			if (!stale()) {
+				changingQuality = false;
+				if (takingOver) fetchWatchedEpisodes();
+			}
 		}
 	}
 
-	/** Counts episode changes: one picked while another was still loading takes over from it. */
+	/** Counts episode and copy changes: only the latest one's link is used. */
 	let episodeSwitch = 0;
+	let handPickedSwitch = -1;
 
 	async function playEpisode(ep: Episode, passingFinished = false) {
 		if (ep === activeEpisode || !playable(ep)) return;
 		// Left nearly done (the credits skipped to here): its download can go.
 		if (duration > 0 && currentTime >= duration * 0.9) finishedDownload();
 		const mine = ++episodeSwitch;
+		changingQuality = false;
+		if (qualityTimer) { clearTimeout(qualityTimer); qualityTimer = null; }
+		prevStreamUrl = '';
+		subLoads++;
+		subsKey = '';
 		mayMoveOn = false;
 		// Copies left for a missing piece were this episode's.
 		copiesLeft.clear();
@@ -7205,9 +7535,12 @@
 		// Subtitles on carry on to the next episode, however they went on (owner: "if the user has
 		// captions on in a previous episode … they are gonna want them on"). Ones that went on by
 		// themselves don't go on over the dub, unless they're captions.
-		const prevSub = subtitlesOn && activeSubFileName && (!subsAuto || !hearingDub() || /\bCC\b|SDH/i.test(activeSubFileName))
+		const prevSub = pendingSub && !captionsOffForShow()
+			? { fileName: pendingSub.fileName, language: pendingSub.language, delay: subtitleDelay }
+			: subtitlesOn && activeSubFileName && (!subsAuto || !hearingDub() || /\bCC\b|SDH/i.test(activeSubFileName))
 			? { fileName: activeSubFileName, language: febboxSubs.find(s => s.url === activeSubUrl)?.language ?? '', delay: subtitleDelay }
 			: undefined;
+		pendingSub = null;
 
 		// Japanese or the dub, heard on a copy with both: the next episode starts the same way.
 		const heard = hlsInstance && hlsInstance.audioTracks.length > 1 ? hlsInstance.audioTracks[hlsActiveAudio] : null;
@@ -7390,6 +7723,7 @@
 		const hidden = away;
 		untrack(() => {
 			if (hidden) {
+				if (videoEl) videoEl.autoplay = false;
 				if (videoTitle) sayStopped();
 				playOnReturn = Boolean(videoEl && !videoEl.paused) || ((loading || resolving || loadingEpisode) && !userPaused);
 				if (videoEl && !videoEl.paused) {
@@ -7453,7 +7787,6 @@
 		<button
 			type="button"
 			class="bar-btn file-pick-btn"
-			disabled={changingQuality}
 			onclick={() => {
 				showFilePicker = !showFilePicker;
 				// One menu open at a time (on a TV two at once were in each other's way).
@@ -7465,7 +7798,7 @@
 			<svg class="file-arrow" class:open={showFilePicker} viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
 		</button>
 		{#if showFilePicker}
-			<div class="popup popup-files">
+			<div class="popup popup-files" use:fitOnScreen>
 				<p class="popup-label">Files</p>
 				{#each currentFiles as f (f.fid)}
 					<button
@@ -7526,7 +7859,7 @@
 						{/if}
 					</button>
 					{#if showFilePicker && liveGame}
-						<div class="popup popup-files">
+						<div class="popup popup-files" use:fitOnScreen>
 							<p class="popup-label">Channels showing it</p>
 							{#each liveGame.channels as channel (channel.id)}
 								<button class="popup-item" class:active={liveNow.id === channel.id} onclick={() => switchLiveChannel(channel)}>
@@ -7558,7 +7891,7 @@
 						{/if}
 					</button>
 					{#if showFilePicker}
-						<div class="popup popup-files">
+						<div class="popup popup-files" use:fitOnScreen>
 							<p class="popup-label">Versions</p>
 							{#each replayVersions as label, at (at)}
 								{#if label}
@@ -7578,6 +7911,18 @@
 				{@render filePicker()}
 			{/if}
 
+			{#if canDownload}
+				<button type="button" class="bar-btn" class:active={showDownloadMenu} onclick={() => (showDownloadMenu ? (showDownloadMenu = false) : openDownload())}>Download</button>
+			{/if}
+
+			{#if !sportsMode}
+				<button
+					type="button"
+					class="bar-btn cast-btn"
+					class:active={castOpen}
+					onclick={() => { castOpen = !castOpen; }}
+				>{pm ? p('Cast') : 'Cast'}</button>
+			{/if}
 
 			{#if showType === 'tv' && seasons.length > 0}
 				<button
@@ -7587,7 +7932,7 @@
 				>{sidebarOpen ? (pm ? p('alt:Hide episodes') : 'Hide episodes') : (pm ? p('Episodes') : 'Episodes')}</button>
 			{/if}
 
-			<!-- (Autoplay, Auto-skip and Autosync are in the settings menu now, with Cast and Download.) -->
+			<!-- (Autoplay, Auto-skip and Autosync are in the settings menu.) -->
 
 			{#if sportsMode}
 				<!-- (Nothing of the library's for a live channel or a replay.) -->
@@ -7707,11 +8052,11 @@
 
 			<div class="video-area">
 				{#if qualityToast}
-						<div class="quality-toast">{qualityToast}</div>
+						<div style:top={toastTop} class="quality-toast">{qualityToast}</div>
 					{:else if timingSubs}
-						<div class="quality-toast timing-note">Timing subtitles to the video…</div>
+						<div style:top={toastTop} class="quality-toast timing-note">Timing subtitles to the video…</div>
 					{:else if timingLive && subtitlesOn}
-						<div class="quality-toast timing-note">Timing captions to the commentary…</div>
+						<div style:top={toastTop} class="quality-toast timing-note">Timing captions to the commentary…</div>
 					{/if}
 					{#if needsLogin}
 					<div class="login-prompt">
@@ -7772,6 +8117,7 @@
 								videoEl?.pause();
 								return;
 							}
+							if (!miniMode) playingChannel?.postMessage('play');
 							playing = true;
 							if (pausedAtWall) {
 								lastPauseMs = Date.now() - pausedAtWall;
@@ -7804,6 +8150,7 @@
 							if (videoEl && videoEl.buffered.length > 0)
 								bufferedEnd = videoEl.buffered.end(videoEl.buffered.length - 1);
 						}}
+						onemptied={() => notePlayerEvent('media element emptied')}
 						onwaiting={() => {
 							buffering = true;
 							noteSlowStop();
@@ -7822,12 +8169,16 @@
 							miniStill = '';
 							clearStallWatch();
 							stopEnded('played');
+							streamHasPlayed = true;
+							if (!videoEl?.requestVideoFrameCallback) streamHasFrame = true;
+							streamSeekLoading = false;
 							// A file switched to has started: it works, so a later hiccup isn't a reason to switch back.
 							if (prevStreamUrl && !changingQuality) prevStreamUrl = '';
 						}}
 						onseeking={() => {
 							buffering = true;
 							isVideoSeeking = true;
+							streamSeekLoading = true;
 							lastSeekAt = performance.now();
 							watchJumpLoad();
 							if (videoEl) notePlayerEvent(`jumped to ${fmt(videoEl.currentTime)} (${whoMoved()})`);
@@ -7895,7 +8246,7 @@
 						<div class="playback-stats" aria-live="off">
 							<div><span>Source</span>{stats.source} · {stats.height ? `${stats.height}p` : stats.quality}{stats.relayed ? ' · through this computer' : ''}</div>
 							<div><span>Loaded ahead</span>{stats.aheadSeconds} s</div>
-							<div><span>On the computer</span>{stats.heldPercent === null ? 'not downloaded ahead (only 7Movies and Movy are)' : `${stats.heldPercent}% of it · ${fmt(stats.heldAhead)} past here · ${stats.heldGoing} downloading`}</div>
+							<div><span>On the computer</span>{stats.heldPercent === null ? 'not downloaded ahead' : `${stats.heldPercent}% of it · ${fmt(stats.heldAhead)} past here · ${stats.heldGoing} downloading`}</div>
 							<div><span>Each piece</span>{stats.piecesMbps.length ? stats.piecesMbps.map((m) => `${m}`).join(' · ') + ' Mbps' : '—'}{stats.needsMbps ? ` (needs ${stats.needsMbps})` : ''}</div>
 							<div><span>From memory</span>{stats.fromMemory} of the last {stats.piecesMbps.length}</div>
 							<div><span>Server</span>{stats.servers.join(', ') || '—'}</div>
@@ -7908,7 +8259,7 @@
 						<!-- cue text is escaped by safeSubHtml(), so only i/b/u tags can reach the page -->
 						{#if activeSubs.top}
 							<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-							<div class="subtitle-display top" onclick={handleVideoClick} ondblclick={handleVideoDblClick} oncontextmenu={openCaptionMenu} class:plain={!subLook.box} class:bold={subLook.bold} style:font-size={subFontSize}>{@html activeSubs.top.replace(/\n/g, '<br>')}</div>
+							<div class="subtitle-display top" bind:this={topSubEl} bind:offsetHeight={topSubHeight} onclick={handleVideoClick} ondblclick={handleVideoDblClick} oncontextmenu={openCaptionMenu} class:plain={!subLook.box} class:bold={subLook.bold} style:font-size={subFontSize}>{@html activeSubs.top.replace(/\n/g, '<br>')}</div>
 						{/if}
 						{#if activeSubs.bottom}
 							<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -7993,6 +8344,9 @@
 						<div class="mini-top" class:visible={showControls}>
 							<span class="mini-title">{videoTitle}</span>
 							{#if currentFiles.length > 0}{@render filePicker()}{/if}
+							{#if !sportsMode}
+								<button type="button" class="bar-btn cast-btn" class:active={castOpen} onclick={() => { castOpen = !castOpen; }}>{pm ? p('Cast') : 'Cast'}</button>
+							{/if}
 							<button type="button" class="mini-btn" onclick={() => leaveMini(true)} title="Back to Catalog">
 								<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M19 19H5V5h7V3H5a2 2 0 00-2 2v14a2 2 0 002 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
 							</button>
@@ -8167,7 +8521,7 @@
 						<div class="popup popup-settings">
 							<!--
 								Moved here from the bar at the top (owner, 2026-11-15: it was clogged, and wrapped
-								onto two rows over the picture). Switches first, then Cast and Download.
+								onto two rows over the picture). The show switches stay together.
 							-->
 							{#if showType === 'tv'}
 								<p class="popup-label">This show</p>
@@ -8182,15 +8536,6 @@
 									<button class="popup-item popup-switch" class:active={autosync} aria-pressed={autosync} onclick={toggleAutosync} title="Adds the show to your library as you watch, keeps its episode up to date, and marks it completed after the last one">
 										<span class="switch-dot" aria-hidden="true"></span>Autosync to library
 									</button>
-								{/if}
-								<hr class="popup-divider" />
-							{/if}
-							{#if (!sportsMode && !tvMode) || canDownload}
-								{#if !sportsMode && !tvMode}
-									<button class="popup-item" onclick={() => { castOpen = !castOpen; showSettings = false; }}>{pm ? p('Cast') : 'Cast'}</button>
-								{/if}
-								{#if canDownload}
-									<button class="popup-item" onclick={() => { showSettings = false; showDownloadMenu ? (showDownloadMenu = false) : openDownload(); }}>Download…</button>
 								{/if}
 								<hr class="popup-divider" />
 							{/if}
@@ -8552,6 +8897,7 @@
 <style>
 	/* On the TV: only what a remote needs. The TV's own remote does the volume, the picture is
 	   always full screen, and Autosync keeps the library up to date by itself. */
+	:global(html.tv) .cast-btn,
 	:global(html.tv) .in-library-btn,
 	:global(html.tv) .mark-watched-btn,
 	:global(html.tv) .add-btn,
@@ -8617,8 +8963,11 @@
 	.player-page.mini .vol-slider input[type='range'] { width: 70px; }
 	/* Menus fit the window, and scroll when they're longer. */
 	.player-page.mini .popup { bottom: 44px; right: 6px; max-height: calc(100vh - 84px); max-width: calc(100vw - 12px); min-width: 0; }
-	.player-page.mini .popup-files.popup-files { top: calc(100% + 2px); bottom: auto; left: auto; right: 0; max-height: calc(100vh - 50px); }
+	.player-page.mini .popup-files.popup-files { top: calc(100% + 2px); bottom: auto; left: auto; right: 0; max-height: calc(100vh - 50px); max-width: calc(100vw - 16px); }
 	.player-page.mini .mini-top .file-pick-wrap { -webkit-app-region: no-drag; }
+	.player-page.mini .mini-top .file-pick-wrap { min-width: 0; max-width: 40%; }
+	.player-page.mini .mini-top .file-pick-btn { max-width: 100%; overflow: hidden; white-space: nowrap; }
+	.player-page.mini .mini-top .cast-btn { -webkit-app-region: no-drag; padding: 3px 6px; font-size: 0.74rem; }
 	.player-page.mini .mini-top .file-pick-btn { padding: 3px 8px; font-size: 0.74rem; }
 	@media (max-width: 430px) {
 		.player-page.mini .time-display { display: none; }
@@ -8684,6 +9033,7 @@
 	.player-bar.bar-hidden { opacity: 0; pointer-events: none; transform: translateY(-100%); }
 	.bar-btn { flex: none; font-size: 0.82rem; font-weight: 600; padding: 5px 12px; border-radius: var(--radius-sm); border: 1px solid rgba(255, 255, 255, 0.15); background: rgba(255, 255, 255, 0.06); color: #e0e0e0; cursor: pointer; text-decoration: none; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
 	.bar-btn:hover { border-color: rgba(255, 255, 255, 0.3); color: #fff; }
+	.cast-btn.active { color: var(--accent); border-color: var(--accent); }
 	.player-title { flex: 1; font-size: 1rem; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #fff; }
 	/* A game opened before it's on: when it starts, over the empty player. */
 	.live-wait { position: absolute; inset: 0; z-index: 12; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; text-align: center; color: #fff; background: #000; }
@@ -8703,7 +9053,7 @@
 	.more-languages .file-arrow { margin-left: auto; }
 	.language-option { padding-left: 28px; }
 	.file-arrow.open { transform: rotate(180deg); }
-	.popup-files.popup-files { position: absolute; top: calc(100% + 4px); left: 0; right: auto; bottom: auto; min-width: 180px; z-index: 25; }
+	.popup-files.popup-files { position: absolute; top: calc(100% + 4px); left: auto; right: 0; bottom: auto; min-width: min(180px, calc(100vw - 16px)); max-width: min(420px, calc(100vw - 16px)); box-sizing: border-box; overflow: auto; z-index: 25; }
 	/* The Download dialog, over the video. */
 	.download-dialog { position: absolute; top: 60px; right: 16px; z-index: 30; width: min(360px, calc(100% - 32px)); max-height: calc(100% - 80px); overflow-y: auto; padding: 16px; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px; background: rgba(18, 18, 18, 0.97); color: #fff; display: flex; flex-direction: column; gap: 8px; }
 	.download-title { margin: 0 0 4px; font-size: 1rem; font-weight: 700; }
@@ -8959,8 +9309,14 @@
 		.sidebar { width: 180px; }
 	}
 
+	@media (max-width: 1000px) {
+		.player-bar { flex-wrap: wrap; gap: 6px; }
+		.player-bar .bar-btn { padding: 4px 8px; }
+		.player-bar .file-pick-wrap { min-width: 0; max-width: 100%; }
+		.player-bar .file-pick-btn { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+	}
+
 	@media (max-width: 560px) {
-		.player-bar { flex-wrap: wrap; gap: 8px; }
 		.player-title { order: -1; width: 100%; font-size: 0.9rem; }
 		.add-btn { margin-left: 0; flex: 1; text-align: center; }
 		.player-body { flex-direction: column; }

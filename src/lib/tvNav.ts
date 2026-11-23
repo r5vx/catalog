@@ -212,7 +212,7 @@ function move(app: HTMLElement, direction: Direction): boolean {
 }
 
 /** The screens the menu goes to. Back on them opens the menu rather than leaving. */
-export const MENU_SCREENS = /^\/tv(\/(search|library|friends|live|settings|browse\/[^/]+))?\/?$/;
+export const MENU_SCREENS = /^\/tv(\/(new|search|library|friends|live|youtube|settings|browse\/[^/]+))?\/?$/;
 
 /**
  * The remote's Back, as on Netflix. On a screen from the menu it opens the menu; with the menu
@@ -241,7 +241,9 @@ export function tvBack(): 'handled' | 'exit' | 'default' {
 /** Where a screen starts: what it marks [data-tv-autofocus], else the first thing on it. */
 function firstItem(app: Element): HTMLElement | null {
 	const main = app.querySelector('[data-tv-main]') ?? app;
-	return main.querySelector<HTMLElement>('[data-tv-autofocus]') ?? items(main)[0] ?? null;
+	return main.querySelector<HTMLElement>('[data-tv-autofocus]') ?? items(main)[0] ??
+		app.querySelector<HTMLElement>('[data-tv-nav] [data-tv-item][aria-current="page"]') ??
+		app.querySelector<HTMLElement>('[data-tv-nav] [data-tv-item]');
 }
 
 /**
@@ -252,11 +254,18 @@ let holding = false;
 const glide = (): ScrollBehavior => (holding ? 'auto' : 'smooth');
 
 function onKey(event: KeyboardEvent) {
+	if (document.querySelector('.whats-new')) return;
 	holding = event.repeat;
 	const app = document.querySelector<HTMLElement>('[data-tv-app]');
 	if (!app || event.altKey || event.ctrlKey || event.metaKey) return;
 	const direction = DIRECTIONS[event.key];
 	if (direction) {
+		const current = document.activeElement;
+		if ((direction === 'left' || direction === 'right') && current?.hasAttribute('data-tv-carousel')) {
+			current.dispatchEvent(new CustomEvent('catalog:tv-slide', { detail: direction === 'right' ? 1 : -1 }));
+			event.preventDefault();
+			return;
+		}
 		if (move(app, direction)) event.preventDefault();
 		return;
 	}
@@ -267,7 +276,7 @@ function onKey(event: KeyboardEvent) {
 		return;
 	}
 	// Trying the TV screens on a computer: Esc (or Backspace) is the remote's Back.
-	if (event.key === 'Escape' || event.key === 'Backspace') {
+	if (event.key === 'Escape' || event.key === 'Backspace' || event.keyCode === 10009) {
 		event.preventDefault();
 		if (tvBack() === 'default') history.back();
 		return;

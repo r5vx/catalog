@@ -8,6 +8,8 @@ import { toshoSubtitles, toshoFilmSubtitles, keepSeasonSubtitles, type ToshoSubt
 import { fetchRomajiTitle } from '$lib/server/metadata/anilist';
 import { isAnimeFilm } from '$lib/server/animeFilm';
 import { isCinemaRecording } from '$lib/watch';
+import { nyaaFileSubtitles, parseNyaaShareKey } from '$lib/server/sources/nyaa';
+import { kitsunekkoSubtitles } from '$lib/server/sources/kitsunekko';
 import type { RequestHandler } from './$types';
 
 /**
@@ -42,6 +44,10 @@ export const GET: RequestHandler = async ({ url }) => {
 	const share = parseAniwaveShareKey(url.searchParams.get('share') ?? '');
 	const ref = parseAniwaveShareKey(url.searchParams.get('ref') ?? '');
 	const hianimeShare = parseHianimeShareKey(url.searchParams.get('share') ?? '');
+	// A Nyaa file's own subtitle tracks (sources/nyaa.ts), first and on by themselves: they're made
+	// for that very file, so they're never retimed.
+	const nyaaShare = url.searchParams.get('share') ?? '';
+	const inFileSoon = parseNyaaShareKey(nyaaShare) ? within(nyaaFileSubtitles(nyaaShare).catch(() => []), 25_000, []) : Promise.resolve([]);
 
 	if (!title) return error(400, 'Missing title');
 
@@ -118,6 +124,16 @@ export const GET: RequestHandler = async ({ url }) => {
 			? await within(nexusSubtitlesFor(show, title, nexusSeason, nexusEpisode), 8000, [])
 			: [];
 
+	// Kitsunekko (sources/kitsunekko.ts), only when nothing official was found: old shows' fan
+	// subtitles, picture ones read into text (Jungle King Tar-chan's English is only that).
+	let fromKitsunekko: Option[] = [];
+	if (!tosho.length && !(Array.isArray(nexusAnswer) && nexusAnswer.length) && show && anime && season && episode) {
+		const romaji = await fetchRomajiTitle(title).catch(() => null);
+		const names = [...new Set([title, show.name, ...(romaji ? [romaji] : [])])];
+		const overall = tmdb ? episodesBefore(show, tmdb.season) + tmdb.episode : episodesBefore(show, season) + episode;
+		fromKitsunekko = await within(kitsunekkoSubtitles(names, episode, overall).catch(() => []), 10_000, []);
+	}
+
 	const [playerTracks, kept] = await Promise.all([playerTracksSoon, othersSoon]);
 	// Copies: the lists are kept between requests, and marking one `default` here mustn't carry
 	// over to the next (the Japanese-audio pick showed as on for the dub).
@@ -193,11 +209,17 @@ export const GET: RequestHandler = async ({ url }) => {
 	const rest = others.filter((s) => !markedCaptions.includes(s) && !japaneseRelease.includes(s));
 
 	// Aniwave's own subtitle server often doesn't answer, so its files go last.
-	const list: Option[] = [...askCheck, ...japaneseRelease, ...markedCaptions, ...fromTosho, ...fromNexus, ...rest, ...fromPlayer];
+	const list: Option[] = [...askCheck, ...japaneseRelease, ...markedCaptions, ...fromTosho, ...fromNexus, ...fromKitsunekko, ...rest, ...fromPlayer];
 
 	// Anime in Japanese: subtitles on from the start, the best English there is. (The player
 	// moves on to the next English one if this one won't download.)
 	// Not over a picture that already has them (Aniwave's burned-in Japanese version).
+	const inFile: Option[] = await inFileSoon;
+	if (inFile.length) {
+		if (inFile.some((s) => s.default)) for (const s of list) delete s.default;
+		return json([...inFile, ...list]);
+	}
+
 	if (anime && !dub && share?.kind !== 'sub') {
 		const usable = list.filter((s) => !s.check);
 		const pick =

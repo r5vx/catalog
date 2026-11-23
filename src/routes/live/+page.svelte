@@ -31,7 +31,6 @@
 		isOnNow,
 		itemWord,
 		matches,
-		replayDay,
 		replayHref,
 		scoreText,
 		sendSaved,
@@ -99,21 +98,28 @@
 	});
 
 	async function load() {
+		if (stopped) return;
 		try {
 			const resp = await fetch('/api/live/guide');
 			if (!resp.ok) throw new Error();
 			const fresh = await resp.json();
+			if (stopped) return;
 			liveKept.guide = fresh;
 			guide = fresh;
 			if (!countryPicked && guide?.homeCountry) country = guide.homeCountry;
 			failed = false;
 			// No games at all is never the real schedule: asked again soon, not in ten minutes.
-			if (!fresh?.games?.length && emptyTries++ < 6) setTimeout(load, 20_000);
+			if (!fresh?.games?.length && emptyTries++ < 6) {
+				clearTimeout(retryTimer);
+				retryTimer = setTimeout(load, 20_000);
+			}
 		} catch {
-			if (!guide) failed = true;
+			if (!stopped && !guide) failed = true;
 		}
 	}
 	let emptyTries = 0;
+	let stopped = false;
+	let retryTimer: ReturnType<typeof setTimeout> | undefined;
 
 	let ticker: ReturnType<typeof setInterval> | undefined;
 	let reloader: ReturnType<typeof setInterval> | undefined;
@@ -137,6 +143,8 @@
 	});
 	let scorer: ReturnType<typeof setInterval> | undefined;
 	onDestroy(() => {
+		stopped = true;
+		clearTimeout(retryTimer);
 		clearInterval(ticker);
 		clearInterval(reloader);
 		clearInterval(scorer);

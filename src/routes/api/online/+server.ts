@@ -1,5 +1,5 @@
 import { error, json } from '@sveltejs/kit';
-import { cloud, keepMe, computerName, connectOnline, disconnectOnline, noteStopped, lastSync, noteWatchingMore, onlineConnected, onlineJoined, onlineSwitches, setSyncProfile, syncNow, syncProfiles, tryOwnerKey } from '$lib/server/online';
+import { cloud, keepMe, myAccount, computerName, connectOnline, disconnectOnline, noteStopped, lastSync, noteWatchingMore, onlineConnected, onlineJoined, onlineSwitches, setSyncProfile, syncNow, syncProfiles, tryOwnerKey } from '$lib/server/online';
 import { readSettings, updateSettings } from '$lib/server/settings';
 import { currentProfile } from '$lib/server/profile';
 import { lastLibrarySync, libraryPreview, libraryProfiles, nameOnlyCount, removalsOn, setLibraryProfile, syncLibrary } from '$lib/server/librarySync';
@@ -16,6 +16,8 @@ export const GET: RequestHandler = async ({ url }) => {
 	const connected = onlineConnected();
 	// ?light=1: only what this computer knows by itself (the player asks this; nothing goes to the server).
 	if (url.searchParams.get('light') === '1') return json({ connected, switches: onlineSwitches() });
+	// ?me=1: who this profile is (id, name, picture), for the My profile button when the page didn't know yet.
+	if (url.searchParams.get('me') === '1') return json({ me: connected ? await myAccount(profile).catch(() => null) : null });
 	let account: Account | null = null;
 	let computers = 0;
 	let google = false;

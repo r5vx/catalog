@@ -12,11 +12,18 @@
 
 	// Your own logo, when one is chosen (Settings → Personalization → Logo; src/lib/logo.ts).
 	const chosen = $derived(page.data?.logo as Logo | undefined);
-	const logo = $derived(catalog ? { kind: 'catalog', words: '', image: '', dot: dot || chosen?.dot || '' } : chosen);
+	const logo = $derived(catalog ? { kind: 'catalog', words: '', image: '', dot: dot || chosen?.dot || '', size: 100, x: 0, y: 0 } : chosen);
 </script>
 
 {#if logo?.kind === 'picture'}
-	<img class="own-picture" src={logo.image} alt={label} style:height />
+	<!-- Its size and place as picked (Settings → Personalization → Logo). -->
+	<img
+		class="own-picture"
+		src={logo.image}
+		alt={label}
+		style:height={logo.size && logo.size !== 100 ? `calc(${height} * ${logo.size / 100})` : height}
+		style:transform={logo.x || logo.y ? `translate(${logo.x}%, ${logo.y}%)` : null}
+	/>
 {:else if logo?.kind === 'words'}
 	<span class="own-words" style:font-size="calc({height} * 0.82)" style:line-height={height}>{logo.words}</span>
 {:else}

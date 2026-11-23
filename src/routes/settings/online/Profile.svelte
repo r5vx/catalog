@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import Avatar from '$lib/Avatar.svelte';
+	import PictureCropDialog from '$lib/PictureCropDialog.svelte';
+	import { drawFitted, type Fit } from '$lib/pictureFit';
 
 	/**
 	 * Settings → Online's name and picture (its own page, Profile, until 2026-11-14): what friends see, for the profile using this page
@@ -55,25 +57,37 @@
 		if (clean && clean !== account?.name) send({ name: clean }, 'Name saved.');
 	}
 
-	/** The middle square of the chosen image, drawn small, as a JPEG. */
-	async function squared(file: File): Promise<string> {
+	/** The chosen square of the image (moved and zoomed in the box first), drawn small, as a JPEG. */
+	async function squared(file: File, fit: Fit): Promise<string> {
 		const image = await createImageBitmap(file);
-		const side = Math.min(image.width, image.height);
 		const canvas = document.createElement('canvas');
 		canvas.width = SIDE;
 		canvas.height = SIDE;
-		const pen = canvas.getContext('2d')!;
-		pen.imageSmoothingQuality = 'high';
-		pen.drawImage(image, (image.width - side) / 2, (image.height - side) / 2, side, side, 0, 0, SIDE, SIDE);
+		drawFitted(canvas.getContext('2d')!, image, SIDE, SIDE, fit);
 		return canvas.toDataURL('image/jpeg', 0.85);
 	}
 
-	async function pickPicture(event: Event) {
+	/** A picture just chosen: moved and zoomed in a round frame before it's sent (as Discord does). */
+	let adjusting = $state<{ file: File; url: string } | null>(null);
+
+	function pickPicture(event: Event) {
 		const file = (event.currentTarget as HTMLInputElement).files?.[0];
 		if (fileBox) fileBox.value = '';
 		if (!file) return;
+		adjusting = { file, url: URL.createObjectURL(file) };
+	}
+
+	function stopAdjusting() {
+		if (adjusting) URL.revokeObjectURL(adjusting.url);
+		adjusting = null;
+	}
+
+	async function applyPicture(fit: Fit) {
+		const file = adjusting?.file;
+		stopAdjusting();
+		if (!file) return;
 		try {
-			await send({ avatar: await squared(file) }, 'Picture saved.');
+			await send({ avatar: await squared(file, fit) }, 'Picture saved.');
 		} catch {
 			problem = "That file isn't a picture Catalog can read.";
 		}
@@ -106,6 +120,9 @@
 					{#if account.avatar}<button type="button" class="btn" onclick={() => send({ avatar: '' }, 'Picture removed.')} disabled={busy}>Remove</button>{/if}
 				</div>
 				<input bind:this={fileBox} type="file" accept="image/*" hidden onchange={pickPicture} />
+				{#if adjusting}
+					<PictureCropDialog src={adjusting.url} title="Adjust your picture" round onapply={applyPicture} oncancel={stopAdjusting} />
+				{/if}
 			</div>
 		</div>
 

@@ -10,7 +10,7 @@
 	import { watchHref, monthYear } from '$lib/friendLinks';
 	import StyledName from '$lib/StyledName.svelte';
 	import { letterColor } from '$lib/avatarColor';
-	import { FONTS, GRADIENTS, NO_STYLE, loadFont, readNameStyle, type NameStyle } from '$lib/nameStyle';
+	import { FONTS, GRADIENTS, NO_STYLE, loadFont, nameStyleToSave, readNameStyle, type NameStyle } from '$lib/nameStyle';
 	import type { Titled } from './+page.server';
 
 	/**
@@ -20,7 +20,16 @@
 	 * the way to their whole library. Your own has Edit profile.
 	 */
 	let { data } = $props();
-	const person = $derived(data.profile);
+	// A profile seen before opens with what was kept; the fresh answer takes its place when it comes.
+	let freshened = $state<{ from: unknown; profile: typeof data.profile } | null>(null);
+	$effect(() => {
+		const waiting = data.fresh;
+		if (!waiting) return;
+		waiting.then((profile) => {
+			if (profile && data.fresh === waiting) freshened = { from: waiting, profile };
+		});
+	});
+	const person = $derived(freshened && freshened.from === data.fresh ? freshened.profile : data.profile);
 	const t = (text: string) => wording(page.data.altMode, text);
 
 	type Known = { id: string; name: string; avatar: number; me?: boolean; friend?: boolean; requested?: boolean; asked?: boolean };
@@ -180,7 +189,9 @@
 		newBanner = null;
 		bannerRemoved = false;
 		bannerNote = '';
-		nameDraft = readNameStyle(person.nameStyle);
+		// (One color lit up, saved as the effect 'glow' before, is one color with Glow on here.)
+		const saved = readNameStyle(person.nameStyle);
+		nameDraft = saved.effect === 'glow' ? { ...saved, effect: 'solid', glow: true } : saved;
 		// (Each font's sample is drawn in that font.)
 		for (const font of FONTS) loadFont(font.id);
 		editing = true;
@@ -300,7 +311,7 @@
 				bio,
 				color: pickedColor,
 				favorites,
-				nameStyle: nameDraft,
+				nameStyle: nameStyleToSave(nameDraft),
 				// (Left out when it didn't change, so the picture isn't sent again.)
 				...(newBanner ? { banner: newBanner } : bannerRemoved ? { banner: '' } : {})
 			})
@@ -411,10 +422,20 @@
 					{/each}
 				</div>
 				<div class="effects" role="radiogroup" aria-label="Look">
-					<button type="button" class="btn" class:btn-primary={!nameDraft.colors.length} onclick={() => (nameDraft = { ...nameDraft, effect: 'solid', colors: [] })}>{t('Plain')}</button>
-					<button type="button" class="btn" class:btn-primary={nameDraft.colors.length > 0 && nameDraft.effect === 'solid'} onclick={() => setEffect('solid')}>{t('One color')}</button>
+					<button type="button" class="btn" class:btn-primary={!nameDraft.colors.length} onclick={() => (nameDraft = { font: nameDraft.font, effect: 'solid', colors: [] })}>{t('Plain')}</button>
+					<button type="button" class="btn" class:btn-primary={nameDraft.colors.length > 0 && nameDraft.effect !== 'gradient'} onclick={() => setEffect('solid')}>{t('One color')}</button>
 					<button type="button" class="btn" class:btn-primary={nameDraft.effect === 'gradient'} onclick={() => setEffect('gradient')}>{t('Gradient')}</button>
-					<button type="button" class="btn" class:btn-primary={nameDraft.effect === 'glow'} onclick={() => setEffect('glow')}>{t('Glow')}</button>
+				</div>
+				<!-- On top of a color or a gradient, together or not. -->
+				<div class="effects extras">
+					<label class="extra">
+						<input type="checkbox" checked={Boolean(nameDraft.glow)} onchange={(e) => { if (!nameDraft.colors.length) setEffect('solid'); nameDraft = { ...nameDraft, glow: e.currentTarget.checked }; }} />
+						{t('Glow')}
+					</label>
+					<label class="extra">
+						<input type="checkbox" checked={Boolean(nameDraft.shimmer)} onchange={(e) => { if (!nameDraft.colors.length) setEffect('solid'); nameDraft = { ...nameDraft, shimmer: e.currentTarget.checked }; }} />
+						{t('Shimmer')}
+					</label>
 				</div>
 				{#if nameDraft.colors.length}
 					<div class="color">
@@ -622,6 +643,14 @@
 
 	.font-label {
 		font-size: 0.72rem;
+	}
+
+	.extra {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		align-self: flex-start;
+		cursor: pointer;
 	}
 
 	.effects {

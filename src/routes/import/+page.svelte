@@ -157,7 +157,7 @@
 <svelte:head><title>Import a list · Catalog</title></svelte:head>
 
 <header>
-	<a href="/" class="back faint">&larr; Library</a>
+	<a href="/?library=1" class="back faint">&larr; Library</a>
 	<h1>Import a list</h1>
 </header>
 
@@ -330,7 +330,7 @@
 			made-up date is worse than none.
 		</p>
 		<div class="actions">
-			<a href="/" class="btn btn-primary">See your library</a>
+			<a href="/?library=1" class="btn btn-primary">See your library</a>
 			<button type="button" class="btn" onclick={startOver}>Import another list</button>
 		</div>
 	</div>

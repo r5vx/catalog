@@ -1,5 +1,7 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
+	import { inPhoneApp, tellPhoneApp } from '$lib/phoneApp';
 	import qrcode from 'qrcode-generator';
 	import type { PageData } from './$types';
 
@@ -12,6 +14,8 @@
 	let working = $state(false);
 	let enableLink = $state('');
 	let problem = $state('');
+	let inApp = $state(false);
+	onMount(() => { inApp = inPhoneApp(); });
 
 	const address = $derived(data.phone.on ? data.phone.address : null);
 	const picture = $derived.by(() => {
@@ -46,6 +50,9 @@
 		Phones open Catalog through Tailscale, at home or away. On the secure address it can go on the Home Screen as
 		an app, with downloads that play offline.
 	</p>
+	{#if inApp}
+		<button type="button" class="btn" onclick={() => tellPhoneApp('setup')}>Connect to another computer</button>
+	{/if}
 </section>
 
 {#if !data.phone.tailscale}

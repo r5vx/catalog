@@ -1,11 +1,11 @@
 import { fetchImdbId, fetchEnglishTitle } from './metadata/tmdb';
 import { slimSubtitle } from './subtitleFonts';
-import { readSettings } from './settings';
 import { gunzipSync, inflateRawSync } from 'node:zlib';
 import xz from 'xz-decompress';
 import { subtitleText } from '$lib/subtitleText';
 import { trustedVideoHost } from './relayHosts';
 import { HIANIME_HEADERS } from './sources/hianime';
+import { fetchSubtitle } from './subtitleFetch';
 
 const OS_REST = 'https://rest.opensubtitles.org/search';
 const GESTDOWN_API = 'https://api.gestdown.info';
@@ -62,7 +62,7 @@ interface OSResult {
 
 async function queryOS(path: string): Promise<OSResult[]> {
 	try {
-		const resp = await fetch(`${OS_REST}/${path}`, {
+		const resp = await fetchSubtitle(`${OS_REST}/${path}`, {
 			headers: { 'User-Agent': UA },
 			redirect: 'manual',
 			signal: AbortSignal.timeout(12000)
@@ -84,7 +84,7 @@ async function queryGestdown(
 	if (type !== 'tv' || !season || !episode) return [];
 	try {
 		const q = title.replace(/[^a-zA-Z0-9 ]/g, ' ').trim();
-		const resp = await fetch(`${GESTDOWN_API}/shows/search/${encodeURIComponent(q)}`, {
+		const resp = await fetchSubtitle(`${GESTDOWN_API}/shows/search/${encodeURIComponent(q)}`, {
 			signal: AbortSignal.timeout(8000)
 		});
 		if (!resp.ok) return [];
@@ -92,8 +92,15 @@ async function queryGestdown(
 		const shows = data?.shows;
 		if (!Array.isArray(shows) || shows.length === 0) return [];
 
-		const show = shows[0];
-		const subResp = await fetch(
+		// Only a show by the same name, not just the first answer: "ERASED" was given the subtitles of
+		// "Erased: WW2's Heroes of Color" (a friend's report, 2026-11-19). A name in brackets after it
+		// ("Reincarnated as a Sword (Tensei shitara ken deshita)", a year) doesn't count.
+		const plain = (name: string) =>
+			String(name ?? '').replace(/\([^)]*\)/g, ' ').toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, ' ').trim();
+		const want = plain(title);
+		const show = shows.find((s: { name?: string }) => plain(s.name ?? '') === want);
+		if (!show) return [];
+		const subResp = await fetchSubtitle(
 			`${GESTDOWN_API}/subtitles/get/${show.id}/${season}/${episode}/english`,
 			{ signal: AbortSignal.timeout(8000) }
 		);
@@ -429,10 +436,10 @@ const isOpenSubtitlesFile = (url: string) => /(^|\.)opensubtitles\.(org|com)$/i.
 async function throughStremio(url: string, season?: number, episode?: number, lang?: string): Promise<string> {
 	const file = url.match(/\/filead\/(\d+)/)?.[1];
 	if (!file) return '';
-	const resp = await fetch(`https://subs5.strem.io/en/download/subencoding-stremio-utf8/src-api/file/${file}`, {
+	const resp = await fetchSubtitle(`https://subs5.strem.io/en/download/subencoding-stremio-utf8/src-api/file/${file}`, {
 		headers: { 'User-Agent': UA },
 		signal: AbortSignal.timeout(15000)
-	});
+	}, [season, episode, lang]);
 	if (!resp.ok) return '';
 	return fromBytes(Buffer.from(await resp.arrayBuffer()), season, episode, lang);
 }
@@ -507,10 +514,10 @@ async function downloadSubtitleText(url: string, season?: number, episode?: numb
 		try {
 			host = new URL(url);
 		} catch {}
-		const resp = await fetch(url, {
+		const resp = await fetchSubtitle(url, {
 			headers: host && trustedVideoHost(host) === 'hianime' ? HIANIME_HEADERS : { 'User-Agent': UA },
 			signal: AbortSignal.timeout(15000)
-		});
+		}, [season, episode, lang]);
 		if (!resp.ok) {
 			if (isOpenSubtitlesFile(url) && /exceeded/i.test(await resp.text().catch(() => ''))) {
 				openSubtitlesRestUntil = Date.now() + 3 * 3600_000;

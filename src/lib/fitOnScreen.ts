@@ -30,9 +30,14 @@ export function fitOnScreen(node: HTMLElement) {
 		}
 	});
 	moved.observe(node, { attributes: true, attributeFilter: ['style'] });
+	const resized = new ResizeObserver(place);
+	resized.observe(node);
+	window.addEventListener('resize', place);
 	return {
 		destroy() {
 			moved.disconnect();
+			resized.disconnect();
+			window.removeEventListener('resize', place);
 		}
 	};
 }

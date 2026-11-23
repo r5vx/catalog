@@ -274,7 +274,7 @@ function playChoice(row as Integer, column as Integer) as Dynamic
             end if
             return { title: title.playTitle, type: title.type, year: title.playYear, season: season, episode: episode }
         else if act = "start" then
-            return { title: title.playTitle, type: title.type, year: "", season: 1, episode: 1 }
+            return { title: title.playTitle, type: title.type, year: title.playYear, season: 0, episode: 0, fromStart: true }
         end if
     else if kind = "episodes" then
         one = m.items[row][column]
@@ -304,5 +304,5 @@ sub onPick()
     end if
     choice = playChoice(at[0], at[1])
     if choice = invalid then return
-    m.top.action = { go: "play", title: choice.title, type: choice.type, year: choice.year, season: choice.season, episode: choice.episode }
+    m.top.action = { go: "play", title: choice.title, type: choice.type, year: choice.year, season: choice.season, episode: choice.episode, fromStart: choice.fromStart = true }
 end sub

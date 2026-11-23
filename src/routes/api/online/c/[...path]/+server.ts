@@ -1,5 +1,5 @@
 import { error, json } from '@sveltejs/kit';
-import { cloud, keepFriendsAnswer, keepMe } from '$lib/server/online';
+import { cloud, forgetProfileAnswers, keepFriendsAnswer, keepMe } from '$lib/server/online';
 import { currentProfile } from '$lib/server/profile';
 import { withNicknames } from '$lib/server/friendNicknames';
 import type { RequestHandler } from './$types';
@@ -48,6 +48,8 @@ const pass: RequestHandler = async ({ request, params, url }) => {
 	// Who this profile is online, for the My profile button (a new name or picture shows there at once).
 	if (path === 'friends' && request.method === 'GET') keepMe(profile, (answer.data as { me?: unknown })?.me);
 	if (path === 'me') keepMe(profile, (answer.data as { account?: unknown })?.account);
+	// A change (profile, privacy, friends): profile pages are asked afresh, not shown from what was kept.
+	if (request.method !== 'GET') forgetProfileAnswers(profile);
 	return json(data);
 };
 

@@ -34,6 +34,24 @@ export async function showboxDownloadRoom(): Promise<{ bytes: number; known: boo
 	return { bytes, known: true, allowance, used, keptBack };
 }
 
+/**
+ * Whether Showbox may play through this computer and be downloaded ahead, as 7Movies and Movy are
+ * (owner, 2026-11-19: downloading a couple of episodes ahead a day won't use up anyone's allowance):
+ * only while at least 2 GB is left beyond what's kept back for watching. The pieces then come
+ * from the disk, so what's watched isn't downloaded twice; only what's ahead (the rest of this
+ * episode, the next one) is extra. Febbox is asked at most every two minutes.
+ */
+const AHEAD_ROOM = 2 * GB;
+let aheadAsked: { at: number; ok: Promise<boolean> } | null = null;
+export function showboxAheadAllowed(): Promise<boolean> {
+	if (aheadAsked && Date.now() - aheadAsked.at < 2 * 60 * 1000) return aheadAsked.ok;
+	const ok = showboxDownloadRoom()
+		.then((room) => room.known && room.bytes >= AHEAD_ROOM)
+		.catch(() => false);
+	aheadAsked = { at: Date.now(), ok };
+	return ok;
+}
+
 /** A Showbox download of this size has started. */
 export function noteShowboxDownload(bytes: number): void {
 	started.push({ bytes, at: Date.now() });

@@ -30,13 +30,13 @@
 		back?: string | null;
 		heading?: string;
 		note?: string | null;
-		music?: { source: string; sourceId: string; title: string; year: string | number | null; type: 'movie' | 'tv'; anime?: boolean } | null;
+		music?: { source: string; sourceId?: string; title: string; year: string | number | null; type: 'movie' | 'tv'; anime?: boolean } | null;
 	} = $props();
 
 	let tab = $state<'cast' | 'music'>('cast');
 	/** The Music tab was opened once: it stays drawn (and doesn't ask again) after going back to Cast. */
 	let musicSeen = $state(false);
-	const showMusic = $derived(Boolean(music?.title && music.sourceId));
+	const showMusic = $derived(Boolean(music?.title && (music.sourceId || music.source === 'manual')));
 	function pick(which: 'cast' | 'music') {
 		tab = which;
 		if (which === 'music') musicSeen = true;
@@ -69,9 +69,11 @@
 		{:else}
 			<h2 class="label">{heading}</h2>
 		{/if}
-		{#if showMusic && musicSeen}
+		{#if showMusic && musicSeen && music}
 			<div hidden={tab !== 'music'}>
-				<MusicCredits source={music!.source} sourceId={music!.sourceId} title={music!.title} year={music!.year} type={music!.type} anime={music!.anime} {back} />
+				{#key JSON.stringify(music)}
+					<MusicCredits {...music} {back} />
+				{/key}
 			</div>
 		{/if}
 		{#if tab === 'cast' && !cast.length}<p class="faint">No cast listed.</p>{/if}

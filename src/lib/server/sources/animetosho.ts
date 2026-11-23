@@ -15,6 +15,7 @@
  */
 import { getOrderCache, saveOrderCache, savedSubtitle, saveSubtitle } from '../db/queries';
 import { downloadSubtitle } from '../showbox-subs';
+import { fetchSubtitle } from '../subtitleFetch';
 
 const FEED = 'https://feed.animetosho.net/json';
 const SITE = 'https://animetosho.net';
@@ -43,13 +44,24 @@ function saved<T>(key: string, maxAge: number): T | undefined {
 }
 
 async function getPage(path: string): Promise<string | null> {
+	if (resting()) return null;
 	try {
-		const resp = await fetch(`${SITE}${path}`, { signal: AbortSignal.timeout(10000) });
+		const resp = await fetchSubtitle(`${SITE}${path}`, { signal: AbortSignal.timeout(10000) });
+		if (resp.status === 429 || resp.status === 503) restingUntil = Date.now() + 10 * 60 * 1000;
 		return resp.ok ? await resp.text() : null;
 	} catch {
 		return null;
 	}
 }
+
+/**
+ * AnimeTosho answers 429 to too many searches at once: the season's subtitles fetched in the
+ * background sent 4-6 at a time per episode, 19 in 30 s on the owner's computer (2026-11-19), and
+ * each refusal counted as "nothing for this episode". After a refusal nothing is asked for 10
+ * minutes (the player's own asks included), and nothing is remembered from it.
+ */
+let restingUntil = 0;
+const resting = () => Date.now() < restingUntil;
 
 async function search(text: string): Promise<Release[]> {
 	// Punctuation out: AnimeTosho reads "-word" as "without this word", and Re:Zero's name is
@@ -58,8 +70,10 @@ async function search(text: string): Promise<Release[]> {
 	const key = `tosho-search|${query.toLowerCase()}`;
 	const known = saved<Release[]>(key, 6 * HOUR);
 	if (known) return known;
+	if (resting()) return [];
 	try {
-		const resp = await fetch(`${FEED}?q=${encodeURIComponent(query)}`, { signal: AbortSignal.timeout(10000) });
+		const resp = await fetchSubtitle(`${FEED}?q=${encodeURIComponent(query)}`, { signal: AbortSignal.timeout(10000) });
+		if (resp.status === 429 || resp.status === 503) restingUntil = Date.now() + 10 * 60 * 1000;
 		if (!resp.ok) return [];
 		const releases = ((await resp.json()) as Release[]).map((r) => ({ id: r.id, title: r.title, num_files: r.num_files }));
 		saveOrderCache(key, releases, Date.now());
@@ -70,12 +84,19 @@ async function search(text: string): Promise<Release[]> {
 }
 
 /** A copy's subtitle tracks, from its page: [download path, "English (SDH) [eng, SRT]"]. */
-async function tracksOf(page: string): Promise<[string, string][]> {
-	const key = `tosho-tracks|${page}`;
+/**
+ * A release page's subtitle tracks; null when the page couldn't be had. A refused or timed-out
+ * page used to be kept as "no tracks" for a week: Re:Zero S3E8's dub captions went missing that
+ * way after AnimeTosho refused a burst of asks (owner, 2026-11-19), while E2-E7 had them. ("2":
+ * the ones kept wrongly then are looked at again.)
+ */
+async function tracksOf(page: string): Promise<[string, string][] | null> {
+	const key = `tosho-tracks2|${page}`;
 	const known = saved<[string, string][]>(key, 7 * 24 * HOUR);
 	if (known) return known;
 	const html = await getPage(page);
-	if (html === null) return [];
+	// (Not a release page at all, a check page say: not remembered either.)
+	if (html === null || !html.includes('animetosho')) return null;
 	const tracks = [...html.matchAll(/<a href="(\/download\/\d+\/subs\/file\/\d+)">([^<]+)<\/a>/g)].map(
 		(m) => [m[1], m[2].trim()] as [string, string]
 	);
@@ -155,7 +176,8 @@ async function episodeInPack(release: Release, season: number, episode: number):
 		const html = await getPage(`/view/${release.id}`);
 		if (html === null) return null;
 		files = [...new Set([...html.matchAll(/href="(\/file\/[^"]+\.\d+)"/g)].map((m) => m[1]))];
-		saveOrderCache(key, files, Date.now());
+		// (A page with no files on it wasn't the pack's page: not remembered, as in tracksOf.)
+		if (files.length) saveOrderCache(key, files, Date.now());
 	}
 	const named = new RegExp(`s0?${season}e0?${episode}(?!\d)`, 'i');
 	let page = files.find((f) => named.test(f));
@@ -167,6 +189,11 @@ async function episodeInPack(release: Release, season: number, episode: number):
 }
 
 /** Crunchyroll copies with every track (the dub captions are only in those) come first. */
+/** Which streaming service a release was taken from, by its name ("CR", "AMZN"…); '' when it doesn't say. */
+function serviceOf(title: string): string {
+	return title.match(/\b(CR|AMZN|NF|BILI|HIDIVE|DSNP|ADN|ABEMA|B-Global|Baha)\b/i)?.[1].toUpperCase() ?? '';
+}
+
 function rank(title: string): number {
 	let score = 0;
 	if (/multi|dual/i.test(title)) score += 2;
@@ -189,10 +216,21 @@ export async function toshoSubtitles(
 	names: string[],
 	season: number,
 	episode: number,
-	overall?: number
+	overall?: number,
+	/** In the background: one search at a time, a moment apart (the player's own ask goes at once). */
+	oneAtATime = false
 ): Promise<ToshoSubtitle[]> {
-	// Every search at once (each is kept for six hours).
-	const ask = async (queries: string[]) => (await Promise.all(queries.map(search))).flat();
+	// Every search at once (each is kept for six hours), or one by one.
+	const ask = async (queries: string[]) => {
+		if (!oneAtATime) return (await Promise.all(queries.map(search))).flat();
+		const found: Release[] = [];
+		for (const query of queries) {
+			if (resting()) break;
+			found.push(...(await search(query)));
+			await new Promise((resolve) => setTimeout(resolve, 700));
+		}
+		return found;
+	};
 	const counted = overall && overall !== episode ? overall : 0;
 	const queries = names.flatMap((n) => [
 		`${n} S${pad(season)}E${pad(episode)}`,
@@ -213,9 +251,23 @@ export async function toshoSubtitles(
 		lists.find((english) => english.some((t) => t.label === 'English CC')) ??
 		lists.find((english) => english.some((t) => t.label === 'English')) ??
 		lists.find((english) => english.length);
-	const fromSingles = await Promise.all(
-		[...singles.values()].sort(byRank).slice(0, 3).map((r) => englishTracks({ page: `/view/${r.id}`, title: r.title }))
-	);
+	const ranked = [...singles.values()].sort(byRank);
+	const fromSingles = await Promise.all(ranked.slice(0, 3).map((r) => englishTracks({ page: `/view/${r.id}`, title: r.title })));
+	// No dub captions in those: up to three copies from other services. Re:Zero S3E8's Crunchyroll
+	// copies have none at all (two uploads each of two of them filled the top places); only
+	// Amazon's has them (ToonsHub AMZN), seventh (owner, 2026-11-19: E2-E7 had them).
+	if (!fromSingles.some((english) => english.some((t) => t.label === 'English CC')) && ranked.length > 3) {
+		const looked = new Set(ranked.slice(0, 3).map((r) => serviceOf(r.title)));
+		const others: Release[] = [];
+		for (const r of ranked.slice(3)) {
+			const service = serviceOf(r.title);
+			if (looked.has(service)) continue;
+			looked.add(service);
+			others.push(r);
+			if (others.length === 3) break;
+		}
+		fromSingles.push(...(await Promise.all(others.map((r) => englishTracks({ page: `/view/${r.id}`, title: r.title })))));
+	}
 	const single = best(fromSingles);
 	if (single?.some((t) => t.label === 'English CC')) return single;
 
@@ -290,13 +342,16 @@ function cueShare(text: string): number {
  * inside and the one full of sound cues is the captions. Kept for a week.
  */
 async function englishTracks(copy: Copy): Promise<ToshoSubtitle[]> {
-	// "2": lists made before scrambled files were dropped (2026-10-21) are looked at again.
-	const key = `tosho-english2|${copy.page}`;
+	// "3": lists made before scrambled files were dropped (2026-10-21), and empty ones kept from a
+	// page that couldn't be had (tracksOf), are looked at again.
+	const key = `tosho-english3|${copy.page}`;
 	const known = saved<ToshoSubtitle[]>(key, 7 * 24 * HOUR);
 	if (known) return known;
 
 	const forced = (label: string) => /forced|signs/i.test(label);
-	const english = (await tracksOf(copy.page)).filter(([, label]) => /\[eng,/i.test(label) && TEXT.test(label));
+	const tracks = await tracksOf(copy.page);
+	if (!tracks) return [];
+	const english = tracks.filter(([, label]) => /\[eng,/i.test(label) && TEXT.test(label));
 	const plain = english.filter(([, label]) => !forced(label));
 	let captions = plain.filter(([, label]) => /SDH|CC|hearing/i.test(label)).map(([path]) => path);
 	/** Unnamed tracks that turned out to be signs only, or that wouldn't download. */
@@ -354,7 +409,9 @@ export function keepSeasonSubtitles(show: string, names: string[], season: numbe
 		let misses = 0;
 		// (This episode is asked again first: it's kept for six hours, so that costs nothing.)
 		for (let ep = episode; ep < episode + 30 && ep <= episode + (left ?? 29) && misses < 2; ep++) {
-			const tracks = await toshoSubtitles(names, season, ep, overall ? overall + ep - episode : undefined);
+			const tracks = await toshoSubtitles(names, season, ep, overall ? overall + ep - episode : undefined, true);
+			// Refused: stop here (it isn't "nothing for this episode"); a later episode starts it again.
+			if (resting()) break;
 			misses = tracks.length ? 0 : misses + 1;
 			for (const track of tracks) {
 				if (savedSubtitle(track.url)) continue;
@@ -362,7 +419,7 @@ export function keepSeasonSubtitles(show: string, names: string[], season: numbe
 				if (content) saveSubtitle(track.url, show, content);
 			}
 			// Gentle on AnimeTosho.
-			await new Promise((resolve) => setTimeout(resolve, 1000));
+			await new Promise((resolve) => setTimeout(resolve, 3000));
 		}
 	})()
 		.catch(() => {})

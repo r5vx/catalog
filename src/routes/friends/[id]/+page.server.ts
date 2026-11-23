@@ -1,5 +1,5 @@
 import { error, redirect } from '@sveltejs/kit';
-import { cloud, keepMe, myAccount, onlineConnected } from '$lib/server/online';
+import { cloud, keepMe, keepProfileAnswer, keptProfileAnswer, myAccount, onlineConnected } from '$lib/server/online';
 import { currentProfile, MAIN_PROFILE } from '$lib/server/profile';
 import { withNicknames } from '$lib/server/friendNicknames';
 import { tmdbGet } from '$lib/server/metadata/tmdb';
@@ -70,16 +70,9 @@ async function someWatched(id: string, profile: number): Promise<Titled[]> {
 	);
 }
 
-export const load: PageServerLoad = async ({ params, url }) => {
-	if (!onlineConnected()) error(404, "This Catalog isn't online");
-	// /friends/me: your own (the My profile buttons link here, as they may not know your id yet).
-	if (params.id === 'me') {
-		const me = await myAccount(currentProfile());
-		if (!me) error(502, "Couldn't reach the server");
-		redirect(307, `/friends/${me.id}${url.search}`);
-	}
-	if (!/^[A-Z0-9]{16}$/.test(params.id)) error(404, 'No such person');
-	const answer = await cloud<Profile>(`/v1/people/${params.id}/profile`, { profile: currentProfile() });
+/** The profile as the meeting point has it, made ready for this page; throws the page's error when it can't be had. */
+async function freshProfile(id: string): Promise<Profile> {
+	const answer = await cloud<Profile>(`/v1/people/${id}/profile`, { profile: currentProfile() });
 	if (!answer.ok || !answer.data) error(answer.status === 403 ? 403 : answer.status === 404 ? 404 : 502, answer.error || "Couldn't open that profile");
 	if (answer.data.me) keepMe(currentProfile(), answer.data);
 	const profile = withNicknames(currentProfile(), answer.data);
@@ -100,7 +93,24 @@ export const load: PageServerLoad = async ({ params, url }) => {
 		profile.recent = inLibrary(profile.recent) ?? [];
 	}
 	if (!profile.hidden && profile.counts.total > 0 && !profile.top.length && !profile.recent.length && !profile.favorites.length) {
-		profile.watched = await someWatched(params.id, currentProfile());
+		profile.watched = await someWatched(id, currentProfile());
 	}
-	return { profile };
+	keepProfileAnswer(currentProfile(), id, profile);
+	return profile;
+}
+
+export const load: PageServerLoad = async ({ params, url }) => {
+	if (!onlineConnected()) error(404, "This Catalog isn't online");
+	// /friends/me: your own (the My profile buttons link here, as they may not know your id yet).
+	if (params.id === 'me') {
+		const me = await myAccount(currentProfile());
+		if (!me) error(502, "Couldn't reach the server");
+		redirect(307, `/friends/${me.id}${url.search}`);
+	}
+	if (!/^[A-Z0-9]{16}$/.test(params.id)) error(404, 'No such person');
+	// Seen before: that answer at once, and the fresh one follows into the open page (`fresh`, a
+	// promise SvelteKit sends on after the page). Never seen: wait for it, as before.
+	const kept = keptProfileAnswer<Profile>(currentProfile(), params.id);
+	if (kept) return { profile: kept, fresh: freshProfile(params.id).catch(() => null) };
+	return { profile: await freshProfile(params.id), fresh: null };
 };

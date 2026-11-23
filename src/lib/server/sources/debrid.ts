@@ -28,6 +28,7 @@
 import type { FileOption } from '../showbox';
 import { readSettings } from '../settings';
 import { tmdbGet } from '../metadata/tmdb';
+import { getOrderCache, saveOrderCache } from '../db/queries';
 
 export type DebridService = 'realdebrid' | 'torbox' | 'alldebrid' | 'premiumize';
 
@@ -174,22 +175,31 @@ async function imdbIdOf(what: What): Promise<string | null> {
 	return ids?.imdb_id && /^tt\d+$/.test(ids.imdb_id) ? ids.imdb_id : null;
 }
 
+const torrentioRequests = new Map<string, Promise<Release[] | null>>();
+
 /** Torrentio's releases for a film or episode (null: it couldn't be asked). */
 export async function torrentioReleases(what: What): Promise<Release[] | null> {
 	const imdb = await imdbIdOf(what);
 	if (!imdb) return null;
 	const path = what.type === 'tv' ? `series/${imdb}:${what.season}:${what.episode}` : `movie/${imdb}`;
-	try {
-		const response = await fetch(`${TORRENTIO}/${TORRENTIO_OPTIONS}/stream/${path}.json`, {
-			headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-			signal: AbortSignal.timeout(15_000)
-		});
-		if (!response.ok) return null;
-		const answer = (await response.json()) as { streams?: TorrentioStream[] };
-		return (answer.streams ?? []).map(releaseFrom).filter((r): r is Release => r !== null);
-	} catch {
-		return null;
-	}
+	const url = `${TORRENTIO}/${TORRENTIO_OPTIONS}/stream/${path}.json`;
+	const under = torrentioRequests.get(url);
+	if (under) return under;
+	const result = (async () => {
+		try {
+			const response = await fetch(url, {
+				headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
+				signal: AbortSignal.timeout(15_000)
+			});
+			if (!response.ok) return null;
+			const answer = (await response.json()) as { streams?: TorrentioStream[] };
+			return (answer.streams ?? []).map(releaseFrom).filter((r): r is Release => r !== null);
+		} catch {
+			return null;
+		}
+	})().finally(() => torrentioRequests.delete(url));
+	torrentioRequests.set(url, result);
+	return result;
 }
 
 /* ------------------------------------------------ the services */
@@ -202,7 +212,7 @@ const baseName = (path: string) => path.split(/[\\/]/).pop() ?? path;
 function pickFileOf<T>(files: T[], release: Release, name: (f: T) => string, size: (f: T) => number, index?: (f: T, i: number) => boolean): T | null {
 	const videos = files.filter((f) => VIDEO.test(name(f)));
 	if (!videos.length) return null;
-	const wantedName = release.filename.toLowerCase();
+	const wantedName = baseName(release.filename).toLowerCase();
 	const byName = wantedName ? videos.find((f) => baseName(name(f)).toLowerCase() === wantedName) : undefined;
 	if (byName) return byName;
 	if (release.fileIdx !== null && index) {
@@ -349,7 +359,7 @@ function allDebrid(key: string): Service {
 			}
 			const listed = sure(await ask<Answer<{ magnets: { id: number; files?: Node[] }[] }>>(`${base}/v4/magnet/files?agent=${AGENT}&id[]=${added.id}`, { headers: auth }));
 			const files = flat(listed.magnets?.[0]?.files ?? []).filter((f) => f.l);
-			const file = pickFileOf(files, release, (f) => f.n, (f) => f.s ?? 0);
+			const file = pickFileOf(files, release, (f) => f.n, (f) => f.s ?? 0, (_, i) => i === release.fileIdx);
 			if (!file?.l) return null;
 			const open = sure(await ask<Answer<{ link?: string }>>(`${base}/v4/link/unlock?agent=${AGENT}&link=${encodeURIComponent(file.l)}`, { headers: auth }));
 			return open.link ?? null;
@@ -444,6 +454,172 @@ async function find(what: What & { quality: Wanted }, service: DebridService, ke
 	const list = ranked(releases, what.quality, what.type);
 	if (!list.length) return { url: null, why: `No ${what.quality === '2160p' ? '4K' : '1080p'} release with sound Catalog can play`, name: '' };
 	return readyLink(list, service, key);
+}
+
+/* ------------------------------------------------ getting one that isn't ready */
+
+/**
+ * Where a release the service doesn't have yet stands: its link once its servers have it, how
+ * far along they are, or why it can't be had. Used for Nyaa's picks (nyaa.ts), which are often
+ * old fan releases nobody has asked a debrid service for: the service downloads it from the
+ * torrent's sharers on its own servers (this computer never joins the torrent), and it's kept in
+ * the account, so asking again later finds it further along or done.
+ */
+export type Getting = { url: string | null; percent: number; why: string; failed: boolean };
+
+/** The torrent added to the account for a release's file, kept so it's asked about, not added again. */
+const gettingKey = (service: DebridService, release: Release) => `debrid-getting|${service}|${release.hash}|${release.filename}`;
+
+function remembered(service: DebridService, release: Release): string | null {
+	const kept = getOrderCache(gettingKey(service, release));
+	return kept && Date.now() - kept.at < 14 * 24 * 60 * MINUTE ? String(kept.value) : null;
+}
+const remember = (service: DebridService, release: Release, id: string) => saveOrderCache(gettingKey(service, release), id, Date.now());
+const forget = (service: DebridService, release: Release) => saveOrderCache(gettingKey(service, release), '', 0);
+
+const along = (name: string, percent: number, sharing?: number) =>
+	`${name} is getting it: ${Math.floor(percent)}%${sharing !== undefined ? `, from ${sharing} sharing` : ''}`;
+
+async function getRealDebrid(release: Release, key: string): Promise<Getting> {
+	const base = BASE.realdebrid;
+	const auth = { Authorization: `Bearer ${key}` };
+	type Info = { id: string; status: string; progress?: number; seeders?: number; files?: { id: number; path: string; bytes: number; selected: number }[]; links?: string[] };
+	let id = remembered('realdebrid', release);
+	let info: Info | null = id ? await ask<Info>(`${base}/torrents/info/${id}`, { headers: auth }).catch(() => null) : null;
+	if (!info) {
+		const added = await ask<{ id: string }>(`${base}/torrents/addMagnet`, { method: 'POST', headers: auth, body: form({ magnet: magnet(release.hash) }) });
+		id = added.id;
+		remember('realdebrid', release, id);
+		info = await ask<Info>(`${base}/torrents/info/${id}`, { headers: auth });
+		for (let i = 0; i < 4 && info.status === 'magnet_conversion'; i++) {
+			await new Promise((r) => setTimeout(r, 700));
+			info = await ask<Info>(`${base}/torrents/info/${id}`, { headers: auth });
+		}
+	}
+	if (info.status === 'waiting_files_selection') {
+		const file = pickFileOf(info.files ?? [], release, (f) => f.path, (f) => f.bytes, (f) => f.id === (release.fileIdx ?? -2) + 1);
+		if (!file) return { url: null, percent: 0, why: 'Real-Debrid found no video in it', failed: true };
+		await ask(`${base}/torrents/selectFiles/${id}`, { method: 'POST', headers: auth, body: form({ files: String(file.id) }) });
+		info = await ask<Info>(`${base}/torrents/info/${id}`, { headers: auth });
+	}
+	if (info.status === 'magnet_conversion') return { url: null, percent: 0, why: 'Real-Debrid is looking for people sharing it', failed: false };
+	if (info.status === 'downloaded' && info.links?.length) {
+		const open = await ask<{ download?: string }>(`${base}/unrestrict/link`, { method: 'POST', headers: auth, body: form({ link: info.links[0] }) });
+		return { url: open.download ?? null, percent: 100, why: open.download ? '' : "Real-Debrid didn't give a link", failed: !open.download };
+	}
+	if (/^(magnet_error|error|virus|dead)$/.test(info.status)) {
+		forget('realdebrid', release);
+		await ask(`${base}/torrents/delete/${id}`, { method: 'DELETE', headers: auth }).catch(() => null);
+		return { url: null, percent: 0, why: `Real-Debrid couldn't get it (${info.status.replace('_', ' ')})`, failed: true };
+	}
+	return { url: null, percent: info.progress ?? 0, why: along('Real-Debrid', info.progress ?? 0, info.seeders), failed: false };
+}
+
+async function getTorBox(release: Release, key: string): Promise<Getting> {
+	const base = BASE.torbox;
+	const auth = { Authorization: `Bearer ${key}` };
+	type Answer<T> = { success?: boolean; detail?: string; data?: T };
+	type Item = { id: number; progress?: number; seeds?: number; download_finished?: boolean; download_present?: boolean; download_state?: string; files?: { id: number; name: string; short_name?: string; size: number }[] };
+	let id = remembered('torbox', release);
+	if (!id) {
+		const made = await ask<Answer<{ torrent_id: number }>>(`${base}/torrents/createtorrent`, { method: 'POST', headers: auth, body: form({ magnet: magnet(release.hash), allow_zip: 'false' }) });
+		if (!made.data?.torrent_id) return { url: null, percent: 0, why: made.detail || "TorBox didn't take it", failed: true };
+		id = String(made.data.torrent_id);
+		remember('torbox', release, id);
+	}
+	const listed = await ask<Answer<Item>>(`${base}/torrents/mylist?id=${id}&bypass_cache=true`, { headers: auth }).catch(() => null);
+	const item = listed?.data;
+	if (!item) {
+		forget('torbox', release);
+		return { url: null, percent: 0, why: 'TorBox no longer has it: ask again', failed: false };
+	}
+	if (/^(error|failed|stalled \(no seeds\))$/i.test(item.download_state ?? '') && !item.download_present) {
+		return { url: null, percent: (item.progress ?? 0) * 100, why: `TorBox is waiting for someone to share it (${item.download_state})`, failed: false };
+	}
+	if (item.download_finished || item.download_present) {
+		const file = pickFileOf(item.files ?? [], release, (f) => f.short_name || f.name, (f) => f.size, (_, i) => i === release.fileIdx);
+		if (!file) return { url: null, percent: 100, why: 'TorBox found no video in it', failed: true };
+		const link = await ask<Answer<string>>(`${base}/torrents/requestdl?token=${encodeURIComponent(key)}&torrent_id=${id}&file_id=${file.id}&zip_link=false`, { headers: auth });
+		return { url: typeof link.data === 'string' ? link.data : null, percent: 100, why: '', failed: typeof link.data !== 'string' };
+	}
+	return { url: null, percent: (item.progress ?? 0) * 100, why: along('TorBox', (item.progress ?? 0) * 100, item.seeds), failed: false };
+}
+
+async function getAllDebrid(release: Release, key: string): Promise<Getting> {
+	const base = BASE.alldebrid;
+	const auth = { Authorization: `Bearer ${key}` };
+	type Magnet = { id: number; statusCode?: number; status?: string; downloaded?: number; size?: number; seeders?: number };
+	let id = remembered('alldebrid', release);
+	if (!id) {
+		const up = await ask<{ status?: string; data?: { magnets: { id: number }[] } }>(`${base}/v4/magnet/upload?agent=${AGENT}`, { method: 'POST', headers: auth, body: form({ 'magnets[]': magnet(release.hash) }) });
+		const added = up.data?.magnets?.[0];
+		if (!added?.id) return { url: null, percent: 0, why: "AllDebrid didn't take it", failed: true };
+		id = String(added.id);
+		remember('alldebrid', release, id);
+	}
+	const status = await ask<{ data?: { magnets?: Magnet | Magnet[] } }>(`${base}/v4.1/magnet/status?agent=${AGENT}&id=${id}`, { headers: auth });
+	const m = Array.isArray(status.data?.magnets) ? status.data?.magnets[0] : status.data?.magnets;
+	if (!m) {
+		forget('alldebrid', release);
+		return { url: null, percent: 0, why: 'AllDebrid no longer has it: ask again', failed: false };
+	}
+	if (m.statusCode === 4) {
+		const answer = await debridLink('alldebrid', key, release);
+		return { url: answer, percent: 100, why: answer ? '' : "AllDebrid didn't give a link", failed: !answer };
+	}
+	if ((m.statusCode ?? 0) >= 5) {
+		forget('alldebrid', release);
+		return { url: null, percent: 0, why: `AllDebrid couldn't get it (${m.status ?? 'error'})`, failed: true };
+	}
+	const percent = m.size ? ((m.downloaded ?? 0) / m.size) * 100 : 0;
+	return { url: null, percent, why: along('AllDebrid', percent, m.seeders), failed: false };
+}
+
+async function getPremiumize(release: Release, key: string): Promise<Getting> {
+	const base = BASE.premiumize;
+	const withKey = (path: string) => `${base}${path}${path.includes('?') ? '&' : '?'}apikey=${encodeURIComponent(key)}`;
+	type Transfer = { id: string; status: string; progress?: number; message?: string };
+	let id = remembered('premiumize', release);
+	if (!id) {
+		const made = await ask<{ status?: string; id?: string; message?: string }>(withKey('/transfer/create'), { method: 'POST', body: form({ src: magnet(release.hash) }) });
+		if (made.status !== 'success' || !made.id) return { url: null, percent: 0, why: made.message || "Premiumize didn't take it", failed: true };
+		id = made.id;
+		remember('premiumize', release, id);
+	}
+	const list = await ask<{ transfers?: Transfer[] }>(withKey('/transfer/list'));
+	const t = list.transfers?.find((one) => one.id === id);
+	if (!t || /^(finished|seeding)$/.test(t.status)) {
+		// Done (it's then in Premiumize's cache), or gone from the list: either way, ask for the file.
+		const url = await debridLink('premiumize', key, release);
+		if (url) return { url, percent: 100, why: '', failed: false };
+		forget('premiumize', release);
+		return { url: null, percent: 0, why: t ? "Premiumize didn't give a link" : 'Premiumize no longer has it: ask again', failed: Boolean(t) };
+	}
+	if (/^(error|deleted|banned|timeout)$/.test(t.status)) {
+		forget('premiumize', release);
+		return { url: null, percent: 0, why: `Premiumize couldn't get it (${t.message || t.status})`, failed: true };
+	}
+	const percent = (t.progress ?? 0) * 100;
+	return { url: null, percent, why: along('Premiumize', percent), failed: false };
+}
+
+/** A cached release's link through the service's usual way (`link`), or null. */
+const debridLink = (service: DebridService, key: string, release: Release) => serviceFor(service, key).link(release).catch(() => null);
+
+/**
+ * A release's file from the debrid service: its link when ready, else the service is set to get
+ * it (or asked how far along it is). Never throws.
+ */
+export async function getOnDebrid(release: Release, service: DebridService, key: string): Promise<Getting> {
+	const name = serviceName(service);
+	try {
+		if (service === 'realdebrid') return await getRealDebrid(release, key);
+		if (service === 'torbox') return await getTorBox(release, key);
+		if (service === 'alldebrid') return await getAllDebrid(release, key);
+		return await getPremiumize(release, key);
+	} catch (e) {
+		return { url: null, percent: 0, why: e instanceof DebridProblem ? e.message : `${name} couldn't be reached`, failed: false };
+	}
 }
 
 /**

@@ -26,7 +26,10 @@ const noted: string[][] = [];
 export function notePieces(pieces: string[]): void {
 	pieces.forEach((url, at) => order.set(url, { pieces, at }));
 	noted.push(pieces);
-	while (noted.length > 20) for (const url of noted.shift()!) if (order.get(url)?.pieces !== pieces) order.delete(url);
+	while (noted.length > 20) {
+		const oldest = noted.shift()!;
+		for (const url of oldest) if (order.get(url)?.pieces === oldest) order.delete(url);
+	}
 }
 
 /** Whether an address is a video piece from a playlist the relay has seen. */

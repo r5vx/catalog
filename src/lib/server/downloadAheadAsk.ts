@@ -32,12 +32,16 @@ async function text(path: string): Promise<string> {
  * that's separate. `keepUntil`: when it may be deleted if nobody has played it (else the usual six
  * hours). Answers with the copies' names being downloaded, none if it couldn't be started.
  */
-export async function downloadCopyAhead(shareKey: string, fid: number, keepUntil = 0, most = 0): Promise<string[]> {
-	if (!shareKey || !fid || !downloadKindOf(shareKey)) return [];
+export async function downloadCopyAhead(shareKey: string, fid: number, keepUntil = 0, most = 0, showbox = false): Promise<string[]> {
+	// Showbox's copies (a Febbox share key and a file number) only when the player asks for the next
+	// episode, never from a page being looked at: that would spend Febbox's allowance on browsing.
+	const isShowbox = showbox && fid > 0 && !downloadKindOf(shareKey);
+	if (!shareKey || !fid || (!downloadKindOf(shareKey) && !isShowbox)) return [];
 	const started: string[] = [];
 	try {
-		const stream = (await (await ownFetch(`/api/watch/stream?share_key=${encodeURIComponent(shareKey)}&fid=${fid}`, { signal: AbortSignal.timeout(120_000) })).json()) as { url?: string };
-		if (!stream.url) return [];
+		const stream = (await (await ownFetch(`/api/watch/stream?share_key=${encodeURIComponent(shareKey)}&fid=${fid}${isShowbox ? '&ahead=1' : ''}`, { signal: AbortSignal.timeout(120_000) })).json()) as { url?: string };
+		// (Showbox comes back as Febbox's own address when there's no room: nothing to download then.)
+		if (!stream.url || !stream.url.startsWith('/api/watch/relay')) return [];
 		let playlist = pathOf(stream.url);
 		let list = await text(playlist);
 		// A choice of qualities: the one the player picks.

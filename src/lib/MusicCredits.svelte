@@ -12,7 +12,7 @@
 	type Album = { title: string; year: string; artist: string; link: string; tracks: Track[] };
 	type Theme = { kind: 'Opening' | 'Ending'; title: string; artist: string; episodes: string };
 
-	let { source, sourceId, title, year, type, anime = false, back = null }: { source: string; sourceId: string; title: string; year: string | number | null; type: 'movie' | 'tv'; anime?: boolean; back?: string | null } = $props();
+	let { source, sourceId = '', title, year, type, anime = false, back = null }: { source: string; sourceId?: string; title: string; year: string | number | null; type: 'movie' | 'tv'; anime?: boolean; back?: string | null } = $props();
 
 	let music = $state<{ people: Person[]; albums: Album[]; themes: Theme[] } | null>(null);
 	let failed = $state(false);

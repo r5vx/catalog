@@ -383,6 +383,54 @@
 		</form>
 	</section>
 
+	<!-- Nyaa's anime torrents (src/lib/server/sources/nyaa.ts): one more copy of every anime episode and film,
+	     got through the debrid service, so only shown once one is saved. -->
+	{#if data.debrid.on}
+	<section>
+		<div class="head">
+			<h2>Nyaa</h2>
+			<span class="pill" class:completed={data.nyaa}>{data.nyaa ? 'On' : 'Off'}</span>
+		</div>
+
+		<p class="muted">
+			Optional. Adds a Nyaa copy of every anime episode and film: fan releases, including old shows no site
+			streams. {data.debrid.name} gets the torrent on its own servers and this computer plays it from there, so
+			your internet connection never joins the torrent. A release nobody has asked {data.debrid.name} for yet
+			can take minutes or hours to arrive. Played only when you pick it in Files or nothing else has the episode.
+		</p>
+
+		{#if form?.nyaaOk}
+			<p class="msg good" role="status">{form.nyaaOk}</p>
+		{/if}
+
+		<form method="POST" action="?/saveNyaa">
+			<input type="hidden" name="nyaa" value={data.nyaa ? '0' : '1'} />
+			<button type="submit" class="btn" class:btn-primary={!data.nyaa}>{data.nyaa ? 'Turn off' : 'Turn on'}</button>
+		</form>
+
+		{#if data.nyaa && data.nyaaWishes.length}
+			<h3 class="wish-head">Waiting for</h3>
+			<p class="muted">Picked while nobody was sharing them. Looked for again every 6 hours, and sent to {data.debrid.name} once someone shares them.</p>
+			<ul class="wishes">
+				{#each data.nyaaWishes as w (w.shareKey)}
+					<li>
+						<span class="wish-name">{w.name}{w.season ? ` S${w.season}E${w.episode}` : ''}</span>
+						<span class="pill" class:completed={w.state === 'ready'}>{w.state === 'ready' ? 'Ready' : w.state === 'getting' ? 'Arriving' : 'Waiting'}</span>
+						{#if w.note && w.state !== 'ready'}<span class="muted wish-note">{w.note}</span>{/if}
+						<form method="POST" action="?/removeNyaaWish">
+							<input type="hidden" name="shareKey" value={w.shareKey} />
+							<button type="submit" class="btn btn-danger">Remove</button>
+						</form>
+					</li>
+				{/each}
+			</ul>
+			<form method="POST" action="?/checkNyaaWishes">
+				<button type="submit" class="btn">Look now</button>
+			</form>
+		{/if}
+	</section>
+	{/if}
+
 	{#snippet debridForm()}
 		<form method="POST" action="?/saveDebrid" class="inline-form">
 			<select name="debridService" aria-label="Debrid service" value={debridChoice} onchange={(e) => (debridPick = e.currentTarget.value)}>
@@ -429,6 +477,13 @@
 </div>
 
 <style>
+	/* Nyaa's wishlist: one line per episode waited for. */
+	.wish-head { margin: 8px 0 0; font-size: 0.95rem; }
+	.wishes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+	.wishes li { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+	.wish-name { font-weight: 600; }
+	.wish-note { flex-basis: 100%; font-size: 0.85rem; }
+
 	.sections {
 		display: flex;
 		flex-direction: column;

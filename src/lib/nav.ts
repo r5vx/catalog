@@ -17,12 +17,12 @@ export function rememberLibrary(search: string): void {
 }
 
 export function libraryHref(): string {
-	if (!browser) return '/';
+	if (!browser) return '/?library=1';
 	try {
 		const search = sessionStorage.getItem(KEY) ?? '';
-		return search ? `/${search}` : '/';
+		return search ? `/${search}` : '/?library=1';
 	} catch {
-		return '/';
+		return '/?library=1';
 	}
 }
 
@@ -38,10 +38,10 @@ export function rememberBeforeSettings(url: string, scrollY: number): void {
 
 /** Where Settings' back link goes: the page you came from, scrolled to where you were. */
 export function beforeSettings(): { url: string; scrollY: number } {
-	if (!browser) return { url: '/', scrollY: 0 };
+	if (!browser) return { url: '/?library=1', scrollY: 0 };
 	try {
 		const saved = JSON.parse(sessionStorage.getItem(SETTINGS_KEY) ?? 'null');
 		if (saved && typeof saved.url === 'string' && saved.url.startsWith('/')) return saved;
 	} catch {}
-	return { url: '/', scrollY: 0 };
+	return { url: '/?library=1', scrollY: 0 };
 }

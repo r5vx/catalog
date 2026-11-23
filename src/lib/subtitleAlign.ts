@@ -48,7 +48,7 @@ function subtitleGrid(cues: TimedCue[], from: number, frames: number, size = FRA
 	for (const cue of cues) {
 		const a = Math.max(0, edge[0]((cue.start - from) / size));
 		const b = Math.min(frames, edge[1]((cue.end - from) / size));
-		for (let i = a; i < b; i++) grid[i] = 1;
+		if (b > a) grid.fill(1, a, b);
 	}
 	return grid;
 }

@@ -178,6 +178,9 @@ end sub
 
 ' Waits for a pause in typing, so it doesn't search every letter.
 sub onTyping()
+    m.searchAsk = invalid
+    m.results.visible = false
+    m.found.visible = true
     m.pause.control = "stop"
     m.pause.control = "start"
 end sub
@@ -192,10 +195,11 @@ sub search()
     end if
     m.asked = words
     m.found.text = "Searching…"
-    api("/api/youtube/search", { q: words }, "onResults")
+    m.searchAsk = api("/api/youtube/search", { q: words }, "onResults")
 end sub
 
 sub onResults(event as Object)
+    if not isCurrentRequest(event, m.searchAsk) then return
     answer = event.getData()
     if m.keyboard.text.Trim() <> m.asked then return
     if not answer.ok then

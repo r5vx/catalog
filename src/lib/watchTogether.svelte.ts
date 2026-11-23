@@ -52,6 +52,7 @@ export const together = $state({
 	people: [] as RoomPerson[],
 	state: null as RoomState | null,
 	problem: '',
+	notice: '',
 	/**
 	 * Watching along with this friend (their name): this screen follows the room and never moves
 	 * it, like listening along on Spotify. '' in a room joined by its code, where everyone's play,
@@ -81,6 +82,7 @@ const DRIFTED = 3;
 let rev = 0;
 /** How far the server's clock is ahead of this screen's. */
 let clockAhead = 0;
+let roomChange = 0;
 let timer: ReturnType<typeof setTimeout> | undefined;
 /** The room was left by hand: the player doesn't start another by itself until one is started or joined again. */
 let leftByHand = false;
@@ -102,6 +104,8 @@ let seekTakes = 0;
 let chasing = 0;
 
 async function ask<T>(path: string, method = 'GET', body?: unknown): Promise<T | null> {
+	const mine = roomChange;
+	const code = together.code;
 	try {
 		const response = await fetch(`/api/online/c/${path}`, {
 			method,
@@ -109,6 +113,7 @@ async function ask<T>(path: string, method = 'GET', body?: unknown): Promise<T |
 			body: body === undefined ? undefined : JSON.stringify(body)
 		});
 		const data = await response.json().catch(() => null);
+		if (mine !== roomChange || code !== together.code) return null;
 		if (!response.ok) {
 			together.problem = data?.error ?? "The room couldn't be reached";
 			return null;
@@ -116,6 +121,7 @@ async function ask<T>(path: string, method = 'GET', body?: unknown): Promise<T |
 		together.problem = '';
 		return data as T;
 	} catch {
+		if (mine !== roomChange || code !== together.code) return null;
 		together.problem = "The room couldn't be reached";
 		return null;
 	}
@@ -145,13 +151,26 @@ function offerIfNew(before: RoomState | null, state: RoomState, first: boolean):
 	together.offer = state;
 }
 
+function updatePeople(people: RoomPerson[], first = false): void {
+	if (!first) {
+		const joined = people.filter((person) => !person.me && !together.people.some((known) => known.id === person.id));
+		const left = together.people.filter((person) => !person.me && !people.some((known) => known.id === person.id));
+		const notice = [...joined.map((person) => `${person.name} joined`), ...left.map((person) => `${person.name} left`)].join(' · ');
+		if (notice) {
+			together.notice = notice;
+			attached?.note(notice);
+		}
+	} else together.notice = '';
+	together.people = people;
+}
+
 function took(answer: RoomAnswer): void {
 	rev = answer.rev;
 	clockAhead = answer.now - Date.now();
 	const first = together.code !== answer.code;
 	together.code = answer.code;
 	together.host = answer.host;
-	together.people = answer.people;
+	updatePeople(answer.people, first);
 	const before = together.state;
 	together.state = answer.state;
 	if (answer.chat) takeChat(answer.chat, true);
@@ -175,10 +194,12 @@ function lookLater(): void {
 
 /** A room started here; its code is in `together.code`. */
 export async function startRoom(): Promise<boolean> {
+	const mine = ++roomChange;
 	leftByHand = false;
 	startedByPlayer = false;
 	const now = attached ? stateNow() : { title: '', type: 'movie', year: '', season: 0, episode: 0, playing: false, position: 0 };
 	const answer = await ask<RoomAnswer>('rooms', 'POST', now);
+	if (mine !== roomChange) return false;
 	if (answer) took(answer);
 	return Boolean(answer);
 }
@@ -190,7 +211,9 @@ export async function joinRoom(code: string, following = ''): Promise<boolean> {
 		together.problem = 'A room code is six letters and digits';
 		return false;
 	}
+	const mine = ++roomChange;
 	const answer = await ask<RoomAnswer>(`rooms/${clean}/join?msg=`, 'POST', {});
+	if (mine !== roomChange) return false;
 	if (answer) {
 		leftByHand = false;
 		startedByPlayer = false;
@@ -207,6 +230,7 @@ export async function joinRoom(code: string, following = ''): Promise<boolean> {
 }
 
 export function leaveRoom(byHand = true): void {
+	roomChange++;
 	const code = together.code;
 	leftByHand = byHand;
 	startedByPlayer = false;
@@ -215,6 +239,7 @@ export function leaveRoom(byHand = true): void {
 	together.code = '';
 	together.state = null;
 	together.people = [];
+	together.notice = '';
 	together.problem = '';
 	together.following = '';
 	together.offer = null;
@@ -236,7 +261,11 @@ export function rejoinKeptRoom(): void {
 		following = localStorage.getItem(KEPT_FOLLOWING) ?? '';
 	} catch {}
 	// (A room nobody else is in is left again: it was this screen's own, from watching earlier.)
-	if (kept) void joinRoom(kept, following).then((ok) => (!ok || !together.people.some((person) => !person.me)) && leaveRoom(false));
+	if (kept) {
+		const joining = joinRoom(kept, following);
+		const mine = roomChange;
+		void joining.then((ok) => mine === roomChange && (!ok || !together.people.some((person) => !person.me)) && leaveRoom(false));
+	}
 }
 
 /**
@@ -251,11 +280,14 @@ export function playerClosed(): void {
 
 async function look(): Promise<void> {
 	if (!together.code) return;
+	const mine = roomChange;
+	const code = together.code;
 	// Who's here as this screen knows it: the room answers with everyone when that's changed, even
 	// with nothing new playing (a host never saw who joined: only what's playing moves `rev`).
 	const known = together.people.map((person) => person.id).join(',');
 	// (`msg`: the room's chat and whispers after the newest one this screen has, ride along.)
-	const answer = await ask<RoomAnswer>(`rooms/${together.code}?rev=${rev}&people=${encodeURIComponent(known)}&msg=${chat.known ? chat.last : ''}`);
+	const answer = await ask<RoomAnswer>(`rooms/${code}?rev=${rev}&people=${encodeURIComponent(known)}&msg=${chat.known ? chat.last : ''}`);
+	if (mine !== roomChange || code !== together.code) return;
 	// The room ended (nobody in it for half a day), or this screen was never let in.
 	if (!answer) {
 		if (/No such room|Join the room/.test(together.problem)) leaveRoom();
@@ -265,7 +297,7 @@ async function look(): Promise<void> {
 		clockAhead = answer.now - Date.now();
 		if (answer.chat) takeChat(answer.chat, true);
 		// Someone came or went: only the list changes, nothing is moved on the video.
-		if (answer.people) together.people = answer.people;
+		if (answer.people) updatePeople(answer.people);
 		return;
 	}
 	took(answer);
@@ -307,6 +339,11 @@ export async function nowPlaying(what: Playing): Promise<void> {
 }
 
 const sameThing = (a: Playing, b: Playing) => a.title.toLowerCase() === b.title.toLowerCase() && a.type === b.type && a.season === b.season && a.episode === b.episode;
+
+export function roomPaused(what: Playing): boolean {
+	const state = together.state;
+	return Boolean(together.code && state?.title && sameThing(what, state) && !state.playing && !state.waiting);
+}
 
 /** Why the player itself has the video paused right now ('' when it hasn't): `holdRoom`. */
 let holdReason = '';
@@ -353,8 +390,9 @@ function apply(before: RoomState | null, steady = false): void {
 	const changedHands = !before || before.at !== state.at;
 	if (changedHands || steady) chasing = 0;
 	const apart = Math.abs(video.currentTime - where);
+	const tolerance = state.playing ? (steady ? DRIFTED : OUT_OF_STEP) : 0.1;
 	// (A move still under way isn't started again: on a slow line that would never let it land.)
-	if (apart > (steady ? DRIFTED : OUT_OF_STEP) && Number.isFinite(where) && video.readyState > 0 && !video.seeking) {
+	if (apart > tolerance && Number.isFinite(where) && video.readyState > 0 && !video.seeking) {
 		roomSeekAt = Date.now();
 		// While the room plays on, aim for where it will be once the move has landed.
 		const aim = where + (state.playing ? seekTakes : 0);
@@ -402,12 +440,14 @@ function tell(): void {
 	if (state?.title && !sameThing(mine, state) && !together.host) return;
 	// Already what the room says (an echo of its own doing): nothing to tell.
 	if (state?.title && sameThing(mine, state) && mine.playing === state.playing && (state.waiting ?? '') === mine.waiting && Math.abs(mine.position - roomPosition(state)) < OUT_OF_STEP) return;
-	void ask<RoomAnswer>(`rooms/${together.code}/state`, 'PUT', mine).then((answer) => {
-		if (answer) {
+	const change = roomChange;
+	const code = together.code;
+	void ask<RoomAnswer>(`rooms/${code}/state`, 'PUT', mine).then((answer) => {
+		if (answer && change === roomChange && code === together.code) {
 			rev = answer.rev;
 			clockAhead = answer.now - Date.now();
 			together.state = answer.state;
-			together.people = answer.people;
+			updatePeople(answer.people);
 		}
 	});
 }

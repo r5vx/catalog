@@ -2,6 +2,7 @@
 	import { fitOnScreen } from '$lib/fitOnScreen';
 	import MoreButton from '$lib/MoreButton.svelte';
 	import TabIcon from '$lib/TabIcon.svelte';
+	import ThisWeekDot from '$lib/ThisWeekDot.svelte';
 	import { page } from '$app/state';
 	import { invalidateAll } from '$app/navigation';
 	import { p } from '$lib/altText';
@@ -34,7 +35,7 @@
 		if (slug) params.set('cat', slug);
 
 		const query = params.toString();
-		return query ? `/?${query}` : '/';
+		return query ? `/?${query}` : '/?library=1';
 	}
 
 	/* ------------------------------------------------ the tabs, in your order */
@@ -43,9 +44,7 @@
 
 	const allTabs = $derived<Tab[]>([
 		{ key: 'all', href: link(''), emoji: '', label: pm ? p('All') : 'All', count: total },
-		...(watchingCount > 0
-			? [{ key: 'watching', href: link('watching'), emoji: '▶', label: pm ? p('Continue Watching') : 'Continue Watching', count: watchingCount }]
-			: []),
+		{ key: 'new', href: '/new', emoji: '', label: 'Home', count: null },
 		...categories.map((c) => ({ key: c.slug, href: link(c.slug), emoji: c.emoji, label: c.name, count: countByCategory[c.id] ?? 0 })),
 		{ key: 'friends', href: link('friends'), emoji: '👥', label: pm ? p('Friends') : 'Friends', count: friendCount || null },
 		{ key: 'orders', href: '/orders', emoji: '🗂️', label: 'Watch list', count: null },
@@ -54,7 +53,7 @@
 
 	// Drag a tab to move it. The order is saved in settings; a tab it doesn't mention
 	// (a new category, say) keeps its usual place, after the ones that were moved.
-	const savedOrder = $derived<string[]>(page.data.tabOrder ?? []);
+	const savedOrder = $derived<string[]>((page.data.tabOrder ?? []).map((key: string) => key === 'watching' ? 'new' : key));
 	let changedOrder = $state<string[] | null>(null);
 	const order = $derived(changedOrder ?? savedOrder);
 
@@ -67,7 +66,7 @@
 		allTabs.filter((t) => t.key === 'all' || shown(t.key)).sort((a, b) => rank(a.key) - rank(b.key))
 	);
 
-	const isActive = (key: string) => (key === 'all' ? active === '' : active === key);
+	const isActive = (key: string) => key === 'new' ? page.url.pathname === '/new' : (key === 'all' ? active === '' : active === key);
 
 	let dragging = $state<string | null>(null);
 	/** The tab the dragged one would land in front of; '' means at the end. */
@@ -138,13 +137,13 @@
 
 	// Right-click a tab to hide it; right-click the empty part of the row to bring tabs back.
 	// Saved in settings, so they stay hidden on every device.
-	const savedHidden = $derived<string[]>(page.data.hiddenTabs ?? []);
+	const savedHidden = $derived<string[]>((page.data.hiddenTabs ?? []).filter((key: string) => key !== 'watching'));
 	let changedHidden = $state<string[] | null>(null);
 	const hidden = $derived(changedHidden ?? savedHidden);
 	const shown = (key: string) => !hidden.includes(key);
 
 	const FIXED_NAMES: Record<string, string> = {
-		watching: 'Continue Watching',
+		new: 'Home',
 		friends: 'Friends',
 		orders: 'Watch list',
 		notes: 'Notes'
@@ -190,6 +189,7 @@
 		>
 			{#if tab.key !== 'all' || vertical}<TabIcon name={tab.key} />{/if}
 			{tab.label}
+			{#if tab.key === 'new'}<ThisWeekDot />{/if}
 			{#if tab.count !== null}<span class="n tabular">{tab.count}</span>{/if}
 		</a>
 	{/each}

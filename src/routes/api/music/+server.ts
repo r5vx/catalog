@@ -9,8 +9,8 @@ import type { RequestHandler } from './$types';
 export const GET: RequestHandler = async ({ url }) => {
 	const source = url.searchParams.get('source') ?? '';
 	const sourceId = url.searchParams.get('id') ?? '';
-	const title = (url.searchParams.get('title') ?? '').slice(0, 200);
-	if (!/^(tmdb|anilist)$/.test(source) || !sourceId || !title) return json({ people: [], albums: [], themes: [] });
+	const title = (url.searchParams.get('title') ?? '').trim().slice(0, 200);
+	if (!title || (source !== 'manual' && (!/^(tmdb|anilist)$/.test(source) || !sourceId))) return json({ people: [], albums: [], themes: [] });
 	const music = await musicFor({
 		source,
 		sourceId,

@@ -18,13 +18,14 @@
 import { noteRelayPiece } from './playbackLog';
 import { trustedVideoHost } from './relayHosts';
 import { keepPiece, pieceKeyOf, storedPiece, watching } from './episodeDownloads';
+import { RELAY_PIECE_TIMEOUT_MS } from '../relayTimeout';
 
 /** Pieces longer than this are split. */
 const LONG = 12;
 /** Roughly how long each part should be. */
 const PART = 6;
 /** No answer, or no new data, for this long counts as the video server having stopped. */
-const STALL_MS = 30_000;
+const STALL_MS = RELAY_PIECE_TIMEOUT_MS;
 /**
  * No answer yet after this long: the same thing is asked for again alongside, and whichever
  * answers first is used. On 2026-10-20 one SVU piece hung for 53 s while every other came in

@@ -22,7 +22,7 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ action: 'choose', id })
 			});
-			await goto('/tv', { invalidateAll: true });
+			await goto(data.openOn === 'library' ? '/tv' : '/tv/new', { invalidateAll: true });
 		} finally {
 			choosing = false;
 		}

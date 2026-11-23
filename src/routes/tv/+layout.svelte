@@ -6,6 +6,7 @@
 	import { watchHref } from '$lib/friendLinks';
 	import TvMenu from '$lib/tv/TvMenu.svelte';
 	import Wordmark from '$lib/Wordmark.svelte';
+	import ThisWeekDot from '$lib/ThisWeekDot.svelte';
 	import { p } from '$lib/altText';
 	import { onMount, tick, type Snippet } from 'svelte';
 	import type { LayoutData } from './$types';
@@ -23,7 +24,8 @@
 
 	const MENU = [
 		{ href: '/tv/search', label: 'Search', icon: 'search' },
-		{ href: '/tv', label: 'Home', icon: 'home' },
+		{ href: '/tv', label: 'Library', icon: 'home' },
+		{ href: '/tv/new', label: 'Home', icon: 'calendar' },
 		{ href: '/tv/browse/movies', label: 'Movies', icon: 'movie' },
 		{ href: '/tv/browse/tv', label: 'TV Shows', icon: 'tv' },
 		{ href: '/tv/browse/anime', label: 'Anime', icon: 'anime' },
@@ -118,6 +120,8 @@
 						<circle cx="10.5" cy="10.5" r="6.5" /><path d="M15.5 15.5 21 21" />
 					{:else if item.icon === 'home'}
 						<path d="M3 11 12 4l9 7" /><path d="M5.5 9.5V20h13V9.5" />
+					{:else if item.icon === 'calendar'}
+						<rect x="3" y="5" width="18" height="16" rx="2" /><path d="M7 3v4M17 3v4M3 11h18" />
 					{:else if item.icon === 'movie'}
 						<rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 9h18M8 5v4M16 5v4" />
 					{:else if item.icon === 'tv'}
@@ -141,7 +145,7 @@
 						<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
 					{/if}
 				</svg>
-				<span class="label">{item.label}</span>
+				<span class="label">{item.label}{#if item.href === '/tv/new'} <ThisWeekDot />{/if}</span>
 			</a>
 		{/each}
 	</nav>
@@ -224,7 +228,7 @@
 		padding: 10vh 0 0 1.6vw;
 		display: flex;
 		flex-direction: column;
-		gap: 0.6vw;
+		gap: 0.35vw;
 		background: linear-gradient(90deg, var(--paper) 55%, transparent);
 		/* The rest of the screen, darkened while the menu's open (a shadow spread over all of it). */
 		box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0%);
@@ -286,7 +290,7 @@
 		align-items: center;
 		gap: 1.4vw;
 		width: fit-content;
-		padding: 0.8vw 1.2vw 0.8vw 0.9vw;
+		padding: 0.55vw 1.2vw 0.55vw 0.9vw;
 		border-radius: 100vw;
 		color: var(--ink-soft);
 		text-decoration: none;

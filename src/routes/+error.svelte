@@ -11,7 +11,7 @@
 	<h1>{page.status}</h1>
 	<p>{page.error?.message ?? 'Something went wrong.'}</p>
 	<button type="button" class="back-link" onclick={goBack}>← Go back</button>
-	<a href="/">Library</a>
+	<a href="/?library=1">Library</a>
 </div>
 
 <style>

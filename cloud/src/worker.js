@@ -50,7 +50,9 @@ function lookOf(value) {
 	const font = typeof v.font === 'string' && /^[a-z0-9-]{0,30}$/.test(v.font) ? v.font : '';
 	const effect = v.effect === 'gradient' || v.effect === 'glow' ? v.effect : 'solid';
 	const colors = (Array.isArray(v.colors) ? v.colors : []).filter((c) => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c)).slice(0, 2).map((c) => c.toLowerCase());
-	return font || colors.length ? { font, effect, colors } : null;
+	if (!font && !colors.length) return null;
+	// Extras on top (Catalog 4.7 on): a glow over a gradient, a shine. Older Catalogs ignore them.
+	return { font, effect, colors, ...(v.glow === true ? { glow: true } : {}), ...(v.shimmer === true ? { shimmer: true } : {}) };
 }
 
 const json = (body, status = 200, headers = {}) =>
@@ -367,8 +369,9 @@ async function answer(request, env, ctx) {
 		if (picture && (picture.length > 90_000 || !PICTURE.test(picture))) return bad(400, "That picture can't be used");
 		if (name) await env.DB.prepare('UPDATE accounts SET name = ? WHERE id = ?').bind(name, account.id).run();
 		if (picture === '') await env.DB.prepare('DELETE FROM avatars WHERE account = ?').bind(account.id).run();
-		// (The number never goes back to one it had, even after the picture was taken away: Catalogs keep pictures by it.)
-		if (picture) await env.DB.prepare('INSERT INTO avatars (account, image, rev) VALUES (?, ?, ?) ON CONFLICT (account) DO UPDATE SET image = excluded.image, rev = excluded.rev').bind(account.id, picture, Math.floor(Date.now() / 1000)).run();
+		// (The number never goes back to one it had, even after the picture was taken away: Catalogs keep pictures by it.
+		// Milliseconds since 2026-11-22: seconds gave a picture changed twice in a second the old one's number.)
+		if (picture) await env.DB.prepare('INSERT INTO avatars (account, image, rev) VALUES (?, ?, ?) ON CONFLICT (account) DO UPDATE SET image = excluded.image, rev = excluded.rev').bind(account.id, picture, Date.now()).run();
 		const now = await env.DB.prepare('SELECT a.id, a.name, a.google_sub, a.email, v.rev AS avatar FROM accounts a LEFT JOIN avatars v ON v.account = a.id WHERE a.id = ?').bind(account.id).first();
 		return json({ ok: true, account: publicAccount(now) });
 	}
@@ -457,11 +460,8 @@ async function answer(request, env, ctx) {
 		if (!row) return bad(404, "That code isn't right, or it ran out");
 		if (await env.DB.prepare('SELECT 1 FROM friends WHERE a = ? AND b = ?').bind(account.id, row.account).first()) return bad(400, "You're friends already");
 		if (row.account === account.id) return bad(400, "That's your own code");
-		const now = Date.now();
-		await env.DB.batch([
-			env.DB.prepare('INSERT OR IGNORE INTO friends (a, b, since) VALUES (?, ?, ?)').bind(account.id, row.account, now),
-			env.DB.prepare('INSERT OR IGNORE INTO friends (a, b, since) VALUES (?, ?, ?)').bind(row.account, account.id, now)
-		]);
+		// (befriend also clears a request either had sent, which otherwise stayed waiting for an answer.)
+		await befriend(env, account.id, row.account, Date.now());
 		const friend = await env.DB.prepare('SELECT name FROM accounts WHERE id = ?').bind(row.account).first();
 		return json({ ok: true, name: friend?.name ?? '' });
 	}
@@ -754,13 +754,14 @@ async function answer(request, env, ctx) {
 			);
 		}
 		if (banner === '') writes.push(env.DB.prepare('UPDATE looks SET banner = NULL, banner_rev = 0 WHERE account = ?').bind(account.id));
-		// (The number is the time in seconds, so it never goes back to one a Catalog kept a picture by.)
+		// (The number is the time, so it never goes back to one a Catalog kept a picture by: in milliseconds,
+		// as seconds gave a banner changed twice in a second the old one's number, and friends kept the old one.)
 		if (banner)
 			writes.push(
 				env.DB.prepare('INSERT INTO looks (account, banner, banner_rev) VALUES (?, ?, ?) ON CONFLICT (account) DO UPDATE SET banner = excluded.banner, banner_rev = excluded.banner_rev').bind(
 					account.id,
 					banner,
-					Math.floor(Date.now() / 1000)
+					Date.now()
 				)
 			);
 		await env.DB.batch(writes);
@@ -900,10 +901,10 @@ async function answer(request, env, ctx) {
 		(await env.DB.prepare('SELECT code FROM room_members WHERE account = ? AND at > ?').bind(account.id, Date.now() - 2 * MINUTE).all()).results.map((r) => r.code);
 	const messageOut = (r) => ({ id: r.id, from: r.from_account, name: r.name ?? '', avatar: r.avatar ?? 0, to: r.to_account, room: r.room, text: r.body, at: r.at });
 	const MESSAGE_FIELDS = 'm.id, m.from_account, m.to_account, m.room, m.body, m.at, a.name, v.rev AS avatar FROM messages m JOIN accounts a ON a.id = m.from_account LEFT JOIN avatars v ON v.account = m.from_account';
-	/** Whispers not read yet, from everyone. */
+	/** Whispers not read yet, from friends (one removed can't be opened, so theirs can't be read). */
 	const unreadCount = async () =>
 		(
-			await env.DB.prepare('SELECT count(*) AS n FROM messages m LEFT JOIN message_reads r ON r.account = ?1 AND r.other = m.from_account WHERE m.to_account = ?1 AND m.id > COALESCE(r.last, 0)')
+			await env.DB.prepare('SELECT count(*) AS n FROM messages m JOIN friends f ON f.a = ?1 AND f.b = m.from_account LEFT JOIN message_reads r ON r.account = ?1 AND r.other = m.from_account WHERE m.to_account = ?1 AND m.id > COALESCE(r.last, 0)')
 				.bind(account.id)
 				.first()
 		)?.n ?? 0;

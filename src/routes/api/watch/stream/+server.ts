@@ -7,7 +7,9 @@ export const GET: RequestHandler = async ({ url }) => {
 	const shareKey = url.searchParams.get('share_key');
 	const fid = Number(url.searchParams.get('fid'));
 	const refresh = url.searchParams.get('refresh') === '1';
+	// The computer's own player (streamLink.ts): Showbox downloaded ahead when there's room.
+	const ahead = url.searchParams.get('ahead') === '1';
 
 	if (!shareKey || !fid) return error(400, 'Missing share_key or fid');
-	return json(await streamLink(shareKey, fid, refresh));
+	return json(await streamLink(shareKey, fid, refresh, ahead));
 };

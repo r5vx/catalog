@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { addPlaybackStop, playbackStops } from '$lib/server/playbackLog';
 import { reportProblem } from '$lib/server/online';
+import { reportScreen } from '$lib/server/reportScreen';
 import type { RequestHandler } from './$types';
 
 /** The stops kept (newest first). */
@@ -29,6 +30,6 @@ export const POST: RequestHandler = async ({ request }) => {
 	if (!seen || typeof seen !== 'object') return json({ ok: false }, { status: 400 });
 	const stop = addPlaybackStop(seen as Record<string, unknown>);
 	// Sent to the owner too (Settings → Online), when this Catalog is online and reports are on.
-	if (worthReporting(seen as Record<string, unknown>)) reportProblem('stop', String((seen as { title?: unknown }).title ?? 'A video').slice(0, 160), stop);
+	if (worthReporting(seen as Record<string, unknown>)) reportProblem('stop', String((seen as { title?: unknown }).title ?? 'A video').slice(0, 160), { ...reportScreen(request), ...stop });
 	return json({ ok: true });
 };

@@ -32,7 +32,7 @@ sub showChips()
 end sub
 
 sub load()
-    api("/api/roku/rows", { screen: "library", status: m.status_ }, "onRows")
+    m.rowsAsk = api("/api/roku/rows", { screen: "library", status: m.status_ }, "onRows")
 end sub
 
 sub onChip()
@@ -42,8 +42,15 @@ sub onChip()
 end sub
 
 sub onRows(event as Object)
+    if not isCurrentRequest(event, m.rowsAsk) then return
     answer = event.getData()
     if not answer.ok then
+        if answer.signIn then
+            m.top.action = { go: "connect" }
+            return
+        end if
+        m.grid.visible = false
+        m.status.visible = true
         m.status.text = "Catalog didn't answer. Is it open on the computer?"
         return
     end if

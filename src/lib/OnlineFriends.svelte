@@ -420,6 +420,7 @@
 							<span class="faint">{me?.name ?? ''}</span>
 						{/each}
 					</p>
+					{#if together.notice}<p class="faint small" role="status">{together.notice}</p>{/if}
 					{#if together.state?.title}
 						<p class="what">
 							{together.state.playing ? t('Playing') : together.state.waiting ? t('Loading') : t('Paused')}: {label(together.state)}

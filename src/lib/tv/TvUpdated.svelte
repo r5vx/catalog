@@ -2,7 +2,7 @@
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { isTv } from '$lib/tv';
-	import { TV_APP_VERSION } from '$lib/tvInstall';
+	import { FIRE_TV_CODE, TV_APP_VERSION } from '$lib/tvInstall';
 
 	/**
 	 * A TV keeps the Catalog it loaded until it's reloaded, so after the computer updates, it's
@@ -30,7 +30,6 @@
 	const tvApp = () => (window as unknown as { CatalogTV?: TvApp }).CatalogTV;
 	let appOld = $state(false);
 	let appState = $state('');
-	let appButton: HTMLButtonElement | undefined = $state();
 
 	/*
 	 * Fire TV lets an app install an update only once "Install unknown apps" is switched on for
@@ -44,6 +43,15 @@
 	let stepsButton: HTMLButtonElement | undefined = $state();
 	/** The settings were opened from the steps: back in Catalog with the switch on, the update starts by itself. */
 	let wentToSettings = false;
+
+	/*
+	 * An update the TV app can't install by itself: an app from before 1.4 (no self-update), or one
+	 * whose own install failed. Then it's Downloader, as when it was first put on the TV, and the
+	 * steps say so (owner, 2026-11-22: a TV that needs Downloader should say that).
+	 */
+	let downloader = $state(false);
+	let downloaderWhy = $state('');
+	let downloaderButton: HTMLButtonElement | undefined = $state();
 
 	const LATER = 'catalog:tvAppLater';
 	const DAY = 24 * 60 * 60 * 1000;
@@ -79,20 +87,22 @@
 	function later() {
 		steps = false;
 		appOld = false;
+		downloader = false;
 		try {
 			localStorage.setItem(LATER, String(Date.now()));
 		} catch {}
 	}
 
 	function stepsKey(event: KeyboardEvent) {
-		if (!steps) return;
+		if (!steps && !downloader) return;
 		const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('.tv-steps button'));
 		const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
 		if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'ArrowDown') {
 			const next = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? Math.max(0, at - 1) : Math.min(buttons.length - 1, at + 1);
 			buttons[next]?.focus();
 		} else if (event.key === 'Escape' || event.key === 'GoBack' || event.key === 'BrowserBack' || event.key === 'Backspace') {
-			steps = false;
+			if (downloader) later();
+			else steps = false;
 		} else if (event.key !== 'Enter' && event.key !== ' ') {
 			return;
 		} else if (at < 0) {
@@ -106,12 +116,19 @@
 
 	onMount(() => {
 		const tv = tvApp();
-		if (!tv?.appVersion || !tv.installUpdate) return;
+		if (!tv) return;
 		let putOff = 0;
 		try {
 			putOff = Number(localStorage.getItem(LATER)) || 0;
 		} catch {}
-		appOld = tv.appVersion() < TV_APP_VERSION && Date.now() - putOff > DAY;
+		const offer = Date.now() - putOff > DAY;
+		// Too old to update itself: Downloader's steps instead.
+		if (!tv.appVersion || !tv.installUpdate) {
+			downloader = offer;
+			window.addEventListener('keydown', stepsKey, true);
+			return () => window.removeEventListener('keydown', stepsKey, true);
+		}
+		appOld = tv.appVersion() < TV_APP_VERSION && offer;
 		(window as unknown as { __catalogTvUpdate: (state: string, detail: string) => void }).__catalogTvUpdate = (state, detail) => {
 			if (state === 'downloading') appState = `Getting the update… ${detail}%`;
 			else if (state === 'allow') {
@@ -120,7 +137,13 @@
 			} else if (state === 'confirm') {
 				steps = false;
 				appState = 'Choose Update on the next screen';
-			} else if (state === 'failed') appState = `The update didn't install: ${detail}`;
+			} else if (state === 'failed') {
+				// Its own install didn't work: Downloader does it the way it was first installed.
+				appState = '';
+				steps = false;
+				downloaderWhy = detail;
+				downloader = true;
+			}
 		};
 		// Back from Fire TV's settings with the switch on: the update carries on by itself.
 		const back = () => {
@@ -144,6 +167,14 @@
 	$effect(() => {
 		if (steps && stepsButton) stepsButton.focus({ preventScroll: true });
 	});
+	$effect(() => {
+		if (!downloader || watching || !downloaderButton) return;
+		const button = downloaderButton;
+		button.focus({ preventScroll: true });
+		// (Again once the TV layout has put its own first highlight on the page behind.)
+		const again = setTimeout(() => button.focus({ preventScroll: true }), 800);
+		return () => clearTimeout(again);
+	});
 
 	/*
 	 * The TV app showing the computer's screens (the "normal layout" switch, for every TV in the
@@ -152,7 +183,7 @@
 	 */
 	let onTvApp = $state(false);
 	let layoutButton: HTMLButtonElement | undefined = $state();
-	const offerTvLayout = $derived(onTvApp && page.url.pathname === '/' && !updated && !steps && !appOld);
+	const offerTvLayout = $derived(onTvApp && page.url.pathname === '/' && !updated && !steps && !appOld && !downloader);
 
 	onMount(() => {
 		onTvApp = Boolean(tvApp());
@@ -203,10 +234,10 @@
 	});
 </script>
 
-{#if appOld && !watching && !updated && !steps}
+{#if appOld && !watching && !updated && !steps && !downloader}
 	<div class="tv-updated" role="status">
 		<span>{appState || 'A new Catalog TV app is ready'}</span>
-		<button type="button" data-tv-item bind:this={appButton} onclick={updateApp}>Update</button>
+		<button type="button" data-tv-item onclick={updateApp}>Update</button>
 		<button type="button" data-tv-item onclick={later}>Later</button>
 	</div>
 {/if}
@@ -226,6 +257,24 @@
 			<div class="row">
 				<button type="button" bind:this={stepsButton} onclick={continueSteps}>Continue</button>
 				<button type="button" onclick={later}>Not now</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if downloader && !watching}
+	<div class="tv-steps" role="dialog" aria-label="Updating the Catalog TV app with Downloader">
+		<div class="card">
+			<h2>A new Catalog TV app is ready</h2>
+			<p>{downloaderWhy ? `It didn't install by itself (${downloaderWhy}). ` : "This TV's Catalog app is too old to update itself. "}Downloader gets it, the same way it was first put on this TV.</p>
+			<ol>
+				<li>Press <strong>Home</strong> on the remote and open <strong>Downloader</strong>.</li>
+				<li>Type the code <strong>{FIRE_TV_CODE}</strong> and choose <strong>Go</strong>.</li>
+				<li>Choose <strong>Install</strong>, then <strong>Open</strong>.</li>
+			</ol>
+			<p>Profiles, Continue Watching and everything else on this TV stay as they are.</p>
+			<div class="row">
+				<button type="button" bind:this={downloaderButton} onclick={later}>OK</button>
 			</div>
 		</div>
 	</div>

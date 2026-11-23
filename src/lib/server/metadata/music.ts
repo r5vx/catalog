@@ -12,7 +12,7 @@
  * reached, what was found is shown but not kept, and asked again in a quarter of an hour.
  */
 import { getOrderCache, saveOrderCache } from '../db/queries';
-import { tmdbGet } from './tmdb';
+import { hasTmdbKey, tmdbGet, type TmdbItem } from './tmdb';
 
 export type MusicPerson = { name: string; job: string; photo: string | null; sourceId: string | null };
 export type Track = { n: string; title: string; artist: string; length: number | null };
@@ -36,7 +36,10 @@ const TRY_AGAIN_AFTER = 15 * 60_000;
 type Lookup = { failed: boolean };
 
 export function musicFor(ask: MusicAsk): Promise<Music> {
-	const key = `music|${ask.source}:${ask.sourceId}`;
+	const identity = ask.source === 'manual'
+		? JSON.stringify([ask.title, ask.year, ask.type, ask.anime, hasTmdbKey()])
+		: ask.sourceId;
+	const key = `music:v2|${ask.source}:${identity}`;
 	const kept = getOrderCache(key);
 	if (kept && kept.value && Date.now() - kept.at < (isEmpty(kept.value as Music) ? 7 : 30) * DAY) return Promise.resolve(kept.value as Music);
 	const recent = shortly.get(key);
@@ -68,9 +71,28 @@ async function lookUp(ask: MusicAsk, run: Lookup): Promise<Music> {
 
 /* ------------------------------------------------------------ who did the music */
 
+const exactName = (name: string) => name.normalize('NFKC').trim().toLowerCase();
+
+async function tmdbIdForManualMusic(ask: MusicAsk, run: Lookup): Promise<string | null> {
+	if (!/^\d{4}$/.test(ask.year) || !hasTmdbKey()) return null;
+	const yearField = ask.type === 'movie' ? 'year' : 'first_air_date_year';
+	const found = await tmdbGet<{ results?: TmdbItem[] }>(`/search/${ask.type}`, {
+		query: ask.title, [yearField]: ask.year, include_adult: 'false'
+	});
+	if (!found) run.failed = true;
+	const wanted = exactName(ask.title);
+	const matches = (found?.results ?? []).filter((item) =>
+		(item.release_date ?? item.first_air_date)?.slice(0, 4) === ask.year &&
+		[item.title, item.original_title, item.name, item.original_name].some((name) => name && exactName(name) === wanted)
+	);
+	return matches.length === 1 ? String(matches[0].id) : null;
+}
+
 async function musicPeople(ask: MusicAsk, run: Lookup): Promise<MusicPerson[]> {
-	if (ask.source === 'tmdb') {
-		const [kind, id] = ask.sourceId.split(':');
+	if (ask.source === 'tmdb' || ask.source === 'manual') {
+		const [kind, id] = ask.source === 'tmdb'
+			? ask.sourceId.split(':')
+			: [ask.type, await tmdbIdForManualMusic(ask, run)];
 		if (!id) return [];
 		type Crew = { id: number; name: string; department?: string; job?: string; jobs?: { job: string }[]; profile_path?: string | null };
 		const credits = await tmdbGet<{ crew?: Crew[] }>(kind === 'tv' ? `/tv/${id}/aggregate_credits` : `/movie/${id}/credits`);
@@ -186,7 +208,7 @@ function isTheirs(album: string, title: string): boolean {
 
 async function soundtracks(title: string, year: string, type: 'movie' | 'tv', run: Lookup): Promise<Album[]> {
 	if (!title.trim()) return [];
-	type Group = { id: string; title: string; 'first-release-date'?: string; 'artist-credit'?: { name: string; joinphrase?: string }[]; releases?: { id: string; status?: string }[] };
+	type Group = { id: string; title: string; 'first-release-date'?: string; 'artist-credit'?: { name: string; joinphrase?: string }[]; releases?: { id: string; title?: string; status?: string }[] };
 	const query = `releasegroup:"${title.replace(/["\\]/g, ' ')}" AND secondarytype:soundtrack`;
 	const found = await musicbrainz<{ 'release-groups'?: Group[] }>(`release-group/?query=${encodeURIComponent(query)}&limit=25`);
 	if (!found) run.failed = true;
@@ -203,7 +225,10 @@ async function soundtracks(title: string, year: string, type: 'movie' | 'tv', ru
 	groups.sort((a, b) => Number(main(b.title)) - Number(main(a.title)) || (a['first-release-date'] ?? '').localeCompare(b['first-release-date'] ?? ''));
 	const albums: Album[] = [];
 	for (const group of groups.slice(0, 4)) {
-		const release = group.releases?.find((one) => one.status === 'Official') ?? group.releases?.[0];
+		const official = group.releases?.filter((one) => one.status === 'Official') ?? [];
+		const release = official.find((one) => exactName(one.title ?? '') === exactName(group.title))
+			?? official.find((one) => one.title && plain(title) && isTheirs(one.title, title))
+			?? official[0] ?? group.releases?.[0];
 		if (!release) continue;
 		type Credit = { name: string; joinphrase?: string };
 		type Release = { media?: { position?: number; tracks?: { number?: string; title: string; length?: number | null; 'artist-credit'?: Credit[] }[] }[] };

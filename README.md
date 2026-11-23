@@ -50,53 +50,107 @@ A library for films, TV and anime with its own player. It runs on your computer 
 
 ![A profile](docs/screenshots/profile.jpg)
 
+## What Catalog is
+
+Catalog started as a list of everything its author had watched, and grew into the app they watch everything in. It's three things at once:
+
+- **A library you keep.** Every film, show and anime you've seen or want to see, with your ratings, statuses, dates, notes and progress, in one file on your computer.
+- **A player that finds the video.** Press Watch and Catalog looks across its built-in sources, picks the sharpest copy, finds subtitles and times them to the sound, and skips the intro for you.
+- **The house's TV box.** One computer runs Catalog and every Fire TV, Roku and phone in the house plays through it, each person with their own profile.
+
+Everything else (Live TV, YouTube, friends, Notes) grew around those three.
+
 ## Features
 
-**Library**
-- Films, TV and anime, with statuses: watching, completed, want to watch, rewatching, caught up
-- Your ratings out of 5 or 10 stars, notes, a watch list and stats
-- Continue Watching, with new episodes as they come out
-- Profiles for everyone in the house, each with their own list and progress
-- Import from a list, and export everything as a backup you can restore
+**Your library**
+- Films, TV shows and anime, each in its own tab, with posters and details from TMDB and AniList
+- Statuses: Watching, Completed, Want to watch, On hold, Dropped, Rewatching and Caught up
+- Ratings out of 5 or 10 stars, a review, favorites and how many times you've watched it
+- Started and Finished dates that fill themselves in as you watch
+- Progress kept by itself: the episode you're on, and where you stopped in it
+- Continue Watching, with the time left, and shows you're caught up on coming back when a new episode is out ("New ep in 3 days")
+- Sort by your rating, IMDb, Rotten Tomatoes, Metacritic, box office, date added and more; filters are remembered
+- Stats as tiles, with your last watched posters
+- Search finds anime by either name and films by their original titles
+- Profiles for everyone in the house, each with their own library, progress and settings
+- An optional PIN to lock Catalog
+- Import everything you've watched from MyAnimeList, AniList, Kitsu, Letterboxd or IMDb, or paste a list
+- Export everything as a backup you can restore
+
+**Watch lists**
+- Franchises in the order to watch them, with your progress and what's up next
+- Ready-made lists: MCU, Ultimate Marvel, Star Wars, DC Universe and Ultimate DC
+- Skip a title, show or hide the extras, and jump straight to where you are
 
 **Finding something to watch**
-- Browse what's trending or the best of all time, by genre, or a random pick
-- More like this, based on what you've watched
+- Browse what's trending now or the best of all time, by genre, for films, shows and anime
+- Random: a box that bursts open with a pick, glowing by its rating, with Roll again
+- More like this under every title, matched on taste, topic, genre, director and series (not on ratings)
+- Title pages with cast, the season's episodes, an episode ratings chart, where to stream it legally, and which friends watched it
 - Cast and crew pages, including the video games an actor has voiced
-- Soundtracks and anime openings and endings on every title
-- IMDb, Rotten Tomatoes and Metacritic scores, and an episode ratings chart for shows
+- A Music tab: who did the music, the soundtrack's songs, and an anime's openings and endings
+- IMDb, Rotten Tomatoes and Metacritic scores, age ratings, awards and box office
+- Lists from Stremio addons as rows on Browse
 
-**Player**
-- Picks the sharpest copy it can find, up to 4K
-- Subtitles from OpenSubtitles, timed to the sound automatically
-- Anime signs and songs drawn as their makers styled them
-- Skip Intro and Skip Credits, next episode by itself, a mini player
-- Downloads to watch with no internet
-- Japanese audio by default for anime
+**The player**
+- Picks the sharpest copy it can find, up to 4K, and shows each copy's real sharpness
+- Sources built in: Showbox (with a free Febbox account), 7Movies, Movy, Vidfast, Aniwave and HiAnime
+- Optional debrid (Real-Debrid, TorBox, AllDebrid, Premiumize) and Stremio addons, only using releases whose sound it can play
+- Falls back to another source by itself when one stops, keeping the same audio language
+- Fetches ahead while you watch so it doesn't stop to buffer, and gets the next episode ready
+- Japanese audio for anime by default, and dubbed audio in Spanish, French, German or Hindi where there's a copy
+- Skip Intro, Skip Recap and Skip Credits, from skip databases or found by comparing episodes' sound, with auto-skip
+- Next episode by itself, preview pictures on the progress bar, volume up to 300%
+- A mini player that stays on top in the corner, and leaving the player keeps the video ready for 30 minutes
+- Rate a film or a series right where it ends
+- Playback stats and a log of every time a video stopped to load, with a best guess at why
+- Xbox and PlayStation controllers work everywhere
 
-**Sources**
-- Built in: Showbox (with a free Febbox account), 7Movies, Movy, Vidfast, Aniwave and HiAnime
-- Optional debrid: Real-Debrid, TorBox, AllDebrid or Premiumize. Catalog only uses releases with sound it can play.
+**Subtitles and captions**
+- Found by themselves from OpenSubtitles and others, in your language, matched to the copy you're watching
+- Auto-timing: Catalog listens to the episode and moves subtitles that are early or late to match the talking, part by part, and checks them by matching the words said (Whisper)
+- Adverts and translator credits taken out of subtitle files
+- Anime signs and songs drawn as their makers styled them, with karaoke and the file's fonts
+- Caption size, look, delay and a Retime button; right-click a caption to copy it
+- Captions on Live TV, timed to the commentary
+
+**Downloads**
+- Download a film, an episode, a season or a whole show from its page or the player, in 720p and up, with captions
+- Captions auto-time on downloads too, with no internet
+- A Downloads page to play, delete or send one to a phone
+
+**Live TV and sports**
+- Today's and tomorrow's games by sport, with the channels showing each, team logos and live scores
+- About 900 channels, plus TV shows like Jeopardy! and SNL
+- Favorite teams first, saved games that start by themselves, and the channel that played best picked for you
+- Replays of NFL, college football, NBA, WNBA and soccer games with no ads
+
+**YouTube**
+- YouTube's own website with no ads before videos, in its own window or inside Catalog, with tabs
+- On Fire TV, Roku and phones too, with each person's own YouTube account
 
 **TVs and phones**
-- A Fire TV app, installed from Catalog on your computer
-- A Roku app (beta)
-- Phones and tablets through [Tailscale](https://tailscale.com), added to the home screen like an app
+- A Fire TV app, installed and updated from the computer, laid out like Netflix, with Who's watching
+- A Roku app laid out the same way (beta)
+- Phones through [Tailscale](https://tailscale.com), as an app on the home screen, with downloads kept on the phone to watch offline
+- The TV matches the video's frame rate on Fire TV, so slow pans don't judder
 
-**Live TV and YouTube**
-- Live channels and a sports schedule with team logos and live scores
-- Replays of NFL, NBA and soccer games
-- YouTube with no ads, in tabs
+**Online (optional, off until you join)**
+- Friends by code, profiles with a banner, a name style (fonts, gradients, glow, shimmer), favorites and highest rated
+- See what friends are watching and what they've rated, and their whole library
+- Watch together in a room (play, pause and skips happen in every house) or watch along with a friend
+- Whispers that pop up even while watching, group chat in a room, and a Messages page
+- Your progress and library kept in step on every computer you use
+- Problems report themselves, so they can be fixed
 
-**Online (optional)**
-- Friends, profiles with a banner picture and your own name style
-- See what friends are watching and what they've rated
-- Watch together, with group chat and messages
-- Your library and progress kept in step on every computer you use
+**Notes**
+- A notes section with lists, tags, pins, search and find-in-note
+- Lock a note behind your PIN, version history, and Recently deleted for 7 days
 
 **Look**
-- Light, dark and black themes, or your own colors
-- Any accent color and a background picture
+- Light, dark, black and a Custom theme where you pick every color
+- An accent color, a background picture you can move, zoom, dim and blur, and a wide layout with a sidebar
+- Your own logo and desktop icon, sized and placed to fit
 
 ## Install
 
@@ -168,6 +222,12 @@ npm run backup     back up now
 npm run restore    preview a restore (-- --write to apply)
 npm run release    build, pack and publish a new version
 ```
+
+To use a JSON backup downloaded from **Settings → Library**, run
+`npm run restore -- --from "path/to/catalog-backup.json"` to preview it. Close
+Catalog, then add `--write` to restore it. Use `--to "path/to/library.db"` to
+restore into a separate database. JSON backups do not contain settings or
+uploaded image files.
 
 | What | Where |
 | --- | --- |

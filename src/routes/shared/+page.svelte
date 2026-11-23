@@ -263,7 +263,7 @@
 
 <svelte:head><title>A shared library · Catalog</title></svelte:head>
 
-<a href="/" class="back faint">&larr; Library</a>
+<a href="/?library=1" class="back faint">&larr; Library</a>
 
 {#if !share}
 	<div class="opener">

@@ -1,6 +1,6 @@
 import { myWatchOrders } from '$lib/server/db/queries';
 import { libraryHeaderData } from '$lib/server/libraryHeader';
-import { resolveOrder, warmFranchiseSuggestions, counts } from '$lib/server/watchOrders';
+import { resolveOrder, warmFranchiseSuggestions, counts, isFinished } from '$lib/server/watchOrders';
 import { titleProgress } from '$lib/orderProgress';
 import type { PageServerLoad } from './$types';
 
@@ -20,6 +20,7 @@ export const load: PageServerLoad = async () => {
 				watched: titleProgress(released).watched,
 				released: titleProgress(released).total,
 				upNext,
+				finished: isFinished(order?.items ?? []),
 				// The next one to watch sets the scene; the finished ones show what's done.
 				backdropUrl: (upNext ?? released.at(-1))?.backdropUrl ?? null,
 				posters: released.slice(0, 6).map((i) => i.posterUrl)

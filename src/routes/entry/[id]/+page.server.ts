@@ -22,21 +22,25 @@ import type { PageServerLoad, Actions } from './$types';
 
 const verifiedSources = new Set<number>();
 
-async function verifySource(entry: { id: number; title: string; source: string; sourceId: string | null }) {
-	if (!entry.sourceId || verifiedSources.has(entry.id)) return;
+/** Whether the entry pointed at the wrong TMDB/AniList title and now points at the right one. */
+async function verifySource(entry: { id: number; title: string; source: string; sourceId: string | null }): Promise<boolean> {
+	if (!entry.sourceId || verifiedSources.has(entry.id)) return false;
 	verifiedSources.add(entry.id);
 	try {
 		const details = await fetchDetails(entry.source, entry.sourceId);
-		if (!details.title || details.title.toLowerCase() === entry.title.toLowerCase()) return;
+		if (!details.title || details.title.toLowerCase() === entry.title.toLowerCase()) return false;
 		const results = await searchAll(entry.title);
 		const match = results.find(r => r.title.toLowerCase() === entry.title.toLowerCase());
-		if (!match?.sourceId || match.sourceId === entry.sourceId) return;
+		if (!match?.sourceId || match.sourceId === entry.sourceId) return false;
 		updateEntrySource(entry.id, match.source, match.sourceId);
 		const correct = await fetchDetails(match.source, match.sourceId);
 		if (correct.cast.length > 0) setCast(entry.id, correct.cast);
 		if (correct.tags.length > 0) setTags(entry.id, correct.tags);
 		if (correct.overview) saveOverview(entry.id, correct.overview);
-	} catch {}
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 
@@ -46,9 +50,9 @@ export const load: PageServerLoad = async ({ params, url }) => {
 	// "More like this" starts now, while the page loads.
 	if (entry.sourceId) startMoreLikeThis(entry.source, entry.sourceId, entry.title);
 
-	await verifySource(entry);
-
 	return {
+		// The saved details show straight away; this checks the match meanwhile (the page reloads if it was fixed).
+		rechecked: verifySource(entry),
 		// Set when opened from somewhere other than the library (a watch order, say).
 		back: safeBack(url.searchParams.get('back')),
 		// A caught-up show's next episode as last asked of TMDB (nextAirs.ts), over the stored one.
@@ -127,6 +131,6 @@ export const actions: Actions = {
 
 	delete: async ({ params }) => {
 		deleteEntry(Number(params.id));
-		redirect(303, '/');
+		redirect(303, '/?library=1');
 	}
 };

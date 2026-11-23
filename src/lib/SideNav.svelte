@@ -37,9 +37,9 @@
 
 <nav class="side" aria-label="Sections">
 	{#if page.data.altMode}
-		<a href="/" class="brand-words">{p('Catalog')}</a>
+		<a href="/?library=1" class="brand-words">{p('Catalog')}</a>
 	{:else}
-		<a href="/" class="brand" aria-label="Catalog, the library"><Wordmark height="1.75rem" /></a>
+		<a href="/?library=1" class="brand" aria-label="Catalog, the library"><Wordmark height="1.75rem" /></a>
 	{/if}
 	<NowPlaying />
 	<p class="label">Library</p>

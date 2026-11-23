@@ -64,12 +64,14 @@ export function words(text: string): string[] {
 /** Where to listen: in each of `parts` equal parts of the video, the `span` seconds with the most subtitle words. */
 export function stretchesToHear(cues: Cue[], duration: number, parts = 8, span = 40): number[] {
 	const out: number[] = [];
+	const counts = cues.map((c) => words(c.text).length);
 	const size = duration / parts;
 	for (let p = 0; p < parts; p++) {
 		let best = -1;
 		let bestAt = p * size;
 		for (let at = p * size; at + span <= (p + 1) * size; at += 10) {
-			const n = cues.filter((c) => c.start >= at && c.start < at + span).reduce((sum, c) => sum + words(c.text).length, 0);
+			let n = 0;
+			for (let i = 0; i < cues.length; i++) if (cues[i].start >= at && cues[i].start < at + span) n += counts[i];
 			if (n > best) {
 				best = n;
 				bestAt = at;

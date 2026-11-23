@@ -30,13 +30,15 @@ import {
 	type ShowboxResult
 } from './showbox';
 import { getOrderCache, saveOrderCache } from './db/queries';
-import { aniwaveFiles, aniwaveSeriesStarts, episodesBefore, hianimeFiles, type AniwaveCopies } from './sources';
+import { aniwaveFiles, aniwaveSeriesStarts, episodesBefore, hianimeFiles, allanimeFiles, type AniwaveCopies } from './sources';
 import { vidriftCopies } from './sources/vidrift';
 import { movyCopy } from './sources/movy';
 import { vidfastCopy } from './sources/vidfast';
 import { debridCopies, debridSetting } from './sources/debrid';
 import { addonCopies, savedAddons } from './sources/addons';
 import { sourceHasNot } from './sourceAnswers';
+import { nyaaCopy, nyaaOn } from './sources/nyaa';
+import { channelFiles, handLinksChanged } from './sources/channels';
 
 /**
  * 7Movies', Movy's and Vidfast's copies of a film or episode, listed by its TMDB id without asking
@@ -60,7 +62,7 @@ export function unasked(what: { type: 'tv' | 'movie'; id: number; season: number
  * Which debrid service and addons the copies above come from: a film or show's list kept from
  * before one was added or removed in Settings → Services is made again (routes/api/watch/resolve).
  */
-export const unaskedSetup = () => `${debridSetting()?.service ?? ''}|${savedAddons().map((a) => a.key).join(',')}`;
+export const unaskedSetup = () => `${debridSetting()?.service ?? ''}|${savedAddons().map((a) => a.key).join(',')}|${nyaaOn() ? 'nyaa' : ''}|${handLinksChanged()}`;
 
 export type ListedEpisode = EpisodeInfo & {
 	/** The share this episode plays from, when it isn't the main entry's. */
@@ -404,15 +406,19 @@ export async function combineEpisodes(
 		const qualities = new Set(main.qualities);
 
 		const companions = mainShowboxId ? await findCompanions(mainTitle, mainShowboxId, show, main) : [];
+		const listings = companions.map((companion) =>
+			listEpisodes(`https://www.febbox.com/share/${companion.shareKey}`).then((value) => ({ value }), (error: unknown) => ({ error }))
+		);
 		let companionRefused = false;
-		for (const companion of companions) {
+		for (const [index, companion] of companions.entries()) {
 			// Febbox not listing just now: this entry joins next time (the list isn't kept meanwhile).
-			const listed = await listEpisodes(`https://www.febbox.com/share/${companion.shareKey}`).catch((e) => {
-				if (!(e instanceof FebboxRefused)) throw e;
+			const result = await listings[index];
+			if ('error' in result) {
+				if (!(result.error instanceof FebboxRefused)) throw result.error;
 				companionRefused = true;
-				return null;
-			});
-			if (!listed) continue;
+				continue;
+			}
+			const listed = result.value;
 			const firstOwn = Math.min(...listed.seasons.filter((s) => s > 0), Infinity);
 			for (const e of listed.episodes) {
 				if (e.season === 0 || !Number.isFinite(firstOwn)) continue;
@@ -496,6 +502,21 @@ export async function combineEpisodes(
 			}
 		}
 
+		// Trusted channels' playlists (sources/channels.ts): old shows no site streams, by TMDB's
+		// numbering, so only when Showbox numbers seasons the same way.
+		if (sameNumbering) {
+			const channel = await channelFiles(show, mainShowboxId ? 4000 : 15000);
+			for (const [key, files] of channel) {
+				const [season, episode] = key.split('-').map(Number);
+				const listed = episodes.find((e) => e.season === season && e.episode === episode);
+				// After Showbox's own files, before the sites that are only asked when picked (most have no old cartoons).
+				if (listed) listed.files = [...listed.files.filter((f) => !f.source), ...files, ...listed.files.filter((f) => f.source)];
+				else episodes.push({ season, episode, files });
+				have.add(key);
+				for (const f of files) qualities.add(f.quality);
+			}
+		}
+
 		// HiAnime, for anime (sources/hianime.ts): asked by MyAnimeList numbering, which counts from the
 		// series' first episode, so it lines up with whichever way this list numbers its seasons
 		// (Showbox's or TMDB's). At most a few seconds the first time (kept after).
@@ -508,6 +529,19 @@ export async function combineEpisodes(
 			for (const e of episodes) {
 				const files = hianime.get(`${e.season}-${e.episode}`);
 				if (files) e.files = [...e.files, ...files];
+			}
+			// AllAnime (sources/allanime.ts): another anime source, desktop app only (hidden window).
+			const allanime = await allanimeFiles(show, mainTitle, mainShowboxId ? 6000 : 15000);
+			for (const e of episodes) {
+				const files = allanime.get(`${e.season}-${e.episode}`);
+				if (files) e.files = [...e.files, ...files];
+			}
+			// Nyaa last (sources/nyaa.ts, when turned on): a torrent is the slowest to start, so it's
+			// asked only when picked or when everything else has failed (WatchPlayer's linkFor).
+			if (nyaaOn()) {
+				for (const e of episodes) {
+					if (e.season > 0 && e.files.length) e.files = [...e.files, ...nyaaCopy({ type: 'tv', id: show.id, season: e.season, episode: e.episode })];
+				}
 			}
 		}
 

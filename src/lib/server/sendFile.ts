@@ -6,7 +6,7 @@ import { createReadStream, statSync } from 'node:fs';
 import { Readable } from 'node:stream';
 
 /** The header that offers a response as a file called `name`. */
-export const attachment = (name: string) => `attachment; filename="${name.replace(/["\\]/g, '')}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+export const attachment = (name: string) => `attachment; filename="${name.replace(/[^\x20-\x7e]|["\\]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(name)}`;
 
 export function sendFile(path: string, type: string, rangeHeader: string | null, saveAs?: string): Response {
 	const size = statSync(path).size;

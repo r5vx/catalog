@@ -7,18 +7,33 @@
  *   node scripts/restore.mjs                  # preview only, changes nothing
  *   node scripts/restore.mjs --write          # overwrite your real library
  *   node scripts/restore.mjs --write --to X   # rebuild into a different file
+ *   node scripts/restore.mjs --from X         # use a downloaded backup
  */
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync, existsSync, renameSync, mkdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { constants, copyFileSync, readFileSync, existsSync, renameSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { join, dirname, resolve } from 'node:path';
 import { dbPath, backupDir } from './paths.mjs';
 
 const args = process.argv.slice(2);
 const write = args.includes('--write');
-const toIndex = args.indexOf('--to');
-const target = toIndex !== -1 ? args[toIndex + 1] : dbPath();
+function pathArg(flag, fallback) {
+	const at = args.indexOf(flag);
+	if (at === -1) return fallback;
+	const value = args[at + 1];
+	if (!value || value.startsWith('--')) {
+		console.error(`${flag} needs a file path.`);
+		process.exit(1);
+	}
+	return value;
+}
 
-const sourceFile = join(backupDir(), 'library.json');
+const target = pathArg('--to', dbPath());
+const sourceFile = pathArg('--from', join(backupDir(), 'library.json'));
+
+if (resolve(target) === resolve(sourceFile)) {
+	console.error('Pick a different path for the rebuilt database.');
+	process.exit(1);
+}
 
 if (!existsSync(sourceFile)) {
 	console.error(`No backup found at ${sourceFile}. Run "npm run backup" first.`);
@@ -39,17 +54,7 @@ if (!write) {
 	process.exit(0);
 }
 
-// Never destroy the current library without keeping it.
-if (existsSync(target)) {
-	const aside = `${target}.replaced-${Date.now()}`;
-	renameSync(target, aside);
-	console.log(`\nExisting library moved aside to ${aside}`);
-}
-
-mkdirSync(dirname(target), { recursive: true });
-const db = new DatabaseSync(target);
-
-db.exec(`
+const schema = `
 	CREATE TABLE categories (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		name TEXT NOT NULL,
@@ -103,15 +108,29 @@ db.exec(`
 		tag_id INTEGER NOT NULL,
 		PRIMARY KEY (note_id, tag_id)
 	);
+	CREATE TABLE note_versions (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		note_id INTEGER NOT NULL,
+		title TEXT NOT NULL,
+		body TEXT NOT NULL,
+		saved_at TEXT NOT NULL
+	);
+	CREATE TABLE my_watch_orders (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		added_at TEXT NOT NULL DEFAULT (datetime('now'))
+	);
 	CREATE TABLE entry_tags (
 		entry_id INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
 		tag_id   INTEGER NOT NULL REFERENCES tags(id)    ON DELETE CASCADE,
 		PRIMARY KEY (entry_id, tag_id)
 	);
-`);
+`;
+
+const identifier = (name) => `"${name.replaceAll('"', '""')}"`;
 
 /** Insert rows using whatever columns the backup actually has. */
-function restore(table, records) {
+function restore(db, table, records) {
 	if (records.length === 0) return;
 
 	const columns = Object.keys(records[0]);
@@ -120,11 +139,11 @@ function restore(table, records) {
 	// last_season…): add them, or every insert fails. The app fills in the rest on start.
 	const existing = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
 	for (const column of columns) {
-		if (!existing.has(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN "${column}"`);
+		if (!existing.has(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${identifier(column)}`);
 	}
 
 	const statement = db.prepare(
-		`INSERT INTO ${table} (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`
+		`INSERT INTO ${table} (${columns.map(identifier).join(',')}) VALUES (${columns.map(() => '?').join(',')})`
 	);
 
 	for (const record of records) {
@@ -132,17 +151,49 @@ function restore(table, records) {
 	}
 }
 
-restore('categories', backup.categories);
-restore('entries', backup.entries);
-restore('tags', backup.tags);
-restore('entry_tags', backup.entryTags);
-restore('notes', backup.notes ?? []);
-restore('note_tags', backup.noteTags ?? []);
-restore('note_tag_links', backup.noteTagLinks ?? []);
-restore('people', backup.people ?? []);
-restore('entry_cast', backup.entryCast ?? []);
+function requireClosedLibrary() {
+	if (['-wal', '-shm', '-journal'].some((suffix) => existsSync(`${target}${suffix}`))) {
+		throw new Error('Close Catalog before restoring. If the previous run crashed, open and close it normally first.');
+	}
+}
 
-const count = db.prepare('SELECT COUNT(*) AS n FROM entries').get().n;
-db.close();
+let staging;
+try {
+	requireClosedLibrary();
+	mkdirSync(dirname(target), { recursive: true });
+	staging = mkdtempSync(join(dirname(target), '.catalog-restore-'));
+	const rebuilt = join(staging, 'library.db');
+	const db = new DatabaseSync(rebuilt);
+	try {
+		db.exec('BEGIN');
+		db.exec(schema);
+		restore(db, 'categories', backup.categories);
+		restore(db, 'entries', backup.entries);
+		restore(db, 'tags', backup.tags);
+		restore(db, 'entry_tags', backup.entryTags);
+		restore(db, 'notes', backup.notes ?? []);
+		restore(db, 'note_tags', backup.noteTags ?? []);
+		restore(db, 'note_tag_links', backup.noteTagLinks ?? []);
+		restore(db, 'note_versions', backup.noteVersions ?? []);
+		restore(db, 'my_watch_orders', backup.watchOrders ?? []);
+		restore(db, 'people', backup.people ?? []);
+		restore(db, 'entry_cast', backup.entryCast ?? []);
+		db.exec('COMMIT');
+	} finally {
+		db.close();
+	}
 
-console.log(`\nRestored ${count} entries into ${target}`);
+	requireClosedLibrary();
+	if (existsSync(target)) {
+		const aside = `${target}.replaced-${Date.now()}`;
+		copyFileSync(target, aside, constants.COPYFILE_EXCL);
+		console.log(`\nPrevious library saved to ${aside}`);
+	}
+	renameSync(rebuilt, target);
+	console.log(`\nRestored ${backup.entries.length} entries into ${target}`);
+} catch (error) {
+	console.error(`Restore failed: ${error.message}`);
+	process.exitCode = 1;
+} finally {
+	if (staging) rmSync(staging, { recursive: true, force: true });
+}

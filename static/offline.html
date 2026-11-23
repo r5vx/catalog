@@ -89,6 +89,9 @@
 	}
 
 	async function load() {
+		urls.forEach((url) => URL.revokeObjectURL(url));
+		urls = [];
+		list.textContent = '';
 		if (!navigator.storage || !navigator.storage.getDirectory) { empty.hidden = false; return; }
 		const dir = await folder();
 		const items = [];
@@ -114,7 +117,7 @@
 			name.textContent = item.name || item.title;
 			const sub = document.createElement('span');
 			sub.className = 'sub';
-			const place = Math.max(places[item.id]?.place || 0, item.place || 0);
+			const place = places[item.id]?.place ?? item.place ?? 0;
 			const parts = [];
 			if (item.episodeName) parts.push(item.episodeName);
 			if (place > 5 && item.duration > 0 && place / item.duration < 0.95) parts.push(`${minutes(item.duration - place)} left`);
@@ -148,7 +151,7 @@
 		}
 		playingName.textContent = item.name || item.title;
 		player.classList.add('open');
-		const place = Math.max(readPlaces()[item.id]?.place || 0, item.place || 0);
+		const place = readPlaces()[item.id]?.place ?? item.place ?? 0;
 		video.src = src;
 		video.addEventListener('loadedmetadata', () => {
 			if (place > 5 && video.duration && place / video.duration < 0.95) video.currentTime = place;
@@ -159,7 +162,9 @@
 
 	let lastSaved = 0;
 	function savePlace(force) {
-		if (!current || !video.duration || video.currentTime < 3) return;
+		if (!current || !video.duration) return;
+		// Rewound to the start: still saved when leaving, or the old place comes back.
+		if (!force && video.currentTime < 3) return;
 		const now = Date.now();
 		if (!force && now - lastSaved < 5000) return;
 		lastSaved = now;
@@ -175,10 +180,10 @@
 		savePlace(true);
 		video.pause();
 		video.removeAttribute('src');
+		video.querySelectorAll('track').forEach((t) => t.remove());
 		video.load();
 		player.classList.remove('open');
 		current = null;
-		list.textContent = '';
 		load();
 	};
 

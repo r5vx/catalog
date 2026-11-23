@@ -1,6 +1,7 @@
 <script lang="ts">
 	import '../app.css';
 	import UpdateBanner from '$lib/UpdateBanner.svelte';
+	import WhatsNewCard from '$lib/WhatsNewCard.svelte';
 	import TvUpdated from '$lib/tv/TvUpdated.svelte';
 	import SigninBanner from '$lib/SigninBanner.svelte';
 	import TmdbBanner from '$lib/TmdbBanner.svelte';
@@ -12,12 +13,13 @@
 	import ChatOverlay from '$lib/ChatOverlay.svelte';
 	import { keptPlayer, followRoute } from '$lib/keptPlayer.svelte';
 	import { navigating, page } from '$app/state';
-	import { beforeNavigate } from '$app/navigation';
+	import { afterNavigate, beforeNavigate, replaceState } from '$app/navigation';
 	import { rememberBeforeSettings } from '$lib/nav';
 	import { onMount, untrack } from 'svelte';
 	import { startTv } from '$lib/tv';
 	import { startGamepad } from '$lib/gamepad';
 	import { startPhoneApp } from '$lib/phoneApp';
+	import { reportPageErrors } from '$lib/problemReport';
 	import { inkFor, DEFAULT_ACCENT } from '$lib/accent';
 	import { applyCustomTheme } from '$lib/customTheme';
 	import { backgroundPreview } from '$lib/backgroundPreview.svelte';
@@ -54,6 +56,8 @@
 	);
 	const backgroundDim = $derived(backgroundPreview.dim ?? background?.dim ?? 0);
 	const backgroundBlur = $derived(backgroundPreview.blur ?? background?.blur ?? 0);
+	// Moved or zoomed in Settings → Personalization (src/lib/pictureFit.ts).
+	const backgroundFit = $derived(backgroundPreview.fit ?? background?.fit ?? null);
 	$effect(() => {
 		document.documentElement.classList.toggle('has-background', Boolean(background));
 	});
@@ -89,6 +93,8 @@
 	onMount(startGamepad);
 	// In the iPhone app, YouTube links open the app's own YouTube (src/lib/phoneApp.ts).
 	onMount(startPhoneApp);
+	// Errors on any page, on any screen, go to the owner as problem reports (src/lib/problemReport.ts).
+	onMount(reportPageErrors);
 
 	// The phone app (the secure Tailscale address, Settings → TV and phones): its offline page is made
 	// ready (static/sw.js), and places from watching with no connection are handed back. Never
@@ -123,6 +129,11 @@
 		const into = to?.url.pathname.startsWith('/settings');
 		const outOf = from?.url.pathname.startsWith('/settings');
 		if (from && into && !outOf) rememberBeforeSettings(from.url.pathname + from.url.search, window.scrollY);
+	});
+	afterNavigate(({ from, to, type }) => {
+		if (type !== 'popstate' && from && to && from.url.href !== to.url.href) {
+			replaceState('', { ...page.state, returnTo: from.url.pathname + from.url.search + from.url.hash });
+		}
 	});
 
 	$effect(() => {
@@ -166,6 +177,9 @@
 		style:background-image="url('{background.image}')"
 		style:filter={backgroundBlur > 0 ? `blur(${backgroundBlur}px)` : null}
 		style:--dim={backgroundDim / 100}
+		style:background-position={backgroundFit ? `${backgroundFit.x}% ${backgroundFit.y}%` : null}
+		style:transform={backgroundFit && backgroundFit.zoom !== 1 ? `scale(${backgroundFit.zoom})` : null}
+		style:transform-origin={backgroundFit ? `${backgroundFit.x}% ${backgroundFit.y}%` : null}
 	></div>
 {/if}
 {#if sideNav}<div style={accentCss}><SideNav /></div>{/if}
@@ -175,6 +189,7 @@
 		<div class="nav-progress" aria-hidden="true"></div>
 	{/if}
 	<UpdateBanner />
+	<WhatsNewCard />
 	<TvUpdated />
 	<SigninBanner signin={data?.showboxSignin} />
 	<TmdbBanner missing={data?.tmdbMissing} />
@@ -192,7 +207,7 @@
 								<p>The player ran into a problem.</p>
 								<div>
 									<button type="button" class="btn btn-primary" onclick={reset}>Reload the player</button>
-									<a class="btn" href="/">Back to the library</a>
+									<a class="btn" href="/?library=1">Back to the library</a>
 								</div>
 							</div>
 						{/if}

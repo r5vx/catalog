@@ -74,19 +74,12 @@ try {
 					});
 					pending.delete(m.id);
 				}
-				if (m.type === 'get-subtitles-result') {
-					pending.get(m.id)!({
-						data: (m.data as string) ?? '',
-						error: m.error as string | undefined
-					});
-					pending.delete(m.id);
-				}
 				if (m.type === 'live-capture-result') {
 					pending.get(m.id)!({ url: (m.url as string) ?? '', headers: (m.headers as Record<string, string>) ?? {}, error: m.error as string | undefined });
 					pending.delete(m.id);
 				}
 				if (m.type === 'movy-find-result') {
-					pending.get(m.id)!({ url: (m.url as string) ?? '', error: m.error as string | undefined });
+					pending.get(m.id)!({ url: (m.url as string) ?? '', error: m.error as string | undefined, sources: m.sources as { sourceUrl: string; sourceName: string; type: string; className: string; streamerId: string }[] | undefined });
 					pending.delete(m.id);
 				}
 				if (m.type === 'page-answer-result') {
@@ -237,34 +230,6 @@ export function electronSyncCookies(): Promise<CookieSyncResult> {
 	});
 }
 
-interface SubtitleResult {
-	data: string;
-	error?: string;
-}
-
-export function electronGetSubtitles(
-	shareKey: string,
-	fid: number
-): Promise<SubtitleResult> {
-	if (typeof process.send !== 'function') {
-		return Promise.resolve({ data: '', error: 'not in Electron' });
-	}
-
-	const id = String(++counter);
-
-	return new Promise<SubtitleResult>((resolve) => {
-		pending.set(id, resolve);
-		process.send!({ type: 'get-subtitles', id, shareKey, fid });
-
-		setTimeout(() => {
-			if (pending.has(id)) {
-				pending.delete(id);
-				resolve({ data: '', error: 'timeout' });
-			}
-		}, 15000);
-	});
-}
-
 /**
  * Opens a page out of sight in the "sources" session (muted, pop-ups blocked), waits for the
  * page's own lookup whose address contains `answerFrom`, and hands back what it answered.
@@ -277,7 +242,7 @@ export function electronGetSubtitles(
  * movy.sx's video playlist for a page of its (electron/main.cjs opens it out of sight and notes
  * what its player asks for). `url` is empty when none came (it hasn't got it, or took too long).
  */
-export function electronMovyFind(pageUrl: string, signal?: AbortSignal, site: 'movy' | 'vidfast' = 'movy', dub?: string): Promise<{ url: string; error?: string }> {
+export function electronMovyFind(pageUrl: string, signal?: AbortSignal, site: 'movy' | 'vidfast' | 'allanime' = 'movy', dub?: string): Promise<{ url: string; error?: string; sources?: { sourceUrl: string; sourceName: string; type: string; className: string; streamerId: string }[] }> {
 	if (typeof process.send !== 'function') {
 		return Promise.resolve({ url: '', error: 'not in Electron' });
 	}

@@ -4,7 +4,7 @@
 	import MoreButton from '$lib/MoreButton.svelte';
 	import { goto, invalidateAll, beforeNavigate } from '$app/navigation';
 	import { statusLabel, sortBadge } from '$lib/constants';
-	import { onMount, tick, untrack } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { p } from '$lib/altText';
 
 	type SharedTitle = {
@@ -188,16 +188,20 @@
 		} catch {}
 	}
 
+	let friendAsked = 0;
+
 	async function loadFriend(id: number) {
+		const mine = ++friendAsked;
 		loadingFriend = true;
 		activeFriend = id;
 		try {
 			const resp = await fetch(`/api/shared?id=${id}`);
 			if (resp.ok) {
 				const data = await resp.json();
+				if (mine !== friendAsked || activeFriend !== id) return;
 				titles = data.titles;
 			}
-		} catch {} finally { loadingFriend = false; }
+		} catch {} finally { if (mine === friendAsked && activeFriend === id) loadingFriend = false; }
 	}
 
 	/** Renaming a friend: the box beside their chip, open while this is their id. */
@@ -669,7 +673,6 @@
 
 	.ctx-menu button:hover { background: var(--accent); color: var(--accent-ink, #fff); }
 	.ctx-menu hr { border: none; border-top: 1px solid var(--rule, #333); margin: 4px 0; }
-	.ctx-info { display: block; padding: 8px 14px; font-size: 0.84rem; color: var(--good); font-weight: 600; }
 
 	.ctx-danger { color: var(--danger, #c33) !important; }
 	.ctx-danger:hover { background: var(--danger, #c33) !important; color: #fff !important; }

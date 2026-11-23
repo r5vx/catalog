@@ -27,7 +27,9 @@ export const POST: RequestHandler = async ({ request }) => {
 	const body = await request.json().catch(() => null);
 	const shareKey = typeof body?.share_key === 'string' ? body.share_key : '';
 	const fid = Number(body?.fid);
-	if (!shareKey || !fid || !downloadKindOf(shareKey)) return error(400, 'Not a copy that is downloaded ahead');
-	void downloadCopyAhead(shareKey, fid);
+	// (A Showbox copy: a Febbox share key and its file number, downloaded only while there's room.)
+	const showbox = fid > 0 && !downloadKindOf(shareKey);
+	if (!shareKey || !fid || (!downloadKindOf(shareKey) && !showbox)) return error(400, 'Not a copy that is downloaded ahead');
+	void downloadCopyAhead(shareKey, fid, 0, 0, showbox);
 	return json({ ok: true });
 };

@@ -9,17 +9,10 @@ import { readCustomTheme } from '$lib/customTheme';
 import { warmBrowseCache, hasTmdbKey } from '$lib/server/metadata';
 import { showboxSignin } from '$lib/server/showboxSignin';
 import { onlineConnected, keptMe, warmMe } from '$lib/server/online';
+import { whatsNewCard, whatsNewSeen, WHATS_NEW_SEEN } from '$lib/server/whatsNewCard';
 import type { LayoutServerLoad } from './$types';
 
 let browseWarmed = false;
-
-const clientAddress = (getClientAddress: () => string) => {
-	try {
-		return getClientAddress();
-	} catch {
-		return '';
-	}
-};
 
 /** On a phone, with more than one person in the house: who this device watches as. */
 function whoIsWatching(request: Request, getClientAddress: () => string) {
@@ -34,8 +27,11 @@ function whoIsWatching(request: Request, getClientAddress: () => string) {
 }
 
 /** The accent colour and the sort list are wanted app-wide, so they load once. */
-export const load: LayoutServerLoad = async ({ request, getClientAddress }) => {
+export const load: LayoutServerLoad = async ({ request, getClientAddress, cookies }) => {
 	const settings = readSettings();
+	const seen = cookies.get(WHATS_NEW_SEEN);
+	const updateCard = whatsNewCard(seen);
+	if (!seen && !updateCard) whatsNewSeen(cookies);
 	const saved = settings.accentColor ?? '';
 
 	if (!browseWarmed) {
@@ -85,6 +81,8 @@ export const load: LayoutServerLoad = async ({ request, getClientAddress }) => {
 		// Your own logo, or Catalog's (Settings → Personalization → Logo).
 		logo: logoFrom(settings),
 		showboxSignin: showboxSignin(),
-		whoIsWatching: whoIsWatching(request, getClientAddress)
+		whoIsWatching: whoIsWatching(request, getClientAddress),
+		// After an update: a few lines once per device (WhatsNewCard.svelte).
+		whatsNew: updateCard
 	};
 };

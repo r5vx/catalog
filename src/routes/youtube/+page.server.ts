@@ -3,6 +3,7 @@ import type { PageServerLoad } from './$types';
 import { onThisComputer } from '$lib/server/profile';
 import { readSettings } from '$lib/server/settings';
 import { youtubePhoneLink } from '$lib/server/youtubePhone';
+import { cachedYouTubeWall } from '$lib/server/youtubeWall';
 
 /**
  * Whether YouTube can open here (the desktop app, on its own computer), and which way. A phone gets
@@ -24,6 +25,7 @@ export const load: PageServerLoad = async ({ request, getClientAddress, url }) =
 	const phoneLink = !canOpen && phone ? youtubePhoneLink(request, url) : null;
 	if (phoneLink) redirect(303, phoneLink);
 	return {
+		thumbs: cachedYouTubeWall(),
 		canOpen,
 		inside: readSettings().youtubeInside === '1',
 		phoneLink,

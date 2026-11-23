@@ -1,14 +1,27 @@
+<script module lang="ts">
+	import type { SearchResult } from '$lib/server/metadata/types';
+
+	let returnToShelf: {
+		href: string;
+		scroll: number;
+		extra: Record<string, SearchResult[]>;
+		at: Record<string, number>;
+		shelfMode: Record<string, string>;
+		ended: Record<string, boolean>;
+	} | undefined;
+</script>
+
 <script lang="ts">
+	import { tick, untrack } from 'svelte';
 	import { fitOnScreen } from '$lib/fitOnScreen';
 	import { posterSrcset, POSTER_SIZES } from '$lib/poster';
 	import { watchTypeOf } from '$lib/watchType';
 	import MoreButton from '$lib/MoreButton.svelte';
-	import { goto } from '$app/navigation';
+	import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import BackBar from '$lib/BackBar.svelte';
 	import RandomPick from '$lib/RandomPick.svelte';
 	import { p, pRandom } from '$lib/altText';
-	import type { SearchResult } from '$lib/server/metadata/types';
 	import { titleKey } from '$lib/titleKey';
 	import type { PageData } from './$types';
 
@@ -74,13 +87,16 @@
 		goto(`?${params.toString()}`, { keepFocus: true, noScroll: true });
 	}
 
-	let yearFromInput = $state(data.yearFrom ? String(data.yearFrom) : '');
-	let yearToInput = $state(data.yearTo ? String(data.yearTo) : '');
+	let yearFromInput = $state<number | undefined>(untrack(() => data.yearFrom ?? undefined));
+	let yearToInput = $state<number | undefined>(untrack(() => data.yearTo ?? undefined));
 	let browseFilterOpen = $state(false);
 	let browseFilterPanel = $state<HTMLDivElement | null>(null);
 
+	$effect(() => { yearFromInput = data.yearFrom ?? undefined; });
+	$effect(() => { yearToInput = data.yearTo ?? undefined; });
+
 	function applyYears() {
-		setParams({ from: yearFromInput, to: yearToInput });
+		setParams({ from: String(yearFromInput ?? ''), to: String(yearToInput ?? '') });
 	}
 
 	const browseFilterCount = $derived((data.genre ? 1 : 0) + (data.yearFrom || data.yearTo ? 1 : 0));
@@ -89,8 +105,9 @@
 		if (browseFilterPanel && !browseFilterPanel.contains(e.target as Node)) browseFilterOpen = false;
 	}
 
-	// eslint-disable-next-line svelte/valid-compile -- intentionally captures initial data.q only
-	let searchText = $state(data.q ?? '');
+	let searchText = $state(untrack(() => data.q));
+	$effect(() => { searchText = data.q; });
+
 	let typing: ReturnType<typeof setTimeout>;
 	function onSearch() {
 		clearTimeout(typing);
@@ -107,15 +124,10 @@
 
 	/** Added during this visit — the page doesn't reload, so it tracks its own. */
 	let justAdded = $state<Record<string, number>>({});
-	let justRemoved = $state<Set<string>>(new Set());
-	let busy = $state<string | null>(null);
+	let justRemoved = $state<Set<number>>(new Set());
 	let problem = $state('');
 
-	const have = (result: SearchResult) => {
-		const k = keyOf(result);
-		if (justRemoved.has(k)) return false;
-		return k in owned || k in justAdded || ownedByTitle(result) !== undefined;
-	};
+	const have = (result: SearchResult) => entryIdOf(result) !== null;
 
 	/** In the library: its poster there, so the two match. */
 	function posterOf(result: SearchResult): string | null {
@@ -125,20 +137,25 @@
 
 	function entryIdOf(result: SearchResult): number | null {
 		const k = keyOf(result);
-		return justAdded[k] ?? owned[k] ?? ownedByTitle(result) ?? null;
+		const id = justAdded[k] ?? owned[k] ?? ownedByTitle(result);
+		return id === undefined || justRemoved.has(id) ? null : id;
 	}
 
 	async function remove(result: SearchResult) {
 		const id = entryIdOf(result);
 		if (!id) return;
+		problem = '';
 		try {
-			await fetch('/api/entries', {
+			const response = await fetch('/api/entries', {
 				method: 'DELETE',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ id })
 			});
-			justRemoved = new Set([...justRemoved, keyOf(result)]);
-		} catch {}
+			if (!response.ok) throw new Error(String(response.status));
+			justRemoved = new Set([...justRemoved, id]);
+		} catch {
+			problem = 'That could not be removed. Try again in a moment.';
+		}
 	}
 
 	let ctxMenu = $state<{ x: number; y: number; result: SearchResult } | null>(null);
@@ -155,7 +172,6 @@
 	function closeCtx() { ctxMenu = null; }
 
 	async function add(result: SearchResult, status: string) {
-		busy = keyOf(result);
 		problem = '';
 
 		try {
@@ -174,8 +190,6 @@
 			justAdded = { ...justAdded, [keyOf(result)]: added.id };
 		} catch {
 			problem = 'That could not be added — no connection.';
-		} finally {
-			busy = null;
 		}
 	}
 
@@ -192,25 +206,28 @@
 	let at = $state<Record<string, number>>({});
 	/** The list a shelf has moved on to (anime: from trending to all-time once trending runs out). */
 	let shelfMode = $state<Record<string, string>>({});
-	let loading = $state<string | null>(null);
+	let loading = $state<Record<string, boolean>>({});
+	const pendingPages = new Map<string, AbortController>();
 	let ended = $state<Record<string, boolean>>({});
 	/** A shelf whose last "Show more" didn't come back: its button says so, and can be pressed again. */
 	let failed = $state<Record<string, boolean>>({});
 
 	// A change of category or trending/all-time replaces the shelves entirely,
 	// so anything loaded on top of the old ones has to go with them.
-	let showing = $state('');
+	const shelfView = $derived(`${data.q}:${data.cat}:${data.mode}:${data.sort}:${data.yearFrom}:${data.yearTo}:${data.genre}`);
 
 	$effect(() => {
-		const signature = `${data.cat}:${data.mode}:${data.sort}:${data.yearFrom}:${data.yearTo}:${data.genre}`;
-		if (showing === signature) return;
-
-		showing = signature;
+		void shelfView;
 		extra = {};
 		at = {};
 		shelfMode = {};
+		loading = {};
 		ended = {};
 		failed = {};
+		return () => {
+			for (const request of pendingPages.values()) request.abort();
+			pendingPages.clear();
+		};
 	});
 
 	const shelfResults = (shelf: { key: string; results: SearchResult[] }) => [
@@ -224,7 +241,11 @@
 	 * the button to try again, rather than saying that's everything.
 	 */
 	async function more(shelf: { key: string; results: SearchResult[]; page: number }) {
-		loading = shelf.key;
+		if (pendingPages.has(shelf.key)) return;
+		const request = new AbortController();
+		const view = shelfView;
+		pendingPages.set(shelf.key, request);
+		loading[shelf.key] = true;
 		failed = { ...failed, [shelf.key]: false };
 		const PAGES_PER_CLICK = 3;
 
@@ -234,7 +255,7 @@
 			if (data.yearFrom) moreUrl += `&from=${data.yearFrom}`;
 			if (data.yearTo) moreUrl += `&to=${data.yearTo}`;
 			if (data.genre) moreUrl += `&genre=${data.genre}`;
-			const response = await fetch(moreUrl, { signal: AbortSignal.timeout(20_000) });
+			const response = await fetch(moreUrl, { signal: AbortSignal.any([request.signal, AbortSignal.timeout(20_000)]) });
 			if (!response.ok) throw new Error(String(response.status));
 			return (await response.json()).results ?? [];
 		};
@@ -250,6 +271,7 @@
 			for (let round = 0; round < 2 && fresh.length === 0; round++) {
 				const numbers = Array.from({ length: PAGES_PER_CLICK }, (_, i) => currentPage + 1 + i);
 				const pages = await Promise.all(numbers.map((n) => pageOf(n, mode)));
+				if (request.signal.aborted || view !== shelfView) return;
 				currentPage = numbers.at(-1)!;
 				fresh = pages.flat().filter((one) => {
 					if (already.has(one.key)) return false;
@@ -270,9 +292,12 @@
 				ended = { ...ended, [shelf.key]: true };
 			}
 		} catch {
-			failed = { ...failed, [shelf.key]: true };
+			if (!request.signal.aborted && view === shelfView) failed = { ...failed, [shelf.key]: true };
 		} finally {
-			loading = null;
+			if (pendingPages.get(shelf.key) === request) {
+				pendingPages.delete(shelf.key);
+				loading[shelf.key] = false;
+			}
 		}
 	}
 
@@ -291,38 +316,36 @@
 
 	$effect(() => {
 		window.addEventListener('scroll', onScroll, { passive: true });
-		const saved = sessionStorage.getItem('browse-scroll');
-		const savedExtra = sessionStorage.getItem('browse-extra');
-		if (savedExtra) {
-			try {
-				const parsed = JSON.parse(savedExtra);
-				extra = parsed.extra ?? {};
-				at = parsed.at ?? {};
-				ended = parsed.ended ?? {};
-			} catch {}
-			sessionStorage.removeItem('browse-extra');
-		}
-		if (saved) {
-			const y = Number(saved);
-			sessionStorage.removeItem('browse-scroll');
-			requestAnimationFrame(() => {
-				requestAnimationFrame(() => window.scrollTo(0, y));
-			});
-		}
 		return () => window.removeEventListener('scroll', onScroll);
 	});
 
-	function saveScroll() {
-		try {
-			sessionStorage.setItem('browse-scroll', String(window.scrollY));
-			if (Object.keys(extra).length > 0) {
-				sessionStorage.setItem('browse-extra', JSON.stringify({ extra, at, ended }));
-			}
-		} catch {}
-	}
-
 	const link = (result: SearchResult) =>
 		`/title/${result.source}/${encodeURIComponent(result.sourceId)}?back=${encodeURIComponent(here)}`;
+	const entryLink = (id: number) => `/entry/${id}?back=${encodeURIComponent(here)}`;
+
+	beforeNavigate(({ to, type }) => {
+		if (type === 'popstate' || to?.route.id !== '/browse') clearTimeout(typing);
+		if (to?.url.searchParams.get('back') === here &&
+			(to.route.id === '/title/[source]/[id]' || to.route.id === '/entry/[id]')) {
+			returnToShelf = { href: here, scroll: window.scrollY, extra, at, shelfMode, ended };
+		} else if (to?.route.id !== '/browse') {
+			returnToShelf = undefined;
+		}
+	});
+
+	afterNavigate(async ({ from, to }) => {
+		const saved = returnToShelf;
+		returnToShelf = undefined;
+		if (!saved || !to || saved.href !== to.url.pathname + to.url.search ||
+			(from?.route.id !== '/title/[source]/[id]' && from?.route.id !== '/entry/[id]')) return;
+
+		extra = saved.extra;
+		at = saved.at;
+		shelfMode = saved.shelfMode;
+		ended = saved.ended;
+		await tick();
+		window.scrollTo(0, saved.scroll);
+	});
 </script>
 
 <svelte:window onmousedown={onBrowseFilterClick} onkeydown={(e) => e.key === 'Escape' && (browseFilterOpen = false)} />
@@ -417,7 +440,7 @@
 					</div>
 
 					{#if browseFilterCount > 0}
-						<button type="button" class="browse-filter-clear" onclick={() => { setParams({ genre: '', from: '', to: '' }); yearFromInput = ''; yearToInput = ''; }}>
+						<button type="button" class="browse-filter-clear" onclick={() => setParams({ genre: '', from: '', to: '' })}>
 							Clear all
 						</button>
 					{/if}
@@ -492,7 +515,7 @@
 
 {#snippet card(result: SearchResult)}
 	<li class="card has-more" class:mine={have(result)} oncontextmenu={(e) => onCardContext(e, result)}>
-		<a href={link(result)} class="card-link" aria-label={result.title} onclick={saveScroll}></a>
+		<a href={link(result)} class="card-link" aria-label={result.title}></a>
 		<div class="poster">
 			{#if posterOf(result)}
 				<img src={posterOf(result)} srcset={posterSrcset(posterOf(result))} sizes={POSTER_SIZES} alt="" loading="lazy" />
@@ -523,8 +546,8 @@
 			<p class="blurb">{result.overview}</p>
 		{/if}
 
-		{#if justAdded[keyOf(result)]}
-			<a class="added" href="/entry/{justAdded[keyOf(result)]}">{pm ? p('alt:Added →') : 'Added →'}</a>
+		{#if have(result) && justAdded[keyOf(result)]}
+			<a class="added" href={entryLink(justAdded[keyOf(result)])}>{pm ? p('alt:Added →') : 'Added →'}</a>
 		{:else if have(result)}
 			<span class="added">{pm ? p('In your library') : 'In your library'}</span>
 		{/if}
@@ -560,10 +583,10 @@
 					<button
 						type="button"
 						class="btn more"
-						disabled={loading === shelf.key}
+						aria-disabled={loading[shelf.key] ? 'true' : undefined}
 						onclick={() => more(shelf)}
 					>
-						{loading === shelf.key ? (pm ? pRandom() : 'Finding more…') : failed[shelf.key] ? "Couldn't load more. Try again" : (pm ? p('alt:Show more') : 'Show more')}
+						{loading[shelf.key] ? (pm ? pRandom() : 'Finding more…') : failed[shelf.key] ? "Couldn't load more. Try again" : (pm ? p('alt:Show more') : 'Show more')}
 					</button>
 				{/if}
 			</section>
@@ -594,8 +617,9 @@
 		</button>
 		<hr />
 		{#if have(ctxMenu.result)}
-			{#if entryIdOf(ctxMenu.result)}
-				<button type="button" onclick={() => { goto(`/entry/${entryIdOf(ctxMenu!.result)}`); closeCtx(); }}>
+			{@const id = entryIdOf(ctxMenu.result)}
+			{#if id}
+				<button type="button" onclick={() => { goto(entryLink(id)); closeCtx(); }}>
 					{pm ? p('View entry') : 'View entry'}
 				</button>
 			{/if}
@@ -785,6 +809,15 @@
 		.browse-toolbar select {
 			flex: 1;
 			min-width: 0;
+		}
+
+		/* The panel hangs from the toolbar's left edge: from the Filter button it ran off one side or the other. */
+		.browse-toolbar {
+			position: relative;
+		}
+
+		.browse-filter-wrap {
+			position: static;
 		}
 	}
 
@@ -1076,14 +1109,6 @@
 		border: none;
 		border-top: 1px solid var(--rule, #333);
 		margin: 4px 0;
-	}
-
-	.ctx-info {
-		display: block;
-		padding: 8px 14px;
-		font-size: 0.84rem;
-		color: var(--good);
-		font-weight: 600;
 	}
 
 	.ctx-danger { color: var(--danger, #c33) !important; }

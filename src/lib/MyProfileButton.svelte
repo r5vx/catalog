@@ -1,3 +1,7 @@
+<script lang="ts" module>
+	const warmed = new Set<string>();
+</script>
+
 <script lang="ts">
 	/**
 	 * Your picture, as a button to your own profile (owner, 2026-11-15: My profile was "really hard to
@@ -6,12 +10,57 @@
 	 */
 	import { page } from '$app/state';
 	import Avatar from '$lib/Avatar.svelte';
+	import { preloadData } from '$app/navigation';
 
 	let { wide = false }: { wide?: boolean } = $props();
 
-	const me = $derived(page.data.onlineMe as { id: string; name: string; avatar: number } | null | undefined);
+	type Me = { id: string; name: string; avatar: number };
+	const fromPage = $derived(page.data.onlineMe as Me | null | undefined);
+	/**
+	 * Asked for here when the page didn't know yet. Right after Catalog opens the computer hasn't
+	 * heard back from the meeting point, and the page's data isn't asked again on its own, so the
+	 * grey stand-in stayed in the top bar until a click (owner, 2026-11-20).
+	 */
+	let asked = $state<Me | null>(null);
+	const me = $derived(fromPage && !fromPage.id && asked?.id ? asked : fromPage);
+
+	$effect(() => {
+		if (!fromPage || fromPage.id || asked?.id) return;
+		let stopped = false;
+		let tries = 0;
+		let timer: ReturnType<typeof setTimeout>;
+		const ask = async () => {
+			try {
+				const r = await fetch('/api/online?me=1');
+				const answer = r.ok ? ((await r.json()) as { me?: Me | null }).me : null;
+				if (!stopped && answer?.id) {
+					asked = answer;
+					return;
+				}
+			} catch {}
+			// Again in 5, 10, 20, 40 s, then each minute: the meeting point may be slow to answer.
+			if (!stopped) timer = setTimeout(ask, Math.min(60_000, 5000 * 2 ** tries++));
+		};
+		timer = setTimeout(ask, 1500);
+		return () => {
+			stopped = true;
+			clearTimeout(timer);
+		};
+	});
 	const href = $derived(`/friends/${me?.id || 'me'}`);
 	const here = $derived(Boolean(me?.id) && page.url.pathname === `/friends/${me?.id}`);
+
+	// Asked for once, a few seconds after Catalog opens, so the first click shows it at once too
+	// (the page keeps each answer: src/lib/server/online.ts keepProfileAnswer).
+	$effect(() => {
+		const id = me?.id;
+		if (!id || warmed.has(id)) return;
+		const timer = setTimeout(() => {
+			warmed.add(id);
+			preloadData(`/friends/${id}`).catch(() => {});
+		}, 4000);
+		return () => clearTimeout(timer);
+	});
 </script>
 
 {#if me}

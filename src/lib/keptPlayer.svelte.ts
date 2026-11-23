@@ -49,14 +49,13 @@ function mediaOf(params: URLSearchParams): string {
 
 /** Whether `url` (a /watch address) is what the kept player is already playing. */
 function isKept(kept: Kept, url: URL): boolean {
+	const season = Number(url.searchParams.get('resume_s')) || 0;
+	const episode = Number(url.searchParams.get('resume_e')) || 0;
+	if (season && kept.season && (season !== kept.season || (episode && episode !== kept.episode))) return false;
 	if (url.search === kept.search) return true;
 	const wanted = mediaOf(url.searchParams);
 	if (!wanted || wanted !== mediaOf(new URLSearchParams(kept.search))) return false;
 	if (url.searchParams.get('mini') || url.searchParams.get('fid')) return false;
-	// A particular episode asked for: only if it's the one playing.
-	const season = Number(url.searchParams.get('resume_s')) || 0;
-	const episode = Number(url.searchParams.get('resume_e')) || 0;
-	if (season && kept.season && (season !== kept.season || (episode && episode !== kept.episode))) return false;
 	return true;
 }
 

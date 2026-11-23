@@ -6,7 +6,7 @@
 ' task's response: { ok, code, data, signIn }.
 function api(path as String, query as Object, callback as String, method = "GET" as String, body = invalid as Dynamic) as Object
     task = CreateObject("roSGNode", "ApiTask")
-    task.request = { path: path, query: query, method: method, body: body }
+    task.request = { server: m.global.server, headers: catalogHeaders(), path: path, query: query, method: method, body: body }
     task.observeField("response", callback)
     task.control = "RUN"
     if m.tasks = invalid then m.tasks = []
@@ -14,6 +14,11 @@ function api(path as String, query as Object, callback as String, method = "GET"
     m.tasks.Push(task)
     if m.tasks.Count() > 20 then m.tasks.Shift()
     return task
+end function
+
+' Ignore replies from requests superseded by a newer search, episode or caption choice.
+function isCurrentRequest(event as Object, task as Dynamic) as Boolean
+    return task <> invalid and event.getRoSGNode().isSameNode(task)
 end function
 
 ' What Catalog needs from this Roku with every request: that it's a TV, whose profile is
@@ -44,13 +49,25 @@ end function
 ' The same, as a video asks with them ("Name:Value"), plus any of its own.
 function videoHeaders(extra as Object) as Object
     headers = catalogHeaders()
-    list = ["Cookie:" + headers["Cookie"], "User-Agent:" + headers["User-Agent"], "X-Roku-Video:" + headers["X-Roku-Video"]]
+    list = ["User-Agent:" + headers["User-Agent"], "X-Roku-Video:" + headers["X-Roku-Video"]]
     if extra <> invalid then
         for each line in extra
             list.Push(line)
         end for
     end if
     return list
+end function
+
+' Video headers go to every host in a playlist. Attach profile/PIN cookies only to Catalog.
+function videoCookies() as Object
+    host = CreateObject("roRegex", "^https?://(\[[^\]]+\]|[^/:]+)", "i").Match(m.global.server)
+    if host.Count() < 2 then return []
+    domain = host[1]
+    if Left(domain, 1) = "[" then domain = Mid(domain, 2, Len(domain) - 2)
+    prefix = "dom=" + domain + ";path=/;name="
+    cookies = [prefix + "catalog_profile;val=" + m.global.profile.ToStr() + ";"]
+    if m.global.token <> "" then cookies.Push(prefix + "catalog_auth;val=" + m.global.token + ";")
+    return cookies
 end function
 
 ' Any value as text (numbers too).

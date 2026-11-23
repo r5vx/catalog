@@ -12,6 +12,166 @@ without both.
 
 ## Unreleased
 
+## 4.7.0 — 2026-11-23 — Old cartoons, Nyaa anime, and a Home page
+
+### New
+
+**Home**
+- A Home page: the week's new films, shows and anime, and new episodes of your shows
+- This week is now called Home
+- Anime laid out by the day it aired, today marked
+- Previous and next arrows on the featured releases
+- New to stream shows a film's first digital or disc release, anywhere
+- A dot marks a new week from Monday until you open it
+- Opens first, unless you choose Library in Settings → Personalization → Open on
+- Back from a title returns to Home, where you left it
+- Home on TV, with featured releases and rows made for the remote
+- Continue watching and new releases from your watch list, on Home
+- Home replaces Continue Watching in the library menu
+- Films already watched, played or added before this week stay out of new streaming releases
+- Followed shows stay in New episodes and Coming up, without repeating in the watch list
+
+**Sources**
+- Nyaa: fan releases of anime, including old shows no site streams (Settings → Services, with a debrid service)
+- Got through your debrid service, so your connection never joins a torrent
+- One nobody has asked for yet says how far along it is
+- Its subtitles come from inside the file
+- Played when picked in Files, or when nothing else has the episode
+- An episode nobody is sharing yet is kept waiting in Settings → Services, looked for every few hours, and got once someone shares it
+- Old cartoon series from a few trusted video collections, played in the Catalog player (on TVs and phones too, with Catalog open on the computer)
+- AllAnime (mkissa.to): another anime source, Japanese audio and English dubs, found by the desktop app
+
+**Adding**
+- Import everything you've watched from MyAnimeList, AniList or Kitsu by username, or from a Letterboxd or IMDb export
+- Statuses, scores and how far you got come along, and a show's seasons come in as one title
+- A new Add page: search with posters, and the other ways to add below it
+
+**Look**
+- Move and zoom the background picture, the app icon and your profile picture to fit
+- Change the size and place of a logo picture
+- After an update, a card you can close says what's new, once per version on each device
+
+**Profiles**
+- Name styles can glow and shimmer on top of a color or a gradient
+
+**Watch lists**
+- A watch list you've seen all of says Finished, on your lists and when adding one
+
+**Player**
+- Showbox episodes are downloaded ahead onto the computer too, while plenty of the day's Febbox allowance is left
+
+### Improved
+
+**TV**
+- A TV app that can't update itself, or whose update didn't install, shows the Downloader steps to get the new one
+
+**YouTube**
+- The moving background appears sooner, with pictures kept between launches and refreshed without waiting
+
+**Home**
+- New films, shows of yours and your watch list's releases come in faster when Home first asks TMDB for them
+
+**Player**
+- Cast and Download are back on the player's top bar
+- Removed Picture glitching and Add a video link from Files; previously marked glitchy copies are still skipped
+- Files stays inside the window, including in the mini player
+- Watch groups announce when someone joins or leaves; changing copies while paused stays paused
+
+**Online**
+- Profiles open at once after the first time, and My profile is ready before you click it
+
+**Titles**
+- A title's page opens at once the first time, with its saved details, and corrects itself if it was matched to the wrong film or show
+
+**Subtitles**
+- Subtitles asked for twice at once download only once, saving your OpenSubtitles allowance
+- Old anime's fan subtitles from Kitsunekko, when there are no official ones
+- Subtitles that come as pictures are read into text, styled like the rest
+- DVD-style picture subtitles inside MKV files are read too, as the file arrives
+- Signs and on-screen text in subtitles show at the top instead of piling onto what's being said
+- Dub captions are found for more anime episodes
+
+### Fixed
+
+- An episode no longer stops partway when a source is slow to send the next piece: the player waits for it
+- Subtitles no longer "don't match" after the next episode starts by itself
+- A show no longer gets another show's subtitles because its name starts the same way
+- Anime captions stay findable after AnimeTosho turns away too many lookups
+- The MCU watch lists have The Fantastic Four: First Steps itself, not its premiere special
+- The note at the top of the player no longer covers captions placed at the top
+- Your profile picture shows in the top bar right after opening, not the grey stand-in
+- The Music tab also shows on films and shows added by hand
+- Downloads from sources other than Showbox no longer get refused for using up Febbox's daily allowance
+- Resuming a download stops safely when its server sends the wrong part, instead of damaging the file
+- Messages from someone you removed as a friend no longer count as unread forever
+- Adding a friend by code takes away their waiting friend request, and yours to them
+- A banner or profile picture changed twice in quick succession shows the newer one to friends
+- A film series with no name no longer causes an error when Catalog starts
+
+**Online**
+- A title removed on another computer no longer removes one you typed in by hand with the same name and year
+- Late watch-together updates no longer rejoin a room you left or change the room you just joined
+- Switching between friends' shared files no longer shows the previous friend's library when it loads late
+- Each conversation keeps its own unsent message, and a message you send stays in its own conversation
+
+**Updates**
+- A Mac update that runs out of disk space reports the error instead of closing Catalog; interrupted downloads close their temporary file
+
+**Live**
+- Leaving Live stops its empty-schedule retries, including when a reply is still arriving
+
+**Player**
+- A copy you pick in Files no longer switches to another copy because its audio language is unknown
+- You can pick another copy in Files while a slow one is loading
+- Anime copies in Files no longer appear and disappear when a source is slow
+- Some copies and downloads that failed to start now start reliably
+- Plain video files offer their audio tracks on the computer and follow the same language choice as streamed copies
+- Starting something in Catalog's window pauses the mini player, instead of both playing at once
+- A copy or episode still loading no longer replaces the one you just picked
+- Automatic subtitle timing that arrives late no longer changes your captions after you switch subtitles, audio or episode
+- Opening a show again no longer adds duplicate dubbed copies to Files
+- Subtitles still loading when the next episode starts no longer appear over it, and your choice carries over in the same language
+- Opening a particular episode no longer returns to a different episode kept in the mini player
+- A failed cast lookup no longer leaves the previous episode's actors showing
+- A video that finishes loading after you leave the player stays paused until you return
+
+**Sources**
+- Saving a download to your computer works when its name has non-English characters, such as Japanese
+- After a download fails, the next one waits until the failed one has fully stopped
+- Videos played through your computer keep loading ahead after a copy change
+- Nyaa and AllDebrid pick the right episode from multi-episode copies
+- More videos played through your computer on a phone or TV start and keep playing
+
+**Library**
+- Browse's Show more keeps keyboard focus while more titles load
+- Browse's search and year fields follow Back and Forward
+- Browse keeps Show more pages and your scroll position when you go Back from a title
+- A Remove from library that fails leaves the title as it was, in Browse and on your other computers
+- Browse no longer adds results from an old filter after you press Show more and change the filter
+- Title, Add page and franchise searches no longer show late results for text you've changed or cleared
+- Closing and reopening Random no longer lets a previous roll replace the new pick
+- Library search finds % and _ exactly as you typed them
+- Library backups include your latest changes even while Catalog is open
+- JSON backups keep note history and saved franchise watch lists
+- Restoring takes a backup downloaded from Settings, and a failed restore leaves your current library in place
+
+**Phones**
+- On a phone, Browse's Filter panel no longer runs off the left of the screen, cutting off Genre and the years
+- Videos kept on your phone reopen where you left them, even at the very start or after rewinding offline
+- Browse filters and the library sort menu stay on the screen
+- Printable export tables scroll sideways on narrow screens without changing the printed page
+- The iPhone app has a Connect to another computer button in Settings → TV and phones, and its setup steps point there
+
+**Roku**
+- Picking an unavailable episode no longer starts a different one, and From the start ignores the saved place
+- Direct video files and Showbox playlists are sent to the right player
+- Searches, filters and captions on Roku no longer jump back to older results
+- Roku keeps your Catalog sign-in on your computer, never sent to video sites
+
+**TV layout**
+- Empty screens keep the remote's menu reachable, and Back from YouTube works like the other menu screens
+- Samsung's Back key opens the menu or returns to the previous screen
+
 ## 4.6.0 — 2026-11-18 — Quicker messages and dates that fill themselves
 
 ### New

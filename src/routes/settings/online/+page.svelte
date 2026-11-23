@@ -33,7 +33,7 @@
 	};
 	type LibraryRound = { at: number; sent: number; taken: number; added: number; removed: number; skipped: number; left: number; longNotes: number; error: string };
 	type LibraryPreview = { here: number; there: number; add: number; update: number; remove: number; send: number; nameOnly: number };
-	type Report = { id: number; houseName: string; kind: string; title: string; body: string; created: number };
+	type Report = { id: number; houseName: string; kind: string; title: string; body: string; created: number; reviewed?: boolean };
 
 	let status = $state<Status | null>(null);
 	let joinCode = $state('');
@@ -288,13 +288,21 @@
 		openBody = text;
 	}
 
+	/** Marks reports as looked through (or not); the ones looked through go below, faded. */
+	async function markReviewed(list: Report[], reviewed: boolean) {
+		const ids = list.map((r) => r.id);
+		reports = reports.map((r) => (ids.includes(r.id) ? { ...r, reviewed } : r));
+		await fetch('/api/online/reports', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, reviewed }) }).catch(() => null);
+	}
+	const shownReports = $derived([...reports.filter((r) => !r.reviewed), ...reports.filter((r) => r.reviewed)]);
+
 	async function deleteReport(report: Report) {
 		await fetch(`/api/online/reports?id=${report.id}`, { method: 'DELETE' }).catch(() => null);
 		reports = reports.filter((r) => r.id !== report.id);
 	}
 
 	const when = (at: number) => new Date(at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-	const kindName: Record<string, string> = { stop: 'Stopped to load', subtitles: "Subtitles didn't match" };
+	const kindName: Record<string, string> = { stop: 'Stopped to load', subtitles: "Subtitles didn't match", error: "Couldn't play or had an error" };
 </script>
 
 <svelte:head><title>Online · Catalog</title></svelte:head>
@@ -470,18 +478,20 @@
 			{#if !reports.length && !reportsProblem}<p class="muted">None.</p>{/if}
 			<p class="faint small">Stops of 4 seconds or more are sent. Shorter ones stay in that computer's stop log (Settings → Playback).</p>
 			<ul class="reports">
-				{#each reports as report (report.id)}
-					<li>
+				{#each shownReports as report (report.id)}
+					<li class:reviewed={report.reviewed}>
 						<button type="button" class="report" onclick={() => openReport(report)}>
 							<strong>{report.title || 'A video'}</strong>
-							<span class="faint">{kindName[report.kind] ?? report.kind} · {report.houseName || 'a computer'} · {when(report.created)}</span>
+							<span class="faint">{kindName[report.kind] ?? report.kind} · {report.houseName || 'a computer'} · {when(report.created)}{report.reviewed ? ' · Reviewed' : ''}</span>
 						</button>
+						<button type="button" class="link" onclick={() => markReviewed([report], !report.reviewed)}>{report.reviewed ? 'Not reviewed' : 'Reviewed'}</button>
 						<button type="button" class="link" onclick={() => deleteReport(report)}>Delete</button>
 						{#if open === report.id}<pre>{openBody}</pre>{/if}
 					</li>
 				{/each}
 			</ul>
 			<div class="row">
+				{#if reports.some((r) => !r.reviewed)}<button type="button" class="btn" onclick={() => markReviewed(reports.filter((r) => !r.reviewed), true)}>Mark all reviewed</button>{/if}
 				<button type="button" class="btn" onclick={loadReports} disabled={reportsLooking}>{reportsLooking ? 'Looking…' : 'Look again'}</button>
 				{#if reportsAt && !reportsLooking}<span class="faint small">Looked at {new Date(reportsAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' })}</span>{/if}
 				<button type="button" class="btn" onclick={forgetOwnerKey}>Forget the owner's key</button>
@@ -622,6 +632,10 @@
 
 	.report span {
 		font-size: 0.85rem;
+	}
+
+	.reports li.reviewed {
+		opacity: 0.55;
 	}
 
 	pre {

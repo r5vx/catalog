@@ -46,8 +46,6 @@ const children = (data: Uint8Array, box: Box, type: string) => [...boxes(data, b
 /** The sound track's id and AAC settings, from a format piece. */
 export type AacTrack = { id: number; profile: number; rateIndex: number; channels: number };
 
-const RATES = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350];
-
 /** The first AAC sound track in a format piece (init segment), or null. */
 export function aacTrackOf(init: Uint8Array): AacTrack | null {
 	const view = new DataView(init.buffer, init.byteOffset, init.byteLength);
@@ -185,6 +183,3 @@ function header(track: AacTrack, size: number): Uint8Array {
 		0xfc
 	]);
 }
-
-/** The sample rate an ADTS stream from this track plays at. */
-export const rateOf = (track: AacTrack) => RATES[track.rateIndex];

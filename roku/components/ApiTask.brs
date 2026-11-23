@@ -11,7 +11,7 @@ sub ask()
     port = CreateObject("roMessagePort")
     transfer.SetMessagePort(port)
 
-    url = m.global.server + request.path
+    url = request.server + request.path
     if request.query <> invalid then
         separator = "?"
         for each name in request.query
@@ -23,7 +23,8 @@ sub ask()
         end for
     end if
     transfer.SetUrl(url)
-    headers = catalogHeaders()
+    transfer.SetCertificatesFile("common:/certs/ca-bundle.crt")
+    headers = request.headers
     for each name in headers
         transfer.AddHeader(name, headers[name])
     end for

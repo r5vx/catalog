@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import { libraryHref } from '$lib/nav';
 	import { p } from '$lib/altText';
+	import { safeBack } from '$lib/back';
 
 	let {
 		href = null,
@@ -12,21 +13,29 @@
 	} = $props();
 	const pm = $derived(page.data.altMode);
 
-	let library = $state('/');
+	let library = $state('/?library=1');
 
 	$effect(() => {
 		library = libraryHref();
 	});
 
-	const backTo = $derived(href ?? library);
-	const backLabel = $derived(href ? (pm ? p(label) : label) : (pm ? p('Library') : 'Library'));
+	const previous = $derived(safeBack((page.state as { returnTo?: string }).returnTo ?? null));
+	const backTo = $derived(href ?? previous ?? library);
+	const backLabel = $derived(href || previous ? (pm ? p(label) : label) : (pm ? p('Library') : 'Library'));
+	function goBack(event: MouseEvent) {
+		if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+		if (previous && previous === backTo) {
+			event.preventDefault();
+			history.back();
+		}
+	}
 
 	// No point offering both when back already goes there.
-	const showHome = $derived(Boolean(href));
+	const showHome = $derived(backTo !== library);
 </script>
 
 <nav class="bar">
-	<a href={backTo} class="faint">&larr; {backLabel}</a>
+	<a href={backTo} class="faint" onclick={goBack}>&larr; {backLabel}</a>
 	{#if showHome}
 		<a href={library} class="faint home">{pm ? p('Library') : 'Library'}</a>
 	{/if}

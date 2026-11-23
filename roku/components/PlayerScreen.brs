@@ -87,8 +87,13 @@ sub showWaiting(words as String)
 end sub
 
 ' Asks Catalog what to play: the copy, its address, and where to start (/api/roku/play).
-sub load(title as String, kind as String, year as String, season as Integer, episode as Integer, fromStart as Boolean)
+sub load(title as String, kind as String, year as String, season as Integer, episode as Integer, fromStart as Boolean, fresh = false as Boolean)
     m.fromStart = fromStart
+    if not fresh then m.retried = false
+    m.plan = invalid
+    m.skipsAsk = invalid
+    m.steps = []
+    m.saver.control = "stop"
     m.video.control = "stop"
     m.skips = []
     m.skipped = {}
@@ -99,6 +104,7 @@ sub load(title as String, kind as String, year as String, season as Integer, epi
         showWaiting("Loading…")
     end if
     m.asking = { title: title, type: kind, year: year, season: season, episode: episode }
+    if fresh then m.asking.refresh = "1"
     m.capByHand = -1
     m.capPicked = -1
     ' A source picked in the menu, for this episode or film only.
@@ -107,10 +113,16 @@ sub load(title as String, kind as String, year as String, season as Integer, epi
         m.asking.copy = text(m.wantCopy.copy)
     end if
     clearCaptions()
-    api("/api/roku/play", m.asking, "onPlan")
+    m.planAsk = api("/api/roku/play", m.asking, "onPlan")
+    if fresh then showWaiting("Getting a fresh link…")
 end sub
 
 sub onPlan(event as Object)
+    if not isCurrentRequest(event, m.planAsk) then return
+    m.planAsk = invalid
+    m.wantCopy = invalid
+    retryAt = m.retryAt
+    m.retryAt = 0
     answer = event.getData()
     if not answer.ok or answer.data.error <> invalid then
         problem = "That can't be played right now."
@@ -120,11 +132,11 @@ sub onPlan(event as Object)
     end if
     plan = answer.data
     m.plan = plan
-    m.wantCopy = invalid
     content = CreateObject("roSGNode", "ContentNode")
     content.url = plan.url
     content.streamFormat = plan.format
     content.httpHeaders = videoHeaders(plan.headers)
+    content.httpCookies = videoCookies()
     ' Only the top quality, never lower by itself (as on the computer and Fire TV).
     if plan.minBandwidth <> invalid and plan.minBandwidth > 0 then content.MinBandwidth = plan.minBandwidth
     name = plan.title
@@ -140,9 +152,8 @@ sub onPlan(event as Object)
         content.FHDBifUrl = plan.bif
     end if
     ' Where to start: where it was left (or, after a fresh link, where it stopped working).
-    if m.retryAt > 0 then
-        content.playStart = m.retryAt
-        m.retryAt = 0
+    if retryAt > 0 then
+        content.playStart = retryAt
     else if not m.fromStart and plan.start > 0 then
         content.playStart = plan.start
     end if
@@ -182,6 +193,7 @@ sub styleCaptions()
 end sub
 
 sub clearCaptions()
+    m.capAsk = invalid
     m.cues = []
     m.cueAt = 0
     m.capOptions = []
@@ -205,10 +217,11 @@ sub loadCaptions()
     if m.global.autoTiming then query.auto = "1" else query.auto = "0"
     if m.capByHand >= 0 then query.pick = m.capByHand.ToStr()
     m.capWaitingBefore = text(m.capTiming.state) = "waiting"
-    api("/api/roku/captions", query, "onCaptions")
+    m.capAsk = api("/api/roku/captions", query, "onCaptions")
 end sub
 
 sub onCaptions(event as Object)
+    if not isCurrentRequest(event, m.capAsk) then return
     answer = event.getData()
     if not answer.ok or m.capOff or answer.data.cues = invalid then return
     data = answer.data
@@ -473,6 +486,7 @@ sub onMenuPick()
         load(m.plan.title, m.plan.type, text(m.plan.year), m.plan.next.season, m.plan.next.episode, false)
     else if act = "capOff" then
         m.capOff = true
+        m.capAsk = invalid
         m.capPoll.control = "stop"
         m.captionGroup.visible = false
         showMenu("main")
@@ -526,6 +540,7 @@ sub onYouTube(event as Object)
     content.url = m.global.server + answer.data.url
     content.streamFormat = "hls"
     content.httpHeaders = videoHeaders([])
+    content.httpCookies = videoCookies()
     content.title = text(m.youtube.label)
     m.played = false
     m.video.content = content
@@ -554,6 +569,7 @@ sub onReplay(event as Object)
     content.url = m.global.server + answer.data.url
     content.streamFormat = "hls"
     content.httpHeaders = videoHeaders([])
+    content.httpCookies = videoCookies()
     content.title = text(m.replayParams.label)
     ' Where this profile left it, and its place kept as it plays (Continue Watching, Recently watched).
     if answer.data.resumeAt <> invalid and answer.data.resumeAt > 0 then content.playStart = answer.data.resumeAt
@@ -581,6 +597,7 @@ sub playLive(params as Object)
     content.streamFormat = "hls"
     content.live = true
     content.httpHeaders = videoHeaders([])
+    content.httpCookies = videoCookies()
     content.title = text(params.label)
     m.video.content = content
     m.video.control = "play"
@@ -590,6 +607,7 @@ sub playLive(params as Object)
 end sub
 
 sub onState()
+    if m.planAsk <> invalid or m.top.closing then return
     state = m.video.state
     if state = "buffering" then
         ' The Roku's player shows its own loading circle: ours goes, so there aren't two.
@@ -612,10 +630,11 @@ sub onState()
             showWaiting("The video stopped working (" + m.video.errorMsg + "). Press Back, and try again.")
         else if not m.retried and m.plan <> invalid then
             ' Stopped working: a fresh link, from where it was (once).
+            plan = m.plan
             m.retried = true
             m.retryAt = Int(m.video.position)
-            showWaiting("Getting a fresh link…")
-            api("/api/roku/play", { title: m.plan.title, type: m.plan.type, year: text(m.plan.year), season: m.plan.season, episode: m.plan.episode, refresh: "1", fid: text(m.plan.fid), copy: text(m.plan.shareKey) }, "onPlan")
+            m.wantCopy = { fid: plan.fid, copy: plan.shareKey }
+            load(plan.title, plan.type, text(plan.year), plan.season, plan.episode, false, true)
         else
             showWaiting("The video stopped working (" + m.video.errorMsg + "). Press Back, and try again.")
         end if
@@ -652,10 +671,11 @@ end sub
 sub askSkips()
     m.skipsAsked = true
     plan = m.plan
-    api("/api/roku/skips", { title: plan.title, year: text(plan.year), season: plan.season, episode: plan.episode, overall: plan.overall, duration: Int(m.video.duration), fid: plan.fid, copy: plan.copy }, "onSkips")
+    m.skipsAsk = api("/api/roku/skips", { title: plan.title, year: text(plan.year), season: plan.season, episode: plan.episode, overall: plan.overall, duration: Int(m.video.duration), fid: plan.fid, copy: plan.copy }, "onSkips")
 end sub
 
 sub onSkips(event as Object)
+    if not isCurrentRequest(event, m.skipsAsk) then return
     answer = event.getData()
     if answer.ok then m.skips = answer.data.segments
 end sub
@@ -761,6 +781,9 @@ end sub
 
 sub onClosing()
     saveProgress()
+    m.planAsk = invalid
+    m.capAsk = invalid
+    m.skipsAsk = invalid
     m.saver.control = "stop"
     m.cueTimer.control = "stop"
     m.capPoll.control = "stop"
@@ -860,7 +883,7 @@ sub keepFallback(content as Object, url as String, qualities as Dynamic)
         end if
         m.steps.Push({ url: content.url, min: 0 })
     end if
-    m.stepFrom = { format: content.streamFormat, headers: content.httpHeaders, title: content.title, live: content.live = true, bif: content.HDBifUrl }
+    m.stepFrom = { format: content.streamFormat, headers: content.httpHeaders, cookies: content.httpCookies, title: content.title, live: content.live = true, bif: content.HDBifUrl, start: content.playStart }
 end sub
 
 function fallBack() as Boolean
@@ -871,6 +894,7 @@ function fallBack() as Boolean
     content.url = lower.url
     content.streamFormat = one.format
     content.httpHeaders = one.headers
+    content.httpCookies = one.cookies
     content.title = one.title
     ' Just that quality (MaxBandwidth too, or it could go back up to the one that wouldn't play).
     if lower.min > 0 then
@@ -885,6 +909,7 @@ function fallBack() as Boolean
     end if
     at = Int(m.video.position)
     if at > 0 then content.playStart = at
+    if at <= 0 and one.start > 0 then content.playStart = one.start
     m.played = false
     m.video.content = content
     m.video.control = "play"

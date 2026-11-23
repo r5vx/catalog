@@ -49,8 +49,3 @@ export function tagsForEntry(entryId: number): TagOption[] {
 			.all(entryId)
 	);
 }
-
-/** Drop tags no entry uses any more, so the filter list stays honest. */
-export function pruneTags(): void {
-	db.exec('DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM entry_tags)');
-}

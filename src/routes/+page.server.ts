@@ -35,12 +35,13 @@ function keptView(url: URL): { view: URLSearchParams; remember: string | null } 
 	return { view, remember: changed && view.toString() !== saved.toString() ? view.toString() : null };
 }
 
-export const load: PageServerLoad = async ({ url, request }) => {
+export const load: PageServerLoad = async ({ url, request, isDataRequest }) => {
 	// The TV app opens the TV layout (big rows for the remote) unless it's been switched off.
 	// It starts at "Who's watching?", every time the TV app opens (like Netflix).
 	if (/CatalogTV\//.test(request.headers.get('user-agent') ?? '') && readSettings().tvLayout !== 'full') {
 		redirect(303, '/tv/profiles');
 	}
+	if (!isDataRequest && !url.search && readSettings().openOn !== 'library') redirect(303, '/new');
 	const { view, remember } = keptView(url);
 	const q = (url.searchParams.get('q') ?? '').trim();
 	const cat = url.searchParams.get('cat') ?? '';

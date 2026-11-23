@@ -12,6 +12,7 @@
  */
 import { getOrderCache, saveOrderCache } from '../db/queries';
 import { electronPageAnswer } from '../electron-fetch';
+import { fetchSubtitle } from '../subtitleFetch';
 
 const API = 'https://api.anime.nexus/api/anime';
 const SITE = 'https://anime.nexus';
@@ -42,7 +43,7 @@ export interface NexusSubtitle {
 
 async function ask<T>(path: string): Promise<T | null> {
 	try {
-		const resp = await fetch(`${API}${path}`, {
+		const resp = await fetchSubtitle(`${API}${path}`, {
 			headers: { 'User-Agent': UA, Accept: 'application/json', Origin: SITE, Referer: `${SITE}/` },
 			signal: AbortSignal.timeout(12000)
 		});

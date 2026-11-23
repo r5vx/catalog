@@ -14,8 +14,18 @@ import { vidfastStream, parseVidfastShareKey } from './sources/vidfast';
 import { nothingFrom } from './reachable';
 import { debridStream, parseDebridShareKey } from './sources/debrid';
 import { addonStream, parseAddonShareKey } from './sources/addons';
+import { nyaaStream, parseNyaaShareKey } from './sources/nyaa';
+import { channelStream, parseChannelShareKey } from './sources/channels';
+import { allanimeStream, parseAllanimeShareKey } from './sources/allanime';
+import { showboxAheadAllowed } from './showboxDownloadRoom';
+import { trustVideoHost } from './relayHosts';
 
-export async function streamLink(shareKey: string, fid: number, refresh = false): Promise<{ url: string; debug?: string }> {
+/**
+ * `ahead`: asked by the computer's own player (not a TV or phone, whose Showbox video would then
+ * cross the house's Wi-Fi twice). Showbox's copy then comes through the relay, named as a copy, so
+ * it's downloaded ahead onto this computer (episodeDownloads.ts) while Febbox's allowance has room.
+ */
+export async function streamLink(shareKey: string, fid: number, refresh = false, ahead = false): Promise<{ url: string; debug?: string }> {
 	// Another source's file: its share key says which show, episode and version. Its video
 	// comes through Catalog's relay, so it plays anywhere Catalog does (phone and TV too).
 	const aniwave = parseAniwaveShareKey(shareKey);
@@ -69,11 +79,37 @@ export async function streamLink(shareKey: string, fid: number, refresh = false)
 		return { url: found.url, debug: found.name };
 	}
 
+	// Nyaa (sources/nyaa.ts): the file's link from the debrid service, played directly.
+	if (parseNyaaShareKey(shareKey)) {
+		const found = await nyaaStream(shareKey, refresh);
+		if (!found.url) return { url: '', debug: found.why };
+		return { url: found.url, debug: found.name };
+	}
+
+	// A trusted channel's video (sources/channels.ts): kept by the desktop app's hidden YouTube window, as HLS.
+	if (parseChannelShareKey(shareKey)) {
+		const found = await channelStream(shareKey);
+		if (!found.url) return { url: '', debug: found.why };
+		return { url: found.url };
+	}
+
+	// AllAnime (sources/allanime.ts): found by the desktop app's hidden browser window; played through the relay.
+	if (parseAllanimeShareKey(shareKey)) {
+		const playlist = await allanimeStream(shareKey, refresh);
+		if (!playlist) return { url: '', debug: await nothingFrom('AllAnime', 'AllAnime has nothing for this right now') };
+		return { url: `/api/watch/relay?u=${encodeURIComponent(playlist)}` };
+	}
+
 	const { febboxToken } = readSettings();
 	if (!febboxToken) return { url: '' };
 
 	if (refresh) invalidateStreamCache(fid);
 
 	const result = await getStreamUrl(shareKey, fid, febboxToken);
-	return { url: result.url ?? '', debug: result.debug };
+	const url = result.url ?? '';
+	if (ahead && fid > 0 && url.startsWith('https:') && url.includes('.m3u8') && (await showboxAheadAllowed())) {
+		trustVideoHost(url, 'febbox');
+		return { url: `/api/watch/relay?u=${encodeURIComponent(url)}&copy=${encodeURIComponent(`showbox:${fid}`)}`, debug: result.debug };
+	}
+	return { url, debug: result.debug };
 }

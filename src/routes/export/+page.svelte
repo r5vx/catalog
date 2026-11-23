@@ -188,6 +188,12 @@
 		margin-top: 30px;
 	}
 
+	@media screen and (max-width: 560px) {
+		section {
+			overflow-x: auto;
+		}
+	}
+
 	/**
 	 * On paper nothing is themed: black on white, full width, and none of the
 	 * app's chrome. The toolbar and the surrounding page padding go away so

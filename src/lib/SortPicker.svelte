@@ -202,4 +202,11 @@
 	.tick {
 		font-size: 0.8em;
 	}
+
+	@media (max-width: 560px) {
+		.panel {
+			left: auto;
+			right: 0;
+		}
+	}
 </style>

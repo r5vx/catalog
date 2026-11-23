@@ -233,7 +233,11 @@ type Here = { id: number; updated: number } | null;
  * Finds a title here: by its site and id, else (the other site's copy of an anime) by name and
  * year. Asks the library as it is now, so a title added earlier in the same round is found too.
  */
-function matcher(profile: number): (key: string, value: Value) => Here {
+/**
+ * The title here a row from the other computer is about. `idOnly` (for removals): only the same
+ * TMDB/AniList id counts, never the same name and year, so a title typed in by hand is never removed.
+ */
+function matcher(profile: number, idOnly = false): (key: string, value: Value) => Here {
 	if (profile === 0) {
 		const keys = existingSourceKeysWithIds();
 		const byKey = db.prepare("SELECT id, updated_at AS updated FROM entries WHERE source = ? AND source_id = ?");
@@ -241,10 +245,10 @@ function matcher(profile: number): (key: string, value: Value) => Here {
 		const byName = db.prepare('SELECT id, updated_at AS updated FROM entries WHERE lower(title) = lower(?) AND year = ? LIMIT 1');
 		return (key, value) => {
 			const at = key.indexOf(':');
-			const known = keys[key] ?? (value.t && value.y ? keys[titleKey(value.t, value.y)] : undefined);
+			const known = keys[key] ?? (!idOnly && value.t && value.y ? keys[titleKey(value.t, value.y)] : undefined);
 			const row = (byKey.get(key.slice(0, at), key.slice(at + 1)) ??
 				(known ? byId.get(known) : undefined) ??
-				(value.t && value.y ? byName.get(value.t, value.y) : undefined)) as { id: number; updated: string } | undefined;
+				(!idOnly && value.t && value.y ? byName.get(value.t, value.y) : undefined)) as { id: number; updated: string } | undefined;
 			return row ? { id: row.id, updated: toMs(row.updated) } : null;
 		};
 	}
@@ -252,7 +256,7 @@ function matcher(profile: number): (key: string, value: Value) => Here {
 	const byName = db.prepare('SELECT id, updated_at AS updated FROM profile_titles WHERE profile = ? AND lower(title) = lower(?) AND year = ? LIMIT 1');
 	return (key, value) => {
 		const at = key.indexOf(':');
-		const row = (byKey.get(profile, key.slice(0, at), key.slice(at + 1)) ?? (value.t && value.y ? byName.get(profile, value.t, value.y) : undefined)) as
+		const row = (byKey.get(profile, key.slice(0, at), key.slice(at + 1)) ?? (!idOnly && value.t && value.y ? byName.get(profile, value.t, value.y) : undefined)) as
 			| { id: number; updated: string }
 			| undefined;
 		return row ? { id: row.id, updated: toMs(row.updated) } : null;
@@ -269,15 +273,19 @@ export async function libraryPreview(profile: number): Promise<{ preview: Librar
 	if (remote.error) return { preview: null, error: remote.error };
 	const local = localRows(profile);
 	const find = matcher(profile);
+	const findRemoved = matcher(profile, true);
 	const there = new Map(remote.rows.map((r) => [r.key, r]));
 	let add = 0;
 	let update = 0;
 	let remove = 0;
 	for (const row of there.values()) {
-		const here = find(row.key, row.value);
 		if (row.value?.x === 1) {
+			const here = findRemoved(row.key, row.value);
 			if (here && removalsOn() && row.updated > here.updated) remove++;
-		} else if (!here) add++;
+			continue;
+		}
+		const here = find(row.key, row.value);
+		if (!here) add++;
 		else if (row.updated > here.updated) update++;
 	}
 	let send = 0;
@@ -393,6 +401,7 @@ async function oneRound(profile: number): Promise<LibraryRound> {
 			return done(remote.error);
 		}
 		const find = matcher(profile);
+		const findRemoved = matcher(profile, true);
 		let rev = revBefore;
 		const added: number[] = [];
 		// When each title removed here was removed.
@@ -409,7 +418,7 @@ async function oneRound(profile: number): Promise<LibraryRound> {
 				const value = row.value;
 				// Removed by hand on another computer: gone here too, when it wasn't changed here since.
 				if (KEY.test(row.key) && value && typeof value === 'object' && value.x === 1) {
-					const here = removalsOn() ? find(row.key, value) : null;
+					const here = removalsOn() ? findRemoved(row.key, value) : null;
 					if (here && row.updated > here.updated) {
 						if (round.removed >= MOST_REMOVES) {
 							round.left = remote.rows.length - index;

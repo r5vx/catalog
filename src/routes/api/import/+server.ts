@@ -9,7 +9,12 @@ type Incoming = {
 	categoryId?: number | null;
 	lastSeason?: number | null;
 	lastEpisode?: number | null;
+	/** From another site's list (src/routes/import/list): how it stood there, and your score out of 10. */
+	status?: string;
+	rating?: number | null;
 };
+
+const STATUSES = ['watching', 'completed', 'paused', 'dropped', 'planned', 'rewatching'];
 
 /**
  * Bulk import from a pasted list. Finished dates are deliberately left empty
@@ -39,7 +44,9 @@ export const POST: RequestHandler = async ({ request }) => {
 			categoryId: item.categoryId,
 			markWatchedToday: false,
 			lastSeason: item.lastSeason ?? null,
-			lastEpisode: item.lastEpisode ?? null
+			lastEpisode: item.lastEpisode ?? null,
+			status: item.status && STATUSES.includes(item.status) ? item.status : undefined,
+			rating: typeof item.rating === 'number' && item.rating > 0 && item.rating <= 10 ? Math.round(item.rating * 2) / 2 : null
 		});
 
 		existing.add(fingerprint);

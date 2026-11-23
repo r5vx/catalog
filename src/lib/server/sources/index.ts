@@ -27,6 +27,7 @@ import {
 } from './aniwave';
 import { searchNexus, nexusEpisodes, nexusSubtitles, type NexusShow, type NexusSubtitle } from './animenexus';
 import { hianimeCopies, hianimeEpisodeCount, hianimeHas } from './hianime';
+import { searchAllanime, allanimeShowDetails, allanimeCopies } from './allanime';
 import { malEpisodeOf } from '../metadata/skiptimes';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -445,5 +446,94 @@ export async function hianimeFiles(
 		}
 	})().catch((error) => console.warn('[hianime] could not list:', error));
 	await Promise.race([work, new Promise((resolve) => setTimeout(resolve, wait))]);
-	return out;
+	return new Map(out);
+}
+
+/* ------------------------------------------------ AllAnime */
+
+type AllanimePlaced = Placed & { showId: string };
+
+async function placeAllanime(show: TmdbShow, title: string): Promise<AllanimePlaced[]> {
+	const key = `allanime-placed|${show.id}`;
+	const known = saved<AllanimePlaced[]>(key, 6 * HOUR);
+	if (known?.length) return known;
+
+	const found = new Map<string, { id: string; name: string; type: string; start: string | null; sub: number; dub: number }>();
+	const names = await namesFor(show, title);
+	const terms = searchTerms(show, title, names);
+	for (const results of await Promise.all(terms.map(searchAllanime))) {
+		for (const entry of results) found.set(entry.id, entry);
+	}
+	const details = await Promise.all(
+		[...found.keys()].map(async (id) => {
+			const d = await allanimeShowDetails(id);
+			return [id, d] as const;
+		})
+	);
+	for (const [id, d] of details) {
+		if (d) {
+			const entry = found.get(id)!;
+			entry.type = d.type;
+			entry.start = d.start;
+			entry.sub = d.sub;
+			entry.dub = d.dub;
+		}
+	}
+	const series = [...found.values()].filter((e) => /^(tv|ona)$/i.test(e.type.trim()));
+	const candidates: Candidate[] = series.map((e) => ({
+		key: e.id,
+		names: [e.name],
+		type: e.type,
+		start: e.start,
+		count: async () => Math.max(e.sub, e.dub)
+	}));
+	let placed: AllanimePlaced[] = (await place(show, names, candidates)).map((p) => ({ ...p, showId: p.key }));
+	if (!placed.length && candidates.length) {
+		const seasons = show.seasons.filter((s) => s.number > 0 && s.airDate).sort((a, b) => a.number - b.number);
+		const used = new Set<string>();
+		for (let i = 0; i < seasons.length; i++) {
+			const season = seasons[i];
+			const from = Date.parse(season.airDate!) - 60 * DAY;
+			const to = seasons[i + 1] ? Date.parse(seasons[i + 1].airDate!) - DAY : Infinity;
+			const here = candidates.filter((c) => {
+				if (used.has(c.key) || !c.start) return false;
+				const at = Date.parse(c.start);
+				return at >= from && at < to;
+			});
+			let offset = 0;
+			for (const c of here.sort((a, b) => Date.parse(a.start!) - Date.parse(b.start!))) {
+				used.add(c.key);
+				placed.push({ key: c.key, season: season.number, offset, showId: c.key });
+				offset += await c.count();
+			}
+		}
+	}
+	if (placed.length && !anilistResting()) saveOrderCache(key, placed, Date.now());
+	return placed;
+}
+
+/**
+ * AllAnime's copies of a show's episodes, by "season-episode": Japanese audio and English
+ * dub, whichever the show has. Desktop app only (the video comes through a hidden window).
+ */
+export async function allanimeFiles(show: TmdbShow, title: string, wait: number): Promise<Map<string, FileOption[]>> {
+	const out = new Map<string, FileOption[]>();
+	if (!show.anime) return out;
+	let done = false;
+	const work = (async () => {
+		const placed = await placeAllanime(show, title);
+		for (const p of placed) {
+			const details = await allanimeShowDetails(p.showId);
+			if (!details) continue;
+			const maxEp = Math.max(details.sub, details.dub);
+			for (let ep = 1; ep <= maxEp; ep++) {
+				const episode = p.offset + ep;
+				const files = allanimeCopies(p.showId, ep, { sub: ep <= details.sub, dub: ep <= details.dub });
+				if (files.length) out.set(`${p.season}-${episode}`, files);
+			}
+		}
+	})().catch((error) => console.warn('[allanime] could not list:', error)).finally(() => { done = true; });
+	await Promise.race([work, new Promise((resolve) => setTimeout(resolve, wait))]);
+	if (!done) console.warn(`[allanime] timed out after ${wait} ms for "${title}" (${out.size} episodes so far)`);
+	return new Map(out);
 }
