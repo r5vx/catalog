@@ -9,7 +9,7 @@
 sub init()
     m.top.backgroundColor = "0x111614FF"
     m.top.backgroundURI = ""
-    m.global.addFields({ server: "", token: "", profile: 0, profileName: "", profileColor: "", captions: true, autoSkip: true, autoplay: true, autoTiming: true, captionBox: false, captionSize: "medium", rokuOutdated: false })
+    m.global.addFields({ server: "", token: "", profile: 0, profileName: "", profileColor: "", captions: true, autoSkip: true, autoplay: true, autoTiming: true, captionBox: false, captionSize: "medium", rokuOutdated: false, rokuAppHow: "" })
     saved = CreateObject("roRegistrySection", "catalog")
     if saved.Exists("server") then m.global.server = saved.Read("server")
     if saved.Exists("token") then m.global.token = saved.Read("token")
@@ -82,9 +82,13 @@ sub onHello(event as Object)
     if not answer.ok or answer.data.rokuApp = invalid then return
     if answer.data.rokuApp <= appVersion() then return
     m.global.rokuOutdated = true
+    ' The steps come from the computer, so their words can change without a new Roku app.
+    how = text(answer.data.rokuAppHow)
+    if how = "" then how = "On the computer Catalog runs on, open Settings, then TV and phones. Under Catalog on a Roku, choose Find Rokus, pick this Roku, type its developer password, then choose Install."
+    m.global.rokuAppHow = how
     dialog = CreateObject("roSGNode", "StandardMessageDialog")
-    dialog.title = "A newer Catalog for this Roku"
-    dialog.message = ["The computer has a newer version of this app. On the computer, open Settings, then Watch on TV, then Install on Roku."]
+    dialog.title = "A new Catalog app for this Roku"
+    dialog.message = ["The computer Catalog runs on has a newer version of this app.", how]
     dialog.buttons = ["OK"]
     dialog.observeField("buttonSelected", "onHelloClosed")
     m.helloDialog = dialog

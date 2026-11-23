@@ -1777,6 +1777,8 @@
 		if ((type !== 'audio' && type !== 'audiovideo') || !frag || !data || data.length < 8) return;
 		const box = String.fromCharCode(data[4], data[5], data[6], data[7]);
 		const piece = { data, at: frag.start, length: frag.duration, isInit: box === 'ftyp' || box === 'moov' };
+		// (Not once this TV has stopped its own hearing: see noteStopStart.)
+		if (tvHearingOff) return;
 		if (subSync) subSync.hearAppended(piece.data, piece.at, piece.length, piece.isInit);
 		downloadedSound?.add(piece.data, piece.at, piece.length, piece.isInit);
 		// The format piece always (it's small); pieces of sound and picture together are too big to keep.
@@ -1994,7 +1996,7 @@
 			clearTimeout(timingSubsTimer);
 			// Read once the effects above have handed the new subtitles over.
 			timingSubsTimer = setTimeout(() => {
-				timingSubs = wanted && !subSync?.fits;
+				timingSubs = wanted && !subSync?.fits && !tvHearingOff;
 				if (timingSubs) timingSubsTimer = setTimeout(() => (timingSubs = false), 120_000);
 			}, 0);
 		});
@@ -2007,6 +2009,9 @@
 		void activeEpisode;
 		untrack(() => {
 			appendedSound = [];
+			stopStarts = [];
+			stopLoopSent = false;
+			tvHearingOff = false;
 			subSync?.reset();
 			syncedOnce = false;
 			if (subtitlesOn && subAutoSync) timeSoundTrack(hlsAudioTracks.find((t) => t.id === hlsActiveAudio)?.url ?? '');
@@ -2262,6 +2267,51 @@
 	function levelBelow(level: number): number {
 		const lower = playableLevels.filter((i) => i < level);
 		return lower.length ? lower[lower.length - 1] : -1;
+	}
+
+	/*
+	 * Playing a second, stopping to load, playing a second, again and again (a family
+	 * Fire TV, 2026-11-23, with "Timing subtitles to the video…" up the whole time). Every stop
+	 * counts here, the player's own small steps past a stalled picture too, which the stop log and
+	 * the box above leave out, and a rebuilt player doesn't start the count again: five in a minute
+	 * is a loop. It's sent as a problem report, once per episode, with what was going on. On a TV,
+	 * the TV's own hearing for auto-timing (a copy with its sound inside the picture) is stopped
+	 * then: it's the one extra job the TV does while playing.
+	 */
+	let stopStarts: number[] = [];
+	let stopLoopSent = false;
+	/** The TV stopped its own hearing for this episode (see above). */
+	let tvHearingOff = false;
+	function noteStopStart() {
+		const v = videoEl;
+		if (!v || v.currentTime < 1 || loadingEpisode || switchingEpisode || changingQuality || userPaused) return;
+		const now = performance.now();
+		// The load after the remote or the mouse moved it is expected.
+		if (now - lastInputAt < 3000) return;
+		stopStarts = stopStarts.filter((t) => now - t < 60_000);
+		stopStarts.push(now);
+		if (stopStarts.length < 5 || stopLoopSent) return;
+		stopLoopSent = true;
+		// (A copy with its own sound track is heard by the computer for a TV, not by the TV.)
+		const ownTrack = Boolean(hlsAudioTracks.find((t) => t.id === hlsActiveAudio)?.url);
+		const tvHearing = isTv() && Boolean(subSync) && subAutoSync && !ownTrack && !tvHearingOff;
+		sendProblemReport(videoTitle || startParams.get('title') || 'A video', {
+			error: 'Keeps playing a moment and stopping to load',
+			stopsInAMinute: stopStarts.length,
+			timingSubtitles: timingSubs,
+			tvHearing,
+			events: playerEvents.slice(-12).map((e) => `${Math.round((e.at - now) / 100) / 10}s ${e.what}`),
+			...playbackNow(),
+			...stopDetails(),
+			copy: activeFile?.name ?? '',
+			why: debugInfo.slice(0, 800),
+			kind: liveMode ? 'live' : replayMode ? 'replay' : downloadMode ? 'download' : 'video'
+		});
+		if (tvHearing) {
+			tvHearingOff = true;
+			timingSubs = false;
+			notePlayerEvent('stopped hearing for auto-timing on this TV (kept stopping to load)');
+		}
 	}
 
 	/** A stop to load that wasn't caused by a jump: the third in two minutes brings up the choice. */
@@ -8153,6 +8203,7 @@
 						onemptied={() => notePlayerEvent('media element emptied')}
 						onwaiting={() => {
 							buffering = true;
+							noteStopStart();
 							noteSlowStop();
 							stopStarted();
 							if (!stalledOut) watchForStall();

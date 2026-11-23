@@ -25,18 +25,29 @@ import { getOrderCache, saveOrderCache } from './db/queries';
 const HOUR = 60 * 60 * 1000;
 const underWay = new Map<string, Promise<boolean>>();
 
-/** Where each source's check is at, for the Watch button to show while it waits. */
-export type SourceCheck = { name: string; state: 'checking' | 'yes' | 'no' };
+/**
+ * Where each source's check is at, for the Watch button to show while it waits. `skipped`: never
+ * asked, or called off, because another source had it (Movy and Vidfast, the slow hidden windows).
+ */
+export type SourceCheck = { name: string; state: 'checking' | 'yes' | 'no' | 'skipped' };
 const progress = new Map<string, SourceCheck[]>();
 
+/**
+ * Each source's answer, kept with the title's answer, so its page shows which sources have it
+ * when it opens again (owner, 2026-11-23: with the answer already known, the row under the button
+ * was empty). Asked afresh, live, once these are an hour old.
+ */
+const sourcesKey = (key: string) => `available-sources|${key}`;
+const SOURCES_FRESH = HOUR;
+
 /** A source's check, noted in `list` as it goes. */
-function noted(list: SourceCheck[], name: string, check: Promise<boolean>): Promise<boolean> {
+function noted(list: SourceCheck[], name: string, check: Promise<boolean>, skipped: () => boolean = () => false): Promise<boolean> {
 	const entry: SourceCheck = { name, state: 'checking' };
 	list.push(entry);
 	return check
 		.catch(() => false)
 		.then((yes) => {
-			entry.state = yes ? 'yes' : 'no';
+			entry.state = yes ? 'yes' : skipped() ? 'skipped' : 'no';
 			return yes;
 		});
 }
@@ -183,6 +194,9 @@ function startCheck(key: string, title: string, type: string, year: string): Pro
 	progress.set(key, list);
 	// A film still only in cinemas is looked for too (the owner's call, 2026-10-26): a copy is
 	// likely a recording made in a cinema, which the page warns about (inCinemasFor), but it plays.
+	// Movy and Vidfast note when they weren't asked (or were called off), so that isn't shown as a "no".
+	let movyHeldBack = false;
+	let vidfastHeldBack = false;
 	const checks = [
 		noted(list, 'Showbox', onShowbox(title, type, year)),
 		noted(list, '7Movies', on7Movies(title, type, year)),
@@ -190,14 +204,30 @@ function startCheck(key: string, title: string, type: string, year: string): Pro
 		noted(list, 'HiAnime', onHianime(title, type)),
 		noted(list, 'Movy', onMovyToo(title, type, year, {
 			// Not started once another source has it, unless it's the title being looked at.
-			start: () => key === latest || (stillOpen(key) && !list.some((s) => s.state === 'yes')),
-			keep: () => stillOpen(key)
-		})),
+			start: () => {
+				const go = key === latest || (stillOpen(key) && !list.some((s) => s.state === 'yes'));
+				if (!go) movyHeldBack = true;
+				return go;
+			},
+			keep: () => {
+				const go = stillOpen(key);
+				if (!go) movyHeldBack = true;
+				return go;
+			}
+		}), () => movyHeldBack),
 		// Only while the title is being looked at: it's a hidden window, like Movy's.
-		noted(list, 'Vidfast', onVidfastToo(title, type, year, () => key === latest || stillOpen(key)))
+		noted(list, 'Vidfast', onVidfastToo(title, type, year, () => {
+			const go = key === latest || stillOpen(key);
+			if (!go) vidfastHeldBack = true;
+			return go;
+		}), () => vidfastHeldBack)
 	];
-	// The sources' progress stays until every one has answered, and a minute more for the page.
-	Promise.allSettled(checks).then(() => setTimeout(() => progress.delete(key), 60_000));
+	// The sources' progress stays until every one has answered, and a minute more for the page;
+	// their answers are kept with the title's (see sourcesKey).
+	Promise.allSettled(checks).then(() => {
+		saveOrderCache(sourcesKey(key), list.map((s) => ({ ...s })), Date.now());
+		setTimeout(() => progress.delete(key), 60_000);
+	});
 	check = firstYes(checks).then((yes) => {
 		saveOrderCache(key, yes, Date.now());
 		underWay.delete(key);
@@ -218,6 +248,13 @@ export function availabilityNow(title: string, type: string, year: string): { av
 	const inCinemas = inCinemasFor(key, title, type, year);
 	const known = getOrderCache(key);
 	if (known && Date.now() - known.at < (known.value ? 24 * HOUR : HOUR) && !underWay.has(key)) {
+		const live = progress.get(key);
+		if (live) return { available: Boolean(known.value), sources: live, inCinemas };
+		const kept = getOrderCache(sourcesKey(key));
+		if (kept && Date.now() - kept.at < SOURCES_FRESH) return { available: Boolean(known.value), sources: kept.value as SourceCheck[], inCinemas };
+		// Known, but which sources have it isn't (or is old): asked again, each shown as it goes,
+		// while the button keeps the answer it had.
+		startCheck(key, title, type, year);
 		return { available: Boolean(known.value), sources: progress.get(key) ?? [], inCinemas };
 	}
 	startCheck(key, title, type, year);

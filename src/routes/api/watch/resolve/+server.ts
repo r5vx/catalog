@@ -215,6 +215,12 @@ async function lookUp(url: URL): Promise<Response> {
 	let startSeason = 0;
 	/** Seconds until Febbox lists folders again, when it refused Showbox's just now (else 0). */
 	let showboxBusy = 0;
+	/**
+	 * Another source's episode list stood in for Showbox's this time (its folder came back empty
+	 * or busy). Said in the answer, so the TV's kept list isn't replaced with it: Bleach's 18
+	 * seasons went back to another source's 2 that way (2026-11-23).
+	 */
+	let standIn = false;
 
 	if (cached && Date.now() - cached.time < RESOLVE_TTL && cached.setup === unaskedSetup()) {
 		matchTitle = cached.match.title;
@@ -228,7 +234,11 @@ async function lookUp(url: URL): Promise<Response> {
 		if (warm && matchType === 'tv' && episodeData) warmLikelyEpisode(episodeData as EpisodeList, shareKey ?? '', matchTitle, startSeason, asked);
 	} else {
 		// Remembered from an earlier session: skips the Showbox search, but re-lists so new episodes show.
-		const saved = getSavedShowboxMatch(cacheKey);
+		// (One kept with no folder is no use: it was looked for afresh. Before 2026-11-23 a busy Febbox
+		// on a new lookup kept the match without its folder, and the show came from other sources
+		// from then on: Bleach's 18 seasons became another source's 2.)
+		const kept = getSavedShowboxMatch(cacheKey);
+		const saved = kept?.shareKey ? kept : null;
 		let restored = false;
 		/** Playing from another source because Showbox's folder came back empty this time. */
 		let otherInstead = false;
@@ -377,12 +387,13 @@ async function lookUp(url: URL): Promise<Response> {
 				}
 
 				// (Found on Showbox even when its folder was busy: next time skips the search.)
+				// (Its own folder, `sk`: `shareKey` is cleared above while another source stands in.)
 				if (!otherInstead || showboxBusy) saveShowboxMatch(cacheKey, {
 					showboxId: matchId,
 					title: matchTitle,
 					type: matchType,
 					posterUrl: matchPosterUrl ?? '',
-					shareKey,
+					shareKey: sk,
 					startSeason
 				});
 			}
@@ -398,6 +409,7 @@ async function lookUp(url: URL): Promise<Response> {
 
 		// Not kept when another source was too slow this time (so it joins on the next visit), or
 		// when Showbox's folder came back empty (so Showbox is back as soon as it answers again).
+		standIn = otherInstead;
 		if (!(episodeData as EpisodeList | undefined)?.partial && !otherInstead) resolveCache.set(cacheKey, {
 			match: { id: matchId, title: matchTitle, type: matchType, posterUrl: matchPosterUrl },
 			shareKey,
@@ -471,7 +483,11 @@ async function lookUp(url: URL): Promise<Response> {
 			libraryEntry,
 			startSeason,
 			// Showbox's folder couldn't be listed just now: the player asks again in this many seconds.
-			showboxBusy
+			showboxBusy,
+			// The list is Showbox's own (its numbering), not another source's standing in.
+			fromShowbox: Boolean(shareKey) && !standIn,
+			// Showbox has the show, but another source's list stood in for its folder this time.
+			showboxStandIn: standIn
 		});
 	}
 

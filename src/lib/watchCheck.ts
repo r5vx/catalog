@@ -5,7 +5,8 @@
  * answer so far (null while checking) and each source's progress. Returns a function that stops
  * asking (for when the page changes).
  */
-export type SourceCheck = { name: string; state: 'checking' | 'yes' | 'no' };
+/** `skipped`: not asked, or called off, because another source had it. */
+export type SourceCheck = { name: string; state: 'checking' | 'yes' | 'no' | 'skipped' };
 
 export function checkWatchable(
 	params: URLSearchParams,

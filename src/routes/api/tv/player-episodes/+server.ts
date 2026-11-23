@@ -5,6 +5,8 @@ import type { RequestHandler } from './$types';
 /** A kept list older than this is looked up again in the background. */
 const RECHECK = 10 * 60 * 1000;
 const rechecking = new Set<string>();
+/** How long a kept list of Showbox's wins over another source's (after that, Showbox may really have lost the show). */
+const SHOWBOX_LIST_WINS = 14 * 24 * 60 * 60 * 1000;
 
 /**
  * A show's episodes as the player lists them (Showbox's seasons where it splits a show its own
@@ -33,7 +35,16 @@ export const GET: RequestHandler = async ({ url, fetch }) => {
 		// Kept only when Showbox answered (never another source's numbering while it was busy).
 		// A list that's only short of other sources' extras is kept all the same.
 		const showboxAnswered = !data?.showboxBusy && data?.error !== 'busy';
-		if (list && 'seasons' in list && showboxAnswered) keepPlayerList(title, year, { ...list, retryIn: undefined });
+		const fromShowbox = data?.fromShowbox === true;
+		// Another source's list standing in for Showbox's (its folder came back empty this time) is
+		// never kept, and one for a show Showbox hasn't got never replaces a recent one of Showbox's:
+		// Bleach's 18 seasons went back to 2 that way (2026-11-23).
+		const standIn = data?.showboxStandIn === true;
+		const before = keptPlayerList(title, year);
+		const showboxKept = before?.list.fromShowbox === true && Date.now() - before.at < SHOWBOX_LIST_WINS;
+		if (list && 'seasons' in list && showboxAnswered && !standIn && (fromShowbox || !showboxKept)) {
+			keepPlayerList(title, year, { ...list, retryIn: undefined, fromShowbox });
+		}
 		return list;
 	};
 
@@ -54,7 +65,8 @@ export const GET: RequestHandler = async ({ url, fetch }) => {
 function playerList(data: any): PlayerList | { retryIn: number } | null {
 	type Listed = { season: number; episode: number; available?: boolean; airDate?: string | null; files: unknown[] };
 	const listed: Listed[] = data?.episodes?.episodes ?? [];
-	const retryIn = Number(data?.showboxBusy || (data?.error === 'busy' ? data.retryIn : 0) || (data?.episodes?.partial ? 5 : 0)) || 0;
+	// (A stand-in for Showbox's list: asked again in half a minute, for Showbox's own.)
+	const retryIn = Number(data?.showboxBusy || (data?.error === 'busy' ? data.retryIn : 0) || (data?.episodes?.partial ? 5 : 0) || (data?.showboxStandIn ? 30 : 0)) || 0;
 	if (!listed.length) return retryIn ? { retryIn } : null;
 	// Specials (season 0: OVAs, films, extras) too, after the last season: they were only to be had by
 	// opening the player and picking its Specials (owner, 2026-11-15).

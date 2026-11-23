@@ -115,6 +115,8 @@ export async function seasonEpisodes(showId: number, season: number): Promise<Tv
 export type PlayerList = {
 	title: string;
 	retryIn?: number;
+	/** Showbox's own list (its seasons), not another source's numbering. Unset on lists kept before 2026-11-23. */
+	fromShowbox?: boolean;
 	seasons: { number: number; count: number }[];
 	episodes: { season: number; episode: number; available: boolean; airDate: string | null }[];
 };

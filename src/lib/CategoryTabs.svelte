@@ -43,8 +43,9 @@
 	type Tab = { key: string; href: string; emoji: string; label: string; count: number | null };
 
 	const allTabs = $derived<Tab[]>([
-		{ key: 'all', href: link(''), emoji: '', label: pm ? p('All') : 'All', count: total },
+		// Home first, at the very top, then All (owner, 2026-11-23).
 		{ key: 'new', href: '/new', emoji: '', label: 'Home', count: null },
+		{ key: 'all', href: link(''), emoji: '', label: pm ? p('All') : 'All', count: total },
 		...categories.map((c) => ({ key: c.slug, href: link(c.slug), emoji: c.emoji, label: c.name, count: countByCategory[c.id] ?? 0 })),
 		{ key: 'friends', href: link('friends'), emoji: '👥', label: pm ? p('Friends') : 'Friends', count: friendCount || null },
 		{ key: 'orders', href: '/orders', emoji: '🗂️', label: 'Watch list', count: null },
@@ -53,7 +54,12 @@
 
 	// Drag a tab to move it. The order is saved in settings; a tab it doesn't mention
 	// (a new category, say) keeps its usual place, after the ones that were moved.
-	const savedOrder = $derived<string[]>((page.data.tabOrder ?? []).map((key: string) => key === 'watching' ? 'new' : key));
+	// An order saved before Home moved to the top still calls it 'watching' (its old name): Home
+	// goes first in it. One saved since names it 'new' and is kept as it is.
+	const savedOrder = $derived.by<string[]>(() => {
+		const saved: string[] = page.data.tabOrder ?? [];
+		return saved.includes('watching') ? ['new', ...saved.filter((key) => key !== 'watching' && key !== 'new')] : saved;
+	});
 	let changedOrder = $state<string[] | null>(null);
 	const order = $derived(changedOrder ?? savedOrder);
 

@@ -3,6 +3,7 @@
 	import { onMount } from 'svelte';
 	import { isTv } from '$lib/tv';
 	import { FIRE_TV_CODE, TV_APP_VERSION } from '$lib/tvInstall';
+	import { sendProblemReport } from '$lib/problemReport';
 
 	/**
 	 * A TV keeps the Catalog it loaded until it's reloaded, so after the computer updates, it's
@@ -56,11 +57,44 @@
 	const LATER = 'catalog:tvAppLater';
 	const DAY = 24 * 60 * 60 * 1000;
 
+	/*
+	 * Update now that never got going (a family TV, 2026-11-23: "it does nothing when he clicks it"):
+	 * when the TV app hasn't said a word 20 seconds after Update, the card says so and points to
+	 * Downloader, and the owner gets a problem report saying which TV app it was.
+	 */
+	let heardFromApp = 0;
+	let silentTimer: ReturnType<typeof setTimeout> | undefined;
+	const NO_ANSWER_AFTER = 20_000;
+
+	function reportUpdate(error: string, detail = '') {
+		const tv = tvApp();
+		sendProblemReport('Catalog TV app update', {
+			error,
+			detail,
+			appVersion: tv?.appVersion?.() ?? null,
+			newest: TV_APP_VERSION,
+			canInstall: tv?.canInstall ? tv.canInstall() : null
+		});
+	}
+
 	function startInstall() {
 		const tv = tvApp();
 		if (!tv?.installUpdate) return;
 		appState = 'Getting the update…';
-		tv.installUpdate(`${location.origin}/catalog-tv.apk`);
+		const asked = Date.now();
+		clearTimeout(silentTimer);
+		silentTimer = setTimeout(() => {
+			if (heardFromApp >= asked) return;
+			appState = "The update didn't start on this TV. Use Downloader instead (the steps above).";
+			reportUpdate('Update now got no answer from the TV app');
+		}, NO_ANSWER_AFTER);
+		try {
+			tv.installUpdate(`${location.origin}/catalog-tv.apk`);
+		} catch (error) {
+			clearTimeout(silentTimer);
+			appState = "The update didn't start on this TV. Use Downloader instead (the steps above).";
+			reportUpdate('Update now could not start', String(error));
+		}
 	}
 
 	function updateApp() {
@@ -94,21 +128,23 @@
 	}
 
 	function stepsKey(event: KeyboardEvent) {
-		if (!steps && !downloader) return;
-		const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('.tv-steps button'));
+		if (!steps && !downloader && !offerShown) return;
+		// (The offer's own two buttons: it sits outside the TV screen's rows, so the remote's arrows
+		// never reached it, and it couldn't be picked or put off — a family TV, 2026-11-23.)
+		const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>(steps || downloader ? '.tv-steps button' : '.tv-app-offer button'));
 		const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
 		if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'ArrowDown') {
 			const next = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? Math.max(0, at - 1) : Math.min(buttons.length - 1, at + 1);
 			buttons[next]?.focus();
 		} else if (event.key === 'Escape' || event.key === 'GoBack' || event.key === 'BrowserBack' || event.key === 'Backspace') {
-			if (downloader) later();
+			if (downloader || !steps) later();
 			else steps = false;
 		} else if (event.key !== 'Enter' && event.key !== ' ') {
 			return;
-		} else if (at < 0) {
-			buttons[0]?.click();
 		} else {
-			return; // Enter on a button presses it as usual
+			// Pressed here rather than left to the browser: OK on the offer's buttons did nothing on a
+			// family Fire TV (2026-11-23).
+			(at < 0 ? buttons[0] : buttons[at])?.click();
 		}
 		event.preventDefault();
 		event.stopPropagation();
@@ -130,13 +166,15 @@
 		}
 		appOld = tv.appVersion() < TV_APP_VERSION && offer;
 		(window as unknown as { __catalogTvUpdate: (state: string, detail: string) => void }).__catalogTvUpdate = (state, detail) => {
+			heardFromApp = Date.now();
+			if (state === 'failed') reportUpdate("The TV app's own install failed", detail);
 			if (state === 'downloading') appState = `Getting the update… ${detail}%`;
 			else if (state === 'allow') {
 				appState = '';
 				steps = true;
 			} else if (state === 'confirm') {
 				steps = false;
-				appState = 'Choose Update on the next screen';
+				appState = 'Choose Update (or Install) on the screen Fire TV shows';
 			} else if (state === 'failed') {
 				// Its own install didn't work: Downloader does it the way it was first installed.
 				appState = '';
@@ -166,6 +204,21 @@
 
 	$effect(() => {
 		if (steps && stepsButton) stepsButton.focus({ preventScroll: true });
+	});
+
+	/*
+	 * The "new TV app" offer: Update is highlighted when it shows, so OK picks it and Back puts it
+	 * off for a day, and again once the TV screen behind has put its own first highlight on.
+	 */
+	let offerButton: HTMLButtonElement | undefined = $state();
+	onMount(() => () => clearTimeout(silentTimer));
+	const offerShown = $derived(appOld && !watching && !updated && !steps && !downloader);
+	$effect(() => {
+		if (!offerShown || !offerButton) return;
+		const button = offerButton;
+		button.focus({ preventScroll: true });
+		const again = setTimeout(() => button.focus({ preventScroll: true }), 800);
+		return () => clearTimeout(again);
 	});
 	$effect(() => {
 		if (!downloader || watching || !downloaderButton) return;
@@ -234,11 +287,25 @@
 	});
 </script>
 
-{#if appOld && !watching && !updated && !steps && !downloader}
-	<div class="tv-updated" role="status">
-		<span>{appState || 'A new Catalog TV app is ready'}</span>
-		<button type="button" data-tv-item onclick={updateApp}>Update</button>
-		<button type="button" data-tv-item onclick={later}>Later</button>
+{#if offerShown}
+	<div class="tv-steps tv-app-offer" role="dialog" aria-label="A new Catalog TV app">
+		<div class="card">
+			<h2>A new Catalog TV app is ready</h2>
+			<p>Two ways to get it. Profiles, Continue Watching and everything else on this TV stay as they are.</p>
+			<h3>On this TV</h3>
+			<p>Choose <strong>Update now</strong>. When Fire TV shows its own screen, choose <strong>Update</strong> (or <strong>Install</strong>) there. Catalog opens again by itself.</p>
+			<h3>Or with Downloader</h3>
+			<ol>
+				<li>Press <strong>Home</strong> on the remote and open <strong>Downloader</strong>.</li>
+				<li>Type the code <strong>{FIRE_TV_CODE}</strong> and choose <strong>Go</strong>.</li>
+				<li>Choose <strong>Install</strong>, then <strong>Open</strong>.</li>
+			</ol>
+			{#if appState}<p class="status" role="status">{appState}</p>{/if}
+			<div class="row">
+				<button type="button" bind:this={offerButton} onclick={updateApp}>Update now</button>
+				<button type="button" data-tv-later onclick={later}>Later</button>
+			</div>
+		</div>
 	</div>
 {/if}
 
@@ -364,6 +431,17 @@
 		padding-left: 2.2vw;
 		font-size: 1.8vw;
 		line-height: 1.55;
+	}
+
+	.tv-steps h3 {
+		margin: 1.6vw 0 0.5vw;
+		font-size: 1.9vw;
+	}
+
+	/* How the update is going (or that it didn't start). */
+	.tv-steps .status {
+		color: #fff;
+		font-weight: 600;
 	}
 
 	.tv-steps .row {

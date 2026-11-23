@@ -12,6 +12,33 @@ without both.
 
 ## Unreleased
 
+## 4.7.1 — 2026-11-23 — Sources on every title, and TV fixes
+
+### Improved
+
+**Library**
+- Home is at the top of the library menu, above All
+
+**Titles**
+- Every source's answer shows under Watch each time a title opens, and is looked up again live after an hour
+- A source that wasn't asked because another already had it no longer shows as crossed out
+
+**TV**
+- The TV stops timing subtitles itself when it keeps stopping to load
+
+### Fixed
+
+**Sources**
+- AllAnime is off for now: its episodes showed as ready to play, then loaded forever
+- Shows like Bleach could stay on another site's seasons after Showbox was briefly busy
+
+**TV**
+- The "new Catalog TV app" notice is a whole screen with both ways to update: Update now, or Downloader's steps and code
+- OK on its buttons works, Later and Back put it off for a day, and it says so when Update now didn't start
+
+**Roku**
+- A Roku with an older app says exactly where on the computer to install the new one
+
 ## 4.7.0 — 2026-11-23 — Old cartoons, Nyaa anime, and a Home page
 
 ### New

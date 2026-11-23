@@ -513,12 +513,20 @@ async function placeAllanime(show: TmdbShow, title: string): Promise<AllanimePla
 }
 
 /**
+ * Off until AllAnime's videos can be played (2026-11-23). Its show search works without the site's
+ * check, but its videos never came: every episode it listed showed as there to play and then
+ * loaded forever (Jungle King Taa-chan episode 2, which only AllAnime listed). Off, it lists
+ * nothing and nothing waits on it. The code is kept for when playing works.
+ */
+const ALLANIME_ON = false;
+
+/**
  * AllAnime's copies of a show's episodes, by "season-episode": Japanese audio and English
  * dub, whichever the show has. Desktop app only (the video comes through a hidden window).
  */
 export async function allanimeFiles(show: TmdbShow, title: string, wait: number): Promise<Map<string, FileOption[]>> {
 	const out = new Map<string, FileOption[]>();
-	if (!show.anime) return out;
+	if (!ALLANIME_ON || !show.anime) return out;
 	let done = false;
 	const work = (async () => {
 		const placed = await placeAllanime(show, title);

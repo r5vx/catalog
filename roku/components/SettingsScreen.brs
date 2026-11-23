@@ -45,7 +45,7 @@ sub show()
     m.options.content = content
     if at > 0 then m.options.jumpToItem = at
     m.about.text = "Catalog on " + m.global.server + Chr(10) + "While watching, Down opens the player's menu: captions, their timing and size, the source and the sound."
-    if m.global.rokuOutdated then m.about.text = m.about.text + Chr(10) + "The computer has a newer version of this app: on the computer, Settings, Watch on TV, Install on Roku."
+    if m.global.rokuOutdated then m.about.text = m.about.text + Chr(10) + "A newer version of this app is ready. " + m.global.rokuAppHow
 end sub
 
 sub toggle(name as String)

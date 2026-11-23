@@ -15,8 +15,8 @@
 {#if sources.length}
 	<ul class="source-checks" aria-label="Sources">
 		{#each sources as source (source.name)}
-			<li class={source.state} class:quiet={found && source.state === 'checking'}>
-				{#if source.state === 'checking' && found}
+			<li class={source.state} class:quiet={(found && source.state === 'checking') || source.state === 'skipped'} title={source.state === 'skipped' ? 'Not asked' : undefined}>
+				{#if (source.state === 'checking' && found) || source.state === 'skipped'}
 					<span class="dot" aria-hidden="true"></span>
 				{:else if source.state === 'checking'}
 					<span class="spin" aria-hidden="true"></span>

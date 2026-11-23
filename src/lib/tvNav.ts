@@ -220,6 +220,12 @@ export const MENU_SCREENS = /^\/tv(\/(new|search|library|friends|live|youtube|se
  * the player) it goes back a page as usual ("default").
  */
 export function tvBack(): 'handled' | 'exit' | 'default' {
+	// The TV app's update offer up: Back puts it off (its Later).
+	const later = document.querySelector<HTMLButtonElement>('.tv-app-offer [data-tv-later]');
+	if (later) {
+		later.click();
+		return 'handled';
+	}
 	// A poster's menu open: Back closes it.
 	if (document.querySelector('[data-tv-sheet]')) {
 		window.dispatchEvent(new Event('catalog:tv-menu-close'));
@@ -254,7 +260,8 @@ let holding = false;
 const glide = (): ScrollBehavior => (holding ? 'auto' : 'smooth');
 
 function onKey(event: KeyboardEvent) {
-	if (document.querySelector('.whats-new')) return;
+	// A card over the screen handles the remote itself (What's new, the TV app's update offer and steps).
+	if (document.querySelector('.whats-new, .tv-app-offer, .tv-steps')) return;
 	holding = event.repeat;
 	const app = document.querySelector<HTMLElement>('[data-tv-app]');
 	if (!app || event.altKey || event.ctrlKey || event.metaKey) return;
