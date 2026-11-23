@@ -1,12 +1,14 @@
 import { json, error } from '@sveltejs/kit';
 import { addProfile, updateProfile, deleteProfile, listProfiles, profileExists } from '$lib/server/db/queries';
 import { PROFILE_COLORS } from '$lib/constants';
-import { MAIN_PROFILE } from '$lib/server/profile';
+import { MAIN_PROFILE, TV_REMEMBER_COOKIE } from '$lib/server/profile';
 import type { RequestHandler } from './$types';
 
 /**
  * Who's watching, on the TV. Body: { action, ... }
- *   choose { id }              this TV watches as them from now on
+ *   choose { id, remember? }   this TV watches as them from now on; `remember`: this TV skips
+ *                              "Who's watching?" from now on (false: asks again)
+ *   remember { on }            only that, for the profile already chosen
  *   add    { name }            a new profile; returns its id
  *   edit   { id, name, color } renamed or recoloured
  *   delete { id }              gone, with what they'd watched (never the owner's)
@@ -15,6 +17,13 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 	const body = await request.json().catch(() => ({}));
 	const id = Number(body.id);
 	const name = String(body.name ?? '').trim().slice(0, 20);
+
+	// "Remember this profile on this TV" (owner, 2026-11-23): kept in this TV's own cookie, so each
+	// TV in the house decides for itself.
+	const remember = (on: boolean) => {
+		if (on) cookies.set(TV_REMEMBER_COOKIE, '1', { path: '/', httpOnly: true, sameSite: 'lax', secure: false, maxAge: 60 * 60 * 24 * 365 });
+		else cookies.delete(TV_REMEMBER_COOKIE, { path: '/' });
+	};
 
 	if (body.action === 'choose') {
 		if (!Number.isInteger(id) || !profileExists(id)) error(404, 'No such profile');
@@ -26,6 +35,12 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			secure: false,
 			maxAge: 60 * 60 * 24 * 365
 		});
+		if (typeof body.remember === 'boolean') remember(body.remember);
+		return json({ ok: true });
+	}
+
+	if (body.action === 'remember') {
+		remember(body.on === true);
 		return json({ ok: true });
 	}
 

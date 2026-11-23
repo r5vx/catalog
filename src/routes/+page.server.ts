@@ -7,7 +7,7 @@ import { SORTS, KEPT_FILTERS } from '$lib/constants';
 import { readSettings } from '$lib/server/settings';
 import { continueWatchingWithPosters } from '$lib/server/continueWatching';
 import { redirect } from '@sveltejs/kit';
-import { currentProfile, MAIN_PROFILE } from '$lib/server/profile';
+import { currentProfile, MAIN_PROFILE, TV_REMEMBER_COOKIE } from '$lib/server/profile';
 import { isWatched } from '$lib/constants';
 import type { EntryCard } from '$lib/server/db/types';
 import { savedView } from '$lib/server/libraryView';
@@ -35,11 +35,13 @@ function keptView(url: URL): { view: URLSearchParams; remember: string | null } 
 	return { view, remember: changed && view.toString() !== saved.toString() ? view.toString() : null };
 }
 
-export const load: PageServerLoad = async ({ url, request, isDataRequest }) => {
+export const load: PageServerLoad = async ({ url, request, isDataRequest, cookies }) => {
 	// The TV app opens the TV layout (big rows for the remote) unless it's been switched off.
-	// It starts at "Who's watching?", every time the TV app opens (like Netflix).
+	// It starts at "Who's watching?", every time the TV app opens (like Netflix), unless this TV
+	// remembers its profile (picked there with "Remember this profile on this TV").
 	if (/CatalogTV\//.test(request.headers.get('user-agent') ?? '') && readSettings().tvLayout !== 'full') {
-		redirect(303, '/tv/profiles');
+		const remembered = cookies.get(TV_REMEMBER_COOKIE) === '1' && cookies.get('catalog_profile') !== undefined;
+		redirect(303, remembered ? (readSettings().openOn === 'library' ? '/tv' : '/tv/new') : '/tv/profiles');
 	}
 	if (!isDataRequest && !url.search && readSettings().openOn !== 'library') redirect(303, '/new');
 	const { view, remember } = keptView(url);

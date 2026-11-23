@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { untrack } from 'svelte';
 	import type { PageData } from './$types';
 
 	/**
@@ -13,6 +14,23 @@
 	let managing = $state(false);
 	let choosing = $state(false);
 
+	/*
+	 * "Remember this profile on this TV" (owner, 2026-11-23): on, this TV opens straight as the
+	 * profile picked next, and skips this screen until it's turned off here (the picture at the top
+	 * of the menu still comes back here to switch). Turning it off takes effect at once.
+	 */
+	let remember = $state(untrack(() => Boolean(data.rememberProfile)));
+	async function toggleRemember() {
+		remember = !remember;
+		if (!remember) {
+			await fetch('/api/profiles', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ action: 'remember', on: false })
+			}).catch(() => {});
+		}
+	}
+
 	async function choose(id: number) {
 		if (choosing) return;
 		choosing = true;
@@ -20,7 +38,7 @@
 			await fetch('/api/profiles', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ action: 'choose', id })
+				body: JSON.stringify({ action: 'choose', id, remember })
 			});
 			await goto(data.openOn === 'library' ? '/tv' : '/tv/new', { invalidateAll: true });
 		} finally {
@@ -70,6 +88,12 @@
 	</div>
 
 	<div class="actions" data-tv-row>
+		{#if !managing}
+			<button type="button" class="manage remember" class:on={remember} data-tv-item aria-pressed={remember} onclick={toggleRemember}>
+				<span class="box" aria-hidden="true">{#if remember}<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7" /></svg>{/if}</span>
+				Remember this profile on this TV
+			</button>
+		{/if}
 		<button type="button" class="manage" data-tv-item onclick={() => (managing = !managing)}>
 			{managing ? 'Done' : 'Manage profiles'}
 		</button>
@@ -93,6 +117,11 @@
 		font-family: var(--display);
 		font-size: 3.6vw;
 		font-weight: 600;
+	}
+
+	.actions {
+		display: flex;
+		gap: 1.6vw;
 	}
 
 	.people {
@@ -192,5 +221,31 @@
 		border-color: var(--ink);
 		background: var(--ink);
 		color: var(--paper);
+	}
+
+	.remember {
+		display: inline-flex;
+		align-items: center;
+		gap: 1vw;
+	}
+
+	/* The tick box: empty when off. */
+	.box {
+		display: inline-grid;
+		place-items: center;
+		width: 1.6vw;
+		height: 1.6vw;
+		border: 0.15vw solid currentColor;
+		border-radius: 0.3vw;
+	}
+
+	.box svg {
+		width: 1.3vw;
+		height: 1.3vw;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 3;
+		stroke-linecap: round;
+		stroke-linejoin: round;
 	}
 </style>

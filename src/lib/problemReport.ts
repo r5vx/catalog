@@ -24,6 +24,37 @@ export function sendProblemReport(title: string, details: Record<string, unknown
 }
 
 /**
+ * A TV page that took a while to come up after a press (owner, 2026-11-23: "a loading thing every
+ * time he clicks on a page"): sent as a report with how long it took and how much of that the
+ * computer spent on it (its Server-Timing), so a slow computer can be told from a slow Wi-Fi.
+ * Pages on the computer itself answer in milliseconds; this is for TVs. Returns the two hooks
+ * the layout calls before and after each move.
+ */
+const SLOW_PAGE = 2500;
+export function watchSlowPages(): { before: () => void; after: (path: string) => void } {
+	let started = 0;
+	return {
+		before: () => (started = performance.now()),
+		after: (path) => {
+			if (!started) return;
+			const took = Math.round(performance.now() - started);
+			started = 0;
+			if (took < SLOW_PAGE) return;
+			// The computer's own time over this page's data, when it said.
+			let computerMs: number | null = null;
+			try {
+				const entries = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
+				const data = entries.filter((one) => one.name.includes('__data.json')).pop();
+				const own = data?.serverTiming?.find((one) => one.name === 'app');
+				if (own) computerMs = Math.round(own.duration);
+				performance.clearResourceTimings();
+			} catch {}
+			sendProblemReport('Slow pages on the TV', { error: 'A page took a while to come up', path, tookMs: took, computerMs });
+		}
+	};
+}
+
+/**
  * Errors nobody caught on a page, sent as reports. Not sent: the connection dropping (the
  * computer asleep or the Wi-Fi gone), which isn't a fault in Catalog and couldn't be sent anyway.
  */

@@ -8,6 +8,9 @@ import { AsyncLocalStorage } from 'node:async_hooks';
  */
 export const MAIN_PROFILE = 0;
 
+/** A TV's own cookie: set, it skips "Who's watching?" and opens as the profile it last chose. */
+export const TV_REMEMBER_COOKIE = 'catalog_tv_remember';
+
 const store = new AsyncLocalStorage<number>();
 
 export function currentProfile(): number {

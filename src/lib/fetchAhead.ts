@@ -327,8 +327,14 @@ async function fetchInParts(url: string, stop: AbortSignal): Promise<ArrayBuffer
 	};
 	try {
 		const first = await fetch(url, { signal: controller.signal, headers: { Range: `bytes=0-${PART_BYTES - 1}` } });
-		// No parts here: this answer is the whole piece.
-		if (first.status === 200) return (await readAll(first)).buffer as ArrayBuffer;
+		// No parts here: this answer is the whole piece. Unless it's exactly one part long: then the
+		// part came back labelled "200", as an Android app's browser does when the app fetches the
+		// request itself (the Fire TV app), and the piece was handed over cut to its first 600 KB:
+		// the TV showed a piece's first picture and failed, over and over (2026-11-23).
+		if (first.status === 200) {
+			const data = await readAll(first);
+			return data.length === PART_BYTES ? null : (data.buffer as ArrayBuffer);
+		}
 		if (first.status !== 206) return null;
 		// Its size, where the server lets the page read it (Febbox's doesn't: then the short last part tells).
 		const total = Number(/\/(\d+)\s*$/.exec(first.headers.get('content-range') ?? '')?.[1]);
@@ -369,6 +375,8 @@ async function fetchInParts(url: string, stop: AbortSignal): Promise<ArrayBuffer
 }
 
 const isRelayed = (url: string) => url.includes('/api/watch/relay?');
+/** Inside the Fire TV app (android/), whose own code fetches other sites' video for the page. */
+const inTvApp = () => typeof window !== 'undefined' && 'CatalogTV' in window;
 /** The page is open on the computer Catalog runs on (its relay is next door, not over Wi-Fi). */
 const onTheComputer = () => /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/.test(location.hostname);
 const relayRequests = new Map<object, number>();
@@ -425,7 +433,12 @@ export function fetchAheadLoader(hls: () => Hls | null, onBytes: () => void = ()
 			let entry = fetched.get(key);
 			// (Never through the relay: it serves parts straight from the site, past its own copy
 			// on disk and its mending of 7Movies' frame times.)
-			const inPartsHere = urgent && kind === 'video' && typeof frag.sn === 'number' && !isRelayed(context.url);
+			// Nor in the Fire TV app: it fetches other sites' pieces itself (to give Febbox's servers the
+			// page they expect), and its browser then cuts each answer to the range asked for and calls
+			// it "200 OK" whatever the server said (Chromium's android_stream_reader_url_loader). Every
+			// piece waited for arrived as its first 600 KB: since 4.2.1 (14 November) a Fire TV showed
+			// one picture, failed and reloaded, over and over, on every Showbox video.
+			const inPartsHere = urgent && kind === 'video' && typeof frag.sn === 'number' && !isRelayed(context.url) && !inTvApp();
 			// Coming whole and not half here yet: in parts is quicker, even starting over.
 			if (entry && inPartsHere && !mostlyHere(entry.progress)) {
 				drop(key, entry);

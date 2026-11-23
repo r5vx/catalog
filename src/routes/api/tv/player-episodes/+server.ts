@@ -50,13 +50,18 @@ export const GET: RequestHandler = async ({ url, fetch }) => {
 
 	const kept = keptPlayerList(title, year);
 	if (kept) {
-		if (Date.now() - kept.at > RECHECK && !rechecking.has(key)) {
+		// One not known to be Showbox's (kept before 2026-11-23, or a show only other sources have) is
+		// looked up again at once, and the page asks again shortly for the answer: Bleach's TV page
+		// kept showing a wrong 2-season list on the first visit after the fix.
+		const unsure = kept.list.fromShowbox !== true;
+		const busy = rechecking.has(key);
+		if ((unsure || Date.now() - kept.at > RECHECK) && !busy) {
 			rechecking.add(key);
 			lookUp()
 				.catch(() => null)
 				.finally(() => rechecking.delete(key));
 		}
-		return json(kept.list);
+		return json(unsure && (rechecking.has(key) || busy) ? { ...kept.list, retryIn: 10 } : kept.list);
 	}
 	return json(await lookUp());
 };

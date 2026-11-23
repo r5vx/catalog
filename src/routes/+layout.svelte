@@ -16,10 +16,10 @@
 	import { afterNavigate, beforeNavigate, replaceState } from '$app/navigation';
 	import { rememberBeforeSettings } from '$lib/nav';
 	import { onMount, untrack } from 'svelte';
-	import { startTv } from '$lib/tv';
+	import { isTv, startTv } from '$lib/tv';
 	import { startGamepad } from '$lib/gamepad';
 	import { startPhoneApp } from '$lib/phoneApp';
-	import { reportPageErrors } from '$lib/problemReport';
+	import { reportPageErrors, watchSlowPages } from '$lib/problemReport';
 	import { inkFor, DEFAULT_ACCENT } from '$lib/accent';
 	import { applyCustomTheme } from '$lib/customTheme';
 	import { backgroundPreview } from '$lib/backgroundPreview.svelte';
@@ -125,12 +125,16 @@
 	});
 
 	// Opening Settings from anywhere: remember the page and scroll position to go back to.
+	// Pages slow to come up on a TV, reported with how long the computer itself took (problemReport.ts).
+	const slowPages = watchSlowPages();
 	beforeNavigate(({ from, to }) => {
+		if (isTv() && to?.url.origin === location.origin) slowPages.before();
 		const into = to?.url.pathname.startsWith('/settings');
 		const outOf = from?.url.pathname.startsWith('/settings');
 		if (from && into && !outOf) rememberBeforeSettings(from.url.pathname + from.url.search, window.scrollY);
 	});
 	afterNavigate(({ from, to, type }) => {
+		if (isTv() && to) slowPages.after(to.url.pathname);
 		if (type !== 'popstate' && from && to && from.url.href !== to.url.href) {
 			replaceState('', { ...page.state, returnTo: from.url.pathname + from.url.search + from.url.hash });
 		}

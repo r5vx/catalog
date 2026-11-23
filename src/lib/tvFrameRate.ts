@@ -40,6 +40,17 @@ export function frameRateOf(gaps: number[]): number {
 
 const FRAMES_TO_MEASURE = 48;
 
+/**
+ * What matching did lately, newest last, for a "Stuck loading" report (tvPlayback.ts): a switch
+ * that never finishes, or a video that stops right after one, shows up here.
+ */
+const log: string[] = [];
+function noteMatch(what: string) {
+	log.push(`${new Date().toISOString().slice(11, 19)} ${what}`);
+	if (log.length > 8) log.shift();
+}
+export const frameRateLog = (): string[] => [...log];
+
 /** Matches the TV to `video` while it plays; the returned function stops and puts the TV's own mode back. */
 export function matchTvFrameRate(video: HTMLVideoElement): () => void {
 	const tv = tvBridge();
@@ -79,14 +90,19 @@ export function matchTvFrameRate(video: HTMLVideoElement): () => void {
 		try {
 			answer = tv!.matchFrameRate!(fps);
 		} catch {}
+		noteMatch(`${fps.toFixed(3)} fps: ${answer}`);
 		if (answer !== 'switching') return;
 		switching = true;
 		const wasPlaying = !video.paused;
 		video.pause();
 		await new Promise<void>((done) => {
-			const timer = setTimeout(done, 6000);
+			const timer = setTimeout(() => {
+				noteMatch('no word from the TV after 6 s');
+				done();
+			}, 6000);
 			tvPlayer.displayChanged = () => {
 				clearTimeout(timer);
+				noteMatch('TV switched');
 				done();
 			};
 		});
@@ -94,7 +110,12 @@ export function matchTvFrameRate(video: HTMLVideoElement): () => void {
 		// The TV shows nothing for a moment after the switch, whatever the app hears.
 		await new Promise((r) => setTimeout(r, 1500));
 		switching = false;
-		if (wasPlaying && !stopped) video.play().catch(() => {});
+		if (wasPlaying && !stopped) {
+			video.play().then(
+				() => noteMatch('playing again'),
+				(error) => noteMatch(`didn't play again: ${String(error?.message ?? error).slice(0, 60)}`)
+			);
+		}
 	}
 
 	// Back in the app after leaving it (the app put the TV's own mode back): measured and matched again.

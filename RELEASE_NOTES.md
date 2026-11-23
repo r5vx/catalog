@@ -12,6 +12,24 @@ without both.
 
 ## Unreleased
 
+## 4.7.2 — 2026-11-23 — Showbox plays on Fire TVs again, and remembered profiles
+
+### New
+
+**TV**
+- "Remember this profile on this TV" on Who's watching: that TV opens straight as you
+
+### Improved
+
+**TV**
+- When the picture keeps failing, the player offers a lower quality instead of fetching new links and trying other sources
+
+### Fixed
+
+**TV**
+- Showbox videos on the Fire TV showed one picture and then reloaded over and over since 4.2.1
+- Shows like Bleach now switch to their full list of seasons within seconds on the TV, not on a later visit
+
 ## 4.7.1 — 2026-11-23 — Sources on every title, and TV fixes
 
 ### Improved

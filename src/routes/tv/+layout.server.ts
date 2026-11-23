@@ -1,11 +1,17 @@
 import { listProfiles } from '$lib/server/db/queries';
-import { currentProfile } from '$lib/server/profile';
+import { currentProfile, TV_REMEMBER_COOKIE } from '$lib/server/profile';
 import { readSettings } from '$lib/server/settings';
 import type { LayoutServerLoad } from './$types';
 
 /** Everyone who watches on the TVs, and who's watching on this one. */
-export const load: LayoutServerLoad = async () => {
+export const load: LayoutServerLoad = async ({ cookies }) => {
 	const profiles = listProfiles();
 	const id = currentProfile();
-	return { profiles, profile: profiles.find((one) => one.id === id) ?? profiles[0], openOn: readSettings().openOn ?? 'new' };
+	return {
+		profiles,
+		profile: profiles.find((one) => one.id === id) ?? profiles[0],
+		openOn: readSettings().openOn ?? 'new',
+		// This TV skips "Who's watching?" (its own cookie).
+		rememberProfile: cookies.get(TV_REMEMBER_COOKIE) === '1'
+	};
 };

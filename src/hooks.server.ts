@@ -266,13 +266,25 @@ export const handle: Handle = async ({ event, resolve }) => {
 		: theme === 'custom'
 			? ` data-theme="custom" style="${customThemeCss(readCustomTheme(settingsNow.customTheme))}"`
 			: ` data-theme="${theme}"`;
-	const resolveWith = (e: typeof event) =>
-		withProfile(profileFor(e), () =>
+	const resolveWith = async (e: typeof event) => {
+		const started = performance.now();
+		const response = await withProfile(profileFor(e), () =>
 			resolve(e, {
 				transformPageChunk: ({ html }) =>
 					themeAttrs ? html.replace('<html lang="en">', `<html lang="en"${themeAttrs}>`) : html
 			})
 		);
+		// How long this computer took over a page's data, for a TV's slow-page report (problemReport.ts
+		// watchSlowPages): it tells a slow computer from a slow Wi-Fi.
+		if (e.isDataRequest) {
+			try {
+				response.headers.set('Server-Timing', `app;dur=${Math.round(performance.now() - started)}`);
+			} catch {
+				// (A response whose headers can't be changed goes as it is.)
+			}
+		}
+		return response;
+	};
 
 	// A brand-new copy of Catalog says hello before it shows an empty library.
 	// Answering the welcome screen is what turns this off, permanently.

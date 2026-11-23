@@ -14,6 +14,7 @@
 	import { isTv, tvPlayer } from '$lib/tv';
 	import { together, attachTogether, rejoinKeptRoom, nowPlaying, holdRoom, playerClosed, roomPaused } from '$lib/watchTogether.svelte';
 	import { matchTvFrameRate } from '$lib/tvFrameRate';
+	import { tvPlaybackFacts } from '$lib/tvPlayback';
 	import { StyledSubs, isStyledLine, onlyStyledLines } from '$lib/styledSubs';
 	import { splitSigns } from '$lib/subtitleSigns';
 	import { padActive } from '$lib/gamepad';
@@ -1373,7 +1374,10 @@
 	let playableLevels: number[] = [];
 	let slowStops: number[] = [];
 	/** What the "keeps stopping" box offers: a lower level (−1 when there's none). */
-	let slowOffer = $state<{ lower: number; height: number; freshLink: boolean; other: FileOption | null } | null>(null);
+	let slowOffer = $state<{ lower: number; height: number; freshLink: boolean; other: FileOption | null; decoder?: boolean } | null>(null);
+	/** When the picture decoder failed (last 2 minutes), and whether a lower quality was offered for it this video. */
+	let decoderErrors: number[] = [];
+	let decoderOffered = false;
 	/** "Keep loading" was picked for this video: not asked again. */
 	let slowOfferDeclined = false;
 
@@ -2011,6 +2015,9 @@
 			appendedSound = [];
 			stopStarts = [];
 			stopLoopSent = false;
+			decoderErrors = [];
+			decoderOffered = false;
+			stuckReported = false;
 			tvHearingOff = false;
 			subSync?.reset();
 			syncedOnce = false;
@@ -2425,6 +2432,34 @@
 		}, 8000);
 	}
 	onDestroy(() => clearTimeout(jumpLoadTimer));
+
+	/*
+	 * The picture not moving for 25 s while it should be playing, however that came about: the stall
+	 * watch's own steps (a fresh link, a rebuilt player) start its count again each time, so a video
+	 * stuck for good through them was never reported (tested 2026-11-23). Only the picture's place is
+	 * watched here; a pause of yours, the first loading screen (it has its own report) and the end
+	 * don't count.
+	 */
+	let stillSince = 0;
+	let stillAt = -1;
+	onMount(() => {
+		const timer = setInterval(() => {
+			const v = videoEl;
+			const now = performance.now();
+			if (!v || userPaused || loading || !streamUrl || v.ended || problem || sportsMode) {
+				stillSince = now;
+				stillAt = v?.currentTime ?? -1;
+				return;
+			}
+			if (Math.abs(v.currentTime - stillAt) > 0.2) {
+				stillAt = v.currentTime;
+				stillSince = now;
+			} else if (stillSince && now - stillSince > 25_000) {
+				reportStuck(now - stillSince);
+			}
+		}, 2000);
+		return () => clearInterval(timer);
+	});
 
 	/** `how`: it played again, it was still stopped after 30 s, or the video was left or changed. */
 	function stopEnded(how: 'played' | 'still' | 'left') {
@@ -4342,6 +4377,41 @@
 		if (stallTimer) { clearInterval(stallTimer); stallTimer = null; }
 	}
 
+	/*
+	 * Stuck loading for 20 s, wherever it is, the first seconds too (owner, 2026-11-23: a family Fire
+	 * TV "plays 1 second and stops and infinitely buffers", and nothing was ever reported: the stop
+	 * log and the other reports only count stops after the first 5 seconds). Sent once per episode,
+	 * with what tells the likely causes apart: Match frame rate and what it did, the TV's browser
+	 * version, what's loaded, the pieces waited for, and the player's last events.
+	 */
+	let stuckReported = false;
+	function reportStuck(stuckFor: number) {
+		if (stuckReported || !videoEl) return;
+		stuckReported = true;
+		const v = videoEl;
+		const ranges: string[] = [];
+		for (let i = 0; i < v.buffered.length; i++) ranges.push(`${v.buffered.start(i).toFixed(1)}-${v.buffered.end(i).toFixed(1)}`);
+		const now = performance.now();
+		sendProblemReport(videoTitle || startParams.get('title') || 'A video', {
+			error: 'Stuck loading',
+			stuckSeconds: Math.round(stuckFor / 1000),
+			position: Math.round(v.currentTime * 10) / 10,
+			loaded: ranges.join(', ') || 'nothing',
+			readyState: v.readyState,
+			networkState: v.networkState,
+			videoError: v.error ? `${v.error.code} ${v.error.message}` : null,
+			paused: v.paused,
+			waitingFor: [...piecesAsked.values()].map((p) => `${p.kind} #${p.n} for ${Math.round((now - p.since) / 1000)} s`),
+			...tvPlaybackFacts(),
+			source: activeFile ? (activeFile.source ?? 'Showbox') : '',
+			copy: activeFile?.name ?? '',
+			quality: activeQuality,
+			level: hlsInstance ? `${hlsInstance.currentLevel}/${hlsInstance.loadLevel} of ${hlsInstance.levels.length}` : 'no hls',
+			events: playerEvents.slice(-15).map((e) => `${Math.round((e.at - now) / 100) / 10}s ${e.what}`),
+			why: debugInfo.slice(0, 800)
+		});
+	}
+
 	function checkStall() {
 		if (!videoEl || loadingEpisode || changingQuality || refreshingStream) return;
 		// Paused on purpose: nothing downloading is normal, and a fresh link would start it playing.
@@ -4357,6 +4427,7 @@
 
 		const now = performance.now();
 		const stuckFor = now - stallSince;
+		if (stuckFor > 20_000) reportStuck(stuckFor);
 		// Silence on the wire, not slowness: a slow download still delivers bytes.
 		const quietFor = now - Math.max(lastBytesAt, stallSince);
 
@@ -6586,13 +6657,13 @@
 				enableIMSC1: false,
 				maxBufferLength: 300,
 				maxMaxBufferLength: 600,
+				backBufferLength: 90,
 				maxBufferHole: 0.5,
 				highBufferWatchdogPeriod: 2,
 				nudgeMaxRetry: 5,
 				liveSyncDurationCount: 3,
 				enableWorker: true,
 				startFragPrefetch: true,
-				backBufferLength: 90,
 				// A piece with no answer after 5 s is asked for again (a busy server leaves one
 				// hanging now and then); a slow one that is arriving is never cut off.
 				fragLoadPolicy: {
@@ -6658,6 +6729,7 @@
 				slowStops = [];
 				slowOffer = null;
 				slowOfferDeclined = false;
+				// (Not decoderErrors: a rebuilt player keeps counting, so the lower quality is still offered.)
 				// A 4K file standing in for 1080p plays its 1080p level, never its 4K one.
 				const standIn = untrack(() => fourKStandIn(activeFile));
 				const heights = hls.levels.map((l) => l.height);
@@ -6766,10 +6838,33 @@
 					prevStreamUrl = '';
 					return;
 				}
-				// A decode hiccup isn't fixed by a new link; hls.js can rebuild the decoder in place.
-				if (data.type === Hls.ErrorTypes.MEDIA_ERROR && performance.now() - mediaRecoveredAt > 10_000) {
-					mediaRecoveredAt = performance.now();
-					notePlayerEvent('decoder rebuilt after an error');
+				// A decode hiccup isn't fixed by a new link (that's what made the family TV go through
+				// "Reloading", fresh links and other sources, all failing the same way): hls.js rebuilds
+				// the decoder in place, then again with the sound's format swapped, and then this
+				// quality is the trouble, so a lower one is offered (never picked by itself).
+				if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+					const now = performance.now();
+					decoderErrors = decoderErrors.filter((t) => now - t < 120_000);
+					decoderErrors.push(now);
+					mediaRecoveredAt = now;
+					const tries = decoderErrors.length;
+					notePlayerEvent(`picture decoder failed (${errDetail}), ${tries} in 2 minutes`);
+					if (tries === 2) hls.swapAudioCodec();
+					if (tries >= 3 && !decoderOffered) {
+						decoderOffered = true;
+						const lower = levelBelow(hls.loadLevel >= 0 ? hls.loadLevel : hls.currentLevel);
+						sendProblemReport(videoTitle || startParams.get('title') || 'A video', {
+							error: "The picture decoder kept failing",
+							detail: errDetail,
+							source: activeFile ? (activeFile.source ?? 'Showbox') : '',
+							copy: activeFile?.name ?? '',
+							quality: activeQuality,
+							lowerOffered: lower >= 0,
+							events: playerEvents.slice(-12).map((e) => `${Math.round((e.at - now) / 100) / 10}s ${e.what}`),
+							why: debugInfo.slice(0, 800)
+						});
+						if (lower >= 0) slowOffer = { lower, height: hls.levels[lower]?.height ?? 0, freshLink: false, other: null, decoder: true };
+					}
 					reloadingByItself('picture decoder rebuilt after an error', videoEl?.currentTime ?? 0);
 					hls.recoverMediaError();
 					return;
@@ -8282,7 +8377,7 @@
 					<!-- keeps stopping to load: asks what to do -->
 					{#if slowOffer}
 						<div class="slow-offer" bind:this={slowOfferEl}>
-							<span>Keeps stopping to load.</span>
+							<span>{slowOffer.decoder ? 'The picture keeps failing at this quality.' : 'Keeps stopping to load.'}</span>
 							<!-- First, so the TV's highlight starts on it: another server is what gets it going again. -->
 							{#if slowOffer.other}<button type="button" onclick={() => slowChoice('other')}>Play on {slowOffer.other.source ?? 'Showbox'}</button>{/if}
 							{#if slowOffer.freshLink}<button type="button" onclick={() => slowChoice('fresh')}>Try a fresh link</button>{/if}
