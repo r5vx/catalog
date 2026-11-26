@@ -25,7 +25,7 @@ export const GET: RequestHandler = async ({ url }) => {
 	if (screen === 'home') {
 		const library = withNextAir(tvLibrary());
 		const continuing = await continueWatchingWithPosters();
-		const links = await Promise.all(continuing.map((item) => (item.type === 'replay' ? null : tvTitleLink(item.title, item.type).catch(() => null))));
+		const links = await Promise.all(continuing.map((item) => (item.type === 'replay' || item.needsRelease ? null : tvTitleLink(item.title, item.type).catch(() => null))));
 		const overviewOf = (title: string) => library.find((item) => item.title.toLowerCase() === title.toLowerCase())?.overview ?? null;
 		rows = [
 			{ label: 'Continue Watching', tiles: continuing.map((item, i) => fromContinue({ ...item, link: links[i] }, overviewOf(item.title))) },

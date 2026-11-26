@@ -2,14 +2,15 @@
 	import { onDestroy } from 'svelte';
 	import { posterSrcset, POSTER_SIZES } from '$lib/poster';
 	import { warmUpTitle } from '$lib/watch';
+	import PosterPlaceholder from '$lib/PosterPlaceholder.svelte';
 	import type { ContinueItem } from '$lib/server/db/queries';
 
-	let { item, href }: { item: ContinueItem; href: string } = $props();
+	let { item, href, oncontextmenu }: { item: ContinueItem; href: string; oncontextmenu?: (e: MouseEvent) => void } = $props();
 	let timer: ReturnType<typeof setTimeout> | null = null;
 	function cancelWarm() { if (timer) clearTimeout(timer); }
 	function scheduleWarm() {
 		cancelWarm();
-		timer = setTimeout(() => warmUpTitle(item), 250);
+		if (!item.needsRelease) timer = setTimeout(() => warmUpTitle(item), 250);
 	}
 	onDestroy(cancelWarm);
 	function progress(current: number, total: number) {
@@ -18,16 +19,16 @@
 	}
 </script>
 
-<a {href} class="card" onpointerenter={scheduleWarm} onpointerleave={cancelWarm} onfocus={scheduleWarm} onblur={cancelWarm}>
+<a {href} class="card" {oncontextmenu} onpointerenter={scheduleWarm} onpointerleave={cancelWarm} onfocus={scheduleWarm} onblur={cancelWarm}>
 	<div class="poster">
 		{#if item.posterUrl}
 			<img src={item.posterUrl} srcset={posterSrcset(item.posterUrl)} sizes={POSTER_SIZES} alt="" loading="lazy" />
-		{:else}<span class="poster-fallback" aria-hidden="true">▶</span>{/if}
+		{:else}<PosterPlaceholder title={item.title} kind={item.type === 'tv' ? 'TV' : 'Film'} />{/if}
 		<span class="watching-progress-overlay"><span class="watching-fill" style:width={`${item.duration > 0 ? Math.min(100, Math.round(item.currentTime / item.duration * 100)) : 0}%`}></span></span>
 	</div>
 	<div class="meta">
 		<h3 class="card-title">{item.title}</h3>
-		<p class="sub faint tabular">{item.type === 'tv' ? `S${item.season}E${item.episode} · ` : ''}{progress(item.currentTime, item.duration)}</p>
+		<p class="sub faint tabular">{item.type === 'tv' ? `S${item.season}E${item.episode} · ` : ''}{item.needsRelease ? 'Choose release' : progress(item.currentTime, item.duration)}</p>
 	</div>
 </a>
 

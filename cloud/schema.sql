@@ -62,6 +62,14 @@ CREATE TABLE IF NOT EXISTS presence (
 	at INTEGER NOT NULL
 );
 
+-- The status someone picked beside My profile (online, away, dnd, invisible) and when they last used
+-- Catalog (sent every couple of minutes while they do). The worker also makes this table itself.
+CREATE TABLE IF NOT EXISTS status (
+	account TEXT PRIMARY KEY,
+	status TEXT NOT NULL,
+	seen INTEGER NOT NULL
+);
+
 -- What someone has watched, for "friends who've seen this" (only while they share it).
 CREATE TABLE IF NOT EXISTS seen (
 	account TEXT NOT NULL,

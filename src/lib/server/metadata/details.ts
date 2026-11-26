@@ -36,6 +36,7 @@ export type TitleDetails = {
 	tagline: string | null;
 	posterUrl: string | null;
 	backdropUrl: string | null;
+	trailerKey: string | null;
 	runtimeMinutes: number | null;
 	episodesTotal: number | null;
 	seasons: number | null;
@@ -63,6 +64,7 @@ const EMPTY: TitleDetails = {
 	tagline: null,
 	posterUrl: null,
 	backdropUrl: null,
+	trailerKey: null,
 	runtimeMinutes: null,
 	episodesTotal: null,
 	seasons: null,
@@ -137,7 +139,17 @@ export async function fetchKnownFor(sourceId: string) {
 			// that first reached one.
 			const seen = new Set<string>();
 
+			// What they did behind the camera (`crew`), by title: a composer, director or writer has
+			// little or nothing in `cast`, so their page listed none of their work.
+			const jobs = new Map<string, string[]>();
+			for (const c of (data.crew ?? []) as Record<string, unknown>[]) {
+				const id = `${c.media_type}:${c.id}`;
+				const job = c.job as string | undefined;
+				if (job && !jobs.get(id)?.includes(job)) jobs.set(id, [...(jobs.get(id) ?? []), job]);
+			}
+
 			return (data.cast ?? [])
+				.concat(data.crew ?? [])
 				.filter((c: Record<string, unknown>) => (c.vote_count as number) > 20)
 				.sort((a: Record<string, number>, b: Record<string, number>) => b.vote_count - a.vote_count)
 				.filter((c: Record<string, unknown>) => {
@@ -151,6 +163,8 @@ export async function fetchKnownFor(sourceId: string) {
 					title: (c.title as string) ?? (c.name as string) ?? '',
 					year: String((c.release_date as string) ?? (c.first_air_date as string) ?? '').slice(0, 4),
 					character: (c.character as string) || null,
+					// "Original Music Composer", "Director": said when there's no part they played.
+					job: c.character ? null : (jobs.get(`${c.media_type}:${c.id}`)?.join(', ') ?? null),
 					poster: c.poster_path ? `https://image.tmdb.org/t/p/w185${c.poster_path}` : null,
 					// Enough to add it straight to the library from here.
 					source: 'tmdb',
@@ -163,18 +177,23 @@ export async function fetchKnownFor(sourceId: string) {
 		}
 
 		// Kept for a week: AniList allows Catalog only thirty questions a minute, for everything.
-		const keyed = `knownfor|anilist:${id}`;
+		const keyed = `knownfor2|anilist:${id}`;
 		const kept = getOrderCache(keyed);
 		if (kept && Date.now() - kept.at < 7 * DAY) return kept.value as unknown[];
 
 		// Each show they voiced someone in, most popular first (`characters` used to be asked for
-		// here, and AniList stopped answering that way: every voice actor had nothing else).
+		// here, and AniList stopped answering that way: every voice actor had nothing else). Then
+		// each show they worked on (`staffMedia`): a composer or director voices no one, so theirs
+		// listed nothing (Yuki Kajiura, 2026-11-24).
 		const response = await fetch('https://graphql.anilist.co', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				query: `query($id:Int){Staff(id:$id){characterMedia(sort:POPULARITY_DESC,perPage:50){edges{
 					characters{ name{ full } }
+					node{ id type title{ english romaji } startDate{ year } coverImage{ medium } averageScore popularity }
+				}} staffMedia(sort:POPULARITY_DESC,perPage:50,type:ANIME){edges{
+					staffRole
 					node{ id type title{ english romaji } startDate{ year } coverImage{ medium } averageScore popularity }
 				}}}}`,
 				variables: { id: Number(id) }
@@ -184,22 +203,31 @@ export async function fetchKnownFor(sourceId: string) {
 		if (response.status === 429) anilistSaidWait(response);
 		if (!response.ok) return kept ? (kept.value as unknown[]) : [];
 
-		const edges = (await response.json())?.data?.Staff?.characterMedia?.edges ?? [];
+		const staff = (await response.json())?.data?.Staff;
+		const edges = [...(staff?.characterMedia?.edges ?? []), ...(staff?.staffMedia?.edges ?? [])];
 		// Two characters in one show come as two answers: one card, both names.
 		const byShow = new Map<number, Record<string, any>>();
 		for (const edge of edges as Record<string, any>[]) {
 			const media = edge.node;
 			if (!media?.id || media.type !== 'ANIME') continue;
 			const names = (edge.characters ?? []).map((c: Record<string, any>) => c?.name?.full).filter(Boolean);
+			const role: string = edge.staffRole ?? '';
 			const known = byShow.get(media.id);
 			if (known) {
-				known.character = [known.character, ...names].filter(Boolean).join(', ');
+				if (names.length) known.character = [known.character, ...names].filter(Boolean).join(', ');
+				// ("Theme Song Lyrics (ED1)", "(ED2)"… on one show: the first three say enough.)
+				else if (role && !known.character && !known.jobs.includes(role) && known.jobs.length < 3) {
+					known.jobs.push(role);
+					known.job = known.jobs.join(', ');
+				}
 				continue;
 			}
 			byShow.set(media.id, {
 				title: media.title?.english || media.title?.romaji || '',
 				year: media.startDate?.year ? String(media.startDate.year) : '',
 				character: names.join(', ') || null,
+				job: role || null,
+				jobs: role ? [role] : [],
 				poster: media.coverImage?.medium ?? null,
 				source: 'anilist',
 				sourceId: String(media.id),
@@ -209,7 +237,10 @@ export async function fetchKnownFor(sourceId: string) {
 				votes: media.popularity ?? null
 			});
 		}
-		const list = [...byShow.values()].slice(0, KNOWN_FOR_DEPTH);
+		const list = [...byShow.values()]
+			.sort((a, b) => (b.votes ?? 0) - (a.votes ?? 0))
+			.slice(0, KNOWN_FOR_DEPTH)
+			.map(({ jobs: _jobs, ...credit }) => credit);
 		saveOrderCache(keyed, list, Date.now());
 		return list;
 	} catch {
@@ -239,7 +270,7 @@ async function fromTmdb(sourceId: string): Promise<TitleDetails> {
 	// (A film's release dates by kind say whether it's only in cinemas so far: cinemas.ts.)
 	url.searchParams.set(
 		'append_to_response',
-		`${isSeries ? 'aggregate_credits' : 'credits,release_dates'},external_ids`
+		`${isSeries ? 'aggregate_credits' : 'credits,release_dates'},external_ids,videos`
 	);
 
 	const init = key.startsWith('eyJ')
@@ -312,6 +343,15 @@ async function fromTmdb(sourceId: string): Promise<TitleDetails> {
 		backdropUrl: data.backdrop_path
 			? `https://image.tmdb.org/t/p/w1280${data.backdrop_path}`
 			: null,
+		trailerKey: (() => {
+			type Vid = { site?: string; type?: string; key?: string; official?: boolean };
+			const vids = ((data.videos?.results ?? []) as Vid[]).filter((v) => v.site === 'YouTube' && v.key);
+			const pick =
+				vids.find((v) => v.type === 'Trailer' && v.official) ??
+				vids.find((v) => v.type === 'Trailer') ??
+				vids.find((v) => v.type === 'Teaser');
+			return pick?.key ?? null;
+		})(),
 		/**
 		 * A film carries `runtime`. A series used to carry `episode_run_time`,
 		 * and for most of them TMDB now returns an empty array there — which is
@@ -373,6 +413,7 @@ async function fromAniList(id: string): Promise<TitleDetails> {
 			siteUrl
 			coverImage{ extraLarge large }
 			bannerImage
+			trailer{ id site }
 			genres
 			studios(isMain:true){nodes{name}}
 			characters(sort:ROLE, perPage:20){
@@ -443,6 +484,7 @@ async function fromAniList(id: string): Promise<TitleDetails> {
 		tagline: null,
 		posterUrl: media.coverImage?.extraLarge || media.coverImage?.large || null,
 		backdropUrl: media.bannerImage || null,
+		trailerKey: media.trailer?.site === 'youtube' && media.trailer?.id ? String(media.trailer.id) : null,
 		runtimeMinutes: media.duration ?? null,
 		episodesTotal: media.episodes ?? null,
 		seasons: null,
@@ -465,10 +507,30 @@ async function fromAniList(id: string): Promise<TitleDetails> {
  * built from the provider instead — otherwise every actor on a preview page is
  * a dead end, which is exactly what it was.
  */
-export async function fetchPerson(
-	sourceId: string
-): Promise<{ name: string; photo: string | null } | null> {
+export interface PersonProfile {
+	name: string;
+	photo: string | null;
+	biography: string | null;
+	birthday: string | null;
+	deathday: string | null;
+	placeOfBirth: string | null;
+	department: string | null;
+}
+
+function formatAniListDate(d?: { year?: number | null; month?: number | null; day?: number | null } | null): string | null {
+	if (!d?.year) return null;
+	const m = d.month ? String(d.month).padStart(2, '0') : '01';
+	const day = d.day ? String(d.day).padStart(2, '0') : '01';
+	return `${d.year}-${m}-${day}`;
+}
+
+export async function fetchPerson(sourceId: string): Promise<PersonProfile | null> {
 	const [provider, id] = sourceId.split(':');
+	if (!provider || !id) return null;
+
+	const keyed = `person2|${provider}:${id}`;
+	const kept = getOrderCache(keyed);
+	if (kept && Date.now() - kept.at < 14 * DAY) return kept.value as PersonProfile;
 
 	try {
 		if (provider === 'tmdb') {
@@ -481,41 +543,56 @@ export async function fetchPerson(
 				: (url.searchParams.set('api_key', key), {});
 
 			const response = await fetch(url, { ...init, signal: AbortSignal.timeout(15_000) });
-			if (!response.ok) return null;
+			if (!response.ok) return (kept?.value as PersonProfile | undefined) ?? null;
 
 			const data = await response.json();
 			if (!data?.name) return null;
 
-			return {
+			const profile: PersonProfile = {
 				name: String(data.name),
-				photo: data.profile_path ? `https://image.tmdb.org/t/p/w185${data.profile_path}` : null
+				photo: data.profile_path ? `https://image.tmdb.org/t/p/w342${data.profile_path}` : null,
+				biography: typeof data.biography === 'string' && data.biography.trim() ? data.biography.trim() : null,
+				birthday: typeof data.birthday === 'string' && data.birthday ? data.birthday : null,
+				deathday: typeof data.deathday === 'string' && data.deathday ? data.deathday : null,
+				placeOfBirth: typeof data.place_of_birth === 'string' && data.place_of_birth.trim() ? data.place_of_birth.trim() : null,
+				department: typeof data.known_for_department === 'string' && data.known_for_department ? data.known_for_department : null
 			};
+			saveOrderCache(keyed, profile, Date.now());
+			return profile;
 		}
-
-		// Kept for a month, so opening them again doesn't ask AniList.
-		const keyed = `person|anilist:${id}`;
-		const kept = getOrderCache(keyed);
-		if (kept && Date.now() - kept.at < 30 * DAY) return kept.value as { name: string; photo: string | null };
 
 		const response = await fetch('https://graphql.anilist.co', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				query: `query($id:Int){Staff(id:$id){ name{ full } image{ medium } }}`,
+				query: `query($id:Int){Staff(id:$id){ name{ full } image{ large medium } description(asHtml:false) dateOfBirth{ year month day } dateOfDeath{ year month day } homeTown primaryOccupations }}`,
 				variables: { id: Number(id) }
 			}),
 			signal: AbortSignal.timeout(15_000)
 		});
 		if (response.status === 429) anilistSaidWait(response);
-		if (!response.ok) return (kept?.value as { name: string; photo: string | null } | undefined) ?? null;
+		if (!response.ok) return (kept?.value as PersonProfile | undefined) ?? null;
 
 		const staff = (await response.json())?.data?.Staff;
 		if (!staff?.name?.full) return null;
 
-		const person = { name: staff.name.full, photo: staff.image?.medium ?? null };
-		saveOrderCache(keyed, person, Date.now());
-		return person;
+		const rawBio = typeof staff.description === 'string'
+			? staff.description.replace(/~!|!~/g, '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').trim()
+			: '';
+		const profile: PersonProfile = {
+			name: staff.name.full,
+			photo: staff.image?.large ?? staff.image?.medium ?? null,
+			biography: rawBio || null,
+			birthday: formatAniListDate(staff.dateOfBirth),
+			deathday: formatAniListDate(staff.dateOfDeath),
+			placeOfBirth: typeof staff.homeTown === 'string' && staff.homeTown.trim() ? staff.homeTown.trim() : null,
+			department: Array.isArray(staff.primaryOccupations) && staff.primaryOccupations.length
+				? staff.primaryOccupations.slice(0, 2).join(', ')
+				: null
+		};
+		saveOrderCache(keyed, profile, Date.now());
+		return profile;
 	} catch {
-		return null;
+		return (kept?.value as PersonProfile | undefined) ?? null;
 	}
 }

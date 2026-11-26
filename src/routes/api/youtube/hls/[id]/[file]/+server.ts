@@ -1,8 +1,18 @@
-import { error } from '@sveltejs/kit';
+import { error, json } from '@sveltejs/kit';
 import { existsSync, readFileSync } from 'node:fs';
+import { catalogDesktop } from '$lib/youtubeDevice';
 import { join } from 'node:path';
-import { isVideoId, mainPlaylist, readIndex, startCapture, trackPlaylist, youtubeDir } from '$lib/server/youtube';
+import { autoCaptions, isVideoId, mainPlaylist, readIndex, startCapture, trackPlaylist, youtubeDir } from '$lib/server/youtube';
 import type { RequestHandler } from './$types';
+
+export const POST: RequestHandler = async ({ params, request, url }) => {
+	if (params.file !== 'captions.json' || !isVideoId(params.id)) return error(404, 'Not found');
+	if (request.headers.get('origin') !== url.origin || !catalogDesktop(request.headers.get('user-agent') ?? '')) return error(403, 'Desktop playback required');
+	if (request.headers.get('content-type') !== 'application/json') return error(415, 'JSON required');
+	const tracks = await autoCaptions(params.id);
+	if (!tracks) return error(404, 'Captions unavailable');
+	return json({id:params.id, tracks}, {headers:{'Cache-Control':'no-store'}});
+};
 
 const PLAYLIST = { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' };
 
@@ -15,7 +25,7 @@ export const GET: RequestHandler = async ({ params }) => {
 	if (file === 'main.m3u8') return new Response(mainPlaylist(index), { headers: PLAYLIST });
 	if (file === 'video.m3u8' || file === 'audio.m3u8') {
 		// (Catalog restarted part way: the hidden player carries on.)
-		if (!index.done) startCapture(id);
+		if (!index.done) startCapture(id, 0, true);
 		return new Response(trackPlaylist(index, file === 'video.m3u8' ? 'video' : 'audio'), { headers: PLAYLIST });
 	}
 	const path = join(youtubeDir, id, file);

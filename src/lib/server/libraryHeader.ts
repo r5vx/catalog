@@ -7,6 +7,8 @@ import {
 	sharedCatalogCount
 } from './db/queries';
 import { countNotes } from './db/notes';
+import { friendCountOf, onlineConnected } from './online';
+import { currentProfile } from './profile';
 
 /** Everything the header and category tabs show, for the pages that share them. */
 export function libraryHeaderData() {
@@ -19,6 +21,7 @@ export function libraryHeaderData() {
 		completedByCategory: completedByCategory(),
 		noteCount: countNotes(),
 		watchingCount: continueWatchingList().length,
-		friendCount: sharedCatalogCount()
+		// Shared catalogs and online friends together: the people on the Friends tab.
+		friendCount: sharedCatalogCount() + (onlineConnected() ? (friendCountOf(currentProfile()) ?? 0) : 0)
 	};
 }

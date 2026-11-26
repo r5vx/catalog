@@ -1,3 +1,5 @@
+import { progressMatches } from '$lib/release';
+import { ambiguousRelease } from '$lib/server/seriesIdentity';
 import { json, error } from '@sveltejs/kit';
 import { continueWatchingList } from '$lib/server/db/queries';
 import { keptPlayerList, showSeasons } from '$lib/server/tvEpisodes';
@@ -22,7 +24,8 @@ export const GET: RequestHandler = async ({ url }) => {
 
 	// Where it was left: Continue Watching, under either of its names.
 	const names = [title, alt].filter(Boolean).map((n) => n.toLowerCase());
-	const continuing = continueWatchingList().find((item) => item.type === 'tv' && names.includes(item.title.toLowerCase())) ?? null;
+	const dated = await ambiguousRelease(title, 'tv', String(year ?? ''));
+	const continuing = continueWatchingList().find((item) => item.type === 'tv' && progressMatches(item.title, names, year, dated)) ?? null;
 
 	// (-1 when nothing's being watched: 0 is Specials now, and the page opened on them, 2026-11-15.)
 	let season = continuing?.season ?? -1;
@@ -31,9 +34,8 @@ export const GET: RequestHandler = async ({ url }) => {
 		season = sameYear || show.seasons[0].number;
 	}
 
-	const playTitle = continuing?.title ?? title;
-	// Asked with no year once it's being watched, as the player was then (the TV page does the same).
-	const playYear = continuing ? '' : String(year ?? '');
+	const playTitle = dated ? `${title} (${year})` : title;
+	const playYear = String(year ?? '');
 	return json({
 		show: { ...show, season },
 		playTitle,

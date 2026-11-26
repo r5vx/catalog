@@ -1,6 +1,7 @@
 import { error, json } from '@sveltejs/kit';
-import { cloud, keepMe, myAccount, computerName, connectOnline, disconnectOnline, noteStopped, lastSync, noteWatchingMore, onlineConnected, onlineJoined, onlineSwitches, setSyncProfile, syncNow, syncProfiles, tryOwnerKey } from '$lib/server/online';
-import { readSettings, updateSettings } from '$lib/server/settings';
+import { cloud, keepMe, myAccount, computerName, connectOnline, disconnectOnline, noteStopped, lastSync, noteWatchingMore, onlineConnected, onlineJoined, onlineSwitches, setStatus, setSyncProfile, syncNow, syncProfiles, tryOwnerKey } from '$lib/server/online';
+import { forgetOwner, isOwner, rememberOwner } from '$lib/server/ownerSession';
+import { updateSettings } from '$lib/server/settings';
 import { currentProfile } from '$lib/server/profile';
 import { lastLibrarySync, libraryPreview, libraryProfiles, nameOnlyCount, removalsOn, setLibraryProfile, syncLibrary } from '$lib/server/librarySync';
 import type { RequestHandler } from './$types';
@@ -11,7 +12,7 @@ import type { RequestHandler } from './$types';
  */
 type Account = { id: string; name: string; google: boolean; email: string | null; avatar: number };
 
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ url, cookies }) => {
 	const profile = currentProfile();
 	const connected = onlineConnected();
 	// ?light=1: only what this computer knows by itself (the player asks this; nothing goes to the server).
@@ -45,7 +46,7 @@ export const GET: RequestHandler = async ({ url }) => {
 		removals: removalsOn(),
 		/** The computer's name: a person still called that hasn't picked a name (the page asks for one). */
 		computerName: computerName(),
-		owner: Boolean(readSettings().onlineAdminKey)
+		owner: isOwner(cookies)
 	});
 };
 
@@ -56,13 +57,14 @@ export const GET: RequestHandler = async ({ url }) => {
  *   switches { reports, share, shared, along, autoJoin? }
  *   watching { title, year, room }   the player: which year's film is open, and its watch-together room
  *   stopped                the player was left or closed: friends stop seeing this profile as watching
+ *   status { status }      the status beside My profile: online, away, dnd or invisible
  *   sync { on }            this profile's progress kept in step (or not); syncNow does a round at once
  *   removals { on }        titles removed on the person's other computers removed here too (or not; per computer)
  *   libraryPreview         what keeping this profile's library in step would do (changes nothing)
  *   library { on }         this profile's library kept in step (or not); on does the first round. libraryNow: a round at once
  *   owner { key }          the owner's key, to read problem reports here, kept when right ('' forgets it)
  */
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, cookies, url }) => {
 	const body = await request.json().catch(() => ({}));
 	const profile = currentProfile();
 	if (body.action === 'connect') {
@@ -91,6 +93,11 @@ export const POST: RequestHandler = async ({ request }) => {
 		if (body.share === false) void cloud('/v1/presence', { method: 'DELETE', profile });
 		return json({ ok: true });
 	}
+	if (body.action === 'status') {
+		const status = ['online', 'away', 'dnd', 'invisible'].includes(body.status) ? body.status : 'online';
+		setStatus(profile, status);
+		return json({ ok: true, status });
+	}
 	if (body.action === 'stopped') {
 		noteStopped(profile);
 		return json({ ok: true });
@@ -115,11 +122,13 @@ export const POST: RequestHandler = async ({ request }) => {
 	if (body.action === 'owner') {
 		const key = String(body.key ?? '').trim();
 		if (!key) {
-			updateSettings({ onlineAdminKey: undefined });
+			forgetOwner(cookies);
 			return json({ ok: true });
 		}
 		// Kept only when the server says it's the owner's key (wrong tries are counted there).
-		return json({ ok: await tryOwnerKey(key) });
+		const ok = await tryOwnerKey(key);
+		if (ok) rememberOwner(cookies, url.protocol === 'https:');
+		return json({ ok });
 	}
 	return error(400, 'Unknown action');
 };

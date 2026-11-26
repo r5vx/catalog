@@ -1,4 +1,5 @@
 import { continueWatchingList, forgetFinishedSubtitles } from './db/queries';
+import { releaseParts } from '../release';
 import { tmdbShow } from './combinedEpisodes';
 
 /**
@@ -10,12 +11,13 @@ export async function continueWatchingWithPosters() {
 	// Anything just finished or taken off Continue Watching lets go of its kept subtitles.
 	forgetFinishedSubtitles();
 	const list = continueWatchingList();
-	const missing = list.filter((item) => !item.posterUrl && item.type === 'tv');
+	const missing = list.filter((item) => !item.posterUrl && !item.needsRelease && item.type === 'tv');
 	if (!missing.length) return list;
 	await Promise.race([
 		Promise.all(
 			missing.map(async (item) => {
-				item.posterUrl = (await tmdbShow(item.title, '').catch(() => null))?.poster ?? null;
+				const {title, year} = releaseParts(item.title);
+				item.posterUrl = (await tmdbShow(title, year).catch(() => null))?.poster ?? null;
 			})
 		),
 		new Promise((resolve) => setTimeout(resolve, 1500))

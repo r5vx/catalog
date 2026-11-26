@@ -41,6 +41,23 @@
 		before?: { secondsBefore: number; what: string }[];
 	};
 	const stops = $derived(data.stops as Stop[]);
+
+	// Picture: how this computer's Catalog window draws video (after it's opened again).
+	let noOverlay = $state(false);
+	let overlaySaved = $state(false);
+	$effect(() => {
+		noOverlay = data.noOverlay;
+	});
+	async function saveNoOverlay(on: boolean) {
+		noOverlay = on;
+		overlaySaved = false;
+		const answer = await fetch('/api/video-drawing', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ noOverlay: on })
+		}).catch(() => null);
+		overlaySaved = Boolean(answer?.ok);
+	}
 	/** The newest few, one line each (owner, 2026-11-15: the long list pushed the rest of the page down). */
 	const FIRST_SHOWN = 5;
 	let showAllStops = $state(false);
@@ -154,6 +171,19 @@
 		</div>
 	</section>
 
+	<!-- This computer's Catalog window only, read when it starts (src/lib/server/videoDrawing.ts). -->
+	<section>
+		<div class="head"><h2>Picture</h2></div>
+		<label class="toggle">
+			<input type="checkbox" checked={noOverlay} onchange={(e) => saveNoOverlay(e.currentTarget.checked)} />
+			Draw video without the graphics card's overlay
+		</label>
+		<p class="muted">
+			Try this if the picture jumps or flickers for a moment on this computer. Takes effect the next time Catalog is opened.
+		</p>
+		{#if overlaySaved}<p class="muted">Saved. Close Catalog and open it again.</p>{/if}
+	</section>
+
 	<!-- Long: across both columns with the wide layout (settings/+layout.svelte). -->
 	<section class="wide-full">
 		<div class="head"><h2>Times a video stopped to load</h2></div>
@@ -219,6 +249,21 @@
 <div class="part"><WatchProgress /></div>
 
 <style>
+	/* The Picture switch: only the box and its words take a click (as in Settings → Online). */
+	.toggle {
+		display: inline-flex;
+		align-self: flex-start;
+		max-width: 100%;
+		align-items: center;
+		gap: 8px;
+		font-size: 0.95rem;
+		cursor: pointer;
+	}
+
+	.toggle input {
+		width: auto;
+	}
+
 	.sections {
 		display: flex;
 		flex-direction: column;

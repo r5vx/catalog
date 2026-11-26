@@ -10,6 +10,8 @@ import {
 	bestMatch,
 	resolveSlugId
 } from '$lib/server/showbox';
+import { ambiguousRelease } from '$lib/server/seriesIdentity';
+import { releaseParts, filmHit } from '$lib/release';
 import { readSettings } from '$lib/server/settings';
 import { febboxAccountsName } from '$lib/server/febboxAccounts';
 import {
@@ -25,12 +27,18 @@ import { fetchRomajiTitle } from '$lib/server/metadata/anilist';
 import { combineEpisodes, tmdbShow, unasked, unaskedSetup, type EpisodeList } from '$lib/server/combinedEpisodes';
 import { aniwaveFilm } from '$lib/server/sources';
 import { aniwaveStream, parseAniwaveShareKey } from '$lib/server/sources/aniwave';
+import { sourceHasNot } from '$lib/server/sourceAnswers';
+import { confirmedVidfast, parseVidfastShareKey } from '$lib/server/sources/vidfast';
 import { vidriftStream } from '$lib/server/sources/vidrift';
 import { movyStream } from '$lib/server/sources/movy';
 import { movyDubCopy, parseMovyShareKey } from '$lib/server/sources/movy';
 import { audioLanguage, audioLanguageName } from '$lib/server/audioLanguage';
 import type { FileOption } from '$lib/server/showbox';
 import { nyaaCopy, nyaaOn } from '$lib/server/sources/nyaa';
+import { xumoFilm, withXumo } from '$lib/server/sources/xumo';
+import { plexFilm, withPlex } from '$lib/server/sources/plex';
+import { plutoFilm, withPluto } from '$lib/server/sources/pluto';
+import { officialMovies } from '$lib/server/sources/official';
 import { isAnimeFilm } from '$lib/server/animeFilm';
 import { measureFilmAhead } from '$lib/server/copySharpness';
 import { downloadLikelyAhead } from '$lib/server/downloadAheadAsk';
@@ -52,12 +60,12 @@ async function listing<T>(work: Promise<T>): Promise<{ value: T } | { busy: numb
 
 /** TMDB's poster for a film, for one only another source has (no Showbox poster). */
 async function tmdbFilmPoster(title: string, year: string): Promise<string | null> {
-	const found = await tmdbGet<{ results: { title?: string; poster_path?: string | null }[] }>('/search/movie', {
+	const found = await tmdbGet<{ results: { title?: string; release_date?: string; poster_path?: string | null }[] }>('/search/movie', {
 		query: title,
 		...(year ? { year } : {})
 	});
 	// The one named exactly that: TMDB's top hit for one Re:Zero film can be the other.
-	const film = found?.results.find((r) => r.title?.toLowerCase() === title.toLowerCase()) ?? found?.results[0];
+	const film = filmHit(found?.results ?? [], title, year);
 	const path = film?.poster_path;
 	return path ? `https://image.tmdb.org/t/p/w342${path}` : null;
 }
@@ -66,8 +74,7 @@ async function tmdbFilmPoster(title: string, year: string): Promise<string | nul
 async function tmdbFilmId(title: string, year: string): Promise<number | null> {
 	type Found = { results: { id: number; title?: string; release_date?: string }[] };
 	const found = await tmdbGet<Found>('/search/movie', { query: title, ...(year ? { year } : {}) });
-	const same = (t?: string) => t?.toLowerCase() === title.toLowerCase();
-	const film = found?.results.find((r) => same(r.title)) ?? found?.results[0];
+	const film = filmHit(found?.results ?? [], title, year);
 	return film?.id ?? null;
 }
 
@@ -75,17 +82,25 @@ async function tmdbFilmId(title: string, year: string): Promise<number | null> {
 async function filmCopies(title: string, year: string): Promise<FileOption[]> {
 	const id = await tmdbFilmId(title, year).catch(() => null);
 	if (!id) return [];
+	const official = await officialMovies(title, year, id);
 	const what = { type: 'movie' as const, id, season: 0, episode: 0 };
 	// (Not a source's that said lately it hasn't got the film: picked, it failed at once.)
 	// Nyaa's copy last, for an anime film, when it's turned on (sources/nyaa.ts).
-	const anime = nyaaOn() ? await Promise.race([isAnimeFilm(title, year).catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), 3000))]) : null;
-	return [...unasked(what), ...(anime ? nyaaCopy(what) : [])];
+	// Xumo Play, Plex, and Pluto TV free copies, when matched by name and year.
+	const [anime, xumo, plex, pluto] = await Promise.all([
+		nyaaOn() ? Promise.race([isAnimeFilm(title, year).catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), 3000))]) : null,
+		xumoFilm(title, year),
+		plexFilm(title, year),
+		plutoFilm(title, year)
+	]);
+	const freeCopies = withPluto(withPlex(withXumo(unasked(what), xumo), plex), pluto);
+	return [...official, ...freeCopies, ...(anime ? nyaaCopy(what) : [])];
 }
 
 async function findOnShowbox(title: string, type: string, year: string) {
 	const results = await searchShowbox(title);
 	if (!results.length) return null;
-	return bestMatch(results, title, type, year);
+	return bestMatch(results, title, type, year, await ambiguousRelease(title, type, year));
 }
 
 /**
@@ -192,9 +207,8 @@ export const GET: RequestHandler = async (event) => {
 };
 
 async function lookUp(url: URL): Promise<Response> {
-	const title = url.searchParams.get('title')?.trim();
+	const { title, year } = releaseParts(url.searchParams.get('title') ?? '', url.searchParams.get('year') ?? '');
 	const type = url.searchParams.get('type') ?? '';
-	const year = url.searchParams.get('year') ?? '';
 	// For series the player picks the episode itself, then asks for that stream.
 	const skipEpisodeStream = url.searchParams.get('nostream') === '1';
 	// The player (or a Watch button pointed at) wants the likely episode's link started.
@@ -203,7 +217,8 @@ async function lookUp(url: URL): Promise<Response> {
 
 	if (!title) return error(400, 'Missing title');
 
-	const cacheKey = `${title.toLowerCase()}:${type}:${year}`;
+	const dated = await ambiguousRelease(title, type, year);
+	const cacheKey = `${title.toLowerCase()}:${type}:${year}${dated ? ':dated' : ''}`;
 	const cached = resolveCache.get(cacheKey);
 	let matchTitle = '';
 	let matchId = 0;
@@ -231,7 +246,7 @@ async function lookUp(url: URL): Promise<Response> {
 		episodeData = cached.episodes;
 		movieFileList = cached.files;
 		startSeason = cached.startSeason;
-		if (warm && matchType === 'tv' && episodeData) warmLikelyEpisode(episodeData as EpisodeList, shareKey ?? '', matchTitle, startSeason, asked);
+		if (warm && matchType === 'tv' && episodeData) warmLikelyEpisode(episodeData as EpisodeList, shareKey ?? '', dated ? `${title} (${year})` : matchTitle, startSeason, asked);
 	} else {
 		// Remembered from an earlier session: skips the Showbox search, but re-lists so new episodes show.
 		// (One kept with no folder is no use: it was looked for afresh. Before 2026-11-23 a busy Febbox
@@ -303,7 +318,7 @@ async function lookUp(url: URL): Promise<Response> {
 				}
 			}
 
-			if (!match) {
+			if (!match && !dated) {
 				const altTitles: string[] = [];
 				const tmdbType = type === 'movie' ? 'movie' as const : 'tv' as const;
 				const tmdbAlts = await fetchAlternativeTitles(title, tmdbType);
@@ -323,36 +338,33 @@ async function lookUp(url: URL): Promise<Response> {
 				}
 			}
 
-			if (!match && type === 'movie') {
+			// A search hit with no usable share isn't a source. Try other providers for the requested release.
+			const hadShowboxHit = Boolean(match);
+			const fallbackType = type || match?.type;
+			if (match && !match.id && match.slug) match.id = await resolveSlugId(match.slug, match.type);
+			const link = match?.id ? await getFebboxLink(match.id, match.type) : null;
+			const sk = link && extractShareKey(link);
+			if (!sk) match = null;
+			const missing = hadShowboxHit ? 'no_link' : 'not_found';
+			if (!match && fallbackType === 'movie') {
 				// A film Showbox doesn't have: an anime one from Aniwave (Re:Zero's Memory Snow),
 				// any from 7Movies (Thor: Love and Thunder).
 				const [anime, sevenMovies] = await Promise.all([aniwaveFilm(title, year), filmCopies(title, year)]);
 				const film = [...(anime ?? []), ...sevenMovies];
-				if (!film.length) return json({ error: 'not_found' });
+				if (!film.length) return json({ error: missing });
 				matchTitle = title;
 				matchType = 'movie';
 				movieFileList = film;
 			} else if (!match) {
 				const other = await fromOtherSources(title, year);
-				if (!other) return json({ error: 'not_found' });
+				if (!other) return json({ error: missing });
 				matchTitle = other.title;
 				matchType = 'tv';
 				episodeData = other.episodes;
 				startSeason = other.startSeason;
 			}
 
-			if (match && match.id === 0 && match.slug) {
-				match.id = await resolveSlugId(match.slug, match.type);
-				if (match.id === 0) return json({ error: 'no_link' });
-			}
-
-			if (match) {
-				const link = await getFebboxLink(match.id, match.type);
-				if (!link) return json({ error: 'no_link' });
-
-				const sk = extractShareKey(link);
-				if (!sk) return json({ error: 'no_link' });
-
+			if (match && link && sk) {
 				matchTitle = match.title;
 				matchId = match.id;
 				matchType = match.type;
@@ -402,7 +414,7 @@ async function lookUp(url: URL): Promise<Response> {
 		// Other Showbox entries for the same show (JoJo's Steel Ball Run) and other sources join
 		// the list, and episodes no one has yet show greyed out. (Already done for a show only
 		// other sources have.)
-		if (warm && matchType === 'tv' && episodeData) warmLikelyEpisode(episodeData as EpisodeList, shareKey ?? '', matchTitle, startSeason, asked);
+		if (warm && matchType === 'tv' && episodeData) warmLikelyEpisode(episodeData as EpisodeList, shareKey ?? '', dated ? `${title} (${year})` : matchTitle, startSeason, asked);
 		if (matchType === 'tv' && episodeData && shareKey) {
 			episodeData = await combineEpisodes(episodeData as EpisodeList, matchTitle, matchId, year);
 		}
@@ -432,7 +444,7 @@ async function lookUp(url: URL): Promise<Response> {
 		const copy = movyDubCopy(movy, dub);
 		return [copy, ...list.filter((file) => file.shareKey !== copy.shareKey)];
 	};
-	const libraryEntry = findEntryByTitle(matchTitle);
+	const libraryEntry = findEntryByTitle(matchTitle, year, matchType);
 	// The library's poster, else TMDB's (Showbox's can be missing or broken, and a show only
 	// another source has has none) — it's what Continue Watching shows.
 	const tmdbPoster = libraryEntry?.posterUrl
@@ -446,7 +458,11 @@ async function lookUp(url: URL): Promise<Response> {
 
 	if (matchType === 'tv') {
 		const original = episodeData as EpisodeList;
-		const epData = dub ? { ...original, episodes: original.episodes.map((ep) => ({ ...ep, files: withDub(ep.files) })) } : original;
+		const epData = { ...original, episodes: original.episodes.map(ep => {
+			const candidate = parseVidfastShareKey(ep.vidfastCandidate ?? '');
+			const files = ep.files.filter(f => f.source !== 'Vidfast' && !(cached && candidate && (f.source === 'Movy' || f.source === '7Movies') && sourceHasNot(f.source, candidate)));
+			return { ...ep, files: withDub(candidate ? [...files, ...confirmedVidfast(candidate)] : files) };
+		}) };
 		// The first episode that can be played, specials aside.
 		const playable = epData.episodes.filter((ep) => ep.available !== false && ep.files.length > 0);
 		let targetEp = playable.find((ep) => ep.season > 0) ?? playable[0];
@@ -468,7 +484,7 @@ async function lookUp(url: URL): Promise<Response> {
 		}
 
 		return json({
-			title: matchTitle,
+			title: dated ? `${title} (${year})` : matchTitle,
 			showboxId: matchId,
 			type: matchType,
 			shareKey,
@@ -491,7 +507,10 @@ async function lookUp(url: URL): Promise<Response> {
 		});
 	}
 
-	const files = withDub(movieFileList as FileOption[]);
+	const filmId = await tmdbFilmId(matchTitle, year);
+	const otherFilms = (movieFileList as FileOption[]).filter(f => f.source !== 'Vidfast');
+	const files = withDub([...otherFilms, ...(filmId ? confirmedVidfast({ type: 'movie', id: filmId, season: 0, episode: 0 }) : [])]);
+	if (!files.length) return json({ error: 'no_file' });
 	// Showbox's best file first; the player asks for another source's link itself.
 	const showboxFiles = files.filter((f) => !f.source);
 	const defaultFile = pickFile(showboxFiles, PREFERRED_QUALITY) ?? showboxFiles[0] ?? files[0];
@@ -513,7 +532,7 @@ async function lookUp(url: URL): Promise<Response> {
 	}
 
 	return json({
-		title: matchTitle,
+		title: dated ? `${title} (${year})` : matchTitle,
 		showboxId: matchId,
 		type: matchType,
 		shareKey,

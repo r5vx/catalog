@@ -31,6 +31,7 @@ export const GET: RequestHandler = async ({ url }) => {
 
 export const POST: RequestHandler = async ({ request }) => {
 	const body = await request.json();
+	if (body.assignLegacy === true) return error(410, 'Progress assignment has been removed');
 	const { title, type, season, episode, currentTime, duration, subUrl, subDelay, subFileName, posterUrl, shareKey, fid, subRate } = body;
 
 	if (!title) return error(400, 'Missing title');

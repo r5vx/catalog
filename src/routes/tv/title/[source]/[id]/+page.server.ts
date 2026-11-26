@@ -1,3 +1,5 @@
+import { progressMatches } from '$lib/release';
+import { ambiguousRelease } from '$lib/server/seriesIdentity';
 import { playsAsFilm } from '$lib/watchType';
 import { error } from '@sveltejs/kit';
 import { fetchDetails } from '$lib/server/metadata/details';
@@ -39,7 +41,8 @@ export const load: PageServerLoad = async ({ params }) => {
 
 	// Where it was left: Continue Watching, under its name here or its name in the library.
 	const names = [details.title, entry?.title, details.altTitle].filter(Boolean).map((n) => n!.toLowerCase());
-	const continuing = continueWatchingList().find((item) => item.type === type && names.includes(item.title.toLowerCase())) ?? null;
+	const dated = await ambiguousRelease(details.title, type, String(details.year ?? ''));
+	const continuing = continueWatchingList().find((item) => item.type === type && progressMatches(item.title, names, details.year, dated)) ?? null;
 
 	// A show's seasons, for picking an episode before playing. Opens on the season being
 	// watched; an anime season's own entry on the season that came out that year.
@@ -52,19 +55,21 @@ export const load: PageServerLoad = async ({ params }) => {
 	}
 
 	// The player's own list from last time (all of Bleach's 18 seasons), so it's there at once.
-	const playTitle = continuing?.title ?? entry?.title ?? details.title;
-	const keptList = show ? (keptPlayerList(playTitle, continuing ? '' : String(details.year ?? ''))?.list ?? null) : null;
+	const playTitle = entry?.title ?? details.title;
+	const keptList = show ? (keptPlayerList(playTitle, String(details.year ?? ''))?.list ?? null) : null;
 
 	return {
 		source,
 		id,
 		type,
+		progressTitle: dated ? `${playTitle} (${details.year})` : playTitle,
 		show: show && show.seasons.length ? { ...show, season } : null,
 		keptList,
 		details: {
 			title: details.title,
 			year: details.year,
 			overview: details.overview,
+			imdbId: details.imdbId,
 			posterUrl: details.posterUrl,
 			backdropUrl: details.backdropUrl,
 			kind: details.kind,

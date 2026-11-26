@@ -141,6 +141,7 @@ export type Settings = {
 	onlineUrl?: string;
 	onlineName?: string;
 	onlineAdminKey?: string;
+	ownerSessionHash?: string;
 	/** The problem reports the owner has looked through: a JSON list of their numbers (kept on this computer). */
 	onlineReportsReviewed?: string;
 	/** The version whose What's new card was last shown and closed (whatsNewCard.ts). */
@@ -158,6 +159,8 @@ export type Settings = {
 	onlineAutoJoin?: string;
 	/** '0': no round chat button in the corner (owner, 2026-11-18). Messages still pop up. */
 	onlineChatButton?: string;
+	/** Each profile's status beside My profile, as JSON ({"0":"invisible"}); online when left out (online.ts statusOf). */
+	onlineStatus?: string;
 	/** This computer's key for Fire TVs' developer connection (fireTvInstall.ts). Never leaves the computer. */
 	fireTvKey?: string;
 	/** Fire TVs seen opening Catalog, and their names once installed on (JSON: address → { seen, name }). */
@@ -179,6 +182,16 @@ export type Settings = {
 	onlineLibraryState?: string;
 	/** '0': titles removed on one computer are left alone on this one (on unless turned off). */
 	onlineRemovals?: string;
+	/** Catasong's Guess the Anime: best streak per level, as JSON ({"easy":7}). catasong/anime.ts. */
+	catasongAnimeBest?: string;
+	/** Catasong daily songs: today's guesses per genre (JSON { date, plays }), catasong/daily.ts. */
+	catasongToday?: string;
+	/** Catasong daily songs: days played, won and the streak per genre (JSON). */
+	catasongStats?: string;
+	/** Catasong's volume, 0–1 (lib/catasong/player.svelte.ts); 0.4 when left out. */
+	catasongVolume?: string;
+	/** Catasong Endless: best streak per genre (JSON). */
+	catasongEndlessBest?: string;
 };
 
 export function readSettings(): Settings {

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import MoreLikeThis from '$lib/MoreLikeThis.svelte';
 	import SourceChecks from '$lib/SourceChecks.svelte';
+	import PosterPlaceholder from '$lib/PosterPlaceholder.svelte';
 	import { checkWatchable, type SourceCheck } from '$lib/watchCheck';
 	import { watchTypeOf } from '$lib/watchType';
 	import { onMount } from 'svelte';
@@ -17,6 +18,7 @@
 	import WhereToWatch from '$lib/WhereToWatch.svelte';
 	import DownloadTitle from '$lib/DownloadTitle.svelte';
 	import EpisodePicker from '$lib/EpisodePicker.svelte';
+	import { seasonsWord } from '$lib/seasonsWord';
 	import EpisodeRatings from '$lib/EpisodeRatings.svelte';
 	import Fold from '$lib/Fold.svelte';
 	import FriendsSeen from '$lib/FriendsSeen.svelte';
@@ -98,6 +100,7 @@
 	$effect(() => {
 		const [title, type, year] = checkKey.split('|');
 		const params = new URLSearchParams({ title, type });
+		if (entry.source === 'tmdb' && entry.sourceId) params.set('tmdb', entry.sourceId);
 		if (year) params.set('year', year);
 		watchAvailable = null;
 		watchSources = [];
@@ -170,25 +173,27 @@
 	let scoresSettled = $state(false);
 
 	/** A film's release day (owner, 2026-11-16: "the exact date a movie was released"). */
-	let released = $state<{ id: number; day: string } | null>(null);
+	let released = $state<{ id: number; day: string | null; trailerKey: string | null } | null>(null);
 	$effect(() => {
 		const { id, source, sourceId } = data.entry;
-		if (source !== 'tmdb' || !sourceId?.startsWith('movie:')) return;
+		if (!sourceId || (source !== 'tmdb' && source !== 'anilist')) return;
 		let current = true;
 		fetch(`/api/release-date?${new URLSearchParams({ source, id: sourceId })}`)
 			.then((r) => (r.ok ? r.json() : null))
 			.then((answer) => {
-				if (current && answer?.releaseDate) released = { id, day: answer.releaseDate };
+				if (current && answer) released = { id, day: answer.releaseDate, trailerKey: answer.trailerKey };
 			})
 			.catch(() => {});
 		return () => (current = false);
 	});
 
 	// Declared after `scores` because box office only arrives with them.
+	let playerSeasons = $state<{ id: number; list: { number: number }[] } | null>(null);
 	const facts = $derived(
 		[
-			released?.id === entry.id ? fullDate(released.day) : entry.year ? String(entry.year) : null,
+			released?.id === entry.id && released.day ? fullDate(released.day) : entry.year ? String(entry.year) : null,
 			category?.name ?? null,
+			playerSeasons?.id === entry.id ? seasonsWord(null, playerSeasons.list) : null,
 			entry.episodesTotal ? `${entry.episodesTotal} episodes` : null,
 			entry.runtimeMinutes ? `${entry.runtimeMinutes} min` : null,
 			entry.rewatches ? `Watched ${entry.rewatches + 1}×` : null,
@@ -316,7 +321,7 @@
 			{#if entry.posterUrl}
 				<img src={entry.posterUrl} alt="" />
 			{:else}
-				<span class="empty" aria-hidden="true">{category?.emoji ?? '?'}</span>
+				<PosterPlaceholder title={entry.title} year={entry.year} kind={category?.name ?? null} />
 			{/if}
 		</div>
 
@@ -359,6 +364,7 @@
 			</div>
 
 			<!-- Your rating, status and progress, beside the poster where they're seen at once. -->
+			<details class="library-edit"><summary>Your rating &amp; progress</summary>
 			{#key data.entry.id}
 				<QuickEdit
 					entry={data.entry}
@@ -366,11 +372,12 @@
 					onsaved={(fields) => (changed = { ...changed, ...fields })}
 				/>
 			{/key}
+			</details>
 
 			<!-- Below your rating, not above it: these come in a moment after the page opens, and above it they
 			     pushed the rating down while you went to click it (owner, 2026-11-16). -->
 			{#if inCinemas && watchAvailable === true}<p class="cinema-note">In cinemas: copies online are likely recorded in a cinema</p>{/if}
-			<SourceChecks sources={watchSources} />
+			<SourceChecks sources={watchSources} series={watchType === 'tv'} anime={category?.slug === 'anime'} />
 			{#if scoresSettled && !looking && !entry.sourceId}
 				<p class="faint hint why-none">Not matched to a title on TMDB, so there are no ratings or details. Pick it under More details → Wrong match?</p>
 			{:else if scoresSettled && !looking && entry.externalRating == null && entry.rating == null && scores?.imdbRating == null && scores?.rtScore == null && scores?.metascore == null}
@@ -391,10 +398,10 @@
 	</header>
 
 	{#if watchType === 'tv' && entry.sourceId && (entry.source === 'tmdb' || entry.source === 'anilist')}
-		<EpisodePicker source={entry.source} sourceId={entry.sourceId} title={entry.title} year={entry.year} />
+		<EpisodePicker source={entry.source} sourceId={entry.sourceId} title={entry.title} year={entry.year} onseasons={(list) => (playerSeasons = { id: entry.id, list })} />
 	{/if}
 
-	<Synopsis text={overview} pending={looking} />
+	<Synopsis trailer={released?.id === entry.id ? released.trailerKey : null} title={entry.title} text={overview} pending={looking} />
 
 	<CastRow
 		{cast}
@@ -519,6 +526,7 @@
 		gap: 30px;
 	}
 
+	@media (min-width:621px) and (max-width:800px) { header { flex-wrap:wrap; } }
 	header {
 		display: flex;
 		gap: 24px;
@@ -567,8 +575,8 @@
 		max-width: 360px;
 	}
 
+	.library-edit summary { cursor:pointer; padding:.45rem 0; font-weight:600; }
 	.btn-watch {
-		flex: 1;
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;

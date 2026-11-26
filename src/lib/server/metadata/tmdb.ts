@@ -1,3 +1,4 @@
+import { releaseParts, seriesHit, type SeriesHit } from '../../release';
 import { env } from '$env/dynamic/private';
 import { readSettings } from '../settings';
 import { getOrderCache, saveOrderCache } from '../db/queries';
@@ -365,11 +366,11 @@ export async function trendingTmdb(
 			url.searchParams.set('include_adult', 'false');
 
 			if (filters?.sort === 'vote_average') {
-				url.searchParams.set('vote_count.gte', '200');
+				url.searchParams.set('vote_count.gte', filters?.genre ? '50' : '200');
 			} else if (filters?.sort === 'release_date_desc' || filters?.sort === 'release_date_asc') {
 				url.searchParams.set('vote_count.gte', '5');
 			} else if (!filters?.sort || filters.sort === 'vote_count') {
-				url.searchParams.set('vote_count.gte', '300');
+				url.searchParams.set('vote_count.gte', filters?.genre ? '50' : '300');
 			}
 
 			if (!hasFilters || !filters?.sort || filters.sort === 'release_date_desc' || filters.sort === 'release_date_asc') {
@@ -399,18 +400,24 @@ export async function trendingTmdb(
 				url.searchParams.set(dateKey, new Date().toISOString().slice(0, 10));
 			}
 
-			// "Trending now" with a sort or a genre (TMDB's trending list takes neither) stays now, as
-			// anime's does: films out this past year, series aired in the last 60 days. It was all time,
-			// so Most popular brought back decades-old titles (owner, 2026-11-16). Years chosen win.
-			if (mode === 'trending' && !filters?.yearFrom && !filters?.yearTo) {
+			// "Trending now" without a genre or explicit date/rating sort stays recent (last year for
+			// films, last 60 days for series). Picking a genre (e.g. Western) or Oldest/Newest/Highest
+			// rated searches across all time so niche genres aren't emptied out.
+			const keepRecent =
+				mode === 'trending' &&
+				!filters?.genre &&
+				!filters?.yearFrom &&
+				!filters?.yearTo &&
+				filters?.sort !== 'release_date_asc' &&
+				filters?.sort !== 'release_date_desc' &&
+				filters?.sort !== 'vote_average';
+			if (keepRecent) {
 				const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
 				if (kind === 'movie') {
 					url.searchParams.set('primary_release_date.gte', daysAgo(365));
 					url.searchParams.set('primary_release_date.lte', daysAgo(0));
 				} else url.searchParams.set('air_date.gte', daysAgo(60));
-				// (300 votes is a lot for a film out this year: 50 still leaves out what nobody watched.
-				// Series take 100, as anime's do: reruns and daily shows have fewer.)
-				if (filters?.sort !== 'vote_average') url.searchParams.set('vote_count.gte', kind === 'movie' ? '50' : '100');
+				url.searchParams.set('vote_count.gte', kind === 'movie' ? '50' : '100');
 			}
 		}
 
@@ -674,9 +681,15 @@ export async function trendingAnimeTmdb(page = 1, mode: BrowseMode = 'trending',
 		films.with_genres = `16,${filters.genre}`;
 		Object.assign(series, seriesGenreParams(filters.genre, true, series.without_genres) ?? {});
 	}
-	// "Trending now" stays now with any sort: sorted by Most popular it used to drop this, and
-	// Pokémon (1997) and Chibi Maruko-chan (1990) came top (owner, 2026-11-16). Years chosen win.
-	const browsingNow = mode === 'trending' && !filters?.yearFrom && !filters?.yearTo;
+	// "Trending now" stays recent unless the user narrowed by genre, years, or date/rating sort.
+	const browsingNow =
+		mode === 'trending' &&
+		!filters?.genre &&
+		!filters?.yearFrom &&
+		!filters?.yearTo &&
+		filters?.sort !== 'release_date_asc' &&
+		filters?.sort !== 'release_date_desc' &&
+		filters?.sort !== 'vote_average';
 	if (browsingNow) {
 		series['air_date.gte'] = daysAgo(60);
 		// Known well enough to be what people are watching (Chibi Maruko-chan airs every week too).
@@ -789,6 +802,52 @@ async function workOutTrendingPeople(): Promise<TrendingPerson[]> {
 		.sort((a, b) => b.score - a.score)
 		.slice(0, 40)
 		.map(({ person, titles }) => ({ ...person, knownFor: titles.slice(0, 2).join(', ') }));
+}
+
+export interface TmdbPersonHit {
+	id: number;
+	sourceId: string;
+	name: string;
+	photo: string | null;
+	department: string;
+	knownFor: string;
+	popularity: number;
+}
+
+/** Search all people on TMDB (actors, directors, composers, crew). */
+export async function searchPeopleTmdb(query: string, limit = 30): Promise<TmdbPersonHit[]> {
+	const trimmed = query.trim();
+	if (trimmed.length < 2 || !tmdbKey()) return [];
+	type RawPerson = {
+		id: number;
+		name?: string;
+		profile_path?: string | null;
+		known_for_department?: string;
+		popularity?: number;
+		adult?: boolean;
+		known_for?: { title?: string; name?: string }[];
+	};
+	const data = await tmdbGet<{ results?: RawPerson[] }>('/search/person', {
+		query: trimmed,
+		include_adult: 'false'
+	});
+	return (data?.results ?? [])
+		.filter((p) => !p.adult && p.name)
+		.sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0))
+		.slice(0, limit)
+		.map((p) => ({
+			id: p.id,
+			sourceId: `tmdb:${p.id}`,
+			name: p.name!,
+			photo: p.profile_path ? `${IMAGE}${p.profile_path}` : null,
+			department: p.known_for_department ?? '',
+			knownFor: (p.known_for ?? [])
+				.map((k) => k.title ?? k.name ?? '')
+				.filter(Boolean)
+				.slice(0, 3)
+				.join(', '),
+			popularity: p.popularity ?? 0
+		}));
 }
 
 export async function fetchImdbId(
@@ -989,14 +1048,16 @@ export async function fetchEpisodeNames(
 
 	try {
 		const searchUrl = new URL(`${BASE}/search/tv`);
-		searchUrl.searchParams.set('query', showTitle);
+		const { title, year } = releaseParts(showTitle);
+		searchUrl.searchParams.set('query', title);
+		if (year) searchUrl.searchParams.set('first_air_date_year', year);
 		const searchResp = await fetch(searchUrl, authorize(searchUrl, key));
 		if (!searchResp.ok) return {};
 
 		const searchData = (await searchResp.json()) as {
-			results?: { id: number; name?: string }[];
+			results?: SeriesHit[];
 		};
-		const show = searchData.results?.[0];
+		const show = seriesHit(searchData.results ?? [], title, year);
 		if (!show) return {};
 
 		const seasonUrl = new URL(`${BASE}/tv/${show.id}/season/${seasonNumber}`);

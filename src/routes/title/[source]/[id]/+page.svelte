@@ -1,6 +1,7 @@
 <script lang="ts">
 	import MoreLikeThis from '$lib/MoreLikeThis.svelte';
 	import SourceChecks from '$lib/SourceChecks.svelte';
+	import PosterPlaceholder from '$lib/PosterPlaceholder.svelte';
 	import { checkWatchable, type SourceCheck } from '$lib/watchCheck';
 	import { page } from '$app/state';
 	import ScoreStrip from '$lib/ScoreStrip.svelte';
@@ -10,6 +11,7 @@
 	import WhereToWatch from '$lib/WhereToWatch.svelte';
 	import DownloadTitle from '$lib/DownloadTitle.svelte';
 	import EpisodePicker from '$lib/EpisodePicker.svelte';
+	import { seasonsWord } from '$lib/seasonsWord';
 	import EpisodeRatings from '$lib/EpisodeRatings.svelte';
 	import Fold from '$lib/Fold.svelte';
 	import FriendsSeen from '$lib/FriendsSeen.svelte';
@@ -54,20 +56,24 @@
 		}
 	}
 
-	// Something not out yet can only be wanted.
-	let selectedStatus = $state(untrack(() => data.listStatus ?? (data.details.unreleased || data.details.inCinemas ? 'planned' : 'completed')));
+	let libraryMenu = $state(false);
 	/** Someone else's profile: what it is on their own list (null: not on it). */
 	let listStatus = $state(untrack(() => data.listStatus));
 	const listLabel = $derived(STATUSES.find((s) => s.value === listStatus)?.label ?? '');
 
 	let watchAvailable = $state<boolean | null>(null);
 	let watchSources = $state<SourceCheck[]>([]);
+	$effect(() => {
+		void data.sourceId; void data.source;
+		addedId = null; addError = ''; libraryMenu = false; listStatus = data.listStatus;
+	});
 
 	// Every source asked at once; each one's progress shows under the button while it waits.
 	$effect(() => {
 		// (A film only in cinemas is looked for too; its button warns of cinema recordings.)
 		if (details.unreleased) return;
 		const params = new URLSearchParams({ title: details.title ?? '', type: data.watchType });
+		if (data.source === 'tmdb') params.set('tmdb', data.sourceId);
 		if (details.year) params.set('year', String(details.year));
 		watchAvailable = null;
 		watchSources = [];
@@ -90,12 +96,14 @@
 			.join(', ')
 	);
 
+	// The player's own seasons once the episode picker knows them (Bleach's 18, not TMDB's 2).
+	let playerSeasons = $state<{ number: number }[] | null>(null);
 	const facts = $derived(
 		[
 			// A film: the day it came out (owner, 2026-11-16).
 			details.kind === 'Movie' && details.releaseDate ? fullDate(details.releaseDate) : details.year ? String(details.year) : null,
 			details.kind,
-			details.seasons ? `${details.seasons} season${details.seasons === 1 ? '' : 's'}` : null,
+			seasonsWord(details.seasons, playerSeasons),
 			details.episodesTotal ? `${details.episodesTotal} episodes` : null,
 			details.runtimeMinutes ? `${details.runtimeMinutes} min` : null,
 			details.status,
@@ -104,17 +112,23 @@
 	);
 </script>
 
+
 <svelte:head><title>{details.title} · Catalog</title></svelte:head>
 
 <BackBar href={data.back} />
 
-<article>
+<article class:has-backdrop={Boolean(details.backdropUrl)}>
+	{#if details.backdropUrl}
+		<div class="hero-backdrop" aria-hidden="true">
+			<img src={details.backdropUrl} alt="" />
+		</div>
+	{/if}
 	<header>
 		<div class="poster">
 			{#if details.posterUrl}
 				<img src={details.posterUrl} alt="" />
 			{:else}
-				<span class="empty" aria-hidden="true">?</span>
+				<PosterPlaceholder title={details.title ?? 'Untitled'} year={details.year} kind={details.kind} />
 			{/if}
 		</div>
 
@@ -122,7 +136,7 @@
 			{#if data.ownList}
 				<p class="eyebrow" class:faint={!listStatus}>{listStatus ? `On your list · ${listLabel}` : 'Not on your list'}</p>
 			{:else if data.ownedEntryId}
-				<p class="eyebrow"><a href="/entry/{data.ownedEntryId}">In your library →</a></p>
+				<p class="eyebrow">In your library</p>
 			{:else}
 				<p class="eyebrow faint">Not in your library</p>
 			{/if}
@@ -171,40 +185,33 @@
 				{/if}
 
 				{#if data.ownedEntryId}
-					<a href="/entry/{data.ownedEntryId}{data.back ? `?back=${encodeURIComponent(data.back)}` : ''}" class="btn btn-primary">View in library</a>
+					<a class="library-link" href="/entry/{data.ownedEntryId}{data.back ? `?back=${encodeURIComponent(data.back)}` : ''}">View library entry →</a>
 				{:else if addedId}
 					<span class="add-done">
 						Added! <a href="/entry/{addedId}{data.back ? `?back=${encodeURIComponent(data.back)}` : ''}">View entry</a>
 					</span>
 				{:else}
-					<div class="add">
-						<select bind:value={selectedStatus} aria-label="Add it as">
+					<details class="library-menu" bind:open={libraryMenu}>
+						<summary>{listStatus ? `Change status · ${listLabel}` : data.ownList ? '+ Save to my list' : '+ Save to library'}</summary>
+						<div class="choices" aria-label="Library status">
 							{#each STATUSES as option (option.value)}
-								<option value={option.value}>
-									{option.label}
-								</option>
+								<button type="button" disabled={addBusy} onclick={async () => { await addToLibrary(option.value); if (!addError) libraryMenu = false; }}>{option.label}</button>
 							{/each}
-						</select>
-						<button
-							type="button"
-							class="btn btn-primary"
-							disabled={addBusy}
-							onclick={() => addToLibrary(selectedStatus)}
-						>{addBusy ? 'Saving...' : data.ownList ? (listStatus ? 'Save' : 'Add to my list') : 'Add to library'}</button>
-					</div>
+						</div>
+					</details>
 				{/if}
 				{#if addError}<p class="add-error">{addError}</p>{/if}
 			</div>
 			{#if details.inCinemas && watchAvailable === true}<p class="cinema-note">In cinemas: copies online are likely recorded in a cinema</p>{/if}
-			{#if !details.unreleased}<SourceChecks sources={watchSources} />{/if}
+			{#if !details.unreleased}<SourceChecks sources={watchSources} series={data.watchType === 'tv'} anime={details.categorySlug === 'anime'} />{/if}
 		</div>
 	</header>
 
 	{#if data.watchType === 'tv' && !details.unreleased}
-		<EpisodePicker source={data.source} sourceId={data.sourceId} title={details.title ?? ''} year={details.year} alt={details.altTitle} />
+		<EpisodePicker source={data.source} sourceId={data.sourceId} title={details.title ?? ''} year={details.year} alt={details.altTitle} onseasons={(list) => (playerSeasons = list)} />
 	{/if}
 
-	<Synopsis text={details.overview} tagline={details.tagline} />
+	<Synopsis trailer={details.trailerKey} title={details.title ?? "Title"} text={details.overview} tagline={details.tagline} />
 
 	<!-- Everyone is clickable: ours by id, the rest by the provider's. -->
 	<!-- With a Music tab beside it: who did the music, the soundtrack, an anime's openings and endings. -->
@@ -260,6 +267,7 @@
 		gap: 30px;
 	}
 
+	@media (min-width:621px) and (max-width:800px) { header { flex-wrap:wrap; } }
 	header {
 		display: flex;
 		gap: 24px;
@@ -282,11 +290,6 @@
 		height: 100%;
 		object-fit: cover;
 		display: block;
-	}
-
-	.empty {
-		font-size: 2.4rem;
-		opacity: 0.35;
 	}
 
 	.meta {
@@ -316,13 +319,7 @@
 		font-size: 0.87rem;
 	}
 
-	.title-actions {
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-		margin-top: 4px;
-		max-width: 360px;
-	}
+	.title-actions { display:flex; align-items:center; flex-wrap:wrap; gap:10px 16px; }
 
 	.btn-watch {
 		display: inline-flex;
@@ -365,15 +362,11 @@
 	}
 
 
-	.add {
-		display: flex;
-		gap: 8px;
-	}
-
-	.add select {
-		flex: 1;
-		min-width: 0;
-	}
+	.library-menu { position:relative; }
+	.library-menu summary, .library-link { cursor:pointer; padding: .5rem .2rem; font-weight:600; color:var(--ink); }
+	.choices { position:absolute; z-index:3; top:100%; left:0; min-width:9rem; display:grid; padding:.3rem; border:1px solid var(--rule); border-radius:var(--radius); background:var(--surface); }
+	.choices button { text-align:left; padding:.55rem; color:inherit; background:none; border:0; cursor:pointer; }
+	.choices button:hover, .choices button:focus-visible { background:var(--surface-2); }
 
 	.add-done {
 		font-size: 0.9rem;
@@ -433,4 +426,44 @@
 			width: 150px;
 		}
 	}
+
+	article.has-backdrop {
+		position: relative;
+	}
+
+	.hero-backdrop {
+		position: relative;
+		margin: -18px 0 0;
+		height: clamp(104px, 17vw, 212px);
+		overflow: hidden;
+		border-radius: 16px 16px 0 0;
+		pointer-events: none;
+		z-index: 0;
+	}
+
+	.hero-backdrop img {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		object-position: center 22%;
+		opacity: 0.8;
+		filter: saturate(1.08);
+	}
+
+	.hero-backdrop::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		background:
+			linear-gradient(to bottom, transparent 45%, var(--paper) 100%),
+			linear-gradient(to right, var(--paper) 0%, transparent 18%, transparent 82%, var(--paper) 100%);
+	}
+
+	article.has-backdrop .facts, article.has-backdrop .eyebrow.faint { color: var(--ink-soft); }
+
+	article.has-backdrop > header {
+		position: relative;
+		z-index: 1;
+	}
+
 </style>

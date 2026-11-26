@@ -14,6 +14,8 @@
 <script lang="ts">
 	import { tick, untrack } from 'svelte';
 	import { fitOnScreen } from '$lib/fitOnScreen';
+	import { onReachBottom } from '$lib/infiniteScroll';
+	import PosterPlaceholder from '$lib/PosterPlaceholder.svelte';
 	import { posterSrcset, POSTER_SIZES } from '$lib/poster';
 	import { watchTypeOf } from '$lib/watchType';
 	import MoreButton from '$lib/MoreButton.svelte';
@@ -23,6 +25,7 @@
 	import RandomPick from '$lib/RandomPick.svelte';
 	import { p, pRandom } from '$lib/altText';
 	import { titleKey } from '$lib/titleKey';
+	import { opensHiddenCard } from '$lib/hiddenCard';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -71,11 +74,11 @@
 	];
 
 	/** Filters live in the URL, so a search you liked is a link you can keep. */
-	function setParam(key: string, value: string) {
+	function setParam(key: string, value: string, replaceState = false) {
 		const params = new URLSearchParams(window.location.search);
 		if (value) params.set(key, value);
 		else params.delete(key);
-		goto(`?${params.toString()}`, { keepFocus: true, noScroll: true });
+		goto(`?${params.toString()}`, { keepFocus: true, noScroll: true, replaceState });
 	}
 
 	function setParams(pairs: Record<string, string>) {
@@ -106,12 +109,34 @@
 	}
 
 	let searchText = $state(untrack(() => data.q));
-	$effect(() => { searchText = data.q; });
+	const hiddenCard = $derived(opensHiddenCard(searchText ?? ''));
+	let searchEl = $state<HTMLInputElement | null>(null);
+	// Not while the box is being typed in: a slower, older search coming back (or the space the
+	// server trims off the end) would take away letters typed since. Same as the library's box.
+	$effect(() => {
+		const q = data.q;
+		if (searchEl && document.activeElement !== searchEl) searchText = q;
+	});
 
 	let typing: ReturnType<typeof setTimeout>;
+	const activeShelf = $derived(data.shelves[0] ?? null);
 	function onSearch() {
 		clearTimeout(typing);
-		typing = setTimeout(() => setParam('q', searchText), 350);
+		typing = setTimeout(() => setParam('q', searchText, true), 150);
+	}
+
+	function onBrowseKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape') {
+			browseFilterOpen = false;
+			return;
+		}
+		if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+			const tag = (document.activeElement as HTMLElement | null)?.tagName;
+			if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+			e.preventDefault();
+			searchEl?.focus();
+			searchEl?.select();
+		}
 	}
 
 	/* ------------------------------------------------- what you already have */
@@ -247,7 +272,7 @@
 		pendingPages.set(shelf.key, request);
 		loading[shelf.key] = true;
 		failed = { ...failed, [shelf.key]: false };
-		const PAGES_PER_CLICK = 3;
+		const PAGES_PER_CLICK = 4;
 
 		const pageOf = async (n: number, mode: string): Promise<SearchResult[]> => {
 			let moreUrl = `/api/browse?cat=${encodeURIComponent(shelf.key)}&mode=${mode}&page=${n}`;
@@ -348,7 +373,7 @@
 	});
 </script>
 
-<svelte:window onmousedown={onBrowseFilterClick} onkeydown={(e) => e.key === 'Escape' && (browseFilterOpen = false)} />
+<svelte:window onmousedown={onBrowseFilterClick} onkeydown={onBrowseKeydown} />
 <svelte:head><title>{pm ? p('alt:Browse') : 'Browse'} · {pm ? p('alt:Catalog') : 'Catalog'}</title></svelte:head>
 
 <BackBar />
@@ -361,13 +386,19 @@
 </header>
 
 <div class="toolbar">
-	<input
-		type="search"
-		placeholder={data.cat === 'actors' ? (pm ? p('alt:Search actors…') : "Search actors…") : (pm ? p('alt:Search for anything…') : "Search for anything…")}
-		bind:value={searchText}
-		oninput={onSearch}
-		aria-label={data.cat === 'actors' ? "Search actors" : "Search every title"}
-	/>
+	<div class="search-wrap">
+		<input
+			type="search"
+			placeholder={data.cat === 'actors' ? (pm ? p('alt:Search actors…') : "Search actors, directors, composers…") : (pm ? p('alt:Search for anything…') : "Search for anything… (press /)")}
+			bind:this={searchEl}
+			bind:value={searchText}
+			oninput={onSearch}
+			aria-label={data.cat === 'actors' ? "Search actors" : "Search every title"}
+		/>
+		{#if !searchText}
+			<kbd class="search-kbd" aria-hidden="true">/</kbd>
+		{/if}
+	</div>
 </div>
 
 <nav class="tabs">
@@ -465,26 +496,51 @@
 	<p class="msg bad" role="alert">{problem}</p>
 {/if}
 
-{#if data.cat === 'actors'}
-	{#if data.q && data.q.length >= 2 && data.people.length === 0}
-		<p class="muted actor-none">No one by that name in your library.</p>
+{#if hiddenCard}
+	<div class="hidden-wrap">
+	<a class="hidden-card" href="/catasong">
+		<span class="hidden-aura" aria-hidden="true"></span>
+		<span class="hidden-burst" aria-hidden="true"></span>
+		<span class="hidden-body">
+			<span class="hidden-name" aria-label="Catasong">
+				{#each 'Catasong' as letter, i (i)}<span class="hidden-letter" style="--n: {i}" aria-hidden="true">{letter}</span>{/each}
+			</span>
+			<span class="hidden-line">Daily songs · Guess the Anime</span>
+		</span>
+	</a>
+	</div>
+{/if}
+
+{#if data.cat === 'actors' && !hiddenCard}
+	{#if data.q && data.q.length >= 2}
+		{#if data.people.length === 0}
+			<p class="muted actor-none">No one found for "{data.q}".</p>
+		{:else}
+			<p class="results-meta faint small tabular">
+				{data.people.length} {data.people.length === 1 ? 'person' : 'people'} for "{data.q}"
+			</p>
+		{/if}
 	{/if}
 
 	<ul class="actor-list">
-		{#each data.people as person (person.id)}
+		{#each data.people as person (person.key)}
 			<li>
-				<a href="/person/{person.id}?back={encodeURIComponent(here)}">
+				<a href="{person.href}{person.href.includes('?') ? '&' : '?'}back={encodeURIComponent(here)}">
 					{#if person.photo}
 						<img src={person.photo} alt="" loading="lazy" />
 					{:else}
 						<span class="noface" aria-hidden="true">?</span>
 					{/if}
 					<span class="actor-who">
-						<span class="actor-name">{person.name}</span>
-						<span class="faint small tabular">
-							{person.count}
-							{person.count === 1 ? 'title' : 'titles'} · {person.sample}
+						<span class="actor-name">
+							{person.name}
+							{#if person.inLibrary}
+								<span class="lib-chip">In library</span>
+							{/if}
 						</span>
+						{#if person.subtitle}
+							<span class="faint small tabular">{person.subtitle}</span>
+						{/if}
 					</span>
 				</a>
 			</li>
@@ -520,7 +576,7 @@
 			{#if posterOf(result)}
 				<img src={posterOf(result)} srcset={posterSrcset(posterOf(result))} sizes={POSTER_SIZES} alt="" loading="lazy" />
 			{:else}
-				<span class="fallback" aria-hidden="true">?</span>
+				<PosterPlaceholder title={result.title} year={result.year} kind={result.kind} />
 			{/if}
 			{#if have(result)}<span class="tick" title="In your library">&check;</span>{/if}
 			<MoreButton onopen={(e) => onCardContext(e, result)} top={have(result) ? 36 : 6} />
@@ -554,11 +610,14 @@
 	</li>
 {/snippet}
 
-{#if data.cat !== 'actors'}
+{#if data.cat !== 'actors' && !hiddenCard}
 	{#if data.q}
 		{#if data.results.length === 0}
-			<p class="empty muted">Nothing found for that.</p>
+			<p class="empty muted">Nothing found for "{data.q}".</p>
 		{:else}
+			<p class="results-meta faint small tabular">
+				{data.results.length} {data.results.length === 1 ? 'result' : 'results'} for "{data.q}"
+			</p>
 			<ul class="grid">
 				{#each data.results as result (result.key)}
 					{@render card(result)}
@@ -567,30 +626,27 @@
 		{/if}
 	{:else if data.shelves.length === 0}
 		<p class="empty muted">Nothing to show. Check your connection, or search for a title.</p>
-	{:else}
-		{#each data.shelves as shelf (shelf.key)}
-			<section class="shelf">
-				<h2>{pm ? p(shelf.label) : shelf.label}</h2>
-				<ul class="grid">
-					{#each shelfResults(shelf) as result (result.key)}
-						{@render card(result)}
-					{/each}
-				</ul>
+	{:else if activeShelf}
+		<section class="shelf">
+			<h2>{pm ? p(activeShelf.label) : activeShelf.label}</h2>
+			<ul class="grid">
+				{#each shelfResults(activeShelf) as result (result.key)}
+					{@render card(result)}
+				{/each}
+			</ul>
 
-				{#if ended[shelf.key]}
-					<p class="faint end">{shelf.key.startsWith('addon~') ? "That's the whole list." : "That's everything TMDB has here."}</p>
-				{:else}
-					<button
-						type="button"
-						class="btn more"
-						aria-disabled={loading[shelf.key] ? 'true' : undefined}
-						onclick={() => more(shelf)}
-					>
-						{loading[shelf.key] ? (pm ? pRandom() : 'Finding more…') : failed[shelf.key] ? "Couldn't load more. Try again" : (pm ? p('alt:Show more') : 'Show more')}
-					</button>
-				{/if}
-			</section>
-		{/each}
+			{#if ended[activeShelf.key]}
+				<p class="faint end">{activeShelf.key.startsWith('addon~') ? "That's the whole list." : "That's everything TMDB has here."}</p>
+			{:else if failed[activeShelf.key]}
+				<button type="button" class="btn more" onclick={() => more(activeShelf)}>
+					Couldn't load more. Try again
+				</button>
+			{:else}
+				<div class="scroll-sentinel" use:onReachBottom={() => !loading[activeShelf.key] && more(activeShelf)}>
+					<span class="faint small">{loading[activeShelf.key] ? (pm ? pRandom() : 'Finding more…') : ''}</span>
+				</div>
+			{/if}
+		</section>
 	{/if}
 {/if}
 
@@ -1242,5 +1298,225 @@
 		line-clamp: 2;
 		-webkit-box-orient: vertical;
 		overflow: hidden;
+	}
+
+	.search-wrap {
+		position: relative;
+		width: 100%;
+		display: flex;
+		align-items: center;
+	}
+
+	.search-wrap input {
+		width: 100%;
+		padding-right: 92px;
+	}
+
+	.shelf-pills {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		margin: 0 0 18px;
+	}
+
+	.shelf-pill {
+		padding: 6px 13px;
+		border: 1px solid var(--rule);
+		border-radius: 999px;
+		background: var(--surface);
+		color: var(--ink-soft);
+		font-size: 0.84rem;
+		font-weight: 500;
+		cursor: pointer;
+		transition: border-color 0.14s ease, color 0.14s ease, background 0.14s ease;
+	}
+
+	.shelf-pill:hover {
+		border-color: var(--rule-firm);
+		color: var(--ink);
+	}
+
+	.shelf-pill.active {
+		border-color: var(--accent);
+		background: var(--accent-bg);
+		color: var(--accent);
+	}
+
+	.search-kbd {
+		position: absolute;
+		right: 12px;
+		padding: 1px 6px;
+		font-size: 0.72rem;
+		font-family: inherit;
+		color: var(--ink-faint);
+		background: var(--surface-2);
+		border: 1px solid var(--rule);
+		border-radius: 4px;
+		pointer-events: none;
+	}
+
+	.results-meta {
+		margin: 0 0 12px;
+	}
+
+	.lib-chip {
+		display: inline-block;
+		margin-left: 6px;
+		padding: 1px 7px;
+		font-size: 0.68rem;
+		font-weight: 600;
+		border-radius: 999px;
+		background: var(--accent-soft, rgba(232, 93, 154, 0.14));
+		color: var(--accent);
+		vertical-align: middle;
+	}
+
+	.scroll-sentinel {
+		padding: 18px 0;
+		text-align: center;
+	}
+
+	/* The hidden card: a slow turning glow round its edge, and a breathing light behind it. */
+	.hidden-wrap {
+		/* The glow and the burst reach past the card; they're cut at the page's edge, not scrolled to. */
+		overflow-x: clip;
+		overflow-y: visible;
+		padding: 10px 0;
+	}
+	.hidden-card {
+		position: relative;
+		display: block;
+		max-width: 420px;
+		margin: 40px auto;
+		border-radius: 14px;
+		padding: 2px;
+		text-decoration: none;
+		color: var(--ink);
+		isolation: isolate;
+		animation:
+			hidden-appear 0.9s cubic-bezier(0.2, 0.9, 0.25, 1.25) both,
+			hidden-breathe 3.2s ease-in-out 0.9s infinite;
+	}
+	/* Appearing: the card rises out of a blur, a ring bursts outward, the glow blooms, letters drop in. */
+	@keyframes hidden-appear {
+		from {
+			opacity: 0;
+			transform: scale(0.55) translateY(24px);
+			filter: blur(14px);
+		}
+		60% {
+			opacity: 1;
+			filter: blur(0);
+		}
+	}
+	.hidden-burst {
+		position: absolute;
+		inset: 0;
+		z-index: -2;
+		border-radius: 14px;
+		border: 2px solid var(--accent);
+		pointer-events: none;
+		animation: hidden-burst 1.1s ease-out 0.15s both;
+	}
+	@keyframes hidden-burst {
+		from {
+			opacity: 0.9;
+			transform: scale(0.8);
+		}
+		to {
+			opacity: 0;
+			transform: scale(1.7);
+		}
+	}
+	.hidden-letter {
+		display: inline-block;
+		animation: hidden-letter 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.4) both;
+		animation-delay: calc(0.35s + var(--n) * 0.05s);
+	}
+	@keyframes hidden-letter {
+		from {
+			opacity: 0;
+			transform: translateY(-14px) rotate(-8deg);
+		}
+	}
+	.hidden-aura {
+		position: absolute;
+		inset: -10px;
+		z-index: -1;
+		border-radius: 20px;
+		background: conic-gradient(from var(--hidden-angle, 0deg), var(--accent), var(--star), var(--logo-dot), #8a6bff, var(--accent));
+		filter: blur(22px);
+		opacity: 0.75;
+		animation:
+			hidden-bloom 1.4s ease-out both,
+			hidden-edge 6s linear infinite;
+	}
+	@keyframes hidden-bloom {
+		from {
+			opacity: 0;
+			transform: scale(0.4);
+		}
+		45% {
+			opacity: 1;
+			transform: scale(1.25);
+		}
+	}
+	.hidden-card::before {
+		content: '';
+		position: absolute;
+		inset: 0;
+		z-index: -1;
+		border-radius: inherit;
+		background: conic-gradient(from var(--hidden-angle, 0deg), var(--accent), var(--star), #8a6bff, var(--accent));
+		animation: hidden-edge 4s linear infinite;
+	}
+	.hidden-body {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		padding: 28px 26px;
+		border-radius: 12px;
+		background: var(--surface);
+	}
+	.hidden-name {
+		font-family: var(--display);
+		font-size: 1.9rem;
+	}
+	.hidden-line {
+		color: var(--ink-soft);
+	}
+	.hidden-card:hover .hidden-aura,
+	.hidden-card:focus-visible .hidden-aura {
+		opacity: 1;
+		inset: -16px;
+		filter: blur(28px);
+	}
+	@property --hidden-angle {
+		syntax: '<angle>';
+		inherits: false;
+		initial-value: 0deg;
+	}
+	@keyframes hidden-edge {
+		to {
+			--hidden-angle: 360deg;
+		}
+	}
+	@keyframes hidden-breathe {
+		0%,
+		100% {
+			transform: scale(1);
+		}
+		50% {
+			transform: scale(1.025);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.hidden-card,
+		.hidden-aura,
+		.hidden-card::before,
+		.hidden-burst,
+		.hidden-letter {
+			animation: none;
+		}
 	}
 </style>

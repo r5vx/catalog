@@ -1,3 +1,5 @@
+import { ordinaryCopies } from './sourceFallback';
+
 /** The quality the player reaches for first. */
 export const PREFERRED_QUALITY = '1080p';
 
@@ -35,7 +37,7 @@ export const isFourK = (file: { quality: string }) => (parseInt(file.quality) ||
  * have no 1080p; the Roku, which picks its own quality, none).
  */
 export function pickFile<T extends Pickable>(files: T[], wanted: string, audio = '', fourK: (file: T) => boolean = () => true): T | null {
-	files = files.filter(playableHere);
+	files = ordinaryCopies(files.filter(playableHere));
 	if (!files.length) return null;
 	const showbox = files.filter((f) => !f.source);
 	// No Showbox copy: the language asked for; failing that, never the English dub unless it was
@@ -45,8 +47,17 @@ export function pickFile<T extends Pickable>(files: T[], wanted: string, audio =
 	if (!showbox.length) {
 		// (Only among copies known to be in that audio: a 7Movies or Movy copy listed without being
 		// checked has no audio said, and isn't preferred over a copy that's really there.)
+		// Prefer instant sources over AllAnime (human Cloudflare check) and Nyaa (torrent).
+		const instant = (list: T[]) => list.filter((f) => f.source !== 'AllAnime' && f.source !== 'Nyaa');
+		const pickFrom = (list: T[]) => {
+			const fast = instant(list);
+			const pool = fast.length ? fast : list;
+			return pool.find((f) => !f.burnedIn) ?? pool[0];
+		};
 		const inAudio = files.filter((f) => audio && f.audio === audio);
-		return inAudio.find((f) => !f.burnedIn) ?? inAudio[0] ?? files.find((f) => audio === 'English' || f.audio !== 'English') ?? files[0];
+		if (inAudio.length) return pickFrom(inAudio);
+		const langOk = files.filter((f) => audio === 'English' || f.audio !== 'English');
+		return pickFrom(langOk.length ? langOk : files);
 	}
 	// Of the wanted quality: one with both languages first, then the largest. (It took the first
 	// one listed: Dungeon Meshi E8 lists a 503 MB single-file copy before its 2.45 GB one. Then

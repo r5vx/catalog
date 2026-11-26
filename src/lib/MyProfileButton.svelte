@@ -10,6 +10,7 @@
 	 */
 	import { page } from '$app/state';
 	import Avatar from '$lib/Avatar.svelte';
+	import OnlineStatusPicker from '$lib/OnlineStatusPicker.svelte';
 	import { preloadData } from '$app/navigation';
 
 	let { wide = false }: { wide?: boolean } = $props();
@@ -49,6 +50,8 @@
 	});
 	const href = $derived(`/friends/${me?.id || 'me'}`);
 	const here = $derived(Boolean(me?.id) && page.url.pathname === `/friends/${me?.id}`);
+	/** The status picked (online, away, dnd, invisible), for the dot on the sidebar picture. */
+	const status = $derived((page.data.onlineStatus as string | undefined) ?? 'online');
 
 	// Asked for once, a few seconds after Catalog opens, so the first click shows it at once too
 	// (the page keeps each answer: src/lib/server/online.ts keepProfileAnswer).
@@ -64,22 +67,54 @@
 </script>
 
 {#if me}
-	<a {href} class="my-profile" class:wide class:here title="My profile" aria-label={wide ? undefined : 'My profile'}>
-		{#if me.id}
-			<Avatar id={me.id} name={me.name || '?'} rev={me.avatar} size={wide ? 22 : 30} />
-		{:else}
-			<svg viewBox="0 0 24 24" width={wide ? 20 : 22} height={wide ? 20 : 22} fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-				<circle cx="12" cy="8" r="4" />
-				<path d="M4 21a8 8 0 0 1 16 0" />
-			</svg>
-		{/if}
-		{#if wide}<span>My profile</span>{/if}
-	</a>
+	{#if wide}
+		<!--
+			The sidebar, like Discord's corner: the picture with the status dot on it, "My profile",
+			and under it a button that says the status (a click on it picks another).
+		-->
+		<span class="me wide" class:here>
+			<a {href} class="pic" tabindex="-1" aria-hidden="true">
+				{#if me.id}
+					<Avatar id={me.id} name={me.name || '?'} rev={me.avatar} size={32} />
+				{:else}
+					<span class="stand-in">
+						<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+							<circle cx="12" cy="8" r="4" />
+							<path d="M4 21a8 8 0 0 1 16 0" />
+						</svg>
+					</span>
+				{/if}
+				<span class="corner {status}"></span>
+			</a>
+			<a {href} class="name">My profile</a>
+			<OnlineStatusPicker wide />
+		</span>
+	{:else}
+		<!-- The top bar: the picture as a round button, with the status dot on its corner (a click on the dot picks the status). -->
+		<span class="me">
+			<a {href} class="my-profile" class:here title="My profile" aria-label="My profile">
+				{#if me.id}
+					<Avatar id={me.id} name={me.name || '?'} rev={me.avatar} size={30} />
+				{:else}
+					<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+						<circle cx="12" cy="8" r="4" />
+						<path d="M4 21a8 8 0 0 1 16 0" />
+					</svg>
+				{/if}
+			</a>
+			<OnlineStatusPicker />
+		</span>
+	{/if}
 {/if}
 
 <style>
+	.me {
+		position: relative;
+		display: inline-flex;
+	}
+
 	/* In the top bar: a round button the size of the others beside it. */
-	.my-profile:not(.wide) {
+	.my-profile {
 		display: inline-grid;
 		place-items: center;
 		width: 38px;
@@ -92,31 +127,71 @@
 		overflow: hidden;
 	}
 
-	.my-profile:not(.wide):hover {
+	.my-profile:hover {
 		border-color: var(--accent);
 		color: var(--accent);
 	}
 
-	/* In the sidebar: a line like the other links there. */
-	.wide {
-		display: flex;
+	/* In the sidebar: the picture on the left, "My profile" and the status button beside it. */
+	.me.wide {
+		display: grid;
+		grid-template-columns: auto 1fr;
 		align-items: center;
-		gap: 10px;
-		padding: 7px 10px;
+		column-gap: 10px;
+		row-gap: 4px;
+		padding: 8px 10px;
 		border-radius: var(--radius-sm);
-		color: var(--ink-soft);
-		text-decoration: none;
-		font-size: 0.86rem;
 	}
 
-	.wide:hover {
+	.me.wide:hover {
 		background: var(--hover);
-		color: var(--ink);
 	}
 
-	.wide.here {
+	.me.wide.here {
 		background: var(--accent-bg);
-		color: var(--accent);
+	}
+
+	.pic {
+		position: relative;
+		grid-row: 1 / span 2;
+		display: inline-grid;
+		color: var(--ink-soft);
+	}
+
+	.stand-in {
+		display: inline-grid;
+		place-items: center;
+		width: 32px;
+		height: 32px;
+		border-radius: 50%;
+		background: var(--surface);
+	}
+
+	/* The status on the picture's corner (colors: --status-* at the top of app.css). */
+	.corner {
+		position: absolute;
+		right: -3px;
+		bottom: -3px;
+		width: 13px;
+		height: 13px;
+		border: 2.5px solid var(--paper);
+		border-radius: 50%;
+		background: var(--status-online);
+		background-clip: padding-box;
+	}
+	.corner.away { background-color: var(--status-away); }
+	.corner.dnd { background-color: var(--status-dnd); }
+	.corner.invisible { background-color: var(--status-offline); }
+
+	.name {
+		color: var(--ink);
+		font-size: 0.86rem;
 		font-weight: 600;
+		text-decoration: none;
+		line-height: 1.2;
+	}
+
+	.here .name {
+		color: var(--accent);
 	}
 </style>

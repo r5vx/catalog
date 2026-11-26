@@ -14,7 +14,7 @@ import { clearOldStrips } from '$lib/server/previewStrips';
 import { keepWithinLimit, tellAppItsShare } from '$lib/server/storage';
 import { moveOffAniList } from '$lib/server/offAniList';
 import { scheduleNewEpisodeChecks } from '$lib/server/newEpisodes';
-import { startOnline, noteInUse, reportProblem } from '$lib/server/online';
+import { startOnline, noteInUse, noteHere, reportProblem } from '$lib/server/online';
 import { reportScreen } from '$lib/server/reportScreen';
 import { scheduleNextAirs } from '$lib/server/nextAirs';
 import { installSecureDns } from '$lib/server/secureDns';
@@ -268,7 +268,10 @@ export const handle: Handle = async ({ event, resolve }) => {
 			: ` data-theme="${theme}"`;
 	const resolveWith = async (e: typeof event) => {
 		const started = performance.now();
-		const response = await withProfile(profileFor(e), () =>
+		const who = profileFor(e);
+		// Someone using Catalog as this profile: friends see them online (online.ts noteHere).
+		if (!e.url.pathname.startsWith('/api/online')) noteHere(who);
+		const response = await withProfile(who, () =>
 			resolve(e, {
 				transformPageChunk: ({ html }) =>
 					themeAttrs ? html.replace('<html lang="en">', `<html lang="en"${themeAttrs}>`) : html

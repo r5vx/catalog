@@ -41,6 +41,8 @@ const lower = (value: string | null) => (value ?? '').trim().toLowerCase();
 /** What a /watch address plays: the same title, replay or download is the same thing. */
 function mediaOf(params: URLSearchParams): string {
 	if (params.get('live')) return '';
+	if (params.get('publisherReplay')) return `publisherReplay:${params.get('publisherReplay')}`;
+	if (params.get('publisher')) return `publisher:${params.get('tmdb')}:${params.get('publisher')}`;
 	if (params.get('replay')) return `replay:${params.get('replay')}`;
 	if (params.get('download')) return `download:${params.get('download')}`;
 	const title = lower(params.get('title'));

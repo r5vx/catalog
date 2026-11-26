@@ -291,13 +291,66 @@ export function notePaused(profile: number): void {
 export function noteWatching(profile: number, what: { title: string; type: string; season: number; episode: number; poster?: string }): void {
 	pauseSynced.delete(profile);
 	const switches = onlineSwitches();
-	if (!onlineConnected() || !switches.share) return;
+	// Invisible: friends see nothing playing.
+	if (!onlineConnected() || !switches.share || statusOf(profile) === 'invisible') return;
 	const now = Date.now();
 	if (now - (said.get(profile) ?? 0) < 60_000) return;
 	said.set(profile, now);
 	const more = playingNow.get(profile);
 	const same = more && more.title.toLowerCase() === what.title.toLowerCase();
 	void cloud('/v1/presence', { method: 'PUT', profile, body: { ...what, year: same ? more.year : '', room: same && switches.along ? more.room : '' } });
+}
+
+/* ------------------------------------------------------------ the status beside My profile */
+
+/**
+ * What friends see beside a profile's name, like Discord's: online (turns to away by itself after a
+ * few minutes unused), away, do not disturb, or invisible (shown as offline, and nothing playing).
+ */
+export type OnlineStatus = 'online' | 'away' | 'dnd' | 'invisible';
+const STATUSES: OnlineStatus[] = ['online', 'away', 'dnd', 'invisible'];
+
+/** Each profile's pick, kept on this computer ({"0":"invisible"}); online when there's none. */
+function statusPicks(): Record<string, string> {
+	try {
+		const kept = JSON.parse(readSettings().onlineStatus ?? '{}');
+		return kept && typeof kept === 'object' ? kept : {};
+	} catch {
+		return {};
+	}
+}
+
+export function statusOf(profile: number): OnlineStatus {
+	const picked = statusPicks()[String(profile)] as OnlineStatus;
+	return STATUSES.includes(picked) ? picked : 'online';
+}
+
+/** When each profile last told the meeting point it's here. */
+const toldHere = new Map<number, number>();
+
+export function setStatus(profile: number, status: OnlineStatus): void {
+	const picks = statusPicks();
+	if (status === 'online') delete picks[String(profile)];
+	else picks[String(profile)] = status;
+	updateSettings({ onlineStatus: Object.keys(picks).length ? JSON.stringify(picks) : undefined });
+	if (!onlineConnected()) return;
+	if (status === 'invisible') said.delete(profile);
+	toldHere.set(profile, Date.now());
+	void cloud('/v1/status', { method: 'PUT', profile, body: { status } });
+}
+
+/**
+ * Someone is using Catalog as this profile (any page or the player): friends see them online. Told
+ * every two minutes at most. Not while invisible (it was said once, when picked).
+ */
+export function noteHere(profile: number): void {
+	const now = Date.now();
+	if (now - (toldHere.get(profile) ?? 0) < 2 * 60_000) return;
+	toldHere.set(profile, now);
+	if (!onlineConnected()) return;
+	const status = statusOf(profile);
+	if (status === 'invisible') return;
+	void cloud('/v1/status', { method: 'PUT', profile, body: { status } });
 }
 
 /** A watched title's key there: the site and its id on it, "tmdb:movie:550" or "anilist:21". */
@@ -496,6 +549,27 @@ export function friendsSnapshot(profile: number): { friends: unknown; activity: 
 		friends = { ...answer, friends: answer.friends.map((friend) => ({ ...friend, watching: null })) };
 	}
 	return { friends, activity: kept?.activity ?? null };
+}
+
+/** When each profile's friends were last asked for, just for their number. */
+const friendCountAsked = new Map<number, number>();
+/**
+ * How many friends a profile has online, for the Friends tab's number (owner, 2026-11-25): from the
+ * last answer kept, asked for in the background when there's none or it's over 10 minutes old.
+ * Null until it's known.
+ */
+export function friendCountOf(profile: number): number | null {
+	const kept = friendsKept.get(profile);
+	const now = Date.now();
+	const stale = now - (kept?.friendsAt ?? 0) > 10 * 60_000;
+	if (stale && onlineConnected() && now - (friendCountAsked.get(profile) ?? 0) > 10 * 60_000) {
+		friendCountAsked.set(profile, now);
+		void cloud('/v1/friends', { profile }).then((answer) => {
+			if (answer.ok && answer.data) keepFriendsAnswer(profile, 'friends', answer.data);
+		});
+	}
+	const list = (kept?.friends as { friends?: unknown[] } | undefined)?.friends;
+	return Array.isArray(list) ? list.length : null;
 }
 
 /**

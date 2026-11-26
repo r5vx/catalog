@@ -4,8 +4,8 @@
 	import { page } from '$app/state';
 	import Avatar from '$lib/Avatar.svelte';
 	import ContextMenu, { menuAt, type MenuItem } from '$lib/ContextMenu.svelte';
-	import { chat, startChat, sendMessage, openChat, markRead, chatNoticeClick, type Message } from '$lib/chat.svelte';
-	import { together, leaveRoom, rejoinKeptRoom, type RoomState } from '$lib/watchTogether.svelte';
+	import { chat, startChat, sendMessage, openChat, markRead, chatNoticeClick, setChatQuiet, inviteRoom, type Message } from '$lib/chat.svelte';
+	import { together, joinRoom, leaveRoom, rejoinKeptRoom, type RoomState } from '$lib/watchTogether.svelte';
 	import { watchHref, wantToWatch } from '$lib/friendLinks';
 	import { isTv } from '$lib/tv';
 
@@ -82,6 +82,11 @@
 	$effect(() => {
 		const state = offer;
 		if (state && (together.following || autoJoin)) void join(state);
+	});
+
+	// Do not disturb picked beside My profile: no message pop-ups.
+	$effect(() => {
+		setChatQuiet(page.data.onlineStatus === 'dnd');
 	});
 
 	// Online: whether there's anyone to talk to (the chat button waits for it).
@@ -323,11 +328,13 @@
 		{#if !chat.open}
 			<ul class="shown" aria-live="polite">
 				{#each chat.shown as message (message.id)}
+					{@const code = message.mine ? null : inviteRoom(message.text)}
 					<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 					<li class="line" class:whisper={!message.room} oncontextmenu={(e) => messageMenu(e, message)}>
 						<span class="where">{message.room ? 'Group' : 'Whisper'}</span>
 						<strong>{message.name}:</strong>
 						<span class="text" data-plain>{message.text}</span>
+						{#if code && together.code !== code}<button type="button" class="join-invite" onclick={() => joinRoom(code)}>Join</button>{/if}
 					</li>
 				{/each}
 			</ul>
@@ -344,16 +351,6 @@
 					{/each}
 					<a class="all" href={chat.to && chat.to !== 'room' ? `/messages?with=${chat.to}` : '/messages'} onclick={close}>All messages</a>
 				</div>
-				{#if lines.length}
-					<ul class="history">
-						{#each lines as message (message.id)}
-							<li class="line" class:whisper={!message.room} class:mine={message.mine}>
-								<strong>{message.mine ? 'You' : message.name}:</strong>
-								<span class="text" data-plain>{message.text}</span>
-							</li>
-						{/each}
-					</ul>
-				{/if}
 				<form onsubmit={send}>
 					<select value={chat.to} onchange={(e) => pickTo(e.currentTarget.value)} aria-label="Send to" onkeydown={boxKey}>
 						{#if together.code}<option value="room">Group</option>{/if}
@@ -438,6 +435,21 @@
 		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
 		overflow-wrap: anywhere;
 		animation: in 0.18s ease-out;
+	}
+
+	/* Join, on a friend's invite to watch together. */
+	.join-invite {
+		margin-left: 8px;
+		padding: 2px 10px;
+		border: 0;
+		border-radius: 100px;
+		background: var(--accent);
+		color: var(--accent-ink);
+		font: inherit;
+		font-size: 0.8rem;
+		font-weight: 600;
+		text-shadow: none;
+		cursor: pointer;
 	}
 
 	.shown .line {
@@ -617,19 +629,23 @@
 		position: relative;
 		display: grid;
 		place-items: center;
-		width: 44px;
-		height: 44px;
-		border: 1px solid var(--rule);
-		border-radius: 50%;
-		background: var(--surface);
+		width: 42px;
+		height: 42px;
+		border: 1px solid color-mix(in srgb, var(--rule-firm) 80%, transparent);
+		border-radius: 14px;
+		background: color-mix(in srgb, var(--surface) 84%, transparent);
+		backdrop-filter: blur(12px);
 		color: var(--ink);
-		box-shadow: var(--shadow);
+		box-shadow: 0 8px 24px -6px rgb(0 0 0 / 45%);
 		cursor: pointer;
+		transition: transform 0.14s ease, border-color 0.14s ease, color 0.14s ease, background 0.14s ease;
 	}
 
 	.chat-button:hover {
+		transform: translateY(-2px);
 		border-color: var(--accent);
 		color: var(--accent);
+		background: var(--surface);
 	}
 
 	.badge {

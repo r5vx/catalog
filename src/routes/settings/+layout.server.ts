@@ -1,10 +1,11 @@
+import { isOwner } from '$lib/server/ownerSession';
 import { updateMode, appVersion, updateState, sourceIsStale } from '$lib/server/updater';
 import { whatsNew } from '$lib/server/whatsnew';
 import { readSettings } from '$lib/server/settings';
 import { omdbConfigured } from '$lib/server/metadata/omdb';
 import type { LayoutServerLoad } from './$types';
 
-export const load: LayoutServerLoad = async () => {
+export const load: LayoutServerLoad = async ({ cookies }) => {
 	const mode = updateMode();
 
 	/**
@@ -23,6 +24,7 @@ export const load: LayoutServerLoad = async () => {
 	};
 
 	return {
+		owner: isOwner(cookies),
 		updateMode: mode,
 		appVersion: appVersion(),
 		releases: whatsNew(),

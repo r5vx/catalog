@@ -264,7 +264,7 @@
 						</div>
 					{/if}
 					<div class="watching-actions">
-						{#if item.type === 'replay'}
+						{#if item.type === 'replay' || item.needsRelease}
 							<!-- A sports replay: nothing to mark in the library. -->
 						{:else if item.entryId && item.entryStatus === 'completed'}
 							<button
@@ -459,10 +459,10 @@
 	<div class="ctx-backdrop" onclick={closeCwCtx} oncontextmenu={(e) => { e.preventDefault(); closeCwCtx(); }}></div>
 	<div class="ctx-menu" use:fitOnScreen style="left: {cwCtx.x}px; top: {cwCtx.y}px;">
 		<button type="button" onclick={() => { goto(resumeHref(cwCtx!.item)); closeCwCtx(); }}>
-			▶ {pm ? p('Resume') : 'Resume'}
+			▶ {cwCtx.item.needsRelease ? 'Choose release' : pm ? p('Resume') : 'Resume'}
 		</button>
 		<hr />
-		{#if cwCtx.item.type === 'replay'}
+		{#if cwCtx.item.type === 'replay' || cwCtx.item.needsRelease}
 			<!-- A sports replay: nothing to mark in the library. -->
 		{:else if cwCtx.item.entryId && cwCtx.item.entryStatus === 'completed'}
 			<button type="button" onclick={() => { markRewatched(cwCtx!.item.entryId!, cwCtx!.item.title, cwCtx!.item.type); closeCwCtx(); }}>
@@ -475,7 +475,11 @@
 		{/if}
 		{#if cwCtx.item.entryId}
 			<button type="button" onclick={() => { goto(`/entry/${cwCtx!.item.entryId}`); closeCwCtx(); }}>
-				{pm ? p('View entry') : 'View entry'}
+				{pm ? p('View details') : 'View details'}
+			</button>
+		{:else if cwCtx.item.type !== 'replay'}
+			<button type="button" onclick={() => { goto(`/browse?q=${encodeURIComponent(cwCtx!.item.title)}`); closeCwCtx(); }}>
+				View details
 			</button>
 		{/if}
 		<hr />

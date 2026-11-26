@@ -122,6 +122,7 @@ export function fromResult(result: Result): Tile {
 }
 
 type Continuing = {
+	needsRelease?: boolean;
 	title: string;
 	type: string;
 	season: number;
@@ -145,10 +146,10 @@ export function fromContinue(item: Continuing, overview: string | null = null): 
 	const fresh = Boolean(item.newEpisode && episode);
 	return {
 		key: `cw-${item.type}-${item.title}`,
-		href: item.href ?? (item.link ? titleHref(item.link.source, item.link.id) : playHref(item.title, item.type, null, item.season, item.episode)),
+		href: item.needsRelease ? `/tv/search?q=${encodeURIComponent(item.title)}` : item.href ?? (item.link ? titleHref(item.link.source, item.link.id) : playHref(item.title, item.type, null, item.season, item.episode)),
 		title: item.title,
 		poster: item.posterUrl,
-		meta: fresh
+		meta: item.needsRelease ? 'Choose release' : fresh
 			? `New episode · ${episode}`
 			: [episode, left !== null && left > 0 ? `${left} min left` : null].filter(Boolean).join(' · ') || 'Continue watching',
 		overview,

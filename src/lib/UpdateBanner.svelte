@@ -133,29 +133,37 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 14px;
+		gap: 12px;
 		flex-wrap: wrap;
-		background: var(--accent-bg);
-		border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
-		border-radius: var(--radius);
-		padding: 11px 15px;
-		margin-bottom: 18px;
-		font-size: 0.9rem;
+		background: color-mix(in srgb, var(--surface) 82%, var(--accent) 18%);
+		backdrop-filter: blur(12px);
+		border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+		border-radius: 12px;
+		padding: 8px 14px;
+		margin-bottom: 14px;
+		font-size: 0.85rem;
+		box-shadow: 0 4px 18px -6px rgb(0 0 0 / 28%);
 	}
 
 	.what {
 		min-width: 0;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
 	}
 
 	.actions {
 		display: flex;
-		gap: 7px;
+		align-items: center;
+		gap: 6px;
 		flex-wrap: wrap;
 	}
 
 	.actions .btn {
-		padding: 5px 11px;
-		font-size: 0.85rem;
+		padding: 4px 10px;
+		font-size: 0.8rem;
+		border-radius: 8px;
 	}
 
 	.quiet {
@@ -165,7 +173,7 @@
 	}
 
 	.quiet:hover {
-		background: transparent;
+		background: var(--surface-2);
 		color: var(--ink);
 	}
 </style>

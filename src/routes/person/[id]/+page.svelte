@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { fitOnScreen } from '$lib/fitOnScreen';
 	import { watchTypeOf } from '$lib/watchType';
+	import { onReachBottom } from '$lib/infiniteScroll';
+	import PosterPlaceholder from '$lib/PosterPlaceholder.svelte';
 	import MoreButton from '$lib/MoreButton.svelte';
 	import { goto } from '$app/navigation';
 	import BackBar from '$lib/BackBar.svelte';
@@ -58,6 +60,8 @@
 		categorySlug: string;
 		rating: number | null;
 		votes: number | null;
+		character?: string | null;
+		job?: string | null;
 	};
 
 	async function addToWatchlist(credit: Credit, status: 'planned' | 'watching' | 'completed' = 'planned') {
@@ -138,9 +142,76 @@
 
 	const PAGE = 20;
 	let showing = $state(PAGE);
+	let bioOpen = $state(false);
+	let roleFilter = $state<'all' | 'movie' | 'tv' | 'acting' | 'crew'>('all');
+	let sortBy = $state<'popular' | 'newest' | 'oldest' | 'rating' | 'title'>('popular');
 
-	const visible = $derived(data.knownFor.slice(0, showing));
-	const remaining = $derived(data.knownFor.length - visible.length);
+	$effect(() => {
+		data.person.sourceId;
+		showing = PAGE;
+		bioOpen = false;
+		roleFilter = 'all';
+		sortBy = 'popular';
+	});
+
+	function calcAge(birth: string | null, death: string | null): number | null {
+		if (!birth) return null;
+		const b = new Date(birth + 'T00:00:00');
+		if (Number.isNaN(b.getTime())) return null;
+		const end = death ? new Date(death + 'T00:00:00') : new Date();
+		if (Number.isNaN(end.getTime())) return null;
+		let age = end.getFullYear() - b.getFullYear();
+		const m = end.getMonth() - b.getMonth();
+		if (m < 0 || (m === 0 && end.getDate() < b.getDate())) age--;
+		return age >= 0 && age < 140 ? age : null;
+	}
+
+	function fmtDate(iso: string | null): string {
+		if (!iso) return '';
+		const d = new Date(iso + 'T00:00:00');
+		if (Number.isNaN(d.getTime())) return iso;
+		return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+	}
+
+	const age = $derived(calcAge(data.person.birthday, data.person.deathday));
+	const lifeLine = $derived.by(() => {
+		const parts: string[] = [];
+		if (data.person.birthday) {
+			if (data.person.deathday) {
+				parts.push(`${fmtDate(data.person.birthday)} – ${fmtDate(data.person.deathday)}${age !== null ? ` (aged ${age})` : ''}`);
+			} else {
+				parts.push(`Born ${fmtDate(data.person.birthday)}${age !== null ? ` (age ${age})` : ''}`);
+			}
+		}
+		if (data.person.placeOfBirth) parts.push(data.person.placeOfBirth);
+		return parts.join(' · ');
+	});
+
+	const knownForList = $derived(data.knownFor as Credit[]);
+
+	const hasMovies = $derived(knownForList.some((c: Credit) => c.categorySlug === 'movies'));
+	const hasTv = $derived(knownForList.some((c: Credit) => c.categorySlug !== 'movies'));
+	const hasActing = $derived(knownForList.some((c: Credit) => Boolean(c.character)));
+	const hasCrew = $derived(knownForList.some((c: Credit) => !c.character && 'job' in c && Boolean(c.job)));
+
+	const filteredKnownFor = $derived.by(() => {
+		let list = knownForList;
+		if (roleFilter === 'movie') list = list.filter((c: Credit) => c.categorySlug === 'movies');
+		else if (roleFilter === 'tv') list = list.filter((c: Credit) => c.categorySlug !== 'movies');
+		else if (roleFilter === 'acting') list = list.filter((c: Credit) => Boolean(c.character));
+		else if (roleFilter === 'crew') list = list.filter((c: Credit) => !c.character && 'job' in c && Boolean(c.job));
+
+		if (sortBy === 'popular') return list;
+		const copy = [...list];
+		if (sortBy === 'newest') copy.sort((a, b) => (Number(b.year) || 0) - (Number(a.year) || 0));
+		else if (sortBy === 'oldest') copy.sort((a, b) => (Number(a.year) || 9999) - (Number(b.year) || 9999));
+		else if (sortBy === 'rating') copy.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
+		else if (sortBy === 'title') copy.sort((a, b) => a.title.localeCompare(b.title));
+		return copy;
+	});
+
+	const visible = $derived(filteredKnownFor.slice(0, showing));
+	const remaining = $derived(filteredKnownFor.length - visible.length);
 </script>
 
 <svelte:head><title>{data.person.name} · Catalog</title></svelte:head>
@@ -153,8 +224,16 @@
 	{:else}
 		<div class="portrait empty" aria-hidden="true">?</div>
 	{/if}
-	<div>
-		<h1>{data.person.name}</h1>
+	<div class="head-info">
+		<div class="head-title">
+			<h1>{data.person.name}</h1>
+			{#if data.person.department}
+				<span class="dept-chip">{data.person.department}</span>
+			{/if}
+		</div>
+		{#if lifeLine}
+			<p class="muted life-line">{lifeLine}</p>
+		{/if}
 		{#if data.entries.length > 0}
 			<p class="muted tabular">
 				In {data.entries.length}
@@ -165,6 +244,17 @@
 		{/if}
 	</div>
 </header>
+
+{#if data.person.biography}
+	<section class="bio">
+		<p class:clamped={!bioOpen}>{data.person.biography}</p>
+		{#if data.person.biography.length > 260}
+			<button type="button" class="bio-toggle" onclick={() => (bioOpen = !bioOpen)}>
+				{bioOpen ? 'Show less' : 'Read full biography'}
+			</button>
+		{/if}
+	</section>
+{/if}
 
 <ul class="grid">
 	{#each data.entries as item (item.id)}
@@ -190,11 +280,37 @@
 
 {#if data.knownFor.length > 0}
 	<section class="known">
-		<h2>Also known for</h2>
-		<p class="muted small">Not in your library.</p>
+		<div class="known-bar">
+			<div>
+				<h2>Also known for <span class="faint small tabular">({filteredKnownFor.length})</span></h2>
+				<p class="muted small">Not in your library.</p>
+			</div>
+			<div class="known-controls">
+				<div class="filter-pills" role="group" aria-label="Filter credits">
+					<button type="button" class="pill" class:on={roleFilter === 'all'} onclick={() => { roleFilter = 'all'; showing = PAGE; }}>All</button>
+					{#if hasMovies}
+						<button type="button" class="pill" class:on={roleFilter === 'movie'} onclick={() => { roleFilter = 'movie'; showing = PAGE; }}>Movies</button>
+					{/if}
+					{#if hasTv}
+						<button type="button" class="pill" class:on={roleFilter === 'tv'} onclick={() => { roleFilter = 'tv'; showing = PAGE; }}>TV</button>
+					{/if}
+					{#if hasActing && hasCrew}
+						<button type="button" class="pill" class:on={roleFilter === 'acting'} onclick={() => { roleFilter = 'acting'; showing = PAGE; }}>Acting</button>
+						<button type="button" class="pill" class:on={roleFilter === 'crew'} onclick={() => { roleFilter = 'crew'; showing = PAGE; }}>Crew &amp; Music</button>
+					{/if}
+				</div>
+				<div class="sort-pills" role="group" aria-label="Sort credits">
+					<button type="button" class="pill" class:on={sortBy === 'popular'} onclick={() => (sortBy = 'popular')}>Popular</button>
+					<button type="button" class="pill" class:on={sortBy === 'newest'} onclick={() => (sortBy = 'newest')}>Newest</button>
+					<button type="button" class="pill" class:on={sortBy === 'oldest'} onclick={() => (sortBy = 'oldest')}>Oldest</button>
+					<button type="button" class="pill" class:on={sortBy === 'rating'} onclick={() => (sortBy = 'rating')}>Top rated</button>
+					<button type="button" class="pill" class:on={sortBy === 'title'} onclick={() => (sortBy = 'title')}>A–Z</button>
+				</div>
+			</div>
+		</div>
 
 		<ul class="grid">
-			{#each visible as credit (credit.title + credit.year)}
+			{#each visible as credit (credit.source + ':' + credit.sourceId)}
 				{@const key = `${credit.source}:${credit.sourceId}`}
 				<li class="has-more" oncontextmenu={(e) => openMenu(e, credit)}>
 					<MoreButton corner="left" onopen={(e) => openMenu(e, credit)} />
@@ -208,13 +324,15 @@
 							{#if credit.poster}
 								<img src={credit.poster} alt="" loading="lazy" />
 							{:else}
-								<span class="fallback" aria-hidden="true">?</span>
+								<PosterPlaceholder title={credit.title} year={credit.year} kind={credit.kind} />
 							{/if}
 						</div>
 						<h3 class="name">{credit.title}</h3>
 						<p class="sub faint tabular">{credit.year || '—'}</p>
 						{#if credit.character}
 							<p class="role faint">as {credit.character}</p>
+						{:else if 'job' in credit && credit.job}
+							<p class="role faint">{credit.job}</p>
 						{/if}
 					</a>
 
@@ -239,10 +357,9 @@
 		</ul>
 
 		{#if remaining > 0}
-			<button type="button" class="btn more" onclick={() => (showing += PAGE)}>
-				Show {Math.min(PAGE, remaining)} more
-				<span class="faint tabular">({remaining} left)</span>
-			</button>
+			<div class="scroll-sentinel" use:onReachBottom={() => (showing += PAGE)}>
+				<span class="faint small">Loading more…</span>
+			</div>
 		{/if}
 	</section>
 {/if}
@@ -264,10 +381,9 @@
 			{/each}
 		</ul>
 		{#if games.length > gamesShown}
-			<button type="button" class="btn more" onclick={() => (gamesShown += 24)}>
-				Show {Math.min(24, games.length - gamesShown)} more
-				<span class="faint tabular">({games.length - gamesShown} left)</span>
-			</button>
+			<div class="scroll-sentinel" use:onReachBottom={() => (gamesShown += 24)}>
+				<span class="faint small">Loading more…</span>
+			</div>
 		{/if}
 	</section>
 {/if}
@@ -378,6 +494,118 @@
 	header p {
 		margin: 2px 0 0;
 		font-size: 0.88rem;
+	}
+
+	.head-title {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		flex-wrap: wrap;
+	}
+
+	.dept-chip {
+		font-size: 0.75rem;
+		font-weight: 600;
+		padding: 3px 9px;
+		border-radius: 999px;
+		background: var(--accent-soft, rgba(232, 93, 154, 0.14));
+		color: var(--accent);
+		border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+	}
+
+	.life-line {
+		font-size: 0.86rem;
+	}
+
+	.bio {
+		max-width: 72ch;
+		margin: -10px 0 26px;
+		padding: 14px 16px;
+		background: var(--surface);
+		border: 1px solid var(--rule);
+		border-radius: var(--radius);
+	}
+
+	.bio p {
+		margin: 0;
+		font-size: 0.9rem;
+		line-height: 1.55;
+		color: var(--ink-muted);
+		white-space: pre-line;
+	}
+
+	.bio p.clamped {
+		display: -webkit-box;
+		-webkit-line-clamp: 3;
+		line-clamp: 3;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
+
+	.bio-toggle {
+		margin-top: 8px;
+		padding: 0;
+		border: none;
+		background: none;
+		color: var(--accent);
+		font-size: 0.82rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.bio-toggle:hover {
+		text-decoration: underline;
+	}
+
+	.known-bar {
+		display: flex;
+		align-items: flex-end;
+		justify-content: space-between;
+		gap: 14px;
+		flex-wrap: wrap;
+		margin-bottom: 14px;
+	}
+
+	.known-controls {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		flex-wrap: wrap;
+	}
+
+	.filter-pills,
+	.sort-pills {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		flex-wrap: wrap;
+	}
+
+	.pill {
+		padding: 4px 10px;
+		border-radius: 999px;
+		border: 1px solid var(--rule);
+		background: var(--surface);
+		color: var(--ink-muted);
+		font-size: 0.78rem;
+		cursor: pointer;
+		transition: border-color 0.12s, background 0.12s, color 0.12s;
+	}
+
+	.pill:hover {
+		border-color: var(--rule-firm);
+		color: var(--ink);
+	}
+
+	.pill.on {
+		background: var(--accent);
+		border-color: var(--accent);
+		color: var(--accent-ink, #fff);
+	}
+
+	.scroll-sentinel {
+		padding: 20px 0;
+		text-align: center;
 	}
 
 	.grid {

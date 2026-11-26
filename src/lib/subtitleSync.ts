@@ -66,6 +66,8 @@ export class SubtitleSync {
 	/** Where the subtitles' later parts begin, for a set joined from parts (each part is timed on its own). */
 	joins: () => number[] = () => [];
 	private told = false;
+	private mismatchReady = false;
+	checkingWords: () => boolean = () => false;
 	/** Seconds heard when a plan last said these subtitles fit. */
 	private fittedWith = 0;
 	/** Timing from the words themselves (wordTiming.ts), when the computer has it: wins over the listening. */
@@ -106,7 +108,7 @@ export class SubtitleSync {
 	last: Record<string, unknown> = {};
 
 	/** Told the delay that fits the part of the video playing now. */
-	onDelay: ((delay: number) => void) | null = null;
+	onDelay: ((delay: number, restored?: boolean) => void) | null = null;
 	/** Told how much slower than written the subtitles run (1 unless made for another speed). */
 	onRate: ((rate: number) => void) | null = null;
 	/** Told once when the subtitles clearly don't fit this video at all. */
@@ -159,26 +161,28 @@ export class SubtitleSync {
 			// the video). A video heard bit by bit as it loads (7Movies, Movy) was judged on its first
 			// minutes: Netflix captions on 7Movies' longer copy of Dungeon Meshi E6 were called
 			// wrong, then fitted.
-			if (this.plan?.fits) this.mismatchFrom = null;
+			if (!this.plan || this.plan.fits) {
+				this.mismatchFrom = null;
+				this.mismatchReady = false;
+			}
 			// No longer fitting, after it moved them: put back where they were. (Venom 2's cinema-copy
 			// subtitles fit at −22 s for the first minutes, then not at all — and the −22 s stayed.)
 			if (this.plan && !this.plan.fits && this.lastSet !== null && !this.heldByHand && !this.byHand() && this.before !== null) {
 				this.lastSet = null;
-				this.onDelay?.(this.before);
+				this.onDelay?.(this.before, true);
 				this.onRate?.(1);
 			}
 			if (this.plan && !this.plan.fits && !this.told) {
 				const heard = Number(event.data.heard) || 0;
 				this.mismatchFrom ??= heard;
-				const duration = Number.isFinite(this.video.duration) ? this.video.duration : Infinity;
+				const duration = this.video.duration > 0 && Number.isFinite(this.video.duration) ? this.video.duration : Infinity;
 				// And never before 20 minutes are heard (or most of a shorter video): loosely timed
 				// subtitles take that long to show they fit. Ice Age 3's R5 ones, two speakers to a
 				// line, were called wrong at 13 minutes and fit at 20 (2026-11-07); the whole sound
 				// track is heard in a minute or two, so this costs little.
 				const enough = Math.min(1200, duration * 0.8);
 				if ((heard >= this.mismatchFrom + 180 && heard >= enough) || heard >= duration * 0.8) {
-					this.told = true;
-					this.onMismatch?.();
+					this.mismatchReady = true;
 				}
 			}
 			this.apply();
@@ -248,6 +252,7 @@ export class SubtitleSync {
 		this.before = null;
 		this.heldByHand = false;
 		this.told = false;
+		this.mismatchReady = false;
 		this.mismatchFrom = null;
 		this.round++;
 		this.worker.postMessage({ kind: 'cues', cues, joins, round: this.round });
@@ -380,6 +385,7 @@ export class SubtitleSync {
 	/** The timing from the words themselves: replaces the listening's for these subtitles. */
 	useWordTiming(plan: DelayPlan & { fits: true }): void {
 		this.wordPlan = plan;
+		this.mismatchReady = false;
 		this.plan = plan;
 		this.mismatchFrom = null;
 		this.last = { ...this.last, plan, words: true };
@@ -389,7 +395,12 @@ export class SubtitleSync {
 
 	/** Sets the delay for the part of the video playing now, from the plan. */
 	private apply(): void {
-		if (!this.running || this.heldByHand || this.byHand() || !this.plan?.fits || !this.onDelay) return;
+		if (!this.running || this.heldByHand || this.byHand()) return;
+		if (this.mismatchReady && !this.told && !this.checkingWords()) {
+			this.told = true;
+			this.onMismatch?.();
+		}
+		if (!this.plan?.fits || !this.onDelay) return;
 		if (!this.wordPlan && Date.now() < this.waitForWordsUntil && this.plan.steps.every((s) => Math.abs(s.delay) < 5)) return;
 		const current = this.delay();
 		// Moved by hand since it last moved them: left alone from now on.

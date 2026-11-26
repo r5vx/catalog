@@ -2,34 +2,59 @@
 	import type { SourceCheck } from './watchCheck';
 
 	/** Each source being looked through for the Watch button, and how it went. */
-	let { sources }: { sources: SourceCheck[] } = $props();
+	let { sources, anime = true, series = false }: { sources: SourceCheck[]; anime?: boolean; series?: boolean } = $props();
 
-	/**
-	 * Once a source has it, the ones still looking go quiet: Movy can take 30–75 s to answer (it
-	 * reads its pages in a hidden window), and its spinning pill looked like Catalog taking forever
-	 * though Watch already worked (a friend, 2026-11-14).
-	 */
-	const found = $derived(sources.some((source) => source.state === 'yes'));
+	const ANIME_ONLY = new Set(['Aniwave', 'HiAnime', 'AllAnime', 'KickAssAnime']);
+
+	/** Hide anime-only sources on non-anime titles (unless they actually matched). */
+	const applicable = $derived(
+		sources.filter((s) => anime || !ANIME_ONLY.has(s.name) || s.state === 'yes')
+	);
+
+	const pilotCheck = (s: SourceCheck) => ['Movy', 'Vidfast', '7Movies', 'HiAnime'].includes(s.name);
+	const listing = (s: SourceCheck) => s.state === 'listed' || (series && s.state === 'yes' && !pilotCheck(s));
+	const found = $derived(applicable.some((source) => source.state === 'yes' || source.state === 'listed'));
+	let showUnavailable = $state(false);
+
+	const visible = $derived(
+		showUnavailable || !found
+			? applicable.filter((s) => s.state !== 'skipped')
+			: applicable.filter((s) => s.state === 'yes' || s.state === 'checking' || s.state === 'listed')
+	);
+	const hiddenCount = $derived(
+		found ? applicable.filter((s) => s.state === 'no').length : 0
+	);
 </script>
 
-{#if sources.length}
+{#if visible.length || hiddenCount > 0}
+	{#if series && found}<p class="scope-note">Sources for this series · availability varies by episode.</p>{/if}
 	<ul class="source-checks" aria-label="Sources">
-		{#each sources as source (source.name)}
-			<li class={source.state} class:quiet={(found && source.state === 'checking') || source.state === 'skipped'} title={source.state === 'skipped' ? 'Not asked' : undefined}>
-				{#if (source.state === 'checking' && found) || source.state === 'skipped'}
+		{#each visible as source (source.name)}
+			<li title={source.name === 'YouTube' ? (series ? 'YouTube has a matched upload for one or more episodes' : 'YouTube has a matched upload for this movie') : undefined} class={listing(source) ? 'listed' : source.state} class:quiet={found && source.state === 'checking'}>
+				{#if source.state === 'checking' && found}
 					<span class="dot" aria-hidden="true"></span>
 				{:else if source.state === 'checking'}
 					<span class="spin" aria-hidden="true"></span>
+				{:else if listing(source)}
+					<span class="dot" aria-hidden="true"></span>
 				{:else}
 					<span aria-hidden="true">{source.state === 'yes' ? '✓' : '✕'}</span>
 				{/if}
-				{source.name}
+				{source.name}{series && source.state === 'yes' ? (source.pilotListed === false ? ' · other episodes' : source.pilotListed === true ? ' · S1E1 listed' : pilotCheck(source) ? ' · S1E1' : '') : ''}
 			</li>
 		{/each}
+		{#if hiddenCount > 0}
+			<li class="toggle-wrap">
+				<button type="button" class="toggle-unavail" onclick={() => (showUnavailable = !showUnavailable)}>
+					{showUnavailable ? 'Hide unavailable' : `+${hiddenCount} unavailable`}
+				</button>
+			</li>
+		{/if}
 	</ul>
 {/if}
 
 <style>
+	.scope-note { margin: 10px 0 0; color: var(--ink-muted); font-size: .85rem; }
 	.source-checks {
 		display: flex;
 		flex-wrap: wrap;
@@ -87,6 +112,27 @@
 		border-right-color: transparent;
 		border-radius: 50%;
 		animation: spin 0.8s linear infinite;
+	}
+
+	.toggle-wrap {
+		border: none !important;
+		background: transparent !important;
+		padding: 0 !important;
+	}
+
+	.toggle-unavail {
+		padding: 4px 10px;
+		border: 1px dashed var(--rule);
+		border-radius: 999px;
+		background: transparent;
+		color: var(--ink-faint);
+		font-size: 0.78rem;
+		cursor: pointer;
+	}
+
+	.toggle-unavail:hover {
+		color: var(--ink);
+		border-color: var(--rule-firm);
 	}
 
 	@keyframes spin {

@@ -51,7 +51,7 @@ export async function loadThisWeek(tv = false) {
 		.then((result) => ({ ...result, items: mark(unwatched(result.items)) }));
 	const continueWatching = continueWatchingWithPosters().then(async (items) => Promise.all(items.map(async (item) => ({
 		...item,
-		link: tv && item.type !== 'replay' ? await tvTitleLink(item.title, item.type).catch(() => null) : null
+		link: tv && !item.needsRelease && item.type !== 'replay' ? await tvTitleLink(item.title, item.type).catch(() => null) : null
 	}))));
 	const yours = (tmdbReady && currentProfile() === MAIN_PROFILE
 		? within(yourShows(), 12_000, { out: [], soon: [], failed: true })

@@ -10,6 +10,7 @@ import { isAnimeFilm } from '$lib/server/animeFilm';
 import { isCinemaRecording } from '$lib/watch';
 import { nyaaFileSubtitles, parseNyaaShareKey } from '$lib/server/sources/nyaa';
 import { kitsunekkoSubtitles } from '$lib/server/sources/kitsunekko';
+import { parseXumoShareKey, xumoSubtitles } from '$lib/server/sources/xumo';
 import type { RequestHandler } from './$types';
 
 /**
@@ -47,7 +48,12 @@ export const GET: RequestHandler = async ({ url }) => {
 	// A Nyaa file's own subtitle tracks (sources/nyaa.ts), first and on by themselves: they're made
 	// for that very file, so they're never retimed.
 	const nyaaShare = url.searchParams.get('share') ?? '';
-	const inFileSoon = parseNyaaShareKey(nyaaShare) ? within(nyaaFileSubtitles(nyaaShare).catch(() => []), 25_000, []) : Promise.resolve([]);
+	// Xumo Play's captions for its copy (sources/xumo.ts) the same way: timed to that very copy.
+	const inFileSoon = parseNyaaShareKey(nyaaShare)
+		? within(nyaaFileSubtitles(nyaaShare).catch(() => []), 25_000, [])
+		: parseXumoShareKey(nyaaShare)
+			? within(xumoSubtitles(nyaaShare).catch(() => []), 10_000, [])
+			: Promise.resolve([]);
 
 	if (!title) return error(400, 'Missing title');
 

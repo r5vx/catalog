@@ -28,6 +28,7 @@ import {
 import { searchNexus, nexusEpisodes, nexusSubtitles, type NexusShow, type NexusSubtitle } from './animenexus';
 import { hianimeCopies, hianimeEpisodeCount, hianimeHas } from './hianime';
 import { searchAllanime, allanimeShowDetails, allanimeCopies } from './allanime';
+import { searchKaa, kaaShowDetails, kaaEpisodes, kaaCopies } from './kickassanime';
 import { malEpisodeOf } from '../metadata/skiptimes';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -513,12 +514,11 @@ async function placeAllanime(show: TmdbShow, title: string): Promise<AllanimePla
 }
 
 /**
- * Off until AllAnime's videos can be played (2026-11-23). Its show search works without the site's
- * check, but its videos never came: every episode it listed showed as there to play and then
- * loaded forever (Jungle King Taa-chan episode 2, which only AllAnime listed). Off, it lists
- * nothing and nothing waits on it. The code is kept for when playing works.
+ * AllAnime is on, for testing: an episode's ask opens AllAnime's check in a small window
+ * (electron/turnstileSolver.cjs) for the person at the computer to tick. How long a ticked
+ * check counts is not known yet. Desktop app only.
  */
-const ALLANIME_ON = false;
+const ALLANIME_ON = true;
 
 /**
  * AllAnime's copies of a show's episodes, by "season-episode": Japanese audio and English
@@ -543,5 +543,62 @@ export async function allanimeFiles(show: TmdbShow, title: string, wait: number)
 	})().catch((error) => console.warn('[allanime] could not list:', error)).finally(() => { done = true; });
 	await Promise.race([work, new Promise((resolve) => setTimeout(resolve, wait))]);
 	if (!done) console.warn(`[allanime] timed out after ${wait} ms for "${title}" (${out.size} episodes so far)`);
+	return new Map(out);
+}
+
+/* ------------------------------------------------ KickAssAnime */
+
+type KaaPlaced = Placed & { slug: string };
+
+async function placeKaa(show: TmdbShow, title: string): Promise<KaaPlaced[]> {
+	const key = `kaa-placed|${show.id}`;
+	const known = saved<KaaPlaced[]>(key, 6 * HOUR);
+	if (known?.length) return known;
+
+	const found = new Map<string, { slug: string; name: string; en: string; type: string; start: string | null; locales: string[] }>();
+	const names = await namesFor(show, title);
+	const terms = searchTerms(show, title, names).slice(0, 6);
+	for (const results of await Promise.all(terms.map(searchKaa))) {
+		for (const entry of results) found.set(entry.slug, entry);
+	}
+	const series = [...found.values()].filter((e) => /^(tv|ona)$/i.test(e.type.trim()));
+	const detailed = await Promise.all(series.slice(0, 8).map((e) => kaaShowDetails(e.slug)));
+	const items = detailed.filter((d): d is NonNullable<typeof d> => Boolean(d));
+	const candidates: Candidate[] = items.map((e) => ({
+		key: e.slug,
+		names: [e.name, e.en].filter(Boolean),
+		type: e.type,
+		start: e.start,
+		count: async () => (await kaaEpisodes(e.slug, 'ja-JP')).length || (await kaaEpisodes(e.slug, 'en-US')).length
+	}));
+	const placed: KaaPlaced[] = (await place(show, names, candidates)).map((p) => ({ ...p, slug: p.key }));
+	if (placed.length && !anilistResting()) saveOrderCache(key, placed, Date.now());
+	return placed;
+}
+
+/** KickAssAnime's copies of a show's episodes, by "season-episode": Japanese audio and English dub. */
+export async function kaaFiles(show: TmdbShow, title: string, wait: number): Promise<Map<string, FileOption[]>> {
+	const out = new Map<string, FileOption[]>();
+	if (!show.anime) return out;
+	let done = false;
+	const work = (async () => {
+		const placed = await placeKaa(show, title);
+		for (const p of placed) {
+			const [subEps, dubEps] = await Promise.all([
+				kaaEpisodes(p.slug, 'ja-JP'),
+				kaaEpisodes(p.slug, 'en-US')
+			]);
+			const subMap = new Map(subEps.map((e) => [e.number, e.slug]));
+			const dubMap = new Map(dubEps.map((e) => [e.number, e.slug]));
+			const nums = new Set([...subMap.keys(), ...dubMap.keys()]);
+			for (const ep of nums) {
+				const episode = p.offset + ep;
+				const files = kaaCopies(p.slug, ep, subMap.get(ep) ?? null, dubMap.get(ep) ?? null);
+				if (files.length) out.set(`${p.season}-${episode}`, files);
+			}
+		}
+	})().catch((error) => console.warn('[kaa] could not list:', error)).finally(() => { done = true; });
+	await Promise.race([work, new Promise((resolve) => setTimeout(resolve, wait))]);
+	if (!done) console.warn(`[kaa] timed out after ${wait} ms for "${title}" (${out.size} episodes so far)`);
 	return new Map(out);
 }

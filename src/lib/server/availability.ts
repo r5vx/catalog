@@ -1,3 +1,8 @@
+import { filmHit } from '../release';
+import { ambiguousRelease } from './seriesIdentity';
+import { publisherMatches } from './sources/official';
+import { cachedListing } from './sources/videoListing';
+import { channelFiles } from './sources/channels';
 /**
  * Whether something can be watched: on Showbox, on 7Movies, on Movy, or (anime) on Aniwave or
  * HiAnime, or on Vidfast (asked by playing its copy in a hidden window, only for the title being
@@ -12,11 +17,14 @@ import { searchShowbox, bestMatch } from './showbox';
 import { fetchAlternativeTitles } from './metadata/tmdb';
 import { fetchRomajiTitle } from './metadata/anilist';
 import { tmdbShow } from './combinedEpisodes';
-import { aniwaveFiles, aniwaveFilm } from './sources';
+import { aniwaveFiles, aniwaveFilm, kaaFiles } from './sources';
 import { onVidrift } from './sources/vidrift';
 import { onMovy, type Wanted } from './sources/movy';
 import { hianimeHas } from './sources/hianime';
-import { vidfastShareKey, vidfastStream } from './sources/vidfast';
+import { confirmedVidfast, vidfastShareKey, vidfastStream } from './sources/vidfast';
+import { onXumo } from './sources/xumo';
+import { onPlex } from './sources/plex';
+import { onPluto } from './sources/pluto';
 import { malEpisodeOf } from './metadata/skiptimes';
 import { tmdbGet } from './metadata/tmdb';
 import { filmOnlyInCinemas } from './metadata/cinemas';
@@ -29,7 +37,8 @@ const underWay = new Map<string, Promise<boolean>>();
  * Where each source's check is at, for the Watch button to show while it waits. `skipped`: never
  * asked, or called off, because another source had it (Movy and Vidfast, the slow hidden windows).
  */
-export type SourceCheck = { name: string; state: 'checking' | 'yes' | 'no' | 'skipped' };
+export type { SourceCheck } from '../watchCheck';
+import type { SourceCheck } from '../watchCheck';
 const progress = new Map<string, SourceCheck[]>();
 
 /**
@@ -37,8 +46,8 @@ const progress = new Map<string, SourceCheck[]>();
  * when it opens again (owner, 2026-11-23: with the answer already known, the row under the button
  * was empty). Asked afresh, live, once these are an hour old.
  */
-const sourcesKey = (key: string) => `available-sources|${key}`;
-const SOURCES_FRESH = HOUR;
+const sourcesKey = (key: string) => `available-sources4|${key}`;
+const SOURCES_FRESH = 5 * 60_000;
 
 /** A source's check, noted in `list` as it goes. */
 function noted(list: SourceCheck[], name: string, check: Promise<boolean>, skipped: () => boolean = () => false): Promise<boolean> {
@@ -53,9 +62,11 @@ function noted(list: SourceCheck[], name: string, check: Promise<boolean>, skipp
 }
 
 async function onShowbox(title: string, type: string, year: string): Promise<boolean> {
+	const strict = await ambiguousRelease(title, type, year);
 	const results = await searchShowbox(title);
-	if (results.length && bestMatch(results, title, type, year)) return true;
+	if (results.length && bestMatch(results, title, type, year, strict)) return true;
 
+	if (strict) return false;
 	// Its other names, all searched at once (one after another took most of a slow check).
 	const tmdbType = type === 'movie' ? ('movie' as const) : ('tv' as const);
 	const [alternatives, romaji] = await Promise.all([
@@ -68,7 +79,7 @@ async function onShowbox(title: string, type: string, year: string): Promise<boo
 	return firstYes(
 		altTitles.map(async (alt) => {
 			const candidate = await searchShowbox(alt);
-			const best = candidate.length > 0 ? bestMatch(candidate, alt, type, year) : null;
+			const best = candidate.length > 0 ? bestMatch(candidate, alt, type, year, strict) : null;
 			if (!best) return false;
 			return wordsOf(best.title).some((w) => origWords.has(w)) || wordsOf(alt).some((w) => origWords.has(w));
 		})
@@ -80,9 +91,9 @@ async function onShowbox(title: string, type: string, year: string): Promise<boo
  * it (Japanese or dub). Left out of this check until 2026-11-14: a show only HiAnime had (So I'm
  * a Spider, So What?) came up as Showbox's alone.
  */
-async function onHianime(title: string, type: string): Promise<boolean> {
+async function onHianime(title: string, type: string, year: string): Promise<boolean> {
 	if (type === 'movie') return false;
-	const show = await tmdbShow(title.replace(/\s+(season|s)\s*\d+\s*$/i, '').trim(), '');
+	const show = await seriesFor(title, year);
 	if (!show?.anime) return false;
 	const spot = await malEpisodeOf(title, 1).catch(() => null);
 	if (!spot) return false;
@@ -91,20 +102,32 @@ async function onHianime(title: string, type: string): Promise<boolean> {
 
 async function onAniwave(title: string, type: string, year: string): Promise<boolean> {
 	if (type === 'movie') return Boolean(await aniwaveFilm(title, year));
-	const show = await tmdbShow(title.replace(/\s+(season|s)\s*\d+\s*$/i, '').trim(), '');
+	const show = await seriesFor(title, year);
 	if (!show?.anime) return false;
 	return (await aniwaveFiles(show, title)).size > 0;
+}
+
+async function onKaa(title: string, type: string, year: string): Promise<boolean> {
+	if (type === 'movie') return false;
+	const show = await seriesFor(title, year);
+	if (!show?.anime) return false;
+	return (await kaaFiles(show, title, 8000)).size > 0;
+}
+
+function seriesFor(title: string, year: string) {
+	const base = title.replace(/\s+(season|s)\s*\d+\s*$/i, '').trim();
+	return tmdbShow(base, base === title ? year : '');
 }
 
 /** What 7Movies and Movy are asked about: by TMDB's id, a film or a show's first episode. */
 async function byTmdbId(title: string, type: string, year: string) {
 	if (type === 'movie') {
-		type Found = { results: { id: number; title?: string }[] };
+		type Found = { results: { id: number; title?: string; release_date?: string }[] };
 		const found = await tmdbGet<Found>('/search/movie', { query: title, ...(year ? { year } : {}) });
-		const film = found?.results.find((r) => r.title?.toLowerCase() === title.toLowerCase()) ?? found?.results[0];
+		const film = filmHit(found?.results ?? [], title, year);
 		return film ? { type: 'movie' as const, id: film.id } : null;
 	}
-	const show = await tmdbShow(title.replace(/\s+(season|s)\s*\d+\s*$/i, '').trim(), '');
+	const show = await seriesFor(title, year);
 	return show ? { type: 'tv' as const, id: show.id, season: 1, episode: 1 } : null;
 }
 
@@ -124,10 +147,18 @@ async function onMovyToo(title: string, type: string, year: string, wanted: Want
  * everything; now its "no" leaves the copy out (sourceAnswers.ts), and a "yes" is kept for playing.
  * Asked only while `wanted` (the title is being looked at).
  */
+const checkedEpisode = new Map<string, Parameters<typeof confirmedVidfast>[0]>();
+function staleVidfast(key: string, sources: SourceCheck[]) {
+	if (!sources.some(s => s.name === 'Vidfast' && s.state === 'yes')) return false;
+	const episode = checkedEpisode.get(key);
+	return !episode || !confirmedVidfast(episode).length;
+}
+
 async function onVidfastToo(title: string, type: string, year: string, wanted: () => boolean): Promise<boolean> {
 	const what = await byTmdbId(title, type, year);
 	if (!what || !wanted()) return false;
 	const full = { type: what.type, id: what.id, season: what.type === 'tv' ? 1 : 0, episode: what.type === 'tv' ? 1 : 0 };
+	checkedEpisode.set(availabilityKey(title, type, year), full);
 	return Boolean(await vidfastStream(vidfastShareKey(full)));
 }
 
@@ -164,7 +195,7 @@ function firstYes(checks: Promise<boolean>[]): Promise<boolean> {
  * Where a title's answer is kept. ("available2": answers kept before films only in cinemas were
  * left out had Clayface down as watchable for a day.)
  */
-const availabilityKey = (title: string, type: string, year: string) => `available2|${title.toLowerCase()}|${type}|${year}`;
+const availabilityKey = (title: string, type: string, year: string) => `available9|${title.toLowerCase()}|${type}|${year}`;
 
 /** How long the Watch button's check waits before saying "not available" for now. */
 const LIMIT = 12_000;
@@ -177,7 +208,10 @@ const LIMIT = 12_000;
 export async function isAvailable(title: string, type: string, year: string): Promise<{ available: boolean; unsure?: boolean }> {
 	const key = availabilityKey(title, type, year);
 	const known = getOrderCache(key);
-	if (known && Date.now() - known.at < (known.value ? 24 * HOUR : HOUR)) return { available: Boolean(known.value) };
+	if (known && Date.now() - known.at < SOURCES_FRESH) {
+		const sources = progress.get(key) ?? getOrderCache(sourcesKey(key))?.value as SourceCheck[] | undefined;
+		if (sources && !staleVidfast(key, sources)) return { available: Boolean(known.value) };
+	}
 
 	asked(key);
 	const check = startCheck(key, title, type, year);
@@ -197,11 +231,38 @@ function startCheck(key: string, title: string, type: string, year: string): Pro
 	// Movy and Vidfast note when they weren't asked (or were called off), so that isn't shown as a "no".
 	let movyHeldBack = false;
 	let vidfastHeldBack = false;
+	const publisher: SourceCheck = { name: 'YouTube', state: 'checking' };
+	list.push(publisher);
+	function vod(name: string, check: typeof onXumo) {
+		let pilot: boolean | undefined;
+		return noted(list, name, check(title, type, year, () => seriesFor(title, year), has => { pilot = has; })).then(ok => {
+			if (pilot !== undefined) list.find(s => s.name === name)!.pilotListed = pilot;
+			return ok;
+		});
+	}
 	const checks = [
+		(async () => {
+			const exact = await publisherMatches(title, year, type);
+			const linked = exact.find(w => cachedListing(w.videoId) !== 'unavailable');
+			if (linked) publisher.tmdb = linked.tmdb;
+			else if (type !== 'movie') {
+				const show = await seriesFor(title, year);
+				if (show && (await channelFiles(show, 15_000)).size) publisher.tmdb = `tv:${show.id}`;
+			}
+			return Boolean(publisher.tmdb);
+		})().catch(() => false).then(found => {
+			publisher.state = found ? 'listed' : 'skipped';
+			return found;
+		}),
 		noted(list, 'Showbox', onShowbox(title, type, year)),
 		noted(list, '7Movies', on7Movies(title, type, year)),
 		noted(list, 'Aniwave', onAniwave(title, type, year)),
-		noted(list, 'HiAnime', onHianime(title, type)),
+		noted(list, 'HiAnime', onHianime(title, type, year)),
+		noted(list, 'KickAssAnime', onKaa(title, type, year)),
+		// Xumo Play, Plex, and Pluto TV: free VOD sources (no account needed).
+		vod('Xumo Play', onXumo),
+		vod('Plex', onPlex),
+		vod('Pluto TV', onPluto),
 		noted(list, 'Movy', onMovyToo(title, type, year, {
 			// Not started once another source has it, unless it's the title being looked at.
 			start: () => {
@@ -247,15 +308,13 @@ export function availabilityNow(title: string, type: string, year: string): { av
 	asked(key);
 	const inCinemas = inCinemasFor(key, title, type, year);
 	const known = getOrderCache(key);
-	if (known && Date.now() - known.at < (known.value ? 24 * HOUR : HOUR) && !underWay.has(key)) {
+	if (known && Date.now() - known.at < SOURCES_FRESH && !underWay.has(key)) {
 		const live = progress.get(key);
-		if (live) return { available: Boolean(known.value), sources: live, inCinemas };
+		if (live && !staleVidfast(key, live)) return { available: Boolean(known.value), sources: live, inCinemas };
 		const kept = getOrderCache(sourcesKey(key));
-		if (kept && Date.now() - kept.at < SOURCES_FRESH) return { available: Boolean(known.value), sources: kept.value as SourceCheck[], inCinemas };
+		if (!live && kept && Date.now() - kept.at < SOURCES_FRESH && !staleVidfast(key, kept.value as SourceCheck[])) return { available: Boolean(known.value), sources: kept.value as SourceCheck[], inCinemas };
 		// Known, but which sources have it isn't (or is old): asked again, each shown as it goes,
 		// while the button keeps the answer it had.
-		startCheck(key, title, type, year);
-		return { available: Boolean(known.value), sources: progress.get(key) ?? [], inCinemas };
 	}
 	startCheck(key, title, type, year);
 	const sources = progress.get(key) ?? [];

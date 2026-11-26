@@ -133,16 +133,20 @@ export function planFromMatches(points: Point[]): (DelayPlan & { fits: true; mat
 			if (Math.abs(dt) > 120) slopes.push((points[j].off - points[i].off) / dt);
 		}
 	}
-	let slope = slopes.length ? median(slopes) : 0;
-	// Within 0.15 % of the normal speed: the normal speed (a second over an 11-minute stretch).
-	if (Math.abs(slope) < 0.0015) slope = 0;
-	else {
-		const near = RATES.find((r) => Math.abs(r - 1 - slope) < 0.003);
-		if (near) slope = near - 1;
-	}
-	const delay = median(points.map((p) => p.off - slope * p.t));
-	const agree = points.filter((p) => Math.abs(p.off - (delay + slope * p.t)) <= 0.5).length;
-	if (agree < 8 || agree / points.length < 0.5) return null;
+	const measured = slopes.length ? median(slopes) : 0;
+	const score = (slope: number) => {
+		const offsets = points.map((p) => p.off - slope * p.t);
+		const delay = median(offsets);
+		const residuals = offsets.map((d) => Math.abs(d - delay));
+		return { slope, delay, agree: residuals.filter((d) => d <= 0.5).length, residual: median(residuals) };
+	};
+	// Prefer normal speed when indistinguishable; accept drift only when it fits the actual lines better.
+	const models = [0, ...RATES.map((r) => r - 1).filter((s) => Math.abs(s - measured) < 0.003), measured].map(score);
+	const most = Math.max(...models.map((m) => m.agree));
+	const best = models.filter((m) => m.agree === most);
+	const residual = Math.min(...best.map((m) => m.residual));
+	const { slope, delay, agree } = best.find((m) => m.residual <= residual + 0.03)!;
+	if (agree < 8 || agree <= points.length / 2) return null;
 	// Only the ones that agree, for the delay itself.
 	const exact = median(points.filter((p) => Math.abs(p.off - (delay + slope * p.t)) <= 0.5).map((p) => p.off - slope * p.t));
 	return { steps: [{ from: 0, delay: Math.round(exact * 10) / 10 }], fits: true, clear: agree / points.length, rate: 1 + slope, matches: points.length, agree };

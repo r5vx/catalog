@@ -11,7 +11,7 @@ import type { RequestHandler } from './$types';
  */
 export const GET: RequestHandler = async ({ url }) => {
 	if (url.searchParams.has('work')) return json({ job: nextWordJob() });
-	return json({ answer: wordAnswer(url.searchParams.get('copy') ?? '', url.searchParams.get('sub') ?? '') });
+	return json({ answer: wordAnswer(url.searchParams.get('copy') ?? '', url.searchParams.get('sub') ?? '', url.searchParams.get('language') ?? '', Number(url.searchParams.get('audio') ?? -1)) });
 };
 
 export const POST: RequestHandler = async ({ request }) => {
@@ -19,9 +19,11 @@ export const POST: RequestHandler = async ({ request }) => {
 	const copy = String(body?.copy ?? '');
 	const sub = String(body?.sub ?? '');
 	const master = String(body?.master ?? '');
-	if (!copy || !sub || !master) return json({ state: 'none', answer: null });
-	const state = askWordTiming(copy, sub, master, String(body?.language ?? ''), Number(body?.duration) || 0);
-	return json({ state, answer: wordAnswer(copy, sub) });
+	if (!body || !copy || !sub || !master) return json({ state: 'none', answer: null });
+	const language = String(body.language ?? '');
+	const audio = Number(body.audio ?? -1);
+	const state = askWordTiming(copy, sub, master, language, Number(body.duration) || 0, audio);
+	return json({ state, answer: wordAnswer(copy, sub, language, audio) });
 };
 
 export const PUT: RequestHandler = async ({ request }) => {

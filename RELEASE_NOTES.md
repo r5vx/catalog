@@ -12,6 +12,39 @@ without both.
 
 ## Unreleased
 
+## 4.8.0 — 2026-11-26 — Online status, invites to watch together and Xumo Play
+
+### New
+
+- AllAnime is back: Cloudflare's check is handled automatically, and anime episodes that only AllAnime has can play again
+- Xumo Play is a new source: its free films and TV shows play in Catalog's own player, with no adverts
+- Xumo Play's own English captions come on by themselves when its copy plays
+- Settings → Playback → Picture: draw video without the graphics card's overlay, for a picture that jumps or flickers on one computer
+- A status on your My profile picture: Online, Away, Do not disturb or Invisible, picked from the dot in the top bar or the status button in the sidebar. Friends see a green, yellow, red or grey dot on your picture; Invisible shows you as offline and hides what you're watching, and Do not disturb stops message pop-ups
+- Invite to watch together, the small button in a friend's card: it starts a room and whispers them its code, with a Join button on their side
+
+### Improved
+
+- Friend cards show the friend's banner, are opened with a click anywhere on them, and only say what they're watching
+- The Friends tab shows how many friends you have
+- A copy missing a part, or one that fresh links can't get playing, now moves on through the episode's other copies instead of staying stuck
+- On a TV, the player waits longer for each part of the video before asking again, so slow Wi-Fi can still start a video
+- Live TV → Replays: more channel replays load by themselves as you scroll, with no Show more button
+- Live TV → Replays: each channel replay says what it is (Counter-Strike 2, League of Legends, Rainbow Six Siege…), with the match, the event and the date
+- The status button under My profile is just the dot and its name
+
+### Fixed
+
+- A show's season count under its name matches its season buttons (a long show said 2 seasons while showing 18)
+- Captions that come on by themselves skip files typed all in capitals when a normal one is there
+- Escape in the chat box closes the box instead of leaving full screen
+- Watch along jumps to where your friend is, even when your copy of the film goes by a slightly different name
+- Streaming Catalog on Discord keeps its frame rate while the window is covered or the screen is locked
+- The next episode starts with the subtitles made for its own copy, not ones like the last episode's that can be out of time
+- Subtitles made for the copy playing are no longer swapped for another release's when auto-timing thinks they don't match
+- A phone that can't reach Catalog says what to check: Tailscale on the phone, and the computer awake with Catalog open
+- Catalog on a phone can't get stuck pinched in, with pages wider than the screen
+
 ## 4.7.2 — 2026-11-23 — Showbox plays on Fire TVs again, and remembered profiles
 
 ### New

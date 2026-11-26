@@ -393,8 +393,9 @@ async function answer(request, env, ctx) {
 		// or its friends would keep a name on their list that is never watching anything again.
 		const left = await env.DB.prepare('SELECT count(*) AS n FROM members WHERE account = ?').bind(account.id).first();
 		if (!left?.n && !account.google_sub) {
+			await statusTable(env.DB);
 			await env.DB.batch(
-				['DELETE FROM friends WHERE a = ?1 OR b = ?1', 'DELETE FROM seen WHERE account = ?1', 'DELETE FROM seen_info WHERE account = ?1', 'DELETE FROM profiles WHERE account = ?1', 'DELETE FROM looks WHERE account = ?1', 'DELETE FROM privacy WHERE account = ?1', 'DELETE FROM messages WHERE from_account = ?1 OR to_account = ?1', 'DELETE FROM message_reads WHERE account = ?1','DELETE FROM presence WHERE account = ?1', 'DELETE FROM avatars WHERE account = ?1', 'DELETE FROM sync_rows WHERE account = ?1', 'DELETE FROM codes WHERE account = ?1', 'DELETE FROM friend_codes WHERE account = ?1', 'DELETE FROM activity WHERE account = ?1', 'DELETE FROM friend_requests WHERE from_account = ?1 OR to_account = ?1', 'DELETE FROM accounts WHERE id = ?1'].map((sql) => env.DB.prepare(sql).bind(account.id))
+				['DELETE FROM friends WHERE a = ?1 OR b = ?1', 'DELETE FROM seen WHERE account = ?1', 'DELETE FROM seen_info WHERE account = ?1', 'DELETE FROM profiles WHERE account = ?1', 'DELETE FROM looks WHERE account = ?1', 'DELETE FROM privacy WHERE account = ?1', 'DELETE FROM messages WHERE from_account = ?1 OR to_account = ?1', 'DELETE FROM message_reads WHERE account = ?1','DELETE FROM presence WHERE account = ?1', 'DELETE FROM status WHERE account = ?1','DELETE FROM avatars WHERE account = ?1', 'DELETE FROM sync_rows WHERE account = ?1', 'DELETE FROM codes WHERE account = ?1', 'DELETE FROM friend_codes WHERE account = ?1', 'DELETE FROM activity WHERE account = ?1', 'DELETE FROM friend_requests WHERE from_account = ?1 OR to_account = ?1', 'DELETE FROM accounts WHERE id = ?1'].map((sql) => env.DB.prepare(sql).bind(account.id))
 			);
 		}
 		const fresh = await accountOf(request, env, house, account.name);
@@ -472,9 +473,10 @@ async function answer(request, env, ctx) {
 	};
 
 	if (is('GET', '/v1/friends')) {
+		await statusTable(env.DB);
 		const [rows, asked, known] = await env.DB.batch([
 			env.DB.prepare(
-				'SELECT a.id, a.name, v.rev AS avatar, p.what, p.at, l.name_style FROM friends f JOIN accounts a ON a.id = f.b LEFT JOIN avatars v ON v.account = a.id LEFT JOIN presence p ON p.account = f.b AND p.at > ? LEFT JOIN looks l ON l.account = a.id WHERE f.a = ? ORDER BY a.name'
+				'SELECT a.id, a.name, v.rev AS avatar, p.what, p.at, l.name_style, l.banner_rev, st.status, st.seen FROM friends f JOIN accounts a ON a.id = f.b LEFT JOIN avatars v ON v.account = a.id LEFT JOIN presence p ON p.account = f.b AND p.at > ? LEFT JOIN looks l ON l.account = a.id LEFT JOIN status st ON st.account = a.id WHERE f.a = ? ORDER BY a.name'
 			).bind(Date.now() - 3 * MINUTE, account.id),
 			// Asked to be friends with this account, not answered yet.
 			env.DB.prepare('SELECT a.id, a.name, v.rev AS avatar FROM friend_requests r JOIN accounts a ON a.id = r.from_account LEFT JOIN avatars v ON v.account = a.id WHERE r.to_account = ? ORDER BY r.at DESC LIMIT 20').bind(account.id),
@@ -492,7 +494,10 @@ async function answer(request, env, ctx) {
 		]);
 		return json({
 			me: publicAccount(account),
-			friends: rows.results.map((r) => ({ id: r.id, name: r.name, avatar: r.avatar ?? 0, watching: r.what ? JSON.parse(r.what) : null, at: r.at ?? null, nameStyle: lookOf(r.name_style) })),
+			friends: rows.results.map((r) => {
+				const watching = r.what && r.status !== 'invisible' ? JSON.parse(r.what) : null;
+				return { id: r.id, name: r.name, avatar: r.avatar ?? 0, watching, at: watching ? r.at : null, nameStyle: lookOf(r.name_style), banner: r.banner_rev ?? 0, state: stateOf(r.status, r.seen, Boolean(watching)) };
+			}),
 			requests: asked.results.map((r) => ({ id: r.id, name: r.name, avatar: r.avatar ?? 0 })),
 			suggestions: known.results.map((r) => ({ id: r.id, name: r.name, avatar: r.avatar ?? 0, via: r.via, mutual: r.mutual, requested: Boolean(r.requested) }))
 		});
@@ -612,6 +617,20 @@ async function answer(request, env, ctx) {
 	}
 	if (path === '/v1/presence' && method === 'DELETE') {
 		await env.DB.prepare('DELETE FROM presence WHERE account = ?').bind(account.id).run();
+		return json({ ok: true });
+	}
+
+	// The status picked beside My profile (online, away, dnd, invisible), and when Catalog was last
+	// used as this person: sent when it's picked and every couple of minutes while they use Catalog.
+	// Invisible also takes away what they're watching.
+	if (path === '/v1/status' && method === 'PUT') {
+		const sent = await body(request);
+		const status = STATUSES.includes(sent.status) ? sent.status : 'online';
+		await statusTable(env.DB);
+		await env.DB.prepare('INSERT INTO status (account, status, seen) VALUES (?, ?, ?) ON CONFLICT (account) DO UPDATE SET status = excluded.status, seen = excluded.seen')
+			.bind(account.id, status, Date.now())
+			.run();
+		if (status === 'invisible') await env.DB.prepare('DELETE FROM presence WHERE account = ?').bind(account.id).run();
 		return json({ ok: true });
 	}
 
@@ -1231,6 +1250,31 @@ function counted(db, tally) {
 }
 
 const USAGE_TABLE = 'CREATE TABLE IF NOT EXISTS usage (day TEXT PRIMARY KEY, requests INTEGER NOT NULL DEFAULT 0, rows_read INTEGER NOT NULL DEFAULT 0, rows_written INTEGER NOT NULL DEFAULT 0)';
+
+/** The statuses someone can pick beside My profile. */
+const STATUSES = ['online', 'away', 'dnd', 'invisible'];
+const STATUS_TABLE = 'CREATE TABLE IF NOT EXISTS status (account TEXT PRIMARY KEY, status TEXT NOT NULL, seen INTEGER NOT NULL)';
+let statusTableMade = false;
+/** A server put online before its database had the status table makes it itself (once per copy). */
+async function statusTable(db) {
+	if (statusTableMade) return;
+	await db.prepare(STATUS_TABLE).run();
+	statusTableMade = true;
+}
+
+/**
+ * How a friend shows: null for an older Catalog that sends no status (nothing to say), offline when
+ * invisible or not used for half an hour, otherwise what they picked. Online turns to away after six
+ * minutes unused (it's sent every two while Catalog is used). Watching something counts as used.
+ */
+function stateOf(status, seen, watching) {
+	if (!status) return watching ? 'online' : null;
+	if (status === 'invisible') return 'offline';
+	const ago = Date.now() - (seen ?? 0);
+	if (!watching && ago > 30 * MINUTE) return 'offline';
+	if (status === 'dnd' || status === 'away') return status;
+	return watching || ago <= 6 * MINUTE ? 'online' : 'away';
+}
 
 /** Adds what's been counted here to its day's row. */
 async function keepUsage(db, done) {

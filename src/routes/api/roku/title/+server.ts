@@ -1,9 +1,12 @@
 import { error, json } from '@sveltejs/kit';
+import { progressMatches } from '$lib/release';
+import { ambiguousRelease } from '$lib/server/seriesIdentity';
 import { playsAsFilm } from '$lib/watchType';
 import { fetchDetails } from '$lib/server/metadata/details';
 import { continueWatchingList, entryIdForSource, getEntry, profileTitleFor } from '$lib/server/db/queries';
 import { currentProfile, MAIN_PROFILE } from '$lib/server/profile';
-import { showSeasons } from '$lib/server/tvEpisodes';
+import { keptPlayerList, showSeasons } from '$lib/server/tvEpisodes';
+import { seasonsWord } from '$lib/seasonsWord';
 import { bigPicture } from '$lib/tv/tiles';
 import type { RequestHandler } from './$types';
 
@@ -26,16 +29,20 @@ export const GET: RequestHandler = async ({ url }) => {
 	const film = playsAsFilm({ categorySlug: details.categorySlug, sourceId: id, kind: details.kind, episodesTotal: details.episodesTotal });
 	const type = film ? 'movie' : 'tv';
 	const names = [details.title, entry?.title, details.altTitle].filter(Boolean).map((n) => n!.toLowerCase());
-	const continuing = continueWatchingList().find((item) => item.type === type && names.includes(item.title.toLowerCase())) ?? null;
+	const dated = await ambiguousRelease(details.title, type, String(details.year ?? ''));
+	const continuing = continueWatchingList().find((item) => item.type === type && progressMatches(item.title, names, details.year, dated)) ?? null;
 	const all = type === 'tv' ? await showSeasons(source, id, entry?.title ?? details.title).catch(() => null) : null;
 	// Not Specials on the Roku yet: its app would call them "Season 0" (roku/components/TitleScreen.brs).
 	const show = all ? { ...all, seasons: all.seasons.filter((s) => s.number > 0) } : null;
 	let season = continuing?.season ?? -1;
 	if (show && !show.seasons.some((s) => s.number === season)) season = show.seasons[0]?.number ?? 0;
+	// The player's own seasons from last time (Bleach's 18, not TMDB's 2), for the line under the name.
+	const playTitle = entry?.title ?? details.title;
+	const kept = show ? keptPlayerList(playTitle, String(details.year ?? ''))?.list : null;
 
 	return json({
 		title: details.title,
-		playTitle: continuing?.title ?? entry?.title ?? details.title,
+		playTitle,
 		year: details.year,
 		type,
 		overview: details.overview ?? '',
@@ -52,7 +59,7 @@ export const GET: RequestHandler = async ({ url }) => {
 		facts: [
 			details.year,
 			details.kind,
-			details.seasons ? `${details.seasons} season${details.seasons === 1 ? '' : 's'}` : null,
+			seasonsWord(details.seasons, kept?.seasons),
 			details.runtimeMinutes && type === 'movie' ? `${Math.floor(details.runtimeMinutes / 60)}h ${details.runtimeMinutes % 60}m`.replace(/^0h /, '') : null,
 			details.externalRating ? `★ ${details.externalRating.toFixed(1)}` : null
 		]

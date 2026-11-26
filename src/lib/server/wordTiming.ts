@@ -4,6 +4,7 @@
  * screen or a second watch has it at once. Any screen asks (the computer's player, a TV): the
  * computer does the hearing. Only in the desktop app.
  */
+import { createHash } from 'node:crypto';
 import { getOrderCache, saveOrderCache } from './db/queries';
 import type { DelayPlan } from '$lib/subtitleAlign';
 
@@ -12,17 +13,18 @@ export type WordJob = { key: string; master: string; language: string; sub: stri
 export type WordAnswer = { plan: (DelayPlan & { fits: true }) | null; matches: number; heard: number; finished: boolean; at: number; why?: string; points?: { t: number; off: number }[] };
 
 const jobs = new Map<string, WordJob>();
-const keyOf = (copy: string, sub: string) => `word-timing|${copy}|${sub.replace(/[?#].*$/, '')}`;
+const keyOf = (copy: string, sub: string, language: string, audio: number) =>
+	`word-timing|v2|${createHash('sha256').update(JSON.stringify([copy, sub, language, audio])).digest('hex')}`;
 
-export function wordAnswer(copy: string, sub: string): WordAnswer | null {
-	const kept = getOrderCache(keyOf(copy, sub))?.value as WordAnswer | undefined;
+export function wordAnswer(copy: string, sub: string, language: string, audio: number): WordAnswer | null {
+	const kept = getOrderCache(keyOf(copy, sub, language, audio))?.value as WordAnswer | undefined;
 	return kept ?? null;
 }
 
 /** Asks the computer to time these subtitles by their words, unless it has or is doing so. */
-export function askWordTiming(copy: string, sub: string, master: string, language: string, duration: number): 'known' | 'asked' | 'none' {
-	const key = keyOf(copy, sub);
-	const kept = wordAnswer(copy, sub);
+export function askWordTiming(copy: string, sub: string, master: string, language: string, duration: number, audio: number): 'known' | 'asked' | 'none' {
+	const key = keyOf(copy, sub, language, audio);
+	const kept = wordAnswer(copy, sub, language, audio);
 	if (kept?.finished) return 'known';
 	if (typeof process.send !== 'function') return 'none';
 	if (!jobs.has(key)) jobs.set(key, { key, master, language, sub, duration, asked: Date.now() });

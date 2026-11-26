@@ -5,11 +5,11 @@ import { parseAniwaveShareKey, warmAniwaveStream } from '$lib/server/sources/ani
 import { parseHianimeShareKey, warmHianimeStream } from '$lib/server/sources/hianime';
 import { parseVidriftShareKey, vidriftStream } from '$lib/server/sources/vidrift';
 import { movyStream, parseMovyShareKey } from '$lib/server/sources/movy';
-import { vidfastStream, parseVidfastShareKey } from '$lib/server/sources/vidfast';
+import { vidfastStream, parseVidfastShareKey, confirmedVidfast } from '$lib/server/sources/vidfast';
 import type { RequestHandler } from '@sveltejs/kit';
 
 export const POST: RequestHandler = async ({ request }) => {
-	const { share_key, fids } = await request.json();
+	const { share_key, fids, check } = await request.json();
 	if (!share_key || !Array.isArray(fids) || fids.length === 0) return json({ ok: false });
 
 	// Aniwave's next episode: its link, fetched now so the episode starts at once.
@@ -23,7 +23,12 @@ export const POST: RequestHandler = async ({ request }) => {
 		warmHianimeStream(hianime.mal, hianime.episode, hianime.kind);
 		return json({ ok: true });
 	}
-	if (parseVidfastShareKey(String(share_key))) {
+	const what = parseVidfastShareKey(String(share_key));
+	if (what) {
+		if (check === true) {
+			await vidfastStream(share_key);
+			return json({ copy: confirmedVidfast(what)[0] ?? null });
+		}
 		vidfastStream(String(share_key)).catch(() => null);
 		return json({ ok: true });
 	}

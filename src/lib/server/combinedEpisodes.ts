@@ -27,18 +27,24 @@ import {
 	resolveSlugId,
 	FebboxRefused,
 	type EpisodeInfo,
+	type FileOption,
 	type ShowboxResult
 } from './showbox';
 import { getOrderCache, saveOrderCache } from './db/queries';
-import { aniwaveFiles, aniwaveSeriesStarts, episodesBefore, hianimeFiles, allanimeFiles, type AniwaveCopies } from './sources';
+import { aniwaveFiles, aniwaveSeriesStarts, episodesBefore, hianimeFiles, allanimeFiles, kaaFiles, type AniwaveCopies } from './sources';
 import { vidriftCopies } from './sources/vidrift';
 import { movyCopy } from './sources/movy';
-import { vidfastCopy } from './sources/vidfast';
+import { releaseParts, seriesHit, type SeriesHit } from '../release';
+import { confirmedVidfast, vidfastShareKey } from './sources/vidfast';
 import { debridCopies, debridSetting } from './sources/debrid';
 import { addonCopies, savedAddons } from './sources/addons';
 import { sourceHasNot } from './sourceAnswers';
 import { nyaaCopy, nyaaOn } from './sources/nyaa';
+import { nativeRevision } from './sources/official';
 import { channelFiles, handLinksChanged } from './sources/channels';
+import { xumoFiles, withXumo } from './sources/xumo';
+import { plexFiles, withPlex } from './sources/plex';
+import { plutoFiles, withPluto } from './sources/pluto';
 
 /**
  * 7Movies', Movy's and Vidfast's copies of a film or episode, listed by its TMDB id without asking
@@ -54,7 +60,7 @@ export function unasked(what: { type: 'tv' | 'movie'; id: number; season: number
 		...addonCopies(what),
 		...(sourceHasNot('7Movies', what) ? [] : vidriftCopies(what)),
 		...(sourceHasNot('Movy', what) ? [] : [movyCopy(what)]),
-		...(sourceHasNot('Vidfast', what) ? [] : [vidfastCopy(what)])
+		...confirmedVidfast(what)
 	];
 }
 
@@ -62,9 +68,10 @@ export function unasked(what: { type: 'tv' | 'movie'; id: number; season: number
  * Which debrid service and addons the copies above come from: a film or show's list kept from
  * before one was added or removed in Settings → Services is made again (routes/api/watch/resolve).
  */
-export const unaskedSetup = () => `${debridSetting()?.service ?? ''}|${savedAddons().map((a) => a.key).join(',')}|${nyaaOn() ? 'nyaa' : ''}|${handLinksChanged()}`;
+export const unaskedSetup = () => `publisher-v7:${nativeRevision()}|${debridSetting()?.service ?? ''}|${savedAddons().map((a) => a.key).join(',')}|${nyaaOn() ? 'nyaa' : ''}|${handLinksChanged()}`;
 
 export type ListedEpisode = EpisodeInfo & {
+	vidfastCandidate?: string;
 	/** The share this episode plays from, when it isn't the main entry's. */
 	shareKey?: string;
 	/** False for an episode TMDB lists but no source has. */
@@ -99,16 +106,17 @@ function save(key: string, value: unknown): void {
 /* ------------------------------------------------ TMDB */
 
 export async function tmdbShow(title: string, year: string): Promise<TmdbShow | null> {
-	const key = `tmdb-show3|${normalizeTitle(title)}|${year}`;
+	({ title, year } = releaseParts(title, year));
+	const key = `tmdb-show4|${normalizeTitle(title)}|${year}`;
 	const known = saved<TmdbShow | null>(key, 3 * DAY);
 	if (known !== undefined) return known;
 
-	const found = await tmdbGet<{ results: { id: number }[] }>('/search/tv', {
+	const found = await tmdbGet<{ results: SeriesHit[] }>('/search/tv', {
 		query: withoutQualifier(title),
 		...(year ? { first_air_date_year: year } : {})
 	});
 	if (!found) return null; // couldn't ask: try again next time, don't remember
-	const id = found.results[0]?.id;
+	const id = seriesHit(found.results, withoutQualifier(title), year)?.id;
 	let show: TmdbShow | null = null;
 	if (id) {
 		type Season = { season_number: number; name: string; episode_count: number; air_date?: string | null };
@@ -487,7 +495,14 @@ export async function combineEpisodes(
 		// seasons the same way.
 		if (sameNumbering) {
 			const out = show.seasons.filter((s) => s.number > 0 && s.count > 0);
-			const dated = await Promise.all(out.map(async (s) => [s, await airDates(show.id, s.number)] as const));
+			const wait = mainShowboxId ? 4000 : 10000;
+			const missedList = () => { partial = true; return new Map<string, FileOption[]>(); };
+			// Fetch independent lists together. Merge them below in source-priority order.
+			const [dated, xumo, plex, pluto, channel] = await Promise.all([
+				Promise.all(out.map(async (s) => [s, await airDates(show.id, s.number)] as const)),
+				xumoFiles(show, wait).catch(missedList), plexFiles(show, wait).catch(missedList),
+				plutoFiles(show, wait).catch(missedList), channelFiles(show, mainShowboxId ? 4000 : 15000).catch(missedList)
+			]);
 			for (const [season, dates] of dated) {
 				for (let episode = 1; episode <= season.count; episode++) {
 					const aired = dates.get(episode);
@@ -495,22 +510,44 @@ export async function combineEpisodes(
 					const what = { type: 'tv' as const, id: show.id, season: season.number, episode };
 					const files = unasked(what);
 					const listed = episodes.find((e) => e.season === season.number && e.episode === episode);
-					if (listed) listed.files = [...listed.files, ...files];
-					else episodes.push({ season: season.number, episode, files });
+					const vidfastCandidate = vidfastShareKey(what);
+					if (listed) { listed.files = [...listed.files, ...files]; listed.vidfastCandidate = vidfastCandidate; }
+					else episodes.push({ season: season.number, episode, files, vidfastCandidate });
 					have.add(`${season.number}-${episode}`);
 				}
 			}
-		}
 
-		// Trusted channels' playlists (sources/channels.ts): old shows no site streams, by TMDB's
-		// numbering, so only when Showbox numbers seasons the same way.
-		if (sameNumbering) {
-			const channel = await channelFiles(show, mainShowboxId ? 4000 : 15000);
+			// Free ad-supported VOD sources matched by TMDB numbering.
+			for (const [key, files] of xumo) {
+				const [season, episode] = key.split('-').map(Number);
+				const listed = episodes.find((e) => e.season === season && e.episode === episode);
+				if (listed) listed.files = withXumo(listed.files, files);
+				else episodes.push({ season, episode, files });
+				have.add(key);
+				for (const f of files) qualities.add(f.quality);
+			}
+			for (const [key, files] of plex) {
+				const [season, episode] = key.split('-').map(Number);
+				const listed = episodes.find((e) => e.season === season && e.episode === episode);
+				if (listed) listed.files = withPlex(listed.files, files);
+				else episodes.push({ season, episode, files });
+				have.add(key);
+				for (const f of files) qualities.add(f.quality);
+			}
+			for (const [key, files] of pluto) {
+				const [season, episode] = key.split('-').map(Number);
+				const listed = episodes.find((e) => e.season === season && e.episode === episode);
+				if (listed) listed.files = withPluto(listed.files, files);
+				else episodes.push({ season, episode, files });
+				have.add(key);
+				for (const f of files) qualities.add(f.quality);
+			}
+
+			// The publisher's exact episode is a fallback, not the first choice.
 			for (const [key, files] of channel) {
 				const [season, episode] = key.split('-').map(Number);
 				const listed = episodes.find((e) => e.season === season && e.episode === episode);
-				// After Showbox's own files, before the sites that are only asked when picked (most have no old cartoons).
-				if (listed) listed.files = [...listed.files.filter((f) => !f.source), ...files, ...listed.files.filter((f) => f.source)];
+				if (listed) listed.files = [...listed.files, ...files];
 				else episodes.push({ season, episode, files });
 				have.add(key);
 				for (const f of files) qualities.add(f.quality);
@@ -530,11 +567,16 @@ export async function combineEpisodes(
 				const files = hianime.get(`${e.season}-${e.episode}`);
 				if (files) e.files = [...e.files, ...files];
 			}
-			// AllAnime (sources/allanime.ts): another anime source, desktop app only (hidden window).
-			const allanime = await allanimeFiles(show, mainTitle, mainShowboxId ? 6000 : 15000);
+			// AllAnime (sources/allanime.ts) and KickAssAnime (sources/kickassanime.ts) in parallel.
+			const [allanime, kaa] = await Promise.all([
+				allanimeFiles(show, mainTitle, mainShowboxId ? 6000 : 15000),
+				kaaFiles(show, mainTitle, mainShowboxId ? 6000 : 15000)
+			]);
 			for (const e of episodes) {
-				const files = allanime.get(`${e.season}-${e.episode}`);
-				if (files) e.files = [...e.files, ...files];
+				const kaaF = kaa.get(`${e.season}-${e.episode}`);
+				if (kaaF) e.files = [...e.files, ...kaaF];
+				const allF = allanime.get(`${e.season}-${e.episode}`);
+				if (allF) e.files = [...e.files, ...allF];
 			}
 			// Nyaa last (sources/nyaa.ts, when turned on): a torrent is the slowest to start, so it's
 			// asked only when picked or when everything else has failed (WatchPlayer's linkFor).

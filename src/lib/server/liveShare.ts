@@ -1,3 +1,4 @@
+import { isWebPage } from './readOpening';
 import { fetchSteadily } from '$lib/server/relayPieces';
 import { isPicture, videoFromPicture } from '$lib/server/pictureVideo';
 
@@ -80,6 +81,10 @@ async function wholePiece(address: string, headers: Record<string, string>): Pro
 	} catch {
 		return { refused: 502 };
 	}
+	if (upstream.response.headers.get('cf-mitigated') === 'challenge') {
+		upstream.cancel();
+		return { refused: 403 };
+	}
 	if (!upstream.response.ok) {
 		upstream.cancel();
 		return { refused: upstream.response.status };
@@ -91,6 +96,7 @@ async function wholePiece(address: string, headers: Record<string, string>): Pro
 		return { refused: 502 };
 	}
 	const bytes = Buffer.concat(parts);
+	if (isWebPage(bytes)) return { refused: 502 };
 	if (new TextDecoder().decode(bytes.subarray(0, 16)).startsWith('#EXTM3U')) return 'playlist';
 	// Pieces that are pictures with the video inside (pictureVideo.ts), unwrapped.
 	if (isPicture(bytes)) {

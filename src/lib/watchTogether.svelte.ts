@@ -43,7 +43,19 @@ export type RoomState = {
 /** Someone in the room: their name and picture (Settings → Online; `avatar` 0 means none). */
 export type RoomPerson = { id: string; name: string; avatar: number; me: boolean };
 type RoomAnswer = { code: string; host: boolean; state: RoomState; rev: number; now: number; people: RoomPerson[]; same?: boolean; error?: string; chat?: Parameters<typeof takeChat>[0] };
-export type Playing = { title: string; type: 'tv' | 'movie'; year: string; season: number; episode: number };
+export type Playing = {
+	title: string;
+	type: 'tv' | 'movie';
+	year: string;
+	season: number;
+	episode: number;
+	/**
+	 * The name it was asked for, when its source calls it something else: Watch along opens the
+	 * friend's name, and this computer's source may spell it its own way (2026-11-23: watch along
+	 * never jumped to the friend's place).
+	 */
+	asked?: string;
+};
 
 /** The room this screen is in ('' when none), for the pages. */
 export const together = $state({
@@ -144,7 +156,7 @@ function offerIfNew(before: RoomState | null, state: RoomState, first: boolean):
 		return;
 	}
 	// (The player follows a show's next episode by itself; only what the person isn't watching is asked.)
-	if (here && here.type === 'tv' && state.type === 'tv' && here.title.toLowerCase() === state.title.toLowerCase()) return;
+	if (here && here.type === 'tv' && state.type === 'tv' && sameTitle(here, state)) return;
 	// Never what this person started themselves (owner, 2026-11-15: reopening Catalog rejoined the
 	// room their own player had started earlier, and offered them their own film as "Alex started…").
 	if (state.by && state.by === myName()) return;
@@ -338,7 +350,19 @@ export async function nowPlaying(what: Playing): Promise<void> {
 	} catch {}
 }
 
-const sameThing = (a: Playing, b: Playing) => a.title.toLowerCase() === b.title.toLowerCase() && a.type === b.type && a.season === b.season && a.episode === b.episode;
+/** A name without capitals, punctuation or a year in brackets: "Spider-Man: Brand New Day" = "Spider-Man - Brand New Day". */
+const plainName = (name: string) =>
+	name
+		.toLowerCase()
+		.normalize('NFKD')
+		.replace(/[̀-ͯ]/g, '')
+		.replace(/&/g, 'and')
+		.replace(/\((19|20)\d\d\)/g, '')
+		.replace(/[^a-z0-9]+/g, '');
+/** The same film or show, by its name here or the name it was asked for. */
+const sameTitle = (here: Playing, room: { title: string }) =>
+	[here.title, here.asked].some((name) => Boolean(name) && plainName(name!) === plainName(room.title));
+const sameThing = (a: Playing, b: Playing) => sameTitle(a, b) && a.type === b.type && a.season === b.season && a.episode === b.episode;
 
 export function roomPaused(what: Playing): boolean {
 	const state = together.state;
@@ -363,7 +387,9 @@ function stateNow() {
 	const { video, playing } = attached!;
 	const on = !video.paused && !video.ended;
 	if (on) holdReason = '';
-	return { ...playing(), playing: on, position: video.currentTime, waiting: on ? '' : holdReason };
+	// (The name it was asked for stays here: the room is told the name its source gave.)
+	const { asked: _asked, ...what } = playing();
+	return { ...what, playing: on, position: video.currentTime, waiting: on ? '' : holdReason };
 }
 
 /** Where the room is right now, in seconds into the video. */
@@ -383,7 +409,7 @@ function apply(before: RoomState | null, steady = false): void {
 	if (!sameThing(here, state)) {
 		// The room went to another episode of the show playing here: this house goes too.
 		const moved = !steady && before !== null && (before.season !== state.season || before.episode !== state.episode);
-		if (moved && follow && state.type === 'tv' && here.type === 'tv' && here.title.toLowerCase() === state.title.toLowerCase()) follow(state);
+		if (moved && follow && state.type === 'tv' && here.type === 'tv' && sameTitle(here, state)) follow(state);
 		return;
 	}
 	const where = roomPosition(state);

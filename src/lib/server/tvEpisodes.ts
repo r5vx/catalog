@@ -1,3 +1,4 @@
+import { releaseParts } from '../release';
 import { tmdbGet } from './metadata/tmdb';
 import { tmdbShow } from './combinedEpisodes';
 import { getOrderCache, saveOrderCache } from './db/queries';
@@ -124,7 +125,10 @@ export type PlayerList = {
 /** A complete list is kept this long (looked up again in the background each visit). */
 const PLAYER_LIST_KEPT = 60 * 24 * 60 * 60 * 1000;
 
-const playerListKey = (title: string, year: string) => `tv-episodes|${title.toLowerCase()}|${year}`;
+const playerListKey = (label: string, requestedYear: string) => {
+	const { title, year } = releaseParts(label, requestedYear);
+	return `tv-episodes|${title.toLowerCase()}|${year}`;
+};
 
 export function keptPlayerList(title: string, year: string): { list: PlayerList; at: number } | null {
 	const kept = getOrderCache(playerListKey(title, year));

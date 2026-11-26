@@ -1,4 +1,6 @@
 <script lang="ts">
+	import SourceChecks from '$lib/SourceChecks.svelte';
+	import { checkWatchable, type SourceCheck } from '$lib/watchCheck';
 	import { airsText } from '$lib/airs';
 	import { untrack } from 'svelte';
 	import { playHref, bigPicture } from '$lib/tv/tiles';
@@ -8,6 +10,7 @@
 	import FriendsSeen from '$lib/FriendsSeen.svelte';
 	import type { PageData } from './$types';
 	import { warmWhenResting } from '$lib/watch';
+	import { seasonsWord } from '$lib/seasonsWord';
 
 	// The highlight resting on Play (or an episode) for a moment starts the lookup and the video
 	// link, so OK opens it sooner. Longer than on a computer: Play is highlighted by itself when
@@ -18,7 +21,12 @@
 
 	const d = $derived(data.details);
 	// The library's name for it plays (it's what Showbox was matched by); else this page's.
-	const playTitle = $derived(data.continuing?.title ?? data.entry?.title ?? d.title ?? '');
+	const playTitle = $derived(data.entry?.title ?? d.title ?? '');
+	let sources = $state<SourceCheck[]>([]);
+	$effect(() => {
+		sources = [];
+		if (playTitle && !d.unreleased) return checkWatchable(new URLSearchParams({ title: playTitle, type: data.type, year: String(d.year ?? ''), tmdb: data.source === 'tmdb' ? data.id : '' }), (_, checks) => sources = checks.filter(c => c.state === 'yes' || c.state === 'listed'));
+	});
 	const resumeLabel = $derived(
 		data.continuing
 			? data.type === 'tv' && data.continuing.season
@@ -28,16 +36,6 @@
 				: 'Resume'
 			: 'Play'
 	);
-	const facts = $derived(
-		[
-			d.year,
-			d.kind,
-			d.seasons ? `${d.seasons} season${d.seasons === 1 ? '' : 's'}` : null,
-			d.runtimeMinutes && data.type === 'movie' ? `${Math.floor(d.runtimeMinutes / 60)}h ${d.runtimeMinutes % 60}m`.replace(/^0h /, '') : null,
-			d.externalRating ? `★ ${d.externalRating.toFixed(1)}` : null
-		].filter(Boolean)
-	);
-
 	let inList = $state(false);
 	let adding = $state(false);
 	$effect(() => {
@@ -132,7 +130,7 @@
 	$effect(() => {
 		const show = data.show;
 		if (!show || data.type !== 'tv') return;
-		const params = new URLSearchParams({ title: playTitle, year: data.continuing ? '' : String(d.year ?? '') });
+		const params = new URLSearchParams({ title: playTitle, year: String(d.year ?? '') });
 		playerList = null;
 		let tries = 0;
 		let timer: ReturnType<typeof setTimeout>;
@@ -163,6 +161,16 @@
 	});
 	const seasonsShown = $derived(playerList?.seasons ?? data.show?.seasons ?? []);
 	const episodeTitle = $derived(playerList?.title ?? playTitle);
+	// The line under the name: "2001 · Anime · 18 seasons · ★ 8.0" (the seasons as the buttons show them).
+	const facts = $derived(
+		[
+			d.year,
+			d.kind,
+			seasonsWord(d.seasons, playerList?.seasons),
+			d.runtimeMinutes && data.type === 'movie' ? `${Math.floor(d.runtimeMinutes / 60)}h ${d.runtimeMinutes % 60}m`.replace(/^0h /, '') : null,
+			d.externalRating ? `★ ${d.externalRating.toFixed(1)}` : null
+		].filter(Boolean)
+	);
 
 	/** A season of the player's own list: its names as the player shows them, and how far through each. */
 	async function playerSeason(list: PlayerList, wanted: number): Promise<SeasonEpisode[]> {
@@ -222,7 +230,7 @@
 				});
 			return;
 		}
-		const params = new URLSearchParams({ show: String(show.showId), season: String(wanted), title: playTitle });
+		const params = new URLSearchParams({ show: String(show.showId), season: String(wanted), title: data.progressTitle });
 		fetch(`/api/tv/season?${params}`)
 			.then((response) => response.json())
 			.then((result) => {
@@ -265,6 +273,7 @@
 				{#if data.continuing.left}<span>{data.continuing.left} min left</span>{/if}
 			</p>
 		{/if}
+		<SourceChecks {sources} series={data.type === 'tv'} />
 		{#if d.overview}<p class="overview">{d.overview}</p>{/if}
 
 		<div class="buttons" data-tv-row>
@@ -276,8 +285,8 @@
 					class="button primary"
 					data-tv-item
 					data-tv-autofocus
-					href={playHref(playTitle, data.type, data.continuing ? null : d.year, data.continuing?.season, data.continuing?.episode)}
-					onfocus={() => watchWarm.start({ title: playTitle, type: data.type, year: data.continuing ? null : d.year, season: data.continuing?.season, episode: data.continuing?.episode })}
+					href={playHref(playTitle, data.type, d.year, data.continuing?.season, data.continuing?.episode)}
+					onfocus={() => watchWarm.start({ title: playTitle, type: data.type, year: d.year, season: data.continuing?.season, episode: data.continuing?.episode })}
 					onblur={watchWarm.stop}
 				>
 					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12.5-7.5z" /></svg>
@@ -287,8 +296,8 @@
 					<a
 						class="button"
 						data-tv-item
-						href={playHref(playTitle, data.type, null, 1, 1)}
-						onfocus={() => watchWarm.start({ title: playTitle, type: data.type, season: 1, episode: 1 })}
+						href={playHref(playTitle, data.type, d.year, 1, 1)}
+						onfocus={() => watchWarm.start({ title: playTitle, type: data.type, year: d.year, season: 1, episode: 1 })}
 						onblur={watchWarm.stop}>From the start</a
 					>
 				{/if}
@@ -319,8 +328,8 @@
 							<a
 								class="ep"
 								data-tv-item
-								href={playHref(episodeTitle, 'tv', data.continuing ? null : d.year, season, ep.episode)}
-								onfocus={() => watchWarm.start({ title: episodeTitle, type: 'tv', year: data.continuing ? null : d.year, season, episode: ep.episode })}
+								href={playHref(episodeTitle, 'tv', d.year, season, ep.episode)}
+								onfocus={() => watchWarm.start({ title: episodeTitle, type: 'tv', year: d.year, season, episode: ep.episode })}
 								onblur={watchWarm.stop}
 							>
 								<span class="still">

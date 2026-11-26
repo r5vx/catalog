@@ -74,7 +74,7 @@
 							{#each ratings.seasons as season (season.number)}
 								{@const ep = season.episodes.find((e) => e.episode === i + 1)}
 								{#if ep}
-									<td class="cell {level(ep.rating)}" title="S{season.number}E{ep.episode} · {ep.title}{ep.rating !== null ? ` · ${ep.rating.toFixed(1)}` : ' · not rated yet'}">
+									<td class="cell {level(ep.rating)}" title="S{season.number}E{ep.episode} · {ep.title}{ep.rating !== null ? ` · ${ep.rating.toFixed(1)}` : ' · rating unavailable'}">
 										{ep.rating !== null ? ep.rating.toFixed(1) : '–'}
 									</td>
 								{:else}
@@ -97,7 +97,7 @@
 				</tfoot>
 			</table>
 		</div>
-		<p class="faint note">{ratings.from === 'IMDb' ? "IMDb's ratings" : "TMDB's ratings (IMDb has none for it)"}</p>
+		<p class="faint note">{ratings.from === 'IMDb' ? 'IMDb via OMDb' : 'TMDB (at least 3 votes)'}. A dash means no score was available from this source.</p>
 	{/if}
 </Fold>
 

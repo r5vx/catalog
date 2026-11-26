@@ -29,10 +29,22 @@ export const load: PageServerLoad = async ({ params, url }) => {
 		name: url.searchParams.get('name')?.trim() ?? '',
 		photo: /^https:\/\/(image\.tmdb\.org|s4\.anilist\.co)\//.test(url.searchParams.get('photo') ?? '') ? url.searchParams.get('photo') : null
 	};
-	const resolved = person ?? {
-		id: 0,
-		sourceId: params.id,
-		...((await fetchPerson(params.id)) ?? given)
+	const sourceId = person?.sourceId ?? params.id;
+	const [profile, rawKnownFor] = await Promise.all([
+		fetchPerson(sourceId),
+		fetchKnownFor(sourceId)
+	]);
+
+	const resolved = {
+		id: person?.id ?? 0,
+		sourceId,
+		name: person?.name || profile?.name || given.name,
+		photo: profile?.photo ?? person?.photo ?? given.photo,
+		biography: profile?.biography ?? null,
+		birthday: profile?.birthday ?? null,
+		deathday: profile?.deathday ?? null,
+		placeOfBirth: profile?.placeOfBirth ?? null,
+		department: profile?.department ?? null
 	};
 
 	if (!resolved.name && params.id.startsWith('anilist:') && anilistResting()) error(503, 'AniList is busy. Try again in a few seconds.');
@@ -42,7 +54,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
 	const owned = allTitleKeys();
 	const normalise = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
-	const knownFor = (await fetchKnownFor(resolved.sourceId)).filter(
+	const knownFor = rawKnownFor.filter(
 		(credit: { title: string }) => !owned.has(normalise(credit.title))
 	);
 

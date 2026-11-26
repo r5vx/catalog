@@ -116,7 +116,25 @@ export function takeChat(answer: ChatAnswer, fromRoom = false): void {
 	chat.last = Math.max(chat.last, answer.last ?? 0);
 }
 
+/**
+ * An invite to watch together is an ordinary whisper with the room's code in it (a friend's older
+ * Catalog still shows the code to type in). `inviteRoom` finds the code, for a Join button.
+ */
+export function roomInviteText(code: string): string {
+	return `Watch together with me: room ${code}`;
+}
+export function inviteRoom(text: string): string | null {
+	return text.match(/^Watch together with me: room ([A-Z0-9]{6})$/)?.[1] ?? null;
+}
+
+/** Do not disturb (the status beside My profile): messages come in and count, with no pop-ups. */
+let quiet = false;
+export function setChatQuiet(on: boolean): void {
+	quiet = on;
+}
+
 function show(message: Message): void {
+	if (quiet && !message.mine) return;
 	chat.shown = [...chat.shown, message].slice(-5);
 	setTimeout(() => (chat.shown = chat.shown.filter((one) => one !== message && one.id !== message.id)), SHOWN_FOR);
 }
@@ -132,7 +150,7 @@ export function chatNoticeClick(run: (message: Message) => void): void {
  * too, since the corner can't be seen. Not where there's no Notification (TVs), and one per whisper.
  */
 function notify(message: Message): void {
-	if (message.mine || document.hasFocus() || typeof Notification === 'undefined') return;
+	if (quiet || message.mine || document.hasFocus() || typeof Notification === 'undefined') return;
 	try {
 		if (Notification.permission === 'default') void Notification.requestPermission();
 		if (Notification.permission !== 'granted') return;

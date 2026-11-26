@@ -4,15 +4,13 @@
  *
  * Like Movy, its link only comes to its own page, so the desktop app opens that page out of
  * sight and notes the playlist its player asks for (electron/main.cjs, `findOnVidfastNow`, in
- * the same queue as Movy's: two lookups at once). A link found is kept 30 minutes, a "no" 6
- * hours. Its video servers (goldenkite.top, ultramoss.top, olivewave.top on 2026-11-04) want
+ * the same queue as Movy's: two lookups at once). Evidence lasts five minutes for this episode only. Its video servers (goldenkite.top, ultramoss.top, olivewave.top on 2026-11-04) want
  * vidfast.vc as Referer and Origin, so the video comes through Catalog's relay.
  * Only in the desktop app: elsewhere (npm run dev) Vidfast never has anything.
  */
 import type { FileOption } from '../showbox';
 import { electronMovyFind } from '../electron-fetch';
 import { trustVideoHost } from '../relayHosts';
-import { noteSourceAnswer } from '../sourceAnswers';
 
 const SITE = 'https://vidfast.vc';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
@@ -44,6 +42,11 @@ const pageFor = (what: What) =>
 
 const known = new Map<string, { at: number; url: string | null }>();
 const asking = new Map<string, Promise<string | null>>();
+const POSITIVE = 5 * MINUTE;
+export function confirmedVidfast(what: What): FileOption[] {
+	const kept = known.get(vidfastShareKey(what));
+	return kept?.url && Date.now() - kept.at < POSITIVE ? [vidfastCopy(what)] : [];
+}
 
 /** The video playlist for a Vidfast copy, or null when it hasn't got it (or didn't answer in time). */
 export function vidfastStream(shareKey: string, fresh = false): Promise<string | null> {
@@ -52,7 +55,7 @@ export function vidfastStream(shareKey: string, fresh = false): Promise<string |
 	const kept = known.get(shareKey);
 	if (kept && !fresh) {
 		const age = Date.now() - kept.at;
-		if (kept.url ? age < 30 * MINUTE : age < 6 * 60 * MINUTE) return Promise.resolve(kept.url);
+		if (kept.url ? age < POSITIVE : age < MINUTE) return Promise.resolve(kept.url);
 	}
 	const under = asking.get(shareKey);
 	if (under) return under;
@@ -61,13 +64,9 @@ export function vidfastStream(shareKey: string, fresh = false): Promise<string |
 			if (url) {
 				trustVideoHost(url, 'vidfast');
 				known.set(shareKey, { at: Date.now(), url });
-				noteSourceAnswer('Vidfast', what, true);
 				return url;
 			}
-			// Every server said no: its copy isn't listed for this a while (sourceAnswers.ts).
-			if (error === 'none') noteSourceAnswer('Vidfast', what, false);
-			// Nothing came: kept 6 hours. Too slow: asked again after 10 minutes. Otherwise not kept.
-			if (error === 'timeout') known.set(shareKey, { at: Date.now() - 6 * 60 * MINUTE + 10 * MINUTE, url: null });
+			if (error !== 'cancelled') known.set(shareKey, { at: Date.now(), url: null });
 			return null;
 		})
 		.finally(() => asking.delete(shareKey));

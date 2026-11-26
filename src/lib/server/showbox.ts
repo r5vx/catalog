@@ -762,8 +762,10 @@ export function bestMatch(
 	items: ShowboxResult[],
 	query: string,
 	wantType: string,
-	wantYear: string
+	wantYear: string,
+	strictYear = false
 ): ShowboxResult | null {
+	if (strictYear && wantYear) items = items.filter(r => extractYear(r.info) === wantYear);
 	if (!items.length) return null;
 	query = withoutQualifier(query);
 	const want = query.toLowerCase().trim();

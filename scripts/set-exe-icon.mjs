@@ -45,7 +45,16 @@ if (!rcedit) {
 	process.exit(0); // not worth failing the whole build over
 }
 
-execFileSync(rcedit, [exe, '--set-icon', icon], { stdio: 'inherit' });
+// Windows can briefly hold the freshly packaged executable open.
+for (let attempt = 0; ; attempt++) {
+	try {
+		execFileSync(rcedit, [exe, '--set-icon', icon], { encoding: 'utf8' });
+		break;
+	} catch (err) {
+		if (attempt >= 4 || !/unable to commit changes/i.test(`${err.stdout ?? ''} ${err.stderr ?? ''}`)) throw err;
+		await new Promise(resolve => setTimeout(resolve, 1000 * 2 ** attempt));
+	}
+}
 
 // Confirm it actually landed, rather than assuming.
 const ico = readFileSync(icon);

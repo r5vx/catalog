@@ -7,6 +7,8 @@
 	 */
 	import { goto } from '$app/navigation';
 	import { tick } from 'svelte';
+	import { onReachBottom } from '$lib/infiniteScroll';
+	import PosterPlaceholder from '$lib/PosterPlaceholder.svelte';
 
 	type Suggestion = {
 		source: string;
@@ -131,7 +133,7 @@
 				{#each shown as item (`${item.source}:${item.sourceId}`)}
 					<a class="card" href="/title/{item.source}/{item.sourceId}" oncontextmenu={(e) => openMenu(e, item)}>
 						<div class="poster">
-							{#if item.posterUrl}<img src={item.posterUrl} alt="" loading="lazy" />{:else}<span class="empty">?</span>{/if}
+							{#if item.posterUrl}<img src={item.posterUrl} alt="" loading="lazy" />{:else}<PosterPlaceholder title={item.title} year={item.year} kind={item.kind} />{/if}
 						</div>
 						<span class="name">{item.title}</span>
 						<span class="meta faint">{[item.year, item.why ?? item.kind].filter(Boolean).join(' · ')}</span>
@@ -139,10 +141,9 @@
 					</a>
 				{/each}
 				{#if kept.length > shown.length}
-					<button type="button" class="card more-button" onclick={() => (extra += STEP)}>
-						<span class="poster"><span class="plus">+</span></span>
-						<span class="name">Show more</span>
-					</button>
+					<div class="card more-sentinel" use:onReachBottom={() => (extra += STEP)}>
+						<span class="faint small">Loading more…</span>
+					</div>
 				{/if}
 			</div>
 			{#if !shown.length}<p class="faint none">All of these are watched.</p>{/if}
@@ -308,27 +309,11 @@
 		color: var(--good);
 	}
 
-	.more-button {
-		font: inherit;
-		background: none;
-		border: 0;
-		padding: 0;
-		cursor: pointer;
-		text-align: left;
-	}
-
-	.more-button .poster {
-		border: 1px dashed var(--rule);
-		background: transparent;
-	}
-
-	.more-button:hover .poster {
-		border-color: var(--accent);
-	}
-
-	.plus {
-		font-size: 2rem;
-		color: var(--ink-faint);
+	.more-sentinel {
+		display: grid;
+		place-items: center;
+		min-width: 110px;
+		padding: 12px;
 	}
 
 	.none {

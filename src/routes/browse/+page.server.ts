@@ -1,4 +1,4 @@
-import { searchAll, browseShelves, hasTmdbKey, trendingPeopleTmdb, type BrowseMode, type BrowseFilters } from '$lib/server/metadata';
+import { searchAll, browseShelves, hasTmdbKey, trendingPeopleTmdb, searchPeopleTmdb, type BrowseMode, type BrowseFilters } from '$lib/server/metadata';
 import { existingSourceKeysWithIds, libraryPosters } from '$lib/server/db/queries';
 import { searchPeople } from '$lib/server/db/people';
 import { parseTitle } from '$lib/parseTitle';
@@ -37,7 +37,33 @@ export const load: PageServerLoad = async ({ url }) => {
 		(yearFrom || yearTo || sort || genre) ? { yearFrom, yearTo, sort, genre } : undefined;
 
 	if (isActors) {
-		const people = q.length >= 2 ? searchPeople(q) : [];
+		const [localPeople, tmdbPeople] = q.length >= 2
+			? await Promise.all([
+				Promise.resolve(searchPeople(q)),
+				hasTmdbKey() ? withinTime(searchPeopleTmdb(q, 30), 10_000, []) : Promise.resolve([])
+			])
+			: [[], []];
+		const seenNames = new Set(localPeople.map((p) => p.name.toLowerCase()));
+		const people = [
+			...localPeople.map((p) => ({
+				key: `lib:${p.id}`,
+				href: `/person/${p.id}`,
+				name: p.name,
+				photo: p.photo,
+				subtitle: `${p.count} ${p.count === 1 ? 'title' : 'titles'} in library${p.sample ? ` · ${p.sample}` : ''}`,
+				inLibrary: true
+			})),
+			...tmdbPeople
+				.filter((p) => !seenNames.has(p.name.toLowerCase()))
+				.map((p) => ({
+					key: p.sourceId,
+					href: `/person/${p.sourceId}?name=${encodeURIComponent(p.name)}${p.photo ? `&photo=${encodeURIComponent(p.photo)}` : ''}`,
+					name: p.name,
+					photo: p.photo,
+					subtitle: [p.department, p.knownFor].filter(Boolean).join(' · '),
+					inLibrary: false
+				}))
+		];
 		const trending = !q && hasTmdbKey() ? await withinTime(trendingPeopleTmdb(), 15_000, []) : [];
 		return {
 			q,

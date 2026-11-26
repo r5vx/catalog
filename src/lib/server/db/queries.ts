@@ -1,6 +1,8 @@
 import { digitsAsWords, hasNumberToSwap, numbersAsDigits } from '../../numberWords';
 import { db, plain, plainAll, toInt } from './index';
 import type { Category, Entry, EntryCard } from './types';
+import { releaseParts } from '../../release';
+import { normalizeTitle } from '../metadata/types';
 import { titleKey } from '../../titleKey';
 import { currentProfile, MAIN_PROFILE } from '../profile';
 import { PROFILE_COLORS, WATCHED_SQL } from '../../constants';
@@ -438,6 +440,17 @@ export function saveOrderCache(key: string, value: unknown, at: number): void {
 	db.prepare(
 		'INSERT INTO watch_order_cache (key, value, saved_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, saved_at = excluded.saved_at'
 	).run(key, JSON.stringify(value), at);
+}
+
+/** Every anime in the library (the theme game's "My anime" level): AniList's, and TMDB's in the Anime category. */
+export function libraryAnime(): { key: string; title: string; year: number | null }[] {
+	return db
+		.prepare(
+			`SELECT DISTINCT e.source || ':' || e.source_id AS key, e.title, e.year
+			 FROM entries e LEFT JOIN categories c ON c.id = e.category_id
+			 WHERE e.source_id IS NOT NULL AND (e.source = 'anilist' OR (e.source = 'tmdb' AND c.slug = 'anime'))`
+		)
+		.all() as { key: string; title: string; year: number | null }[];
 }
 
 /* ---------------------------------------------------------------- saved subtitles */
@@ -950,16 +963,14 @@ export function entryIdForSource(source: string, sourceId: string): number | nul
 type FoundEntry = { id: number; status: string; posterUrl: string; lastSeason: number; lastEpisode: number; rating: number | null; rateable: boolean };
 
 /** `rateable`: the library's own entry (another profile's list has no ratings). */
-export function findEntryByTitle(title: string): FoundEntry | null {
+export function findEntryByTitle(title: string, year = '', type = ''): FoundEntry | null {
 	const profile = currentProfile();
+	const identity = `title = ? COLLATE NOCASE AND (? IS NULL OR year = ?) AND (? IS NULL OR source != 'tmdb' OR source_id LIKE ? || ':%')`;
+	const args = [title, year || null, year || null, type || null, type || null];
 	const row = (
 		profile === MAIN_PROFILE
-			? db
-					.prepare('SELECT id, status, poster_url AS posterUrl, last_season AS lastSeason, last_episode AS lastEpisode, rating, 1 AS rateable FROM entries WHERE title = ? COLLATE NOCASE LIMIT 1')
-					.get(title)
-			: db
-					.prepare('SELECT id, status, poster_url AS posterUrl, last_season AS lastSeason, last_episode AS lastEpisode, NULL AS rating, 0 AS rateable FROM profile_titles WHERE profile = ? AND title = ? COLLATE NOCASE LIMIT 1')
-					.get(profile, title)
+			? db.prepare(`SELECT id, status, poster_url AS posterUrl, last_season AS lastSeason, last_episode AS lastEpisode, rating, 1 AS rateable FROM entries WHERE ${identity} LIMIT 1`).get(...args)
+			: db.prepare(`SELECT id, status, poster_url AS posterUrl, last_season AS lastSeason, last_episode AS lastEpisode, NULL AS rating, 0 AS rateable FROM profile_titles WHERE profile = ? AND ${identity} LIMIT 1`).get(profile, ...args)
 	) as (Omit<FoundEntry, 'rateable'> & { rateable: number }) | undefined;
 	return row ? { ...row, rateable: Boolean(row.rateable) } : null;
 }
@@ -1083,7 +1094,20 @@ export function deleteWatchProgress(title: string, type: string, season: number,
 		.run(currentProfile(), title, type, season, episode);
 }
 
+function unassignedRelease(title: string, type: string) {
+	if (releaseParts(title).year) return false;
+	if (getOrderCache(`same-name|${type}|${title.trim().toLowerCase()}`)?.value === true) return true;
+	if (type !== 'tv') return false;
+	// Older libraries can have TMDB answers for both releases but no year on their progress.
+	const name = normalizeTitle(title);
+	return Boolean(db.prepare(`SELECT 1 FROM watch_order_cache WHERE
+		((key BETWEEN ? AND ?) OR (key BETWEEN ? AND ?)) AND json_type(value, '$.id') = 'integer'
+		GROUP BY lower(json_extract(value, '$.name')) HAVING COUNT(DISTINCT json_extract(value, '$.id')) > 1`)
+		.get(`tmdb-show3|${name}|`, `tmdb-show3|${name}|9999`, `tmdb-show4|${name}|`, `tmdb-show4|${name}|9999`));
+}
+
 export type ContinueItem = WatchProgress & {
+	needsRelease?: boolean;
 	updatedAt: string;
 	posterUrl: string | null;
 	entryId: number | null;
@@ -1116,17 +1140,17 @@ export function continueWatchingList(): ContinueItem[] {
 						-- ("Kaiju No. 8" for "Kaiju No. 8 Season 2"). Never a name found somewhere inside
 						-- another: "Re:ZERO … The Frozen Bond" took Disney's Frozen's poster that way.
 						COALESCE(
-							(SELECT e.poster_url FROM entries e WHERE lower(e.title) = lower(w.title) LIMIT 1),
-							(SELECT e.poster_url FROM entries e WHERE w.type = 'tv' AND (instr(lower(e.title), lower(w.title)) = 1 OR instr(lower(w.title), lower(e.title)) = 1) LIMIT 1),
-							NULLIF(w.poster_url, '')
+							NULLIF(w.poster_url, ''),
+							(SELECT e.poster_url FROM entries e WHERE (e.source != 'tmdb' OR e.source_id LIKE w.type || ':%') AND (lower(e.title) = lower(w.title) OR lower(e.title || ' (' || e.year || ')') = lower(w.title)) LIMIT 1),
+							(SELECT e.poster_url FROM entries e WHERE w.type = 'tv' AND (e.source != 'tmdb' OR e.source_id LIKE 'tv:%') AND w.title NOT GLOB '* ([0-9][0-9][0-9][0-9])' AND (instr(lower(e.title), lower(w.title)) = 1 OR instr(lower(w.title), lower(e.title)) = 1) LIMIT 1)
 						) AS posterUrl,
 						COALESCE(
-							(SELECT e.id FROM ${list} e WHERE lower(e.title) = lower(w.title) LIMIT 1),
-							(SELECT e.id FROM ${list} e WHERE w.type = 'tv' AND (instr(lower(e.title), lower(w.title)) = 1 OR instr(lower(w.title), lower(e.title)) = 1) LIMIT 1)
+							(SELECT e.id FROM ${list} e WHERE (e.source != 'tmdb' OR e.source_id LIKE w.type || ':%') AND (lower(e.title) = lower(w.title) OR lower(e.title || ' (' || e.year || ')') = lower(w.title)) LIMIT 1),
+							(SELECT e.id FROM ${list} e WHERE w.type = 'tv' AND (e.source != 'tmdb' OR e.source_id LIKE 'tv:%') AND w.title NOT GLOB '* ([0-9][0-9][0-9][0-9])' AND (instr(lower(e.title), lower(w.title)) = 1 OR instr(lower(w.title), lower(e.title)) = 1) LIMIT 1)
 						) AS entryId,
 						COALESCE(
-							(SELECT e.status FROM ${list} e WHERE lower(e.title) = lower(w.title) LIMIT 1),
-							(SELECT e.status FROM ${list} e WHERE w.type = 'tv' AND (instr(lower(e.title), lower(w.title)) = 1 OR instr(lower(w.title), lower(e.title)) = 1) LIMIT 1)
+							(SELECT e.status FROM ${list} e WHERE (e.source != 'tmdb' OR e.source_id LIKE w.type || ':%') AND (lower(e.title) = lower(w.title) OR lower(e.title || ' (' || e.year || ')') = lower(w.title)) LIMIT 1),
+							(SELECT e.status FROM ${list} e WHERE w.type = 'tv' AND (e.source != 'tmdb' OR e.source_id LIKE 'tv:%') AND w.title NOT GLOB '* ([0-9][0-9][0-9][0-9])' AND (instr(lower(e.title), lower(w.title)) = 1 OR instr(lower(w.title), lower(e.title)) = 1) LIMIT 1)
 						) AS entryStatus
 				FROM watch_progress w
 				-- Caught up at the episode watched last (not one since): done, unless a new one is out.
@@ -1162,6 +1186,7 @@ export function continueWatchingList(): ContinueItem[] {
 				if (!replay) return [];
 				return [{ ...item, posterUrl: replay.poster, newEpisode: false, href: `/watch?${new URLSearchParams({ replay: replay.id, name: item.title })}` }];
 			}
+			if (unassignedRelease(item.title, item.type)) return [{ ...item, needsRelease: true, href: `/browse?q=${encodeURIComponent(item.title)}`, posterUrl: null, entryId: null, entryStatus: null, newEpisode: false }];
 			return [
 				newSeason !== null && newEpisodeNumber !== null
 					? { ...item, season: newSeason, episode: newEpisodeNumber, currentTime: 0, duration: 0, newEpisode: !dismissed }
@@ -1183,12 +1208,16 @@ export function continueWatchingList(): ContinueItem[] {
 export function hideCompletedFromContinueWatching(entryId: number): void {
 	try {
 		const table = currentProfile() === MAIN_PROFILE ? 'entries' : 'profile_titles';
-		const named = db.prepare(`SELECT title FROM ${table} WHERE id = ?`).get(entryId) as { title?: string } | undefined;
+		const named = db.prepare(`SELECT title, year, source_id AS sourceId FROM ${table} WHERE id = ?`).get(entryId) as { title?: string; year?: number; sourceId?: string } | undefined;
 		if (!named?.title) return;
 		const watched = db
-			.prepare('SELECT DISTINCT title, type FROM watch_progress WHERE profile = ? AND lower(title) = lower(?)')
-			.all(currentProfile(), named.title) as { title: string; type: string }[];
-		for (const row of watched) hideFromContinueWatching(row.title, row.type);
+			.prepare('SELECT DISTINCT title, type FROM watch_progress WHERE profile = ? AND (lower(title) = lower(?) OR lower(title) = lower(?))')
+			.all(currentProfile(), named.title, named.year ? `${named.title} (${named.year})` : named.title) as { title: string; type: string }[];
+		for (const row of watched) {
+			if (named.sourceId?.match(/^(tv|movie):/) && !named.sourceId.startsWith(row.type + ':')) continue;
+			if (!releaseParts(row.title).year && unassignedRelease(row.title, row.type)) continue;
+			hideFromContinueWatching(row.title, row.type);
+		}
 	} catch (e) {
 		console.error('[hideCompletedFromContinueWatching]', e);
 	}

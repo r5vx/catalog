@@ -36,6 +36,12 @@
 	--rating-meh: #ec9a45;
 	--rating-bad: #d9574a;
 	--rating-ink: #101512;
+
+	/* The status dots beside My profile and on friends' cards. */
+	--status-online: #3ba55d;
+	--status-away: #e0a526;
+	--status-dnd: #d9574a;
+	--status-offline: #808b85;
 	/* Find in a note (Ctrl+F, src/lib/FindBar.svelte): every match, and the one you're on; the
 	   same in every theme, with dark text on them. */
 	--find: #ffe36e;
@@ -222,6 +228,28 @@ textarea:focus {
 	outline: none;
 	border-color: var(--accent);
 	box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+select {
+	appearance: none;
+	-webkit-appearance: none;
+	padding-right: 32px;
+	cursor: pointer;
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23999' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5'/%3E%3C/svg%3E");
+	background-repeat: no-repeat;
+	background-position: right 10px center;
+	background-size: 12px 12px;
+	transition: border-color 0.12s ease, background-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+select:hover {
+	border-color: var(--ink-faint);
+	background-color: var(--surface-2);
+}
+
+select option {
+	background: var(--surface);
+	color: var(--ink);
 }
 
 textarea {

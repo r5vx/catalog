@@ -1,13 +1,30 @@
 <script lang="ts">
+	import { mixWeekly } from '$lib/mixWeekly';
 	import BackBar from '$lib/BackBar.svelte';
 	import ContinueCard from '$lib/ContinueCard.svelte';
 	import { playHref } from '$lib/tv/tiles';
 	import { withBack } from '$lib/back';
-	import { invalidateAll } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
+	import { fitOnScreen } from '$lib/fitOnScreen';
+	import type { ContinueItem } from '$lib/server/db/queries';
 	import { onMount } from 'svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
+
+	let dismissedCw = $state<Set<string>>(new Set());
+	let cwCtx = $state<{ x: number; y: number; item: ContinueItem; href: string } | null>(null);
+	function openCwCtx(e: MouseEvent, item: ContinueItem, href: string) {
+		e.preventDefault();
+		e.stopPropagation();
+		cwCtx = { x: e.clientX, y: e.clientY, item, href };
+	}
+	function closeCwCtx() { cwCtx = null; }
+	async function removeContinue(item: ContinueItem) {
+		dismissedCw = new Set([...dismissedCw, `${item.title}:${item.type}`]);
+		await fetch(`/api/watch/progress?title=${encodeURIComponent(item.title)}&type=${item.type}&hide=1`, { method: 'DELETE' });
+		invalidateAll();
+	}
 
 	type List = Awaited<PageData['lists']['streaming']>;
 	type Item = List['items'][number];
@@ -77,17 +94,13 @@
 		shown = 0;
 		pending = lists.length;
 		let gone = false;
-		for (const list of lists) list.then((items) => {
+		const buckets: (Item & { tag: string })[][] = lists.map(() => []);
+		lists.forEach((list, i) => list.then((items) => {
 			if (gone) return;
-			const seen = new Set(hero.map((i) => i.title));
-			const added = items.filter((i) => {
-				if (!i.backdrop || seen.has(i.title)) return false;
-				seen.add(i.title);
-				return true;
-			}).slice(0, 3);
-			hero = [...hero, ...added].slice(0, 8);
+			buckets[i] = items.filter(item => item.backdrop);
+			hero = mixWeekly(buckets, 8);
 			pending -= 1;
-		});
+		}));
 		return () => (gone = true);
 	});
 	$effect(() => {
@@ -171,14 +184,32 @@
 </section>
 
 {#await data.continueWatching then items}
-	{#if items.length}
+	{@const visibleCw = items.filter((item) => !dismissedCw.has(`${item.title}:${item.type}`))}
+	{#if visibleCw.length}
 		<section class="block"><h2>Continue watching</h2><div class="continue-list">
-			{#each items as item (`${item.title}:${item.type}`)}
-				<ContinueCard {item} href={withBack(item.href ?? playHref(item.title, item.type, null, item.season, item.episode), '/new')} />
+			{#each visibleCw as item (`${item.title}:${item.type}`)}
+				{@const href = withBack(item.href ?? playHref(item.title, item.type, null, item.season, item.episode), '/new')}
+				<ContinueCard {item} {href} oncontextmenu={(e) => openCwCtx(e, item, href)} />
 			{/each}
 		</div></section>
 	{/if}
 {/await}
+
+{#if cwCtx}
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+	<div class="cw-ctx-backdrop" onclick={closeCwCtx} oncontextmenu={(e) => { e.preventDefault(); closeCwCtx(); }}></div>
+	<div class="cw-ctx-menu" use:fitOnScreen style="left: {cwCtx.x}px; top: {cwCtx.y}px;">
+		<button type="button" onclick={() => { goto(cwCtx!.href); closeCwCtx(); }}>▶ Resume</button>
+		{#if cwCtx.item.entryId}
+			<button type="button" onclick={() => { goto(`/entry/${cwCtx!.item.entryId}`); closeCwCtx(); }}>View details</button>
+		{:else}
+			<button type="button" onclick={() => { goto(`/browse?q=${encodeURIComponent(cwCtx!.item.title)}`); closeCwCtx(); }}>View details</button>
+		{/if}
+		<button type="button" onclick={() => { goto(`/browse?q=${encodeURIComponent(cwCtx!.item.title)}`); closeCwCtx(); }}>Search in Browse</button>
+		<hr />
+		<button type="button" class="cw-ctx-danger" onclick={() => { removeContinue(cwCtx!.item); closeCwCtx(); }}>Remove from Continue watching</button>
+	</div>
+{/if}
 
 {@render row('From your watch list', data.watchList, true)}
 
@@ -224,6 +255,10 @@
 		</section>
 	{/if}
 {/await}
+
+{@render row('New movies to stream', data.lists.streaming)}
+{@render row('New TV shows', data.lists.shows)}
+{@render row('Movies in cinemas', data.lists.cinemas)}
 
 {#await data.lists.anime}
 	<section class="block"><h2>Anime this week</h2><div class="week loading"></div></section>
@@ -284,9 +319,7 @@
 	{/await}
 {/snippet}
 
-{@render row('New to stream', data.lists.streaming)}
-{@render row('In cinemas', data.lists.cinemas)}
-{@render row('New shows', data.lists.shows)}
+
 
 <style>
 	.continue-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap: 20px 16px; }
@@ -729,5 +762,50 @@
 		.featured {
 			animation: none;
 		}
+	}
+
+	.cw-ctx-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 998;
+	}
+
+	.cw-ctx-menu {
+		position: fixed;
+		z-index: 999;
+		min-width: 200px;
+		padding: 6px;
+		background: var(--surface);
+		border: 1px solid var(--rule-firm);
+		border-radius: 10px;
+		box-shadow: 0 12px 32px rgb(0 0 0 / 50%);
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.cw-ctx-menu button {
+		text-align: left;
+		padding: 7px 10px;
+		border: 0;
+		border-radius: 6px;
+		background: transparent;
+		color: var(--ink);
+		font-size: 0.85rem;
+		cursor: pointer;
+	}
+
+	.cw-ctx-menu button:hover {
+		background: var(--surface-2);
+	}
+
+	.cw-ctx-menu hr {
+		border: 0;
+		border-top: 1px solid var(--rule);
+		margin: 4px 0;
+	}
+
+	.cw-ctx-danger {
+		color: var(--bad, #f87171) !important;
 	}
 </style>

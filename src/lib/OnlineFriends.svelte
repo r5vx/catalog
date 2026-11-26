@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount, untrack, tick } from 'svelte';
-	import { goto } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
 	import Avatar from '$lib/Avatar.svelte';
 	import StyledName from '$lib/StyledName.svelte';
@@ -8,7 +8,7 @@
 	import ContextMenu, { menuAt, type MenuItem } from '$lib/ContextMenu.svelte';
 	import { wording } from '$lib/altText';
 	import { together, startRoom, joinRoom, leaveRoom, rejoinKeptRoom, alongChanged } from '$lib/watchTogether.svelte';
-	import { chat, sendMessage, openChat } from '$lib/chat.svelte';
+	import { chat, sendMessage, openChat, roomInviteText } from '$lib/chat.svelte';
 	import { watchHref, wantToWatch } from '$lib/friendLinks';
 
 	/**
@@ -21,7 +21,10 @@
 	 * Nothing shows until this Catalog is online (Settings → Online).
 	 */
 	type Watching = { title: string; type: 'tv' | 'movie'; year: string; season: number; episode: number; poster: string; room?: string };
-	type Friend = { id: string; name: string; avatar: number; watching: Watching | null; nameStyle?: NameStyle | null };
+	type Friend = { id: string; name: string; avatar: number; watching: Watching | null; nameStyle?: NameStyle | null; state?: FriendState | null; banner?: number };
+	/** The status they picked beside My profile, as the meeting point works it out (null: an older Catalog). */
+	type FriendState = 'online' | 'away' | 'dnd' | 'offline';
+	const STATE_WORDS: Record<FriendState, string> = { online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline' };
 	type Switches = { reports: boolean; share: boolean; shared: boolean; along: boolean; autoJoin?: boolean };
 	/** Someone a friend knows ("Bob, a friend of Ann's"). */
 	type Known = { id: string; name: string; avatar: number; via?: string; mutual?: number; requested?: boolean };
@@ -59,7 +62,9 @@
 	const t = (text: string) => wording(page.data.altMode, text);
 
 	/** Watching now first, then everyone else, by name. */
-	const ordered = $derived([...friends].sort((a, b) => Number(Boolean(b.watching)) - Number(Boolean(a.watching)) || a.name.localeCompare(b.name)));
+	// Watching first, then the ones around (online, away, do not disturb), then the rest.
+	const around = (f: Friend) => (f.watching ? 2 : f.state && f.state !== 'offline' ? 1 : 0);
+	const ordered = $derived([...friends].sort((a, b) => around(b) - around(a) || a.name.localeCompare(b.name)));
 
 	const cloud = (path: string, method = 'GET', body?: unknown) =>
 		fetch(`/api/online/c/${path}`, { method, headers: body === undefined ? undefined : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
@@ -179,6 +184,7 @@
 			theirCode = '';
 			adding = false;
 			ownerSaved = true;
+			await invalidateAll();
 			return;
 		}
 		const answer = await cloud('friends/add', 'POST', { code: theirCode });
@@ -220,6 +226,33 @@
 		await goto(watchHref(watching));
 	}
 
+	/** A click on a friend's card, not on one of its buttons or links: their profile. */
+	function openProfile(event: MouseEvent, friend: Friend) {
+		if ((event.target as HTMLElement).closest('a, button')) return;
+		void goto(`/friends/${friend.id}`);
+	}
+
+	/**
+	 * Asks a friend to watch together: into a room first (a new one, unless already in one), then a
+	 * whisper with its code. Their Catalog shows Join beside it (src/lib/chat.svelte.ts inviteRoom).
+	 */
+	async function invite(friend: Friend) {
+		busy = true;
+		problem = '';
+		note = '';
+		try {
+			if (!together.code && !(await startRoom())) {
+				problem = t("Couldn't start a room");
+				return;
+			}
+			const sent = await sendMessage(roomInviteText(together.code), { friend: friend.id });
+			if (sent) note = `${t('Invited')} ${friend.name} · ${t('room')} ${together.code}`;
+			else problem = t("The invite couldn't be sent");
+		} finally {
+			busy = false;
+		}
+	}
+
 	async function addWanted(watching: Watching) {
 		note = (await wantToWatch(watching)) ? `${watching.title}: ${t('added to Want to watch')}` : '';
 		problem = note ? '' : t("Couldn't add it");
@@ -231,6 +264,7 @@
 			{ label: t('View profile'), run: () => goto(`/friends/${friend.id}`) },
 			{ label: t('View their library'), run: () => goto(`/friends/${friend.id}/library`) },
 			{ label: `${t('Whisper to')} ${friend.name}`, run: () => openChat(friend) },
+			{ label: t('Invite to watch together'), run: () => invite(friend) },
 			{ label: t('Messages'), run: () => goto(`/messages?with=${friend.id}`) }
 		];
 		if (w) {
@@ -337,36 +371,53 @@
 		{/if}
 		{#if problem}<p class="msg bad">{problem}</p>{/if}
 		{#if note}<p class="msg">{note}</p>{/if}
-		{#if ownerSaved}<p class="msg">{t('Problem reports are in')} <a href="/settings/online">{t('Settings')} → Online</a>.</p>{/if}
+		{#if ownerSaved}<p class="msg">{t('Problem reports are in')} <a href="/settings/owner">{t('Settings')} → Owner</a>.</p>{/if}
 
 		{#if ordered.length}
 			<ul class="cards">
 				{#each ordered as friend (friend.id)}
 					{@const watching = friend.watching}
-					<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-					<li class="card" class:live={watching} oncontextmenu={(e) => friendMenu(e, friend)}>
+					<!-- Watching counts as online; no word from them (an older Catalog) counts as offline. -->
+					{@const dot = watching ? (friend.state && friend.state !== 'offline' ? friend.state : 'online') : (friend.state ?? 'offline')}
+					<!-- A click anywhere on the card (but its buttons) opens their profile; the picture and name are links too. -->
+					<!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
+					<!-- Their banner (set on their profile) fills the card, darkened so the words stay readable. -->
+					<li
+						class="card"
+						class:live={watching}
+						class:has-banner={Boolean(friend.banner)}
+						style:background-image={friend.banner ? `url('/api/online/banner/${friend.id}?v=${friend.banner}')` : null}
+						oncontextmenu={(e) => friendMenu(e, friend)}
+						onclick={(e) => openProfile(e, friend)}
+					>
 						<a class="face" href="/friends/{friend.id}" aria-label="{friend.name}'s profile">
 							<Avatar id={friend.id} name={friend.name} rev={friend.avatar} size={72} />
+							<span class="state-dot {dot}" title={t(STATE_WORDS[dot])}></span>
 						</a>
 						<div class="about">
 							<a class="name" href="/friends/{friend.id}"><StyledName name={friend.name} look={friend.nameStyle ?? null} /></a>
 							{#if watching}
 								<span class="now"><span class="dot" aria-hidden="true"></span>{t('Watching')} <strong>{label(watching)}</strong></span>
-							{:else}
-								<span class="faint">{t('Not watching now')}</span>
 							{/if}
-							<div class="row">
-								{#if watching}
+							{#if watching}
+								<div class="row">
 									{#if watching.room}
-										<button type="button" class="btn btn-primary" onclick={() => watchAlong(watching, friend.name)} disabled={busy}>{t('Watch along')}</button>
+										<button type="button" class="btn btn-primary small-btn" onclick={() => watchAlong(watching, friend.name)} disabled={busy}>{t('Watch along')}</button>
 									{:else}
-										<button type="button" class="btn btn-primary" onclick={() => startMyself(watching)}>{t('Watch it too')}</button>
+										<button type="button" class="btn btn-primary small-btn" onclick={() => startMyself(watching)}>{t('Watch it too')}</button>
 									{/if}
-									<button type="button" class="btn more" onclick={(e) => watchMenu(e, friend)} aria-label="More ways to watch it" title="More">⋯</button>
-								{/if}
-								<a class="btn" href="/friends/{friend.id}">{t('View profile')}</a>
-							</div>
+									<button type="button" class="btn small-btn more" onclick={(e) => watchMenu(e, friend)} aria-label="More ways to watch it" title="More">⋯</button>
+								</div>
+							{/if}
 						</div>
+						<!-- Invite to watch together: a small round button in the corner, its words on hover. -->
+						<button type="button" class="invite" onclick={() => invite(friend)} disabled={busy} title={t('Invite to watch together')} aria-label={t('Invite to watch together')}>
+							<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+								<circle cx="9" cy="8" r="3.5" />
+								<path d="M2.5 20a6.5 6.5 0 0 1 13 0" />
+								<path d="M19 8v6M16 11h6" />
+							</svg>
+						</button>
 						{#if watching?.poster}<img class="poster" src={watching.poster} alt="" />{/if}
 					</li>
 				{/each}
@@ -586,6 +637,60 @@
 		border-radius: var(--radius);
 		background: var(--sunk);
 		overflow: hidden;
+		cursor: pointer;
+	}
+
+	.card:hover {
+		border-color: var(--rule-firm);
+	}
+
+	/* Their banner across the card, darkened toward the left where the words are. */
+	.card.has-banner {
+		background-size: cover;
+		background-position: center;
+	}
+	.card.has-banner::before {
+		content: '';
+		position: absolute;
+		inset: 0;
+		background: linear-gradient(90deg, rgb(0 0 0 / 72%), rgb(0 0 0 / 40%));
+		pointer-events: none;
+	}
+	.card.has-banner .name,
+	.card.has-banner .now {
+		color: #fff;
+		text-shadow: 0 1px 3px rgb(0 0 0 / 70%);
+	}
+	.card.has-banner .state-dot {
+		border-color: #222;
+	}
+
+	/* The card's own buttons stay small. */
+	.card .small-btn {
+		padding: 4px 12px;
+		font-size: 0.82rem;
+	}
+
+	/* Invite to watch together, small and round in the card's top right. */
+	.invite {
+		position: absolute;
+		top: 10px;
+		right: 10px;
+		z-index: 2;
+		display: grid;
+		place-items: center;
+		width: 34px;
+		height: 34px;
+		padding: 0;
+		border: 1px solid var(--rule);
+		border-radius: 50%;
+		background: color-mix(in srgb, var(--surface) 85%, transparent);
+		color: var(--ink-soft);
+		cursor: pointer;
+	}
+	.invite:hover:not(:disabled) {
+		border-color: var(--accent);
+		color: var(--accent);
 	}
 
 	.card.live {
@@ -593,9 +698,25 @@
 	}
 
 	.face {
+		position: relative;
 		flex: none;
 		border-radius: 50%;
 	}
+
+	/* Their status, on the corner of their picture (colors: top of app.css). */
+	.state-dot {
+		position: absolute;
+		right: 2px;
+		bottom: 2px;
+		width: 16px;
+		height: 16px;
+		border-radius: 50%;
+		border: 3px solid var(--sunk);
+		background: var(--status-online);
+	}
+	.state-dot.away { background: var(--status-away); }
+	.state-dot.dnd { background: var(--status-dnd); }
+	.state-dot.offline { background: var(--status-offline); }
 
 	.about {
 		position: relative;

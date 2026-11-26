@@ -1,4 +1,5 @@
 <script lang="ts">
+	import TitleTrailer from './TitleTrailer.svelte';
 	/**
 	 * What it's about.
 	 *
@@ -10,11 +11,14 @@
 		text,
 		tagline = null,
 		heading = 'What it’s about',
+		trailer = null, title = 'Title',
 		pending = false
 	}: {
 		text: string | null;
 		tagline?: string | null;
 		heading?: string;
+		trailer?: string | null;
+		title?: string;
 		pending?: boolean;
 	} = $props();
 
@@ -25,6 +29,8 @@
 	const long = $derived((text?.length ?? 0) > LONG);
 </script>
 
+{#if text || pending || trailer}
+<div class="overview" class:withTrailer={Boolean(trailer)}>
 {#if text}
 	<section class="synopsis">
 		<h2 class="label">{heading}</h2>
@@ -43,7 +49,13 @@
 	</section>
 {/if}
 
+{#if trailer}<TitleTrailer videoId={trailer} {title} />{/if}
+</div>
+{/if}
+
 <style>
+	.overview.withTrailer { display: grid; gap: 1.25rem; align-items: start; padding: clamp(1rem, 2vw, 1.5rem); background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); }
+	@media (min-width: 760px) { .withTrailer:has(.synopsis) { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); } }
 	.label {
 		font-family: var(--body);
 		font-size: 0.72rem;

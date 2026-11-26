@@ -1,4 +1,5 @@
 <script lang="ts">
+	import PublisherReplays from '$lib/PublisherReplays.svelte';
 	/**
 	 * Live TV on the TV (see /live). Along the top: On now, Your teams, Saved, each sport picked,
 	 * Channels, Replays and Search. OK on a game plays it on its best channel (one click); the
@@ -224,6 +225,7 @@
 	}
 	/** Only the sports this profile picked (asked the first time; "+" changes them). Search covers all. */
 	const mine = $derived(guide?.sports?.length ? new Set<string>(guide.sports) : null);
+	const publisherFilters = $derived(new URLSearchParams({ sports: [...(mine ?? [])].join(',') }).toString());
 	const isMine = (s: Sport) => !mine || mine.has(s);
 	const sportsWithGames = $derived(SPORTS.filter((s) => isMine(s.key) && guide?.games.some((g) => g.sport === s.key && isLocal(g))));
 
@@ -364,7 +366,25 @@
 	</div>
 
 	<div class="content">
-		{#if !guide}
+		{#if view === 'replays'}
+			<h2>Replays</h2>
+			{#if replays === null}
+				<p class="empty">Loading replays…</p>
+			{:else if !replays.length}
+				<p class="empty">No recent replays right now.</p>
+			{:else}
+				<div class="grid" data-tv-row data-tv-grid>
+					{#each replays.filter((r) => isMine(r.sport)).slice(0, MOST) as replay (replay.id)}
+						<a class="game" href={replayHref(replay)} data-tv-item onfocus={() => warmReplay(replay.id)}>
+							<span class="art"><GameArt sport={replay.sport} poster={replay.poster} /></span>
+							<span class="title">{replay.title}</span>
+							<span class="league">{replayLine(replay)}</span>
+						</a>
+					{/each}
+				</div>
+			{/if}
+			{#key publisherFilters}<PublisherReplays filters={publisherFilters} />{/key}
+		{:else if !guide}
 			<p class="empty">{failed ? "Live TV can't be reached right now." : 'Loading the schedule…'}</p>
 		{:else if view === 'recent'}
 			<h2>Recently watched</h2>
@@ -387,23 +407,6 @@
 			{#if guide.recent.length}
 				<div class="grid" data-tv-row data-tv-grid>
 					{#each guide.recent as channel (channel.id)}{@render channelCard(channelById.get(channel.id) ?? channel, true)}{/each}
-				</div>
-			{/if}
-		{:else if view === 'replays'}
-			<h2>Replays</h2>
-			{#if replays === null}
-				<p class="empty">Loading replays…</p>
-			{:else if !replays.length}
-				<p class="empty">No replays right now.</p>
-			{:else}
-				<div class="grid" data-tv-row data-tv-grid>
-					{#each replays.filter((r) => isMine(r.sport)).slice(0, MOST) as replay (replay.id)}
-						<a class="game" href={replayHref(replay)} data-tv-item onfocus={() => warmReplay(replay.id)}>
-							<span class="art"><GameArt sport={replay.sport} poster={replay.poster} /></span>
-							<span class="title">{replay.title}</span>
-							<span class="league">{replayLine(replay)}</span>
-						</a>
-					{/each}
 				</div>
 			{/if}
 		{:else if view === 'search'}

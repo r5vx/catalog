@@ -75,17 +75,18 @@
 	.whats-new {
 		position: fixed;
 		right: 20px;
-		bottom: 20px;
+		top: 20px;
 		z-index: 950;
-		width: min(360px, calc(100vw - 32px));
-		padding: 16px 18px 14px;
-		border: 1px solid var(--rule);
-		border-radius: 10px;
-		background: var(--surface);
-		box-shadow: var(--shadow), 0 12px 32px -12px rgb(0 0 0 / 35%);
-		animation: rise 0.35s ease-out;
+		width: min(340px, calc(100vw - 32px));
+		padding: 14px 16px 12px;
+		border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--rule));
+		border-radius: 14px;
+		background: color-mix(in srgb, var(--surface) 90%, transparent);
+		backdrop-filter: blur(16px);
+		box-shadow: 0 14px 36px -10px rgb(0 0 0 / 50%);
+		animation: rise 0.25s ease-out;
 	}
-	.whats-new.tv { width: 34vw; right: 3vw; bottom: 3vw; padding: 1.5vw; font-size: 1.2vw; }
+	.whats-new.tv { width: 34vw; top: auto; right: 3vw; bottom: 3vw; padding: 1.5vw; font-size: 1.2vw; }
 	.tv h2 { font-size: 1.7vw; }
 	.tv .eyebrow { font-size: 1vw; }
 	.tv ul { font-size: 1.2vw; }

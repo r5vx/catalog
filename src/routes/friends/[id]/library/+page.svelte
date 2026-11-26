@@ -5,6 +5,7 @@
 	import TitleShelf from '$lib/TitleShelf.svelte';
 	import { wording } from '$lib/altText';
 	import { STATUSES, isWatched } from '$lib/constants';
+	import { onReachBottom } from '$lib/infiniteScroll';
 
 	/**
 	 * A friend's library (their Catalog shares it while "Friends see what's being watched" is on),
@@ -103,7 +104,9 @@
 {#if items.length}
 	<TitleShelf {items} grid onadded={added} />
 	{#if items.length < total}
-		<div class="more"><button type="button" class="btn" onclick={() => load(true)} disabled={loading}>{loading ? '…' : t('Show more')}</button></div>
+		<div class="more" use:onReachBottom={() => { if (!loading) load(true); }}>
+			<span class="faint small">{loading ? 'Loading more…' : ''}</span>
+		</div>
 	{/if}
 {:else if loading}
 	<p class="faint">…</p>

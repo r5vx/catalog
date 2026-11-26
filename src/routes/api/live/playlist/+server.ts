@@ -1,5 +1,6 @@
 import { error } from '@sveltejs/kit';
 import { liveLink, liveTrouble, noteLiveTry, openSealedPlaylist } from '$lib/server/sources/daddylive';
+import { plutoLiveLink } from '$lib/server/sources/pluto';
 import { liveHeadersFor, trustLiveHost } from '$lib/server/relayHosts';
 import { sharedLivePiece } from '$lib/server/liveShare';
 import type { RequestHandler } from './$types';
@@ -11,7 +12,14 @@ import type { RequestHandler } from './$types';
  * player's headers, so phones and TVs play them too.
  */
 export const GET: RequestHandler = async ({ url }) => {
-	const id = Number(url.searchParams.get('ch'));
+	const raw = url.searchParams.get('ch') ?? '';
+	if (raw.startsWith('pluto:')) {
+		const plutoId = raw.slice('pluto:'.length);
+		const answer = await plutoPlaylist(plutoId);
+		if (answer.status !== 200) return error(answer.status, answer.text);
+		return new Response(answer.text, { headers: { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' } });
+	}
+	const id = Number(raw);
 	if (!Number.isInteger(id) || id <= 0) return error(400, 'Which channel?');
 	// ?check=1: only whether the channel is on (Live TV's "Check which are on"), no pieces fetched ahead.
 	if (url.searchParams.get('check') === '1') {
@@ -121,4 +129,49 @@ async function fromItsSource(id: number, ahead = true): Promise<Answer | null> {
 function failed(id: number, why: string): null {
 	noteLiveTry(id, why);
 	return null;
+}
+
+/** Pluto TV live channel playlist, rewritten through Catalog's relay (desktop, phones & TVs). */
+async function plutoPlaylist(channelId: string): Promise<Answer> {
+	let link = await plutoLiveLink(channelId);
+	if (!link) return { status: 502, text: 'Pluto TV channel unavailable' };
+	let resp = await get(link.url, link.headers);
+	if (!resp?.ok) {
+		link = await plutoLiveLink(channelId, true);
+		if (!link) return { status: 502, text: 'Pluto TV session unavailable' };
+		resp = await get(link.url, link.headers);
+	}
+	if (!resp?.ok) return { status: 502, text: 'Pluto TV channel did not answer' };
+	let base = link.url;
+	let text = await resp.text();
+	if (text.includes('#EXT-X-STREAM-INF')) {
+		const lines = text.split('\n');
+		let best = { address: '', bandwidth: -1 };
+		for (let i = 0; i < lines.length; i++) {
+			if (!lines[i].startsWith('#EXT-X-STREAM-INF')) continue;
+			const bandwidth = Number(/BANDWIDTH=(\d+)/.exec(lines[i])?.[1] ?? 0);
+			const address = lines.slice(i + 1).find((l) => l.trim() && !l.startsWith('#'))?.trim();
+			if (address && bandwidth > best.bandwidth) best = { address, bandwidth };
+		}
+		if (best.address) {
+			base = new URL(best.address, link.url).href;
+			const variant = await get(base, link.headers);
+			if (variant?.ok) text = await variant.text();
+		}
+	}
+	const relayed = (address: string) => {
+		const full = new URL(address, base);
+		trustLiveHost(full, link!.headers);
+		return `/api/watch/relay?u=${encodeURIComponent(full.href)}`;
+	};
+	const out = text
+		.split('\n')
+		.map((line) => {
+			const trimmed = line.trim();
+			if (!trimmed) return line;
+			if (trimmed.startsWith('#')) return line.replace(/URI="([^"]+)"/g, (_m, uri) => `URI="${relayed(uri)}"`);
+			return relayed(trimmed);
+		})
+		.join('\n');
+	return { status: 200, text: out };
 }

@@ -14,7 +14,8 @@
 		sourceId,
 		title,
 		year = null,
-		alt = null
+		alt = null,
+		onseasons
 	}: {
 		source: string;
 		sourceId: string;
@@ -23,6 +24,8 @@
 		year?: number | null;
 		/** Its other name, so where it was left off is found under either. */
 		alt?: string | null;
+		/** Told the player's own seasons when it numbers the show its own way (Bleach's 18), for the line under the name. */
+		onseasons?: (seasons: { number: number }[]) => void;
 	} = $props();
 
 	const watchWarm = warmWhenResting(250);
@@ -70,6 +73,7 @@
 		let holdTimer: ReturnType<typeof setTimeout> | undefined;
 		show = null;
 		playerList = null;
+		untrack(() => onseasons?.([]));
 		episodes = [];
 		holding = false;
 
@@ -83,6 +87,7 @@
 				list.seasons.every((s, i) => s.number === base.seasons[i].number && Math.abs(s.count - base.seasons[i].count) <= 2);
 			if (same) return;
 			playerList = list;
+			onseasons?.(list.seasons);
 			// (-1, not 0, when nothing's being watched: 0 is Specials.)
 			const resumeSeason = untrack(() => continuing?.season ?? -1);
 			// The season being watched, as the player numbers it (Bleach's season 6 isn't on TMDB).

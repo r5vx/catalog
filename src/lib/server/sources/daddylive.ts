@@ -18,7 +18,8 @@ import { electronFetch, electronLiveCapture } from '../electron-fetch';
 import { getOrderCache, saveOrderCache } from '../db/queries';
 import { gameEnds, sportOf, type LiveChannel, type LiveGame, type Sport } from '$lib/live';
 
-const FIRST = 'https://dlive.sx';
+const MIRRORS = ['https://thedaddy.li', 'https://thedaddy.pk', 'https://dlive.sx'];
+const FIRST = MIRRORS[0];
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
 
 /** Where the site is now (it moves), learned from the list's redirect. */
@@ -83,17 +84,20 @@ export function channelTried(id: number): { ok: boolean; minutesAgo: number } | 
  * (Chromium's network, its DNS and proxy settings).
  */
 async function sitePage(path: string, timeout: number): Promise<string | null> {
+	const candidates = [site, ...MIRRORS.filter((m) => m !== site)];
 	let why = '';
-	try {
-		const resp = await fetch(`${site}${path}`, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(timeout) });
-		if (resp.ok) {
-			site = new URL(resp.url).origin;
-			trouble = '';
-			return await resp.text();
+	for (const host of candidates) {
+		try {
+			const resp = await fetch(`${host}${path}`, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(timeout) });
+			if (resp.ok) {
+				site = new URL(resp.url).origin;
+				trouble = '';
+				return await resp.text();
+			}
+			why = `${host}: HTTP ${resp.status}`;
+		} catch (e) {
+			why = `${host}: ${String((e as Error)?.cause ?? (e as Error)?.message ?? e)}`;
 		}
-		why = `HTTP ${resp.status}`;
-	} catch (e) {
-		why = String((e as Error)?.cause ?? (e as Error)?.message ?? e);
 	}
 	const viaApp = await electronFetch(`${site}${path}`, { headers: { 'User-Agent': UA } }).catch(() => null);
 	if (viaApp && viaApp.status >= 200 && viaApp.status < 300 && viaApp.body) {

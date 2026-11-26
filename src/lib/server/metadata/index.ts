@@ -1,5 +1,5 @@
-import { searchTmdb, trendingTmdb, trendingAnimeTmdb, trendingPeopleTmdb, hasTmdbKey, type BrowseFilters } from './tmdb';
-export { trendingPeopleTmdb };
+import { searchTmdb, trendingTmdb, trendingAnimeTmdb, trendingPeopleTmdb, searchPeopleTmdb, hasTmdbKey, type BrowseFilters } from './tmdb';
+export { trendingPeopleTmdb, searchPeopleTmdb };
 import { normalizeTitle, withoutQualifier, type SearchResult } from './types';
 import { watchRegion as getWatchRegion } from './providers';
 import { hasNumberToSwap, numbersAsDigits } from '../../numberWords';
@@ -118,11 +118,15 @@ function scoreOf(result: SearchResult, query: string, year: number | null, fuzzy
 	// top, above the 1994 and 1967 ones. Little-known new things get next to nothing from it.
 	const thisYear = new Date().getFullYear();
 	const newAndKnown = match > 0 && result.year != null && result.year >= thisYear - 1 ? result.popularity * 8 : 0;
+	// For very short queries ("ba", "sp"), fame matters more than an exact match on an obscure 2-letter title.
+	const shortQuery = normalizeTitle(query).length <= 3;
+	const matchWeight = shortQuery ? Math.min(match, 2) * 8 : match * 10;
+	const popWeight = shortQuery ? 45 : 20;
 
 	return (
-		match * 10 * quality * kindPenalty + //  music/specials sink to the bottom
-		(yearMatches ? 4 : 0) + //               a nudge, never enough to jump a tier
-		result.popularity * 20 + //              0 to 20, separates blockbusters from obscurities within a tier
+		matchWeight * quality * kindPenalty + //  music/specials sink to the bottom
+		(yearMatches ? 4 : 0) + //                a nudge, never enough to jump a tier
+		result.popularity * popWeight + //        separates blockbusters from obscurities within a tier
 		newAndKnown -
 		laterSeason
 	);
@@ -170,6 +174,37 @@ function dedupe(scored: Scored[]): Scored[] {
 
 type SearchOptions = { year?: number | null; limit?: number; fuzzy?: boolean };
 
+const suggestionCache = new Map<string, { at: number; value: string | null }>();
+
+/** Ask Wikipedia's free search API for a spelling suggestion ("incepton" -> "inception"). */
+async function wikiDidYouMean(query: string): Promise<string | null> {
+	const key = normalizeTitle(query);
+	if (key.length < 4) return null;
+	const hit = suggestionCache.get(key);
+	if (hit && Date.now() - hit.at < 24 * 60 * 60 * 1000) return hit.value;
+	try {
+		const url = new URL('https://en.wikipedia.org/w/api.php');
+		url.searchParams.set('action', 'query');
+		url.searchParams.set('list', 'search');
+		url.searchParams.set('srsearch', query);
+		url.searchParams.set('srinfo', 'suggestion');
+		url.searchParams.set('srlimit', '1');
+		url.searchParams.set('format', 'json');
+		const res = await fetch(url, {
+			headers: { 'User-Agent': 'Catalog/1.0 (personal media library)' },
+			signal: AbortSignal.timeout(1500)
+		});
+		if (!res.ok) return null;
+		const data = (await res.json()) as { query?: { searchinfo?: { suggestion?: string } } };
+		const suggestion = data.query?.searchinfo?.suggestion?.trim() || null;
+		const cleaned = suggestion && normalizeTitle(suggestion) !== key ? suggestion : null;
+		suggestionCache.set(key, { at: Date.now(), value: cleaned });
+		return cleaned;
+	} catch {
+		return null;
+	}
+}
+
 /** Search and return one ranked list. */
 export async function searchAll(
 	query: string,
@@ -181,8 +216,28 @@ export async function searchAll(
 	// TMDB only: it has the anime too, one card per show with its seasons inside, and answers
 	// at once. AniList, asked as well, made searches wait up to six seconds (and used up the
 	// thirty questions a minute it allows, which opening a title needed).
-	const found = await searchTmdb(trimmed, fuzzy);
-	return rankResults(found, trimmed, { year, limit, fuzzy });
+	let found = await searchTmdb(trimmed, fuzzy);
+	let ranked = rankResults(found, trimmed, { year, limit, fuzzy });
+
+	// When a fuzzy search finds nothing or only weak text matches (e.g. "incepton", "avngers"),
+	// try Wikipedia's "did you mean" spelling suggestion and merge the results.
+	if (fuzzy && trimmed.length >= 4) {
+		const topMatch = ranked[0] ? matchScore(ranked[0], trimmed, false) : 0;
+		if (ranked.length === 0 || topMatch < 1.5) {
+			const corrected = await wikiDidYouMean(trimmed);
+			if (corrected) {
+				const extra = await searchTmdb(corrected, false);
+				if (extra.length) {
+					const byKey = new Map<string, SearchResult>();
+					for (const r of extra) byKey.set(r.key, r);
+					for (const r of found) if (!byKey.has(r.key)) byKey.set(r.key, r);
+					ranked = rankResults([...byKey.values()], corrected, { year, limit, fuzzy: true });
+				}
+			}
+		}
+	}
+
+	return ranked;
 }
 
 /** Search results in the order they're shown: best match first, then the better known (scoreOf). */

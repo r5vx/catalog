@@ -11,6 +11,8 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { setTimeout as wait } from 'node:timers/promises';
 import { dataDir } from './db';
 
 export const youtubeDir = join(dataDir, 'youtube');
@@ -40,9 +42,41 @@ export function readIndex(id: string): YouTubeIndex | null {
 	}
 }
 
+let selectedId = '';
 /** Asks the desktop app to keep `id` (and, already going, to make sure `from` seconds is kept). */
-export function startCapture(id: string, from = 0) {
-	process.send?.({ type: 'youtube-capture', id, dir: youtubeDir, from });
+export function startCapture(id: string, from = 0, resumeOnly = false) {
+	if (!resumeOnly) selectedId = id;
+	process.send?.({ type: 'youtube-capture', id, dir: youtubeDir, from, resumeOnly });
+}
+
+type CaptionTrack = { lang: string; cues: { start: number; end: number; text: string }[] };
+const captionJobs = new Map<string, Promise<CaptionTrack[] | null>>();
+export async function autoCaptions(id: string): Promise<CaptionTrack[] | null> {
+	if (!inDesktopApp() || !isVideoId(id) || id !== selectedId) return null;
+	const cached = async (): Promise<CaptionTrack[] | null> => {
+		try {
+			const data = JSON.parse(await readFile(join(youtubeDir, id, 'auto-captions.json'), 'utf8'));
+			if (data.id === id && Array.isArray(data.tracks) && Date.now() - data.at < (data.tracks.length ? 86_400_000 : 30_000)) return data.tracks;
+		} catch {}
+		return null;
+	};
+	const hit = await cached();
+	if (hit) return hit;
+	let job = captionJobs.get(id);
+	if (!job) {
+		job = (async () => {
+			process.send?.({type:'youtube-capture', id, dir:youtubeDir, captionsOnly:true});
+			const end = Date.now() + (readIndex(id)?.done ? 92_000 : 32_000);
+			while (id === selectedId && Date.now() < end) {
+				await wait(350);
+				const ready = await cached();
+				if (ready) return ready;
+			}
+			return null;
+		})().finally(() => captionJobs.delete(id));
+		captionJobs.set(id, job);
+	}
+	return job;
 }
 
 /** The pieces kept from the start with no gap, in order. */

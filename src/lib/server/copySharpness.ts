@@ -130,6 +130,8 @@ const measuring = new Map<string, Promise<Sharpness | null>>();
 
 /** Measures a copy nobody has played yet, and keeps the answer. Null when it can't be had. */
 export function measureCopy(key: string, shareKey: string, fid: number): Promise<Sharpness | null> {
+	// Never probe AllAnime in the background: it may require a human Cloudflare check.
+	if (shareKey.startsWith('allanime:')) return Promise.resolve(null);
 	const kept = keptSharpness([key])[key];
 	if (kept) return Promise.resolve(kept);
 	const running = measuring.get(key);

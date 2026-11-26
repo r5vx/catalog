@@ -135,5 +135,26 @@ check('an unchanged empty-of-others list does not repeat departures', aNotes.fil
 A.leaveRoom();
 check('leaving clears the local notice and paused-load state', A.together.notice === '' && !A.roomPaused(playing(() => aEpisode)()));
 
+// Watch along with a film whose source here calls it something else (2026-11-23: it never jumped to
+// the friend's place). A plays at 1000 s; B follows, its film named differently, asked by A's name.
+room.state = null; room.members.clear(); room.puts = [];
+const c = new Video(200);
+const d = new Video(200);
+const film = (title, asked) => () => ({ title, type: 'movie', year: '2026', season: 0, episode: 0, asked });
+c.base = 1000; await c.play();
+const detachC = A.attachTogether(c, film('Spider-Man: Brand New Day'), () => {});
+await A.startRoom();
+await B.joinRoom(room.code, 'A');
+const detachD = B.attachTogether(d, film('Spider-Man - Brand New Day (2026)'), () => {});
+await wait(1500);
+check('watch along jumps there when only the punctuation differs', !d.paused && Math.abs(c.currentTime - d.currentTime) < 1.5, `A ${c.currentTime.toFixed(1)}, B ${d.currentTime.toFixed(1)}`);
+detachD();
+const e = new Video(200);
+const detachE = B.attachTogether(e, film('Spiderman 4', 'Spider-Man: Brand New Day'), () => {});
+await wait(1500);
+check('and when its source names it otherwise, by the name it was asked for', !e.paused && Math.abs(c.currentTime - e.currentTime) < 1.5, `A ${c.currentTime.toFixed(1)}, B ${e.currentTime.toFixed(1)}`);
+check('the name it was asked for is never sent to the room', room.puts.every((p) => !('asked' in p)) && !('asked' in room.state), JSON.stringify(room.state));
+detachE(); detachC();
+
 console.log(failed ? `\n${failed} FAILED` : '\nall passed');
 process.exit(failed ? 1 : 0);

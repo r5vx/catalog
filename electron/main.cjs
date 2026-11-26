@@ -12,6 +12,7 @@ const { iconPath, useAppIcon } = require('./appIcon.cjs');
 const { captureYouTube } = require('./youtubeHelper.cjs');
 const { signInWithBrowser, signOutOf, youtubePartition } = require('./youtubeSignIn.cjs');
 const { captureLive } = require('./liveCapture.cjs');
+const { solveTurnstile, closeTurnstile } = require('./turnstileSolver.cjs');
 const { fork } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -23,6 +24,10 @@ const { moveToThisAccount } = require('./moveInstall.cjs');
 app.commandLine.appendSwitch('enable-features', 'PlatformHEVCDecoderSupport,PlatformHEVCEncoderSupport');
 app.commandLine.appendSwitch('enable-blink-features', 'AudioVideoTracks');
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
+// A covered window (another window over it, the screen locked while away) still counts as on screen:
+// Chromium stopped drawing it and slowed it to save power, so a friend's Discord stream of Catalog
+// dropped to ~5 frames a second while she was away (2026-11-23).
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
 // Windows shows a page's notices (a whisper while a game is in front) only for a named app: the
 // installer's shortcuts carry this same name (package.json build.appId).
 if (process.platform === 'win32') app.setAppUserModelId('com.blura.catalog');
@@ -33,6 +38,14 @@ if (process.platform === 'win32') app.setAppUserModelId('com.blura.catalog');
 try {
 	const share = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'storage.json'), 'utf8'));
 	if (share?.appCacheBytes > 0) app.commandLine.appendSwitch('disk-cache-size', String(Math.round(share.appCacheBytes)));
+} catch {}
+
+// Settings → Playback → Picture (src/lib/server/videoDrawing.ts): video drawn by Catalog itself, not
+// handed to the graphics card as a layer of its own, which a friend's card put in the wrong place
+// for a frame now and then (the picture jumped up, 2026-11-23).
+try {
+	const drawing = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'video.json'), 'utf8'));
+	if (drawing?.noOverlay === true) app.commandLine.appendSwitch('disable-direct-composition-video-overlays');
 } catch {}
 
 const PORT = Number(process.env.CATALOG_PORT || 4173);
@@ -405,18 +418,14 @@ function findOnVidfastNow(pageUrl, onStop) {
 					event.preventDefault();
 				}
 			});
+			const observe = require('./vidfastEvidence.cjs')(pageUrl);
 			const dbg = win.webContents.debugger;
 			dbg.attach('1.3');
 			dbg.sendCommand('Network.enable').catch(() => {});
 			dbg.on('message', (_event, method, params) => {
 				if (method !== 'Network.responseReceived') return;
-				const { url, status, mimeType } = params.response;
-				let host = '';
-				try {
-					host = new URL(url).hostname;
-				} catch {}
-				const playlist = /mpegurl/i.test(mimeType) || /\.m3u8(\?|$)/i.test(url);
-				if (status === 200 && playlist && !VIDFAST_OWN.test(host)) finish({ url });
+				const url = observe(win.webContents.getURL(), params.frameId, params.response);
+				if (url) finish({ url });
 			});
 			win.loadURL(pageUrl).catch(() => {});
 		} catch (e) {
@@ -962,6 +971,13 @@ function startServer() {
 		}
 
 		if (message?.type === 'movy-stop') movyStops.get(message.id)?.();
+
+		if (message?.type === 'solve-turnstile') {
+			solveTurnstile(String(message.url), message.timeout || 60000, window)
+				.then((result) => server?.send({ type: 'solve-turnstile-result', id: message.id, ...result }));
+		}
+
+		if (message?.type === 'close-turnstile') closeTurnstile();
 
 		// Live TV: a channel's stream address, read from its page out of sight (liveCapture.cjs).
 		if (message?.type === 'live-capture') {
@@ -1710,6 +1726,7 @@ function createWindow() {
 		if (!quitting) app.quit();
 	});
 	addTextMenu(window.webContents);
+	escapeInFullscreen(window);
 	window.loadURL(ORIGIN);
 
 	// "ready-to-show" never comes if the first load fails (the server not quite up yet,
@@ -1744,6 +1761,14 @@ function createWindow() {
 			return { action: 'deny' };
 		}
 		if (isFebbox(url)) return { action: 'allow', overrideBrowserWindowOptions: signIn };
+		// Catasong's Spotify links open the Spotify app when it's installed, like Discord's do. Only
+		// this one shape becomes an app link (spotify:search:…, built from the address here), so it
+		// can't be used to start anything else.
+		const spotifySearch = /^https:\/\/open\.spotify\.com\/search\/([^/?#]+)$/.exec(url);
+		if (spotifySearch && app.getApplicationNameForProtocol('spotify://')) {
+			shell.openExternal(`spotify:search:${spotifySearch[1]}`);
+			return { action: 'deny' };
+		}
 		// Only web and mail links go to the computer's own programs: any other kind (file:, or a
 		// program's own link type) could start something on the computer (2026-11-16).
 		if (!url.startsWith(ORIGIN) && /^(https?|mailto):/i.test(url)) shell.openExternal(url);
@@ -1751,6 +1776,31 @@ function createWindow() {
 	});
 
 	window.webContents.on('did-create-window', (childWindow) => watchSignIn(childWindow));
+}
+
+/**
+ * Escape while the page is full screen (the player): Electron used to leave full screen before the
+ * page heard the key, so Escape in the chat box took you out of full screen instead of closing the
+ * box (2026-11-23). Now the page hears it first; the chat box, a menu or the player takes it, and
+ * full screen is left only when nothing did.
+ */
+function escapeInFullscreen(win) {
+	let pageFullscreen = false;
+	win.on('enter-html-full-screen', () => (pageFullscreen = true));
+	win.on('leave-html-full-screen', () => (pageFullscreen = false));
+	win.webContents.on('before-input-event', (event, input) => {
+		if (!pageFullscreen || input.type !== 'keyDown' || input.key !== 'Escape') return;
+		event.preventDefault();
+		win.webContents
+			.executeJavaScript(
+				`(() => {
+					const key = new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, cancelable: true });
+					(document.activeElement || document.body).dispatchEvent(key);
+					if (!key.defaultPrevented && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+				})()`
+			)
+			.catch(() => {});
+	});
 }
 
 /**

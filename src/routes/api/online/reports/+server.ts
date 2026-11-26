@@ -1,3 +1,4 @@
+import { requireOwner } from '$lib/server/ownerSession';
 import { json } from '@sveltejs/kit';
 import { cloud } from '$lib/server/online';
 import { readSettings, updateSettings } from '$lib/server/settings';
@@ -14,7 +15,8 @@ function reviewed(): Set<number> {
 }
 
 /** Problem reports Catalogs sent by themselves, read with the owner's key (Settings → Online). ?id= for one in full. */
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ url, cookies }) => {
+	requireOwner(cookies);
 	const id = Number(url.searchParams.get('id'));
 	const answer = await cloud<{ reports?: { id: number }[] }>(id ? `/v1/reports/${id}` : '/v1/reports', { admin: true });
 	if (!answer.ok) return json({ error: answer.error }, { status: answer.status || 502 });
@@ -24,7 +26,8 @@ export const GET: RequestHandler = async ({ url }) => {
 };
 
 /** { ids, reviewed }: marks reports as looked through, or not. */
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, cookies }) => {
+	requireOwner(cookies);
 	const sent = (await request.json().catch(() => ({}))) as { ids?: unknown; reviewed?: unknown };
 	const ids = Array.isArray(sent.ids) ? sent.ids.map(Number).filter(Number.isInteger) : [];
 	const seen = reviewed();
@@ -37,7 +40,8 @@ export const POST: RequestHandler = async ({ request }) => {
 	return json({ ok: true });
 };
 
-export const DELETE: RequestHandler = async ({ url }) => {
+export const DELETE: RequestHandler = async ({ url, cookies }) => {
+	requireOwner(cookies);
 	const answer = await cloud(`/v1/reports/${Number(url.searchParams.get('id'))}`, { method: 'DELETE', admin: true });
 	return answer.ok ? json({ ok: true }) : json({ error: answer.error }, { status: answer.status || 502 });
 };

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
 	import { onMount } from 'svelte';
+	import { mixWeekly } from '$lib/mixWeekly';
 	import TvRow from '$lib/tv/TvRow.svelte';
 	import TvCard from '$lib/tv/TvCard.svelte';
 	import { fromContinue, type Tile } from '$lib/tv/tiles';
@@ -14,17 +15,17 @@
 		{ key: 'watchList', label: 'From your watch list' },
 		{ key: 'yours', label: 'New episodes of your shows' },
 		{ key: 'soon', label: 'Coming up' },
-		{ key: 'anime', label: 'Anime this week' },
 		{ key: 'streaming', label: 'New to stream' },
 		{ key: 'cinemas', label: 'In cinemas' },
-		{ key: 'shows', label: 'New shows' }
+		{ key: 'shows', label: 'New TV shows' },
+		{ key: 'anime', label: 'Anime this week' }
 	];
 	let lists = $state<Partial<Record<Name, List>>>({});
 	let selected = $state<string | null>(null);
 	let continueTiles = $state<Tile[]>([]);
 	const all = $derived(Object.values(lists).flatMap((list) => list?.items ?? []));
-	const hero = $derived([...new Map(all.map((item) => [item.href, item])).values()]
-		.sort((a, b) => b.popularity - a.popularity).slice(0, 6));
+	const hero = $derived(mixWeekly((['streaming', 'shows', 'cinemas', 'anime'] as const).map(key =>
+		[...(lists[key]?.items ?? [])].sort((a, b) => b.popularity - a.popularity)), 6));
 	const continuing = $derived(continueTiles.find((item) => item.href === selected));
 	const featured = $derived(continuing ? { ...continuing, backdrop: null, overview: continuing.overview ?? '', date: '', what: continuing.meta }
 		: all.find((item) => item.href === selected) ?? hero[0]);

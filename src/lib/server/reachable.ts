@@ -3,13 +3,31 @@
  * be reached" (an internet provider blocking it, the site down) need different words on screen.
  * Any answer counts as reachable, even an error page; only no answer at all doesn't. Kept two minutes.
  */
-const SITES: Record<string, string> = {
+export const SITES: Record<string, string> = {
 	'7Movies': 'https://embed.vidrift.net/',
 	Movy: 'https://www.movy.sx/',
 	Vidfast: 'https://vidfast.vc/',
+	'Xumo Play': 'https://valencia-app-mds.xumo.com/',
+	Plex: 'https://plex.tv/',
+	'Pluto TV': 'https://boot.pluto.tv/',
 	HiAnime: 'https://zokoanime.video/',
 	Aniwave: 'https://aniwaves.ru/',
-	Showbox: 'https://www.febbox.com/'
+	Showbox: 'https://showbox.media/',
+	Febbox: 'https://www.febbox.com/',
+	Torrentio: 'https://torrentio.strem.fun/manifest.json',
+	'Real-Debrid': 'https://api.real-debrid.com/rest/1.0/time',
+	TorBox: 'https://api.torbox.app/',
+	AllDebrid: 'https://api.alldebrid.com/',
+	Premiumize: 'https://www.premiumize.me/',
+	KickAssAnime: 'https://kaa.lt/',
+	AllAnime: 'https://allmanga.to/',
+	'Anime Nexus': 'https://anime.nexus/',
+	Nyaa: 'https://nyaa.si/',
+	DaddyLive: 'https://thedaddy.li/',
+	YouTube: 'https://www.youtube.com/',
+	'Football replays': 'https://nfl-video.com/',
+	'Basketball replays': 'https://basketball-video.com/',
+	'Soccer replays': 'https://soccerfull.net/'
 };
 const known = new Map<string, { at: number; ok: boolean }>();
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import PublisherReplays from '$lib/PublisherReplays.svelte';
 	import { fitOnScreen } from '$lib/fitOnScreen';
 	/**
 	 * Live TV (sources/daddylive.ts): games from the schedule, by sport, with the channels showing
@@ -63,7 +64,76 @@
 		playable: boolean;
 		homeCountry?: string;
 	};
-	type Tab = 'games' | 'channels' | 'replays' | 'saved';
+	type Tab = 'games' | 'pluto' | 'channels' | 'replays' | 'saved';
+
+	type PlutoLiveChannel = {
+		id: string;
+		number: number;
+		name: string;
+		category: string;
+		summary: string;
+		logo: string | null;
+		nowThumb: string | null;
+		nowTitle: string;
+		nowEpisode: string;
+		nowStart: number;
+		nowStop: number;
+		nextTitle: string;
+	};
+	type PlutoLiveGuide = { categories: string[]; channels: PlutoLiveChannel[] };
+
+	let plutoGuide = $state<PlutoLiveGuide | null>(null);
+	let plutoCategory = $state('All');
+	let plutoShown = $state(60);
+
+	async function loadPlutoGuide() {
+		try {
+			const r = await fetch('/api/live/pluto');
+			if (r.ok) plutoGuide = await r.json();
+		} catch {}
+	}
+
+	const plutoFiltered = $derived.by(() => {
+		const list = plutoGuide?.channels ?? [];
+		const q = search.trim().toLowerCase();
+		return list.filter((c) => {
+			if (plutoCategory !== 'All' && c.category !== plutoCategory) return false;
+			if (!q) return true;
+			return (
+				c.name.toLowerCase().includes(q) ||
+				c.nowTitle.toLowerCase().includes(q) ||
+				c.nowEpisode.toLowerCase().includes(q) ||
+				c.category.toLowerCase().includes(q)
+			);
+		});
+	});
+
+	function plutoProgress(start: number, stop: number): number {
+		if (!start || !stop || stop <= start) return 0;
+		return Math.max(0, Math.min(100, Math.round(((Date.now() - start) / (stop - start)) * 100)));
+	}
+
+	function plutoLeft(stop: number): string {
+		if (!stop) return '';
+		const mins = Math.max(1, Math.round((stop - Date.now()) / 60_000));
+		return mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m left` : `${mins}m left`;
+	}
+
+	const plutoWatchHref = (ch: PlutoLiveChannel) =>
+		`/watch?${new URLSearchParams({ live: `pluto:${ch.id}`, name: ch.nowTitle ? `${ch.name} — ${ch.nowTitle}` : ch.name })}`;
+
+	function channelBadgeText(name: string): string {
+		const words = name.replace(/\b(USA|UK|CA|AU|HD|SD|FHD|TV|NETWORK|CHANNEL)\b/gi, '').trim().split(/\s+/).filter(Boolean);
+		if (!words.length) return name.slice(0, 4).toUpperCase();
+		if (words[0].length <= 5) return words[0].toUpperCase();
+		return words.slice(0, 3).map((w) => w[0]).join('').toUpperCase();
+	}
+
+	function channelHue(name: string): number {
+		let h = 205;
+		for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
+		return h;
+	}
 
 	const KEPT = 'catalog:live';
 	/** Games shown for each sport with every sport showing; channels shown before "Show all". */
@@ -169,6 +239,7 @@
 	let replays = $state<LiveReplay[] | null>(liveKept.replays);
 	onMount(() => {
 		fetchReplays().then((list) => (replays = list));
+		void loadPlutoGuide();
 	});
 	const replaysFound = $derived(
 		(replays ?? []).filter((r) => isMine(r.sport) && (sport === 'all' || r.sport === sport) && (!searched || matches(`${r.title} ${r.league}`, searched)))
@@ -194,6 +265,8 @@
 	 * so the page isn't every sport there is. A search still looks through all of them.
 	 */
 	const mine = $derived(guide?.sports?.length ? new Set<string>(guide.sports) : null);
+	let publisherCounts = $state<Record<string,number>>({});
+	const publisherFilters = $derived(new URLSearchParams({ sports: searched ? '' : [...(mine ?? [])].join(','), sport, q:searched }).toString());
 	const isMine = (s: Sport) => !mine || mine.has(s) || Boolean(searched);
 	let picking = $state(false);
 	let choice = $state<Sport[]>([]);
@@ -296,36 +369,11 @@
 	 * opens the channel's page out of sight, so it's a button, not done by itself. What's found is
 	 * kept on this computer an hour ("on") or half an hour ("off"), like channels played lately.
 	 */
-	let checked = $state<Record<number, boolean>>({});
-	let checking = $state<{ done: number; of: number } | null>(null);
-	let stopChecking = false;
 	type Shown = LiveChannel | { id: number; name: string; country?: string };
 	function statusOf(channel: Shown): 'on' | 'off' | '' {
-		if (channel.id in checked) return checked[channel.id] ? 'on' : 'off';
 		const tried = 'tried' in channel ? channel.tried : null;
 		return tried ? (tried.ok ? 'on' : 'off') : '';
 	}
-	/** How many one click looks at: the next ones in the list not looked at yet. */
-	const CHECK_AT_ONCE = 40;
-	const unchecked = $derived(channels.filter((c) => !(c.id in checked)));
-	async function checkChannels() {
-		const list = unchecked.slice(0, CHECK_AT_ONCE).map((c) => c.id);
-		checking = { done: 0, of: list.length };
-		stopChecking = false;
-		let next = 0;
-		await Promise.all(
-			[0, 1].map(async () => {
-				while (next < list.length && !stopChecking) {
-					const id = list[next++];
-					const answer = await fetch(`/api/live/playlist?ch=${id}&check=1`).catch(() => null);
-					checked = { ...checked, [id]: answer?.status === 204 };
-					if (checking) checking = { ...checking, done: checking.done + 1 };
-				}
-			})
-		);
-		checking = null;
-	}
-	onDestroy(() => (stopChecking = true));
 
 	/* Nothing on the schedule: Replays instead of an empty page (owner, 2026-11-15), once a visit. */
 	let movedToReplays = false;
@@ -446,19 +494,34 @@
 
 {#snippet channelCard(channel: LiveChannel | { id: number; name: string; country?: string }, recent = false)}
 	{@const showing = showingNow.get(channel.id)}
+	{@const st = statusOf(channel)}
 	<li class="channel" class:recent oncontextmenu={(e) => openMenu(e, { channel })}>
 		<a href={watchHref(channel, showing)}>
-			<span class="name">{channel.name}</span>
 			{#if showing}
-				<span class="now"><span class="dot"></span>{showing.title}</span>
-			{:else if statusOf(channel) === 'off'}
-				<!-- Didn't play when last tried: said before it's picked (it loaded forever, 2026-11-15). -->
-				<span class="off-air">Off{channel.country ? ` · ${channel.country}` : ''}</span>
-			{:else if statusOf(channel) === 'on'}
-				<span class="on-air"><span class="dot"></span>On{channel.country ? ` · ${channel.country}` : ''}</span>
-			{:else if channel.country}
-				<span class="country">{channel.country}</span>
+				<span class="ch-game-thumb" aria-hidden="true">
+					<GameArt art={showing.art} sport={showing.sport} poster={showing.poster} />
+				</span>
+			{:else}
+				<span class="ch-thumb" style:--ch-hue={channelHue(channel.name)} aria-hidden="true">
+					{channelBadgeText(channel.name)}
+				</span>
 			{/if}
+			<span class="ch-body">
+				<span class="name">{channel.name}</span>
+				<span class="ch-meta">
+					{#if showing}
+						<span class="now"><span class="dot"></span>{showing.title}</span>
+					{:else if st === 'on'}
+						<span class="status-pill online"><span class="dot"></span>Online</span>
+						{#if channel.country}<span class="country">{channel.country}</span>{/if}
+					{:else if st === 'off'}
+						<span class="status-pill offline">Offline</span>
+						{#if channel.country}<span class="country">{channel.country}</span>{/if}
+					{:else if channel.country}
+						<span class="country">{channel.country}</span>
+					{/if}
+				</span>
+			</span>
 		</a>
 		<LiveStar saved={savedChannelIds.has(channel.id)} label={channel.name} onclick={() => saveChannel(channel)} />
 		{#if recent}{@render removeButton(channel.name, () => forgetChannel(channel.id))}{/if}
@@ -520,11 +583,14 @@
 		<button type="button" class:on={tab === 'games'} onclick={() => (tab = 'games')}>
 			Schedule{#if guide}<span class="count">{gamesFound.length}</span>{/if}
 		</button>
+		<button type="button" class:on={tab === 'pluto'} onclick={() => (tab = 'pluto')}>
+			Free TV (Pluto){#if plutoGuide}<span class="count">{plutoFiltered.length}</span>{/if}
+		</button>
 		<button type="button" class:on={tab === 'channels'} onclick={() => (tab = 'channels')}>
 			Channels{#if guide}<span class="count">{channelsFound.length}</span>{/if}
 		</button>
 		<button type="button" class:on={tab === 'replays'} onclick={() => (tab = 'replays')}>
-			Replays{#if replays}<span class="count">{replays.length}</span>{/if}
+			Replays
 		</button>
 		<button type="button" class:on={tab === 'saved'} onclick={() => (tab = 'saved')}>
 			Saved{#if savedCount}<span class="count">{savedCount}</span>{/if}
@@ -551,14 +617,82 @@
 		</section>
 	{/if}
 
-	{#if !guide}
-		<p class="faint">{failed ? "Live TV can't be reached right now." : 'Loading the schedule…'}</p>
+	{#if tab === 'pluto'}
+		{#if !plutoGuide}
+			<p class="faint">Loading Pluto TV channels and what's airing now…</p>
+		{:else}
+			<div class="pluto-cats" role="group" aria-label="Pluto TV categories">
+				<button type="button" class="chip" class:on={plutoCategory === 'All'} onclick={() => { plutoCategory = 'All'; plutoShown = 60; }}>
+					All<span class="count">{plutoGuide.channels.length}</span>
+				</button>
+				{#each plutoGuide.categories as cat (cat)}
+					{@const n = plutoGuide.channels.filter((c) => c.category === cat).length}
+					<button type="button" class="chip" class:on={plutoCategory === cat} onclick={() => { plutoCategory = cat; plutoShown = 60; }}>
+						{cat}<span class="count">{n}</span>
+					</button>
+				{/each}
+			</div>
+
+			{#if !plutoFiltered.length}
+				<p class="faint">No Pluto TV channels match that right now.</p>
+			{:else}
+				<div class="pluto-grid">
+					{#each plutoFiltered.slice(0, plutoShown) as ch (ch.id)}
+						{@const pct = plutoProgress(ch.nowStart, ch.nowStop)}
+						<a class="pluto-card" href={plutoWatchHref(ch)}>
+							<div class="pluto-thumb" style:--ch-hue={channelHue(ch.name)}>
+								{#if ch.nowThumb}
+									<img class="pluto-thumb-img" src={ch.nowThumb} alt="" loading="lazy" />
+								{/if}
+								<div class="pluto-thumb-top">
+									<div class="pluto-logo-badge">
+										{#if ch.logo}
+											<img src={ch.logo} alt="" loading="lazy" />
+										{:else}
+											<span class="pluto-num">#{ch.number}</span>
+										{/if}
+									</div>
+									<span class="pluto-live-pill">LIVE</span>
+								</div>
+								{#if pct > 0}
+									<div class="pluto-thumb-bar"><span style:width={`${pct}%`}></span></div>
+								{/if}
+							</div>
+
+							<div class="pluto-body">
+								<div class="pluto-head-row">
+									<span class="pluto-name">{ch.name}</span>
+									{#if pct > 0}
+										<span class="pluto-left">{plutoLeft(ch.nowStop)}</span>
+									{/if}
+								</div>
+								<strong class="pluto-title">{ch.nowTitle || 'Live broadcast'}</strong>
+								{#if ch.nowEpisode}
+									<span class="pluto-ep">{ch.nowEpisode}</span>
+								{/if}
+								{#if ch.nextTitle}
+									<p class="pluto-next">Up next: <span>{ch.nextTitle}</span></p>
+								{/if}
+							</div>
+						</a>
+					{/each}
+				</div>
+
+				{#if plutoFiltered.length > plutoShown}
+					<div class="pluto-more">
+						<button type="button" class="btn" onclick={() => (plutoShown += 60)}>
+							Show more channels ({plutoFiltered.length - plutoShown} left)
+						</button>
+					</div>
+				{/if}
+			{/if}
+		{/if}
 	{:else if tab === 'replays'}
 		<div class="sports" role="group" aria-label="Sport">
 			<button type="button" class="chip" class:on={sport === 'all'} onclick={() => pickSport('all')}>All</button>
-			{#each SPORTS.filter((s) => isMine(s.key) && (replays ?? []).some((r) => r.sport === s.key)) as s (s.key)}
+			{#each SPORTS.filter((s) => isMine(s.key) && ((replays ?? []).some((r) => r.sport === s.key) || publisherCounts[s.key])) as s (s.key)}
 				<button type="button" class="chip" class:on={sport === s.key} onclick={() => pickSport(s.key)}>
-					{s.label}<span class="count">{(replays ?? []).filter((r) => r.sport === s.key).length}</span>
+					{s.label}<span class="count">{(replays ?? []).filter((r) => r.sport === s.key).length + (publisherCounts[s.key] || 0)}</span>
 				</button>
 			{/each}
 			<button type="button" class="chip add" title="Change which sports show" aria-label="Change which sports show" onclick={() => (picking = true)}>+</button>
@@ -566,7 +700,7 @@
 		{#if replays === null}
 			<p class="faint">Loading replays…</p>
 		{:else if !replaysFound.length}
-			<p class="faint">{searched ? 'No replay called that.' : 'No replays right now.'}</p>
+			<p class="faint">{searched ? 'No replay called that.' : 'No recent replays right now.'}</p>
 		{:else}
 			<p class="faint replay-note">Whole games, a few hours to weeks old. One only hours old may not be ready yet.</p>
 			<ul class="replays">
@@ -583,6 +717,9 @@
 				{/each}
 			</ul>
 		{/if}
+		{#key publisherFilters}<PublisherReplays filters={publisherFilters} counts={(counts) => publisherCounts = counts} />{/key}
+	{:else if !guide}
+		<p class="faint">{failed ? "Live TV can't be reached right now." : 'Loading the schedule…'}</p>
 	{:else if tab === 'saved'}
 		{#if savedFound.games.length}
 			<section>
@@ -726,18 +863,10 @@
 					<option value="">Every country</option>
 					{#each countries as name (name)}<option value={name}>{name}</option>{/each}
 				</select>
-				{#if checking}
-					<span class="faint tabular">Checking {checking.done} of {checking.of}…</span>
-					<button type="button" class="btn" onclick={() => (stopChecking = true)}>Stop</button>
-				{:else if unchecked.length}
-					<button type="button" class="btn" onclick={checkChannels}>
-						{unchecked.length === channels.length ? 'Check which are on' : `Check ${Math.min(CHECK_AT_ONCE, unchecked.length)} more`}
-					</button>
-				{/if}
 			</div>
 			{#if channelsOnNow.length}
 				<section>
-					<div class="section-head"><h2>On now</h2><span class="faint">{channelsOnNow.length}</span></div>
+					<div class="section-head"><h2>Live games on now</h2><span class="faint">{channelsOnNow.length}</span></div>
 					<ul class="channels">
 						{#each channelsOnNow as channel (channel.id)}{@render channelCard(channel)}{/each}
 					</ul>
@@ -1148,11 +1277,13 @@
 	.channel {
 		display: flex;
 		align-items: center;
-		gap: 4px;
-		padding: 4px 4px 4px 12px;
+		gap: 6px;
+		padding: 8px 8px 8px 10px;
 		border: 1px solid var(--rule);
 		border-radius: var(--radius);
 		background: var(--surface);
+		overflow: hidden;
+		min-width: 0;
 	}
 
 	.channel:hover {
@@ -1161,16 +1292,40 @@
 
 	.channel a {
 		display: flex;
-		flex-direction: column;
+		flex-direction: row;
+		align-items: center;
+		gap: 10px;
 		flex: 1;
 		min-width: 0;
-		padding: 5px 0;
+		overflow: hidden;
+		padding: 0;
 		color: var(--ink);
 		text-decoration: none;
 	}
 
 	.channel a:hover .name {
 		color: var(--accent);
+	}
+
+	.ch-game-thumb {
+		flex-shrink: 0;
+		width: 64px;
+		height: 40px;
+		border-radius: 6px;
+		overflow: hidden;
+		display: block;
+	}
+
+	.ch-game-thumb :global(.art),
+	.ch-game-thumb :global(img) {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+	}
+
+	.chk-on {
+		color: #4ade80;
+		font-weight: 600;
 	}
 
 	.name,
@@ -1410,5 +1565,248 @@
 		gap: 2px;
 		padding: 10px 12px;
 		min-width: 0;
+	}
+
+	.pluto-cats {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 7px;
+		margin: 0 0 18px;
+	}
+
+	.pluto-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+		gap: 12px;
+	}
+
+	.pluto-card {
+		display: flex;
+		flex-direction: column;
+		border: 1px solid var(--rule);
+		border-radius: 13px;
+		background: linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 55%, var(--surface)) 0%, var(--surface) 100%);
+		text-decoration: none;
+		color: var(--ink);
+		overflow: hidden;
+		transition: border-color 0.14s ease, transform 0.14s ease, box-shadow 0.14s ease;
+	}
+
+	.pluto-card:hover {
+		border-color: var(--accent);
+		transform: translateY(-2px);
+		box-shadow: 0 10px 24px -10px rgb(0 0 0 / 50%);
+	}
+
+	.pluto-thumb {
+		position: relative;
+		aspect-ratio: 16 / 9;
+		background:
+			radial-gradient(circle at 80% 20%, hsl(var(--ch-hue) 45% 32% / 0.4), transparent 60%),
+			linear-gradient(155deg, hsl(var(--ch-hue) 26% 18%) 0%, hsl(var(--ch-hue) 22% 10%) 100%);
+		overflow: hidden;
+	}
+
+	.pluto-thumb-img {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		display: block;
+	}
+
+	.pluto-thumb::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		background: linear-gradient(180deg, rgb(0 0 0 / 48%) 0%, transparent 45%, rgb(0 0 0 / 55%) 100%);
+		pointer-events: none;
+	}
+
+	.pluto-thumb-top {
+		position: absolute;
+		top: 8px;
+		left: 8px;
+		right: 8px;
+		z-index: 1;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+	}
+
+	.pluto-logo-badge {
+		height: 26px;
+		max-width: 96px;
+		padding: 3px 8px;
+		border-radius: 7px;
+		background: rgb(12 12 16 / 78%);
+		backdrop-filter: blur(6px);
+		border: 1px solid rgb(255 255 255 / 14%);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.pluto-logo-badge img {
+		max-width: 100%;
+		max-height: 100%;
+		object-fit: contain;
+	}
+
+	.pluto-thumb-bar {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		height: 4px;
+		z-index: 1;
+		background: rgb(0 0 0 / 55%);
+	}
+
+	.pluto-thumb-bar span {
+		display: block;
+		height: 100%;
+		background: var(--accent);
+	}
+
+	.pluto-body {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		padding: 11px 13px 13px;
+	}
+
+	.pluto-head-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+	}
+
+	.pluto-num {
+		font-size: 0.72rem;
+		font-weight: 700;
+		color: #e5e7eb;
+	}
+
+	.pluto-name {
+		font-size: 0.76rem;
+		font-weight: 600;
+		color: var(--ink-faint);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.pluto-live-pill {
+		font-size: 0.65rem;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		padding: 2px 7px;
+		border-radius: 999px;
+		background: rgb(220 38 38 / 88%);
+		color: #fff;
+		flex-shrink: 0;
+	}
+
+	.pluto-title {
+		font-size: 0.94rem;
+		font-weight: 650;
+		line-height: 1.3;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
+
+	.pluto-ep {
+		font-size: 0.78rem;
+		color: var(--ink-soft);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.pluto-left {
+		font-size: 0.72rem;
+		color: var(--ink-faint);
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
+
+	.pluto-next {
+		margin: 3px 0 0;
+		font-size: 0.74rem;
+		color: var(--ink-faint);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.pluto-next span {
+		color: var(--ink-soft);
+	}
+
+	.pluto-more {
+		margin-top: 16px;
+		display: flex;
+		justify-content: center;
+	}
+
+	.ch-thumb {
+		width: 44px;
+		height: 34px;
+		border-radius: 8px;
+		flex-shrink: 0;
+		display: grid;
+		place-items: center;
+		font-size: 0.7rem;
+		font-weight: 800;
+		letter-spacing: 0.03em;
+		color: #f3f4f6;
+		background: linear-gradient(145deg, hsl(var(--ch-hue) 44% 30%) 0%, hsl(var(--ch-hue) 34% 16%) 100%);
+		border: 1px solid hsl(var(--ch-hue) 50% 45% / 0.35);
+	}
+
+	.ch-body {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		min-width: 0;
+		flex: 1;
+		overflow: hidden;
+	}
+
+	.ch-meta {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		min-width: 0;
+		overflow: hidden;
+	}
+
+	.status-pill {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 0.68rem;
+		font-weight: 700;
+		padding: 1px 7px;
+		border-radius: 999px;
+	}
+
+	.status-pill.online {
+		background: color-mix(in srgb, #22c55e 16%, transparent);
+		color: #4ade80;
+		border: 1px solid color-mix(in srgb, #22c55e 38%, transparent);
+	}
+
+	.status-pill.offline {
+		background: color-mix(in srgb, #ef4444 14%, transparent);
+		color: #f87171;
+		border: 1px solid color-mix(in srgb, #ef4444 35%, transparent);
 	}
 </style>

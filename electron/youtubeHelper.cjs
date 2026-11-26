@@ -15,6 +15,7 @@ const { BrowserWindow, app } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { TrackReader } = require('./fmp4.cjs');
+const { collectCaptions } = require('./youtubeCaptions.cjs');
 
 // A 2023 Samsung TV (Tizen 8), as the Fire TV app: the 2021 one got "This device no longer fully supports YouTube".
 const AGENT = 'Mozilla/5.0 (SMART-TV; LINUX; Tizen 8.0) AppleWebKit/537.36 (KHTML, like Gecko) 108.0.5359.1/8.0 TV Safari/537.36';
@@ -23,9 +24,42 @@ const RATE = 4;
 const KEEP = 8;
 
 let win = null;
-let loaded = false;
 let job = null;
 let ticker = null;
+let selectedId = '';
+const captionJobs = new Set();
+
+async function keepCaptions(id, folder) {
+	if (id !== selectedId || captionJobs.has(id)) return;
+	const live = job?.id === id && win && !win.isDestroyed() ? win : null;
+	const current = () => id === selectedId && (!live || win === live);
+	let spare, welcomeTimer;
+	captionJobs.add(id);
+	try {
+		if (!live) {
+			// A fully kept video can play without a capture window. Never navigate another episode's player.
+			if (!JSON.parse(fs.readFileSync(path.join(folder, 'index.json'), 'utf8')).done) return;
+			spare = new BrowserWindow({ show:false, webPreferences:{partition:'persist:youtube', sandbox:true, contextIsolation:true, nodeIntegration:false, backgroundThrottling:false} });
+			spare.webContents.setAudioMuted(true);
+			spare.webContents.setUserAgent(AGENT);
+			spare.webContents.setWindowOpenHandler(() => ({action:'deny'}));
+			void spare.loadURL(`https://www.youtube.com/tv#/watch?v=${id}`).catch(() => {});
+			welcomeTimer = setInterval(() => {
+				if (current() && !spare.isDestroyed()) enterGuestVideo(spare, id, current).catch(() => {});
+			}, 750);
+		}
+		const tracks = await collectCaptions(live || spare, id, current, spare ? 90_000 : 30_000);
+		if (current()) {
+			const file = path.join(folder, 'auto-captions.json');
+			fs.writeFileSync(file + '.tmp', JSON.stringify({id, tracks, at:Date.now()}));
+			fs.renameSync(file + '.tmp', file);
+		}
+	} finally {
+		clearInterval(welcomeTimer);
+		if (spare && !spare.isDestroyed()) spare.destroy();
+		captionJobs.delete(id);
+	}
+}
 
 function preloadFile() {
 	const file = path.join(app.getPath('userData'), 'youtube-helper-preload.js');
@@ -37,8 +71,7 @@ function preloadFile() {
 
 async function ensureWindow() {
 	if (win && !win.isDestroyed()) return win;
-	loaded = false;
-	win = new BrowserWindow({
+	const page = win = new BrowserWindow({
 		show: false,
 		width: 1920,
 		height: 1080,
@@ -56,23 +89,22 @@ async function ensureWindow() {
 	win.webContents.setUserAgent(AGENT);
 	win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 	win.on('closed', () => {
-		win = null;
-		loaded = false;
+		if (win === page) win = null;
 	});
-	await win.loadURL('about:blank');
-	const dbg = win.webContents.debugger;
+	await page.loadURL('about:blank');
+	const dbg = page.webContents.debugger;
 	dbg.attach('1.3');
 	await dbg.sendCommand('Runtime.enable');
 	await dbg.sendCommand('Runtime.addBinding', { name: '__catalogCapture' });
 	dbg.on('message', (_e, method, p) => {
-		if (method !== 'Runtime.bindingCalled' || p.name !== '__catalogCapture') return;
+		if (page !== win || method !== 'Runtime.bindingCalled' || p.name !== '__catalogCapture') return;
 		try {
 			received(JSON.parse(p.payload));
 		} catch (e) {
 			note(`capture: ${e.message}`);
 		}
 	});
-	return win;
+	return page;
 }
 
 const js = (code) => (win && !win.isDestroyed() ? win.webContents.executeJavaScript(code).catch(() => null) : Promise.resolve(null));
@@ -139,55 +171,51 @@ function writeIndex() {
 
 /* ------------------------------------------------------------ driving the hidden player */
 
-async function clickText(re) {
-	const r = await js(`(() => { const el = [...document.querySelectorAll('*')].reverse().find((e) => e.childElementCount === 0 && ${re}.test(e.textContent.trim())); if (!el) return null; const b = el.getBoundingClientRect(); if (!b.width) return null; return { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) }; })()`);
+async function clickText(page, current, re) {
+	const r = await page.webContents.executeJavaScript(`(() => { const el = [...document.querySelectorAll('*')].reverse().find((e) => e.childElementCount === 0 && ${re}.test(e.textContent.trim())); if (!el) return null; const b = el.getBoundingClientRect(); if (!b.width) return null; return { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) }; })()`);
 	if (!r) return false;
 	for (const type of ['mouseMove', 'mouseDown', 'mouseUp']) {
-		win.webContents.sendInputEvent({ type, x: r.x, y: r.y, button: 'left', clickCount: 1 });
+		if (!current() || page.isDestroyed()) return false;
+		page.webContents.sendInputEvent({ type, x: r.x, y: r.y, button: 'left', clickCount: 1 });
 		await new Promise((q) => setTimeout(q, 120));
 	}
 	return true;
 }
 
-async function pressEnter() {
-	win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
+async function pressEnter(page, current) {
+	if (!current() || page.isDestroyed()) return;
+	page.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
 	await new Promise((q) => setTimeout(q, 120));
-	win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+	if (current() && !page.isDestroyed()) page.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
 }
 
 /** YouTube's first screens: "Get started", then "Who's watching" (Guest, until an account is added). */
-async function pastWelcome() {
-	const text = (await js(`document.body ? document.body.innerText.slice(0, 400) : ''`)) || '';
+async function enterGuestVideo(page, id, current) {
+	if (!page || page.isDestroyed() || !current() || !page.webContents.getURL().startsWith('https://www.youtube.com/tv')) return false;
+	const text = await page.webContents.executeJavaScript(`document.body ? document.body.innerText.slice(0, 400) : ''`);
+	if (!current() || page.isDestroyed()) return false;
 	if (/Get started/.test(text) && !/Watch as guest|Guest/.test(text)) {
-		await pressEnter();
+		await pressEnter(page, current);
 		return true;
 	}
-	if (/Watch as guest|Add account|Who.s watching/.test(text)) return clickText('/^(Watch as guest|Guest)$/');
+	if (/Watch as guest|Add account|Who.s watching/.test(text)) return clickText(page, current, '/^(Watch as guest|Guest)$/');
+	if (/Home|Recommended/.test(text)) await page.webContents.executeJavaScript(`if (!location.hash.includes('watch?v=')) location.hash = ${JSON.stringify('#/watch?v=' + id)}`);
 	return false;
 }
 
 async function open(id) {
-	await ensureWindow();
-	const at = `https://www.youtube.com/tv#/watch?v=${id}`;
-	if (!loaded) {
-		await win.loadURL('https://www.youtube.com/tv').catch(() => {});
-		loaded = true;
-		for (let i = 0; i < 30; i++) {
-			await new Promise((q) => setTimeout(q, 700));
-			if (await pastWelcome()) await new Promise((q) => setTimeout(q, 1500));
-			const home = await js(`!!document.body && /Home|Search|Recommended|Sign in/.test(document.body.innerText) && !/Watch as guest|Get started/.test(document.body.innerText)`);
-			if (home) break;
-		}
-	}
-	await js(`location.hash = ${JSON.stringify('#/watch?v=' + id)}`);
-	note(`asked for ${at}`);
+	const page = await ensureWindow();
+	if (page !== win || job?.id !== id) return;
+	await page.loadURL(`https://www.youtube.com/tv#/watch?v=${id}`);
 }
 
 async function tick() {
 	if (!job || job.done || job.error) return;
+	const mine = job;
 	if (job.dirty) writeIndex();
 	if (!job.tracks.video || !job.tracks.audio) {
-		if (await pastWelcome()) note('past the welcome screen');
+		if (await enterGuestVideo(win, mine.id, () => job === mine) && job === mine) note('past the welcome screen');
+		if (job !== mine) return;
 		if (Date.now() - job.started > 45_000) {
 			job.error = 'YouTube didn\'t start this video.';
 			note(job.error);
@@ -196,7 +224,7 @@ async function tick() {
 		return;
 	}
 	const st = await js(`(() => { const v = document.querySelector('video'); if (!v || !v.duration) return null; v.muted = true; if (v.playbackRate !== ${RATE}) v.playbackRate = ${RATE}; if (v.paused) v.play().catch(() => {}); let end = v.currentTime; for (let i = 0; i < v.buffered.length; i++) if (v.buffered.start(i) <= v.currentTime + 1 && v.buffered.end(i) > end) end = v.buffered.end(i); return { t: v.currentTime, d: v.duration, end: end, h: v.videoHeight }; })()`);
-	if (!st) return;
+	if (!st || job !== mine) return;
 	job.duration = st.d;
 	job.height = Math.max(job.height || 0, st.h || 0);
 	// The Roku jumped past what's kept: the hidden player goes there.
@@ -213,6 +241,7 @@ async function tick() {
 	if (kept >= st.d - 0.6) {
 		job.done = true;
 		await js(`(() => { const v = document.querySelector('video'); if (v) v.pause(); })()`);
+		if (job !== mine) return;
 		note(`all kept (${st.d.toFixed(0)} s, up to ${job.height}p)`);
 		writeIndex();
 		return;
@@ -259,7 +288,10 @@ async function capture(message) {
 	const dir = String(message.dir ?? '');
 	const from = Number(message.from) || 0;
 	if (!/^[\w-]{6,20}$/.test(id) || !dir) return;
+	if (message.resumeOnly && job && job.id !== id) return;
 	const folder = path.join(dir, id);
+	if (message.captionsOnly) return keepCaptions(id, folder);
+	if (!message.resumeOnly) selectedId = id;
 	// Kept whole before: nothing to do.
 	try {
 		const kept = JSON.parse(fs.readFileSync(path.join(folder, 'index.json'), 'utf8'));
@@ -272,12 +304,15 @@ async function capture(message) {
 	fs.rmSync(folder, { recursive: true, force: true });
 	fs.mkdirSync(folder, { recursive: true });
 	tidy(dir, id);
-	job = { id, folder, started: Date.now(), readers: {}, tracks: {}, done: false, error: null, duration: 0, height: 0, wanted: from > 0 ? from : null, dirty: true, log: [] };
+	// Keep the previous document's late media events out of the next episode.
+	if (win && !win.isDestroyed()) win.destroy();
+	const mine = job = { id, folder, started: Date.now(), readers: {}, tracks: {}, done: false, error: null, duration: 0, height: 0, wanted: from > 0 ? from : null, dirty: true, log: [] };
 	writeIndex();
 	if (!ticker) ticker = setInterval(() => tick().catch(() => {}), 700);
 	try {
 		await open(id);
 	} catch (e) {
+		if (job !== mine) return;
 		job.error = 'The YouTube window couldn\'t open.';
 		note(e.message);
 		writeIndex();

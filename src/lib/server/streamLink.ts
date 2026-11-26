@@ -11,12 +11,16 @@ import { vidriftStream, parseVidriftShareKey } from './sources/vidrift';
 import { movyStream, parseMovyShareKey } from './sources/movy';
 import { hianimeStream, parseHianimeShareKey } from './sources/hianime';
 import { vidfastStream, parseVidfastShareKey } from './sources/vidfast';
+import { xumoStream, parseXumoShareKey } from './sources/xumo';
+import { plexStream, parsePlexShareKey } from './sources/plex';
+import { plutoStream, parsePlutoShareKey } from './sources/pluto';
 import { nothingFrom } from './reachable';
 import { debridStream, parseDebridShareKey } from './sources/debrid';
 import { addonStream, parseAddonShareKey } from './sources/addons';
 import { nyaaStream, parseNyaaShareKey } from './sources/nyaa';
 import { channelStream, parseChannelShareKey } from './sources/channels';
 import { allanimeStream, parseAllanimeShareKey } from './sources/allanime';
+import { kaaStream, parseKaaShareKey } from './sources/kickassanime';
 import { showboxAheadAllowed } from './showboxDownloadRoom';
 import { trustVideoHost } from './relayHosts';
 
@@ -65,6 +69,27 @@ export async function streamLink(shareKey: string, fid: number, refresh = false,
 		return { url: `/api/watch/relay?u=${encodeURIComponent(playlist)}` };
 	}
 
+	// Xumo Play (sources/xumo.ts): its own plain playlist, through the relay.
+	if (parseXumoShareKey(shareKey)) {
+		const found = await xumoStream(shareKey, refresh);
+		if (!found.url) return { url: '', debug: await nothingFrom('Xumo Play', found.why) };
+		return { url: found.url };
+	}
+
+	// Plex free movies & shows (sources/plex.ts): anonymous HLS playlist, through the relay.
+	if (parsePlexShareKey(shareKey)) {
+		const found = await plexStream(shareKey, refresh);
+		if (!found.url) return { url: '', debug: await nothingFrom('Plex', found.why) };
+		return { url: found.url };
+	}
+
+	// Pluto TV on demand (sources/pluto.ts): anonymous HLS playlist, through the relay.
+	if (parsePlutoShareKey(shareKey)) {
+		const found = await plutoStream(shareKey, refresh);
+		if (!found.url) return { url: '', debug: await nothingFrom('Pluto TV', found.why) };
+		return { url: found.url };
+	}
+
 	// A debrid service (sources/debrid.ts): a direct link to the file, played as it is.
 	if (parseDebridShareKey(shareKey)) {
 		const found = await debridStream(shareKey, refresh);
@@ -93,11 +118,19 @@ export async function streamLink(shareKey: string, fid: number, refresh = false,
 		return { url: found.url };
 	}
 
-	// AllAnime (sources/allanime.ts): found by the desktop app's hidden browser window; played through the relay.
+	// AllAnime (sources/allanime.ts): asked directly, after its check is ticked on the computer; played through the relay.
 	if (parseAllanimeShareKey(shareKey)) {
-		const playlist = await allanimeStream(shareKey, refresh);
-		if (!playlist) return { url: '', debug: await nothingFrom('AllAnime', 'AllAnime has nothing for this right now') };
-		return { url: `/api/watch/relay?u=${encodeURIComponent(playlist)}` };
+		const found = await allanimeStream(shareKey, refresh);
+		if (!found.url) return { url: '', debug: await nothingFrom('AllAnime', found.why) };
+		const direct = !/\.m3u8(\?|$|#)|master\.m3u8|playlist\.m3u8/i.test(found.url);
+		return { url: `/api/watch/relay?u=${encodeURIComponent(found.url)}${direct ? '&direct=1' : ''}` };
+	}
+
+	// KickAssAnime (sources/kickassanime.ts): open JSON API + direct HLS through the relay.
+	if (parseKaaShareKey(shareKey)) {
+		const found = await kaaStream(shareKey, refresh);
+		if (!found.url) return { url: '', debug: await nothingFrom('KickAssAnime', found.why) };
+		return { url: `/api/watch/relay?u=${encodeURIComponent(found.url)}` };
 	}
 
 	const { febboxToken } = readSettings();

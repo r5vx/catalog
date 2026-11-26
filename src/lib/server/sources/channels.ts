@@ -16,6 +16,8 @@
  * The copies are named after the channel's collection, never YouTube.
  */
 import { getOrderCache, saveOrderCache } from '../db/queries';
+import { officialFile, publisherMatches } from './official';
+import { cachedListing, videoListing } from './videoListing';
 import type { FileOption } from '../showbox';
 import type { TmdbShow } from '../combinedEpisodes';
 import { tmdbGet } from '../metadata/tmdb';
@@ -23,6 +25,15 @@ import { inDesktopApp, isVideoId, keptSeconds, readIndex, startCapture } from '.
 
 /** The channels, by their handle. `name` is what the copy is called in the player. */
 export const CHANNELS = [{ handle: '@VintageCartooninHD-nn1vk', name: 'Vintage Cartoons' }];
+
+// The channel uses alternate titles, or a title shared with another adaptation.
+const playlistSeries: Record<string, number> = {
+	PLQGZSV9PRCFkFnmkiTPguA9kt_eZXLdae: 14540, // The Tick (1994)
+	PLQGZSV9PRCFn1jPcfgyjYPHyBpyoVj_aj: 3320, // Biker Mice from Mars (1993)
+	PLQGZSV9PRCFm3ZKaRi4alHfnon_llEckb: 75216, // Mort & Phil
+	'PLQGZSV9PRCFlf0JbMmfzQX-umMoU6cLIV': 9987, // WildC.A.T.S: Covert Action Teams
+	PLQGZSV9PRCFm_oc7ScPfmRwiijNG9u_Z9: 62318 // The New Adventures of Lucky Luke (2001)
+};
 
 const DAY = 24 * 60 * 60 * 1000;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
@@ -290,32 +301,39 @@ export const handCopy = (video: string): FileOption => ({ fid: HAND_FID, quality
 
 /**
  * The show's episodes on the trusted channels, by "season-episode", and links added by hand (first).
- * Only in the desktop app (the only place they play). Asked for at most `wait` ms; a slow first
- * answer is kept for next time.
+ * Curated playlist lookups wait up to `wait` ms. Only the desktop host can start native playback.
  */
 export async function channelFiles(show: TmdbShow, wait: number): Promise<Map<string, FileOption[]>> {
 	const out = new Map<string, FileOption[]>();
-	if (!inDesktopApp() && process.env.CATALOG_CHANNELS_TEST !== '1') return out;
-	for (const l of handLinks(show.id)) out.set(`${l.season}-${l.episode}`, [handCopy(l.video)]);
+	const matched = await publisherMatches(show.name, startYear(show), 'tv', `tv:${show.id}`);
+	// Check the chosen video at playback, not a whole show's uploads while listing its episodes.
+	for (const w of matched) {
+		if (cachedListing(w.videoId) === 'unavailable') continue;
+		const key = w.season + '-' + w.episode;
+		out.set(key, [...(out.get(key) ?? []), officialFile(w)]);
+	}
+	for (const l of handLinks(show.id).filter(l => cachedListing(l.video) !== 'unavailable')) out.set(`${l.season}-${l.episode}`, [handCopy(l.video), ...(out.get(`${l.season}-${l.episode}`) ?? [])]);
 	const work = (async () => {
 		const name = wordsOf(show.name);
 		const year = startYear(show);
 		for (const [i, channel] of CHANNELS.entries()) {
 			const playlists = await playlistsOf(channel.handle).catch(() => [] as Playlist[]);
 			for (const list of playlists) {
-				if (wordsOf(list.title) !== name) continue;
+				const pinned = playlistSeries[list.id];
+				if (pinned ? show.id !== pinned : wordsOf(list.title) !== name) continue;
 				const listYear = yearOf(list.title);
-				if (listYear && Number.isFinite(year) && Math.abs(listYear - year) > 1) continue;
+				if (listYear && listYear !== year) continue;
 				const names = await tmdbNames(show).catch(() => []);
 				for (const video of await videosOf(list.id).catch(() => [] as Video[])) {
 					// By the episode's name when the title has one (a name TMDB hasn't got leaves the
 					// video out); by its number only when it has none.
+					if (cachedListing(video.id) === 'unavailable') continue;
 					const name = nameIn(video.title);
 					const at = episodeOf(video.title);
 					const placed = PLACED[video.id] ?? (name ? byName(name, names) : at && (at[0] ? at : onSeasons(show, at[1])));
 					if (!placed) continue;
 					const key = `${placed[0]}-${placed[1]}`;
-					if (out.get(key)?.some((f) => f.source === channel.name)) continue;
+					if (out.get(key)?.some((f) => f.shareKey === channelShareKey(video.id) || f.source === channel.name)) continue;
 					const quality = /4K|2160p/i.test(list.title + video.title) ? '2160p' : /1080p/i.test(list.title + video.title) ? '1080p' : 'HD';
 					out.set(key, [...(out.get(key) ?? []), { fid: -70 - i, quality, name: channel.name, size: '', source: channel.name, shareKey: channelShareKey(video.id) }]);
 				}
@@ -328,19 +346,22 @@ export async function channelFiles(show: TmdbShow, wait: number): Promise<Map<st
 
 /**
  * The stream for a channel copy: the hidden YouTube window starts keeping it, and the address is
- * given once 12 s of picture and sound are kept (up to 45 s).
+ * given once both tracks have a continuous start; the capture continues as playback begins.
  */
 export async function channelStream(shareKey: string): Promise<{ url: string; why: string }> {
 	const id = parseChannelShareKey(shareKey);
 	if (!id) return { url: '', why: 'Not a channel copy' };
 	if (!inDesktopApp()) return { url: '', why: 'Plays only with Catalog open on the computer' };
+	const listing = await videoListing(id, true);
+	if (listing !== 'listed') return { url: '', why: listing === 'unavailable' ? 'This YouTube video is no longer public' : 'YouTube availability could not be confirmed' };
 	startCapture(id, 0);
 	const until = Date.now() + 45_000;
 	while (Date.now() < until) {
 		const index = readIndex(id);
 		if (index?.error) return { url: '', why: index.error };
-		if (index && index.video && index.audio && (index.done || keptSeconds(index) >= Math.min(12, index.duration || 12))) {
-			return { url: `/api/youtube/hls/${id}/main.m3u8`, why: '' };
+		if (index?.video && index.audio) {
+			const seconds = keptSeconds(index);
+			if (seconds >= 4 || (index.done && seconds > 0)) return { url: `/api/youtube/hls/${id}/main.m3u8`, why: '' };
 		}
 		await new Promise((r) => setTimeout(r, 400));
 	}

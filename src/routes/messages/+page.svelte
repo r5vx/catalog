@@ -5,7 +5,8 @@
 	import Avatar from '$lib/Avatar.svelte';
 	import BackBar from '$lib/BackBar.svelte';
 	import { wording } from '$lib/altText';
-	import { chat, sendMessage, markRead, type Message } from '$lib/chat.svelte';
+	import { chat, sendMessage, markRead, inviteRoom, type Message } from '$lib/chat.svelte';
+	import { together, joinRoom } from '$lib/watchTogether.svelte';
 
 	/**
 	 * Whispers with each friend (owner, 2026-11-15: "a messages page so you can view your whispers
@@ -158,8 +159,13 @@
 				<ul class="lines" bind:this={listEl}>
 					{#if more}<li class="older"><button type="button" class="link" onclick={() => loadConversation(withId, messages[0]?.id ?? 0)}>{t('Older messages')}</button></li>{/if}
 					{#each messages as message (message.id)}
+						<!-- Their invite to watch together: Join beside it. -->
+						{@const code = message.from === picked.id ? inviteRoom(message.text) : null}
 						<li class:mine={message.from !== picked.id}>
 							<span class="bubble" data-plain>{message.text}</span>
+							{#if code}
+								<button type="button" class="btn small-btn" onclick={() => joinRoom(code)} disabled={together.code === code}>{together.code === code ? t('In this room') : t('Join')}</button>
+							{/if}
 							<span class="faint small">{when(message.at)}</span>
 						</li>
 					{:else}

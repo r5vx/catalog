@@ -1,3 +1,5 @@
+import { appleMobile } from './youtubeDevice';
+
 /**
  * The Watch button's check, as it goes: asks the computer every second where each source's
  * check is at (/api/watch/available?now=1), until every source has answered (the button can
@@ -6,7 +8,7 @@
  * asking (for when the page changes).
  */
 /** `skipped`: not asked, or called off, because another source had it. */
-export type SourceCheck = { name: string; state: 'checking' | 'yes' | 'no' | 'skipped' };
+export type SourceCheck = { pilotListed?: boolean; tmdb?: string; name: string; state: 'checking' | 'yes' | 'no' | 'listed' | 'skipped' };
 
 export function checkWatchable(
 	params: URLSearchParams,
@@ -18,6 +20,7 @@ export function checkWatchable(
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const query = new URLSearchParams(params);
 	query.set('now', '1');
+	if (typeof navigator !== 'undefined' && appleMobile(navigator.userAgent, navigator.maxTouchPoints)) query.set('handoff', '1');
 	const ask = async () => {
 		try {
 			const answer: { available: boolean | null; sources?: SourceCheck[]; inCinemas?: boolean } = await fetch(`/api/watch/available?${query}`).then((r) => r.json());

@@ -7,13 +7,17 @@ import { MOVY_HEADERS } from '$lib/server/sources/movy';
 import { HIANIME_HEADERS } from '$lib/server/sources/hianime';
 import { VIDFAST_HEADERS } from '$lib/server/sources/vidfast';
 import { ALLANIME_HEADERS } from '$lib/server/sources/allanime';
+import { KAA_HEADERS } from '$lib/server/sources/kickassanime';
+import { XUMO_HEADERS } from '$lib/server/sources/xumo';
+import { plexHeaders } from '$lib/server/sources/plex';
+import { plutoHeaders } from '$lib/server/sources/pluto';
 import { isNotedPiece, notePieces, pieceAhead } from '$lib/server/relayReadAhead';
 import { downloadKindOf, noteEpisode, storedPiece, wantedPiece } from '$lib/server/episodeDownloads';
 import { isPicture, videoFromPicture } from '$lib/server/pictureVideo';
 import { sharedLivePiece } from '$lib/server/liveShare';
 import { repairFrameTimes } from '$lib/server/pieceRepair';
 import { electronFetch } from '$lib/server/electron-fetch';
-import { readOpening } from '$lib/server/readOpening';
+import { isWebPage, openingLength, readOpening } from '$lib/server/readOpening';
 
 /** Febbox's video servers (Showbox), when its copy plays through here to be downloaded ahead (streamLink.ts). */
 const FEBBOX_HEADERS = {
@@ -44,7 +48,7 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	const kind = isVidriftVideo(target) ? 'vidrift' : isAniwaveVideo(target) ? 'aniwave' : trustedVideoHost(target);
 	if (!kind) return error(403, 'Not a video server Catalog was sent to');
 	const askWith: Record<string, string> =
-		kind === 'vidrift' ? VIDRIFT_HEADERS : kind === 'movy' ? MOVY_HEADERS : kind === 'hianime' ? HIANIME_HEADERS : kind === 'vidfast' ? VIDFAST_HEADERS : kind === 'allanime' ? ALLANIME_HEADERS : kind === 'live' ? liveHeadersFor(target) : kind === 'addon' ? addonHeadersFor(target) : kind === 'febbox' ? FEBBOX_HEADERS : VIDEO_HEADERS;
+		kind === 'vidrift' ? VIDRIFT_HEADERS : kind === 'movy' ? MOVY_HEADERS : kind === 'hianime' ? HIANIME_HEADERS : kind === 'vidfast' ? VIDFAST_HEADERS : kind === 'allanime' ? ALLANIME_HEADERS : kind === 'kaa' ? KAA_HEADERS : kind === 'live' ? liveHeadersFor(target) : kind === 'addon' ? addonHeadersFor(target) : kind === 'febbox' ? FEBBOX_HEADERS : kind === 'xumo' ? XUMO_HEADERS : kind === 'plex' ? plexHeaders() : kind === 'pluto' ? plutoHeaders() : VIDEO_HEADERS;
 	// Which copy of which episode, and which piece of it (episodeDownloads.ts): 7Movies' and Movy's
 	// episodes are downloaded ahead onto this computer, and kept by these rather than by address.
 	const copy = url.searchParams.get('copy') ?? '';
@@ -67,7 +71,10 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	const range = request.headers.get('range');
 	// 7Movies' HEVC pieces have a frame on the keyframe's time, which can cost 2 s of picture
 	// (pieceRepair.ts): mended on the way, whichever way the piece comes.
-	const mended = (bytes: Uint8Array<ArrayBuffer>) => (kind === 'vidrift' && !range ? repairFrameTimes(bytes) : bytes);
+	const mended = (bytes: Uint8Array<ArrayBuffer>) => {
+		if (isWebPage(bytes)) error(502, 'The source returned a web page instead of video');
+		return kind === 'vidrift' && !range ? repairFrameTimes(bytes) : bytes;
+	};
 
 	// A piece of an episode downloaded ahead: from this computer's disk, or as soon as it comes
 	// (the one asked for goes first). The progress-bar pictures (`whole=1`) only take what's there.
@@ -122,10 +129,21 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	let upstream: Awaited<ReturnType<typeof fetchSteadily>>;
 	try {
 		upstream = await fetchSteadily(target, { ...askWith, ...(range ? { Range: range } : {}) });
+		if (kind === 'allanime' && upstream.response.status === 403 && upstream.response.headers.get('cf-mitigated') !== 'challenge') {
+			upstream.cancel();
+			upstream = await fetchSteadily(target, {
+				'User-Agent': ALLANIME_HEADERS['User-Agent'],
+				...(range ? { Range: range } : {})
+			});
+		}
 	} catch {
 		return error(502, 'The video server did not answer');
 	}
 	const { response } = upstream;
+	if (response.headers.get('cf-mitigated') === 'challenge') {
+		upstream.cancel();
+		return error(403, 'The source requires verification');
+	}
 	if (!response.ok) {
 		upstream.cancel();
 		return error(response.status, 'The video server refused');
@@ -146,11 +164,16 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	// first bytes say which it is. Video streams straight on; a playlist is read whole.
 	let first: ReadableStreamReadResult<Uint8Array>;
 	try {
-		first = await upstream.read();
+		first = await readOpening(() => upstream.read(), openingLength);
 	} catch {
 		return error(502, 'The video server stopped answering');
 	}
-	let opening = first.value ?? new Uint8Array();
+	const opening = first.value ?? new Uint8Array();
+	const midFile = response.status === 206 && /^bytes [1-9]\d*-/i.test(response.headers.get('content-range') ?? '');
+	if (!midFile && isWebPage(opening)) {
+		upstream.cancel();
+		return error(502, 'The source returned a web page instead of video');
+	}
 	// Live TV's pieces are pictures with the video inside (pictureVideo.ts): read whole, unwrapped.
 	if (kind === 'live' && isPicture(opening)) {
 		const whole = [opening];
@@ -169,7 +192,8 @@ export const GET: RequestHandler = async ({ url, request }) => {
 		});
 	}
 	// A 7Movies MP4 piece is read whole, to be mended (pieceRepair.ts).
-	const mp4 = ['styp', 'moof', 'ftyp'].includes(new TextDecoder().decode(opening.subarray(4, 8)));
+	const mp4 = !midFile && ['styp', 'moof', 'ftyp'].includes(new TextDecoder().decode(opening.subarray(4, 8)));
+	if (mp4) headers.set('Content-Type', 'video/mp4');
 	if (kind === 'vidrift' && mp4 && !range) {
 		const whole = [opening];
 		try {
@@ -184,13 +208,7 @@ export const GET: RequestHandler = async ({ url, request }) => {
 		headers.set('content-length', String(bytes.length));
 		return new Response(bytes, { status: response.status, headers });
 	}
-	try {
-		first = await readOpening(() => upstream.read(), 16, first);
-		opening = first.value ?? new Uint8Array();
-	} catch {
-		return error(502, 'The video server stopped answering');
-	}
-	if (!new TextDecoder().decode(opening.subarray(0, 16)).startsWith('#EXTM3U')) {
+	if (midFile || !new TextDecoder().decode(opening.subarray(0, 16)).startsWith('#EXTM3U')) {
 		const rest = new ReadableStream<Uint8Array>({
 			start(controller) {
 				if (!first.done) controller.enqueue(opening);

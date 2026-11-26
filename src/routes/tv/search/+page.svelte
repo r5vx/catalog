@@ -10,7 +10,7 @@
 	const KEPT = 'catalog:tvSearch';
 	let query = $state('');
 	try {
-		query = sessionStorage.getItem(KEPT) ?? '';
+		query = new URLSearchParams(location.search).get('q') ?? sessionStorage.getItem(KEPT) ?? '';
 	} catch {}
 
 	let results = $state<Tile[]>([]);

@@ -29,12 +29,13 @@
 			flag: 'services'
 		},
 		{ href: '/settings/devices', label: 'TV and phones', hint: 'Fire TV, Roku, phones, PIN lock' },
+		{ href: '/settings/owner', label: 'Owner', hint: 'Sources, reports and server use' },
 		{ href: '/settings/online', label: 'Online', hint: 'Your profile, friends, sync' },
 		{ href: '/settings/updates', label: 'Updates', hint: 'Keep Catalog current', flag: 'updates' }
 	];
 
 	const sections = $derived(
-		SECTIONS.filter((one) => one.href !== '/settings/updates' || data.updateMode !== 'none')
+		SECTIONS.filter((one) => (one.href !== '/settings/owner' || data.owner) && (one.href !== '/settings/updates' || data.updateMode !== 'none'))
 	);
 
 	/**

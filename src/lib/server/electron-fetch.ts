@@ -4,6 +4,15 @@ interface FetchResult {
 	error?: string;
 }
 
+export interface TurnstileResult {
+	token: string;
+	provider: string;
+	solved: boolean;
+	error?: string;
+	streamUrl?: string;
+	episodeData?: unknown;
+}
+
 interface VideoUrlResult {
 	playerHtml: string;
 	dlText: string;
@@ -87,6 +96,17 @@ try {
 						body: (m.body as string) ?? '',
 						status: m.status as number | undefined,
 						error: m.error as string | undefined
+					});
+					pending.delete(m.id);
+				}
+				if (m.type === 'solve-turnstile-result') {
+					pending.get(m.id)!({
+						token: (m.token as string) ?? '',
+						provider: (m.provider as string) ?? 'turnstile',
+						solved: Boolean(m.solved),
+						error: m.error as string | undefined,
+						streamUrl: m.streamUrl as string | undefined,
+						episodeData: m.episodeData
 					});
 					pending.delete(m.id);
 				}
@@ -284,5 +304,29 @@ export function electronPageAnswer(
 			},
 			visible ? 200000 : 30000
 		);
+	});
+}
+
+export function electronCloseTurnstile(): void {
+	if (typeof process.send !== 'function') return;
+	try {
+		process.send({ type: 'close-turnstile' });
+	} catch {}
+}
+
+export function electronSolveTurnstile(url: string, timeout = 60000): Promise<TurnstileResult> {
+	if (typeof process.send !== 'function') {
+		return Promise.resolve({ token: '', provider: 'turnstile', solved: false, error: 'not in Electron' });
+	}
+	const id = String(++counter);
+	return new Promise((resolve) => {
+		pending.set(id, resolve);
+		process.send!({ type: 'solve-turnstile', id, url, timeout });
+		setTimeout(() => {
+			if (pending.has(id)) {
+				pending.delete(id);
+				resolve({ token: '', provider: 'turnstile', solved: false, error: 'timeout' });
+			}
+		}, timeout + 30000);
 	});
 }

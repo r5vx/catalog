@@ -8,7 +8,7 @@ import { logoFrom } from '$lib/logo';
 import { readCustomTheme } from '$lib/customTheme';
 import { warmBrowseCache, hasTmdbKey } from '$lib/server/metadata';
 import { showboxSignin } from '$lib/server/showboxSignin';
-import { onlineConnected, keptMe, warmMe } from '$lib/server/online';
+import { onlineConnected, keptMe, warmMe, statusOf, friendCountOf } from '$lib/server/online';
 import { whatsNewCard, whatsNewSeen, WHATS_NEW_SEEN } from '$lib/server/whatsNewCard';
 import type { LayoutServerLoad } from './$types';
 
@@ -50,7 +50,8 @@ export const load: LayoutServerLoad = async ({ request, getClientAddress, cookie
 			countByCategory,
 			total: Object.values(countByCategory).reduce((sum, n) => sum + n, 0),
 			noteCount: countNotes(),
-			friendCount: sharedCatalogCount(),
+			// Shared catalogs and online friends together: the people on the Friends tab.
+			friendCount: sharedCatalogCount() + (onlineConnected() ? (friendCountOf(currentProfile()) ?? 0) : 0),
 			watchingCount: watching.size
 		};
 	}
@@ -62,6 +63,8 @@ export const load: LayoutServerLoad = async ({ request, getClientAddress, cookie
 
 	return {
 		onlineMe,
+		// The status beside My profile (online, away, dnd, invisible).
+		onlineStatus: online ? statusOf(currentProfile()) : 'online',
 		sideTabs,
 		// No TMDB key: a banner says so (src/lib/TmdbBanner.svelte), as most pages need one.
 		tmdbMissing: !hasTmdbKey(),

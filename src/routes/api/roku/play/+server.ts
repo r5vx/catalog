@@ -1,3 +1,4 @@
+import { videoFromShare } from '$lib/youtubeDevice';
 import { error, json } from '@sveltejs/kit';
 import { getWatchProgress } from '$lib/server/db/queries';
 import { PREFERRED_QUALITY, pickFile } from '$lib/watch';
@@ -60,7 +61,7 @@ export const GET: RequestHandler = async ({ url, request }) => {
 	if (!found || found.error) return cantPlay("Couldn't find that to play.", { why: found?.error ?? 'no answer from the title lookup' });
 
 	// Only an unspecific Play request can fall back to the first episode.
-	const playable = (found.episodes?.episodes ?? []).filter((ep) => ep.available !== false && ep.files.length > 0);
+	const playable = (found.episodes?.episodes ?? []).filter((ep) => ep.available !== false && ep.files.some(f => !videoFromShare(f.shareKey)));
 	const episode =
 		type === 'tv'
 			? wanted.episode > 0
@@ -68,7 +69,7 @@ export const GET: RequestHandler = async ({ url, request }) => {
 				: playable.find((ep) => ep.season > 0) ?? playable[0]
 			: null;
 	if (type === 'tv' && !episode) return cantPlay(wanted.episode > 0 ? 'That episode can’t be played right now.' : 'No episode of that can be played right now.');
-	const listed = (type === 'tv' ? episode!.files : (found.files ?? [])).filter((f) => !f.hevc);
+	const listed = (type === 'tv' ? episode!.files : (found.files ?? [])).filter((f) => !f.hevc && !videoFromShare(f.shareKey));
 	// Showbox is optional: not signed in to Febbox, its copies go whenever another source has it
 	// (the same as the computer's and Fire TV's player).
 	const others = listed.filter((f) => f.source);
