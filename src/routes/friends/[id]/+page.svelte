@@ -160,6 +160,17 @@
 	let nicknaming = $state(false);
 	let nickname = $state('');
 	let removing = $state(false);
+	let codeCopied = $state(false);
+
+	/** Their friend code onto the clipboard, to send to someone who wants to add them. */
+	async function copyFriendCode() {
+		if (!person.code) return;
+		try {
+			await navigator.clipboard.writeText(person.code);
+			codeCopied = true;
+			setTimeout(() => (codeCopied = false), 2000);
+		} catch {}
+	}
 
 	function startNickname() {
 		nickname = person.realName ? person.name : '';
@@ -345,6 +356,13 @@
 					{#if person.friendsSince} · {t('Friends since')} {monthYear(person.friendsSince)}{/if}
 					{#if person.mutual} · {person.mutual} {person.mutual === 1 ? t('friend in common') : t('friends in common')}{/if}
 				</p>
+				{#if person.code}
+					<p class="friend-code">
+						<span class="faint">{person.me ? t('My friend code') : t('Friend code')}</span>
+						<strong class="tabular">{person.code}</strong>
+						<button type="button" class="link" onclick={copyFriendCode}>{codeCopied ? t('Copied') : t('Copy')}</button>
+					</p>
+				{/if}
 				{#if person.watching}
 					<p class="now"><span class="dot" aria-hidden="true"></span>{t('Watching')} <strong>{label(person.watching)}</strong></p>
 				{/if}
@@ -730,6 +748,18 @@
 		margin-right: 6px;
 		border-radius: 50%;
 		background: var(--good, #3c9);
+	}
+
+	/* Their friend code, to pass on to someone else. */
+	.friend-code {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 4px 10px;
+		font-size: 0.95rem;
+	}
+	.friend-code strong {
+		letter-spacing: 0.08em;
 	}
 
 	.real-name {

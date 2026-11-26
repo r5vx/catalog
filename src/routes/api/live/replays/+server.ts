@@ -9,7 +9,7 @@ import type { RequestHandler } from './$types';
  * to play yet are left out (server/replayAnswer.ts).
  */
 export const GET: RequestHandler = async ({ url }) => {
-	if (url.searchParams.get('publisher') === '1') return json(publisherReplayPage(url.searchParams));
+	if (url.searchParams.get('publisher') === '1') return json(await publisherReplayPage(url.searchParams));
 	const replays = (await replayList().catch(() => [])).filter((r) => !replayNotReady(r.id));
 	return json({ replays: replays.map(({ page: _page, ...replay }) => ({ ...replay, condensed: replayCondensedOnly(replay.id) })) });
 };

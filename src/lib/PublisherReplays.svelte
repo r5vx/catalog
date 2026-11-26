@@ -36,7 +36,7 @@
 				<li><a {href} rel={device === 'apple' ? 'external' : undefined} aria-disabled={!href} data-tv-item tabindex={href ? undefined : 0}>
 					<img src={card.poster} alt="" loading="lazy" width="320" height="180" />
 					<span class="kind">{card.kind}</span><strong title={card.upload}>{card.title}</strong><small>{card.event ? card.event + " · " : ""}{when(card.date)}</small>
-					<small>{device === 'apple' ? 'Open in YouTube' : device === 'desktop' ? 'Check and play in Catalog' : 'Desktop or iPhone/iPad only'}</small>
+					{#if device === 'other'}<small>Plays on the computer, iPhone or iPad</small>{/if}
 				</a></li>
 			{/each}
 		</ul>

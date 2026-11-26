@@ -140,7 +140,7 @@
 			void queueEndless(genre);
 		} else {
 			today = answer;
-			nextIn = answer.msToNext;
+			resetAt = Date.now() + answer.msToNext;
 		}
 		// The song comes now, before Play is pressed, so Play starts at once.
 		return player.load(audioUrl());
@@ -274,12 +274,23 @@
 		return () => cancelAnimationFrame(frame);
 	});
 
-	let nextIn = $state(0);
+	/** When the daily songs change (midnight Eastern, from the server), and the clock it's counted on. */
+	let resetAt = $state(0);
+	let clockNow = $state(Date.now());
 	$effect(() => {
-		const timer = setInterval(() => (nextIn = Math.max(0, nextIn - 30_000)), 30_000);
+		const timer = setInterval(() => {
+			clockNow = Date.now();
+			// Past midnight Eastern: today's new song is asked for (only on the daily game).
+			if (resetAt && clockNow >= resetAt && !endlessMode) {
+				resetAt = 0;
+				void loadGame(data.genre, 'daily');
+			}
+		}, 1000);
 		return () => clearInterval(timer);
 	});
-	const nextText = $derived(`${Math.floor(nextIn / 3_600_000)}h ${Math.floor((nextIn % 3_600_000) / 60_000)}m`);
+	const nextIn = $derived(Math.max(0, resetAt - clockNow));
+	const two = (n: number) => String(n).padStart(2, '0');
+	const nextText = $derived(`${Math.floor(nextIn / 3_600_000)}h ${two(Math.floor((nextIn % 3_600_000) / 60_000))}m ${two(Math.floor((nextIn % 60_000) / 1000))}s`);
 
 	$effect(() => () => {
 		clearTimeout(searchTimer);
@@ -321,6 +332,7 @@
 					{#if bloodlust}<span class="mode">Bloodlust</span>{/if}
 				</h1>
 				<p class="lede">A new song every day in each genre.</p>
+				{#if resetAt && !endlessMode}<p class="reset tabular">New songs in {nextText} <span>· midnight ET</span></p>{/if}
 			</div>
 			<a class="other-game" href="/catasong/anime">
 				<span class="other-kicker">Also</span>
@@ -525,6 +537,14 @@
 		50% {
 			background-position: 0 0;
 		}
+	}
+	.reset {
+		margin: 4px 0 0;
+		font-size: 0.85rem;
+		color: var(--ink-soft);
+	}
+	.reset span {
+		color: var(--ink-faint);
 	}
 	.lede {
 		margin: 8px 0 0;

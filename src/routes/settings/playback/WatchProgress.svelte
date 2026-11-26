@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import ContextMenu, { menuAt, type MenuItem } from '$lib/ContextMenu.svelte';
+	import { askText } from '$lib/confirm.svelte';
 
 	interface ProgressEntry {
 		title: string;
@@ -22,6 +24,8 @@
 	let loading = $state(true);
 	let clearing = $state(false);
 	let expanded = $state<Set<string>>(new Set());
+	let menu = $state<{ at: { x: number; y: number }; items: MenuItem[] } | null>(null);
+	let clearProblem = $state('');
 
 	const grouped = $derived.by(() => {
 		const map = new Map<string, TitleGroup>();
@@ -104,7 +108,41 @@
 		entries = entries.filter((x) => !(x.title === g.title && x.type === g.type));
 	}
 
+	/**
+	 * Right-click a film or show: its whole progress removed at once (owner, 2026-11-26: "quick
+	 * delete like an entire show/anime").
+	 */
+	function groupMenu(event: MouseEvent, g: TitleGroup) {
+		event.preventDefault();
+		const key = g.title + ':' + g.type;
+		const items: MenuItem[] = [];
+		const single = g.type === 'movie' || g.type === 'replay';
+		if (!single) items.push({ label: expanded.has(key) ? 'Hide episodes' : 'Show episodes', run: () => toggle(key) }, '-');
+		items.push({
+			label: single ? `Remove ${g.title}'s progress` : `Remove all of ${g.title}'s progress (${g.entries.length})`,
+			run: () => (single ? deleteOne(g.entries[0]) : deleteTitle(g)),
+			danger: true
+		});
+		menu = { at: menuAt(event, items.length), items };
+	}
+
+	/**
+	 * Clear all: only after typing DELETE (owner, 2026-11-26: "i dont want someone accidentally
+	 * clicking that and losing everything"). It takes every saved place and every watched tick.
+	 */
 	async function clearAll() {
+		clearProblem = '';
+		const typed = await askText({
+			title: 'Clear all watch progress?',
+			message: `Every saved place and every watched episode tick goes, for all ${grouped.length} titles. This can't be undone. Type DELETE to clear it.`,
+			placeholder: 'DELETE',
+			confirmLabel: 'Clear everything'
+		});
+		if (typed === null) return;
+		if (typed.toUpperCase() !== 'DELETE') {
+			clearProblem = 'Nothing was cleared: type DELETE to clear it all.';
+			return;
+		}
 		clearing = true;
 		await fetch('/api/watch/progress', { method: 'DELETE' });
 		entries = [];
@@ -125,21 +163,18 @@
 		<p class="muted">No watch progress saved.</p>
 	{:else}
 		<div class="toolbar">
-			<span class="count muted">{entries.length} {entries.length === 1 ? 'entry' : 'entries'}</span>
-			<button class="btn btn-danger" onclick={clearAll} disabled={clearing}>
-				{clearing ? 'Clearing…' : 'Clear all'}
-			</button>
+			<span class="count muted">{entries.length} {entries.length === 1 ? 'entry' : 'entries'} · right-click a title to remove it</span>
 		</div>
 
 		<ul class="list">
 			{#each grouped as group (group.title + ':' + group.type)}
-				{#if group.type === 'movie'}
+				{#if group.type === 'movie' || group.type === 'replay'}
 					{@const e = group.entries[0]}
-					<li class="row">
+					<li class="row" oncontextmenu={(ev) => groupMenu(ev, group)}>
 						<div class="info">
 							<span class="title">{e.title}</span>
 							<span class="details muted">
-								Movie · {fmt(e.currentTime)} / {fmt(e.duration)}
+								{group.type === 'replay' ? 'Replay' : 'Movie'} · {fmt(e.currentTime)} / {fmt(e.duration)}
 								<span class="pct">({pct(e.currentTime, e.duration)})</span>
 							</span>
 						</div>
@@ -151,7 +186,7 @@
 					{@const watching = group.entries.filter((e) => !finished(e))}
 					{@const watched = group.entries.filter(finished)}
 					<li class="group">
-						<button class="group-header" onclick={() => toggle(key)}>
+						<button class="group-header" onclick={() => toggle(key)} oncontextmenu={(ev) => groupMenu(ev, group)}>
 							<div class="info">
 								<span class="title">{group.title}</span>
 								<span class="details muted">
@@ -205,8 +240,18 @@
 				{/if}
 			{/each}
 		</ul>
+
+		<!-- Out of the way at the bottom, and only after typing DELETE. -->
+		<div class="clear-all">
+			<button class="btn btn-danger" onclick={clearAll} disabled={clearing}>
+				{clearing ? 'Clearing…' : 'Clear all watch progress…'}
+			</button>
+			{#if clearProblem}<span class="muted small">{clearProblem}</span>{/if}
+		</div>
 	{/if}
 </section>
+
+{#if menu}<ContextMenu at={menu.at} items={menu.items} close={() => (menu = null)} />{/if}
 
 <style>
 	.label {
@@ -233,6 +278,18 @@
 
 	.count {
 		font-size: 0.82rem;
+	}
+
+	.clear-all {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 10px;
+		margin-top: 18px;
+	}
+
+	.small {
+		font-size: 0.8rem;
 	}
 
 	.btn-danger {

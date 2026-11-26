@@ -176,8 +176,12 @@ async function poolFor(key: string, wide = false): Promise<Song[]> {
 	return songs.length ? songs : ((kept?.value as Song[]) ?? []);
 }
 
-/** This computer's date, YYYY-MM-DD: a new song comes at its midnight. */
-export const today = (when = new Date()) => when.toLocaleDateString('en-CA');
+/**
+ * The day in New York, YYYY-MM-DD: new songs come at midnight Eastern for everyone (owner,
+ * 2026-11-26: "it should happen at 12am est"), not at each computer's own midnight.
+ */
+const RESET_ZONE = 'America/New_York';
+export const today = (when = new Date()) => when.toLocaleDateString('en-CA', { timeZone: RESET_ZONE });
 const yesterday = () => today(new Date(Date.now() - 24 * 60 * 60 * 1000));
 
 /** A number from text, so a day and genre always pick the same song. */
@@ -325,10 +329,23 @@ export type TodayAnswer = {
 	msToNext: number;
 };
 
+/** How far New York's clock is ahead of UTC at that moment, in ms (negative: behind). */
+function zoneOffset(at: number): number {
+	const parts = Object.fromEntries(
+		new Intl.DateTimeFormat('en-US', { timeZone: RESET_ZONE, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' })
+			.formatToParts(new Date(at))
+			.map((p) => [p.type, Number(p.value)])
+	);
+	return Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) - Math.floor(at / 1000) * 1000;
+}
+
+/** Until the next midnight in New York (right on the days the clocks change, too). */
 function msToMidnight(): number {
-	const now = new Date();
-	const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-	return next.getTime() - now.getTime();
+	const now = Date.now();
+	const [y, m, d] = today(new Date(now)).split('-').map(Number);
+	const wall = Date.UTC(y, m - 1, d + 1);
+	const guess = wall - zoneOffset(now);
+	return Math.max(1000, wall - zoneOffset(guess) - now);
 }
 
 /** Where today's game of a genre stands; the song itself only once it's over. */

@@ -12,36 +12,134 @@ without both.
 
 ## Unreleased
 
-## 4.8.0 — 2026-11-26 — Online status, invites to watch together and Xumo Play
+## 4.8.1 — 2026-11-26 — Skipping fixed after the next episode, and friend codes on profiles
 
 ### New
 
-- AllAnime is back: Cloudflare's check is handled automatically, and anime episodes that only AllAnime has can play again
-- Xumo Play is a new source: its free films and TV shows play in Catalog's own player, with no adverts
-- Xumo Play's own English captions come on by themselves when its copy plays
-- Settings → Playback → Picture: draw video without the graphics card's overlay, for a picture that jumps or flickers on one computer
-- A status on your My profile picture: Online, Away, Do not disturb or Invisible, picked from the dot in the top bar or the status button in the sidebar. Friends see a green, yellow, red or grey dot on your picture; Invisible shows you as offline and hides what you're watching, and Do not disturb stops message pop-ups
-- Invite to watch together, the small button in a friend's card: it starts a room and whispers them its code, with a Join button on their side
+**Online**
+- Every friend's code is on their profile, with Copy, to send to someone who wants to add them; right-click a friend's card for Copy friend code
+
+**Settings**
+- Watch progress: right-click a film or show to remove all of its progress at once
 
 ### Improved
 
-- Friend cards show the friend's banner, are opened with a click anywhere on them, and only say what they're watching
-- The Friends tab shows how many friends you have
-- A copy missing a part, or one that fresh links can't get playing, now moves on through the episode's other copies instead of staying stuck
-- On a TV, the player waits longer for each part of the video before asking again, so slow Wi-Fi can still start a video
-- Live TV → Replays: more channel replays load by themselves as you scroll, with no Show more button
-- Live TV → Replays: each channel replay says what it is (Counter-Strike 2, League of Legends, Rainbow Six Siege…), with the match, the event and the date
-- The status button under My profile is just the dot and its name
+**Live TV**
+- Replays → From sports channels only shows videos YouTube says are still up, with no "check and play" line on each card
+
+**Online**
+- Names on friend cards with a banner stand out from the picture, gradients included
+
+**Settings**
+- Clear all watch progress sits at the bottom and asks you to type DELETE first
+- Sports replays in Watch progress are one row, not a list with "S0E0" in it
 
 ### Fixed
 
-- A show's season count under its name matches its season buttons (a long show said 2 seasons while showing 18)
-- Captions that come on by themselves skip files typed all in capitals when a normal one is there
-- Escape in the chat box closes the box instead of leaving full screen
-- Watch along jumps to where your friend is, even when your copy of the film goes by a slightly different name
-- Streaming Catalog on Discord keeps its frame rate while the window is covered or the screen is locked
+**Player**
+- YouTube copies and channel replays show their full length on the bar at once, instead of growing a few seconds at a time
+- A YouTube copy no longer counts as watched or moves to the next episode when it catches up with what's loaded so far
+- After moving to the next episode, the bar could read "0:00", captions went away, every skip went back to the start and the place wasn't saved: fixed
+- Skipping, fast-forward and rewind no longer send a video back to the start when the player lost track of its length
+- A skip that ends up somewhere other than where it was aimed is sent as a problem report
+
+**Live TV**
+- A sports replay moved to the mini player is no longer saved a second time as a film
+
+## 4.8.0 — 2026-11-26 — YouTube as a source, Pluto TV, online status and Xumo Play
+
+### New
+
+**Sources**
+- YouTube is a source: about 700 films and 4,600 TV episodes uploaded in full by their own channels, matched to the exact film or episode
+- YouTube copies show under Watch and in Files beside the others, and play in Catalog's own player on the computer; iPhone and iPad open the upload in YouTube
+- YouTube's auto-generated captions can be picked in Subtitles and audio, timed in Catalog's own caption style
+- Pluto TV is a source: its free films and shows play in Catalog's player, on TVs and phones too
+- Plex's free films and shows are a source, with no account
+- KickAssAnime is a new anime source, with Japanese audio and English dubs
+- Xumo Play is a new source: its free films and TV shows play in Catalog's own player, with no adverts
+- Xumo Play's own English captions come on by themselves when its copy plays
+- AllAnime is back: Cloudflare's check opens inside Catalog, and anime episodes that only AllAnime has can play again
+
+**Live TV**
+- Free TV: over 450 Pluto TV channels by category, with what's on now, what's next and how far along it is
+- Replays → From sports channels: full matches, races and events from sports channels' own uploads, with thumbnails
+
+**Browse**
+- Actors searches everyone on TMDB, not only people in your library, and marks the ones in it
+
+**People**
+- A person's page has their biography, age, birthplace and what they do, with Movies / TV / Acting / Crew filters and sorting
+- Composers, directors and writers show the work they did, not only parts they played
+
+**Titles**
+- A big backdrop across the top of the page, and a Trailer button
+
+**Online**
+- A status on your My profile picture: Online, Away, Do not disturb or Invisible, picked from the dot in the top bar or the status button in the sidebar. Friends see a green, yellow, red or grey dot on your picture; Invisible shows you as offline and hides what you're watching, and Do not disturb stops message pop-ups
+- Invite to watch together, the small button in a friend's card: it starts a room and whispers them its code, with a Join button on their side
+
+**Player**
+- Settings → Playback → Picture: draw video without the graphics card's overlay, for a picture that jumps or flickers on one computer
+
+### Improved
+
+**Browse**
+- Results load by themselves as you scroll, with no Show more button (also on people's pages, friends' libraries and More like this)
+- Search answers sooner, and offers a spelling fix when a misspelled name finds nothing; / jumps to the search box
+- Genre and sort filters show every match, not only the last year's titles
+
+**Home**
+- Films and shows sit above the anime calendar
+
+**Titles**
+- Anime-only sources are left out on films and shows, and sources that don't have it fold under one button
+
+**Live TV**
+- Channels show what game is on with real pictures, and whether each channel is online
+- Replays: more channel replays load by themselves as you scroll
+- Replays: each channel replay says what it is (Counter-Strike 2, League of Legends, Rainbow Six Siege…), with the match, the event and the date
+
+**Online**
+- Friend cards show the friend's banner, are opened with a click anywhere on them, and only say what they're watching
+- The Friends tab shows how many friends you have
+- The status button under My profile is just the dot and its name
+
+**Player**
+- A copy missing a part, or one that fresh links can't get playing, now moves on through the episode's other copies instead of staying stuck
+- On a TV, the player waits longer for each part of the video before asking again, so slow Wi-Fi can still start a video
+
+**Look**
+- Titles with no poster show their name on a dark card instead of a grey box
+- Settings opens on cards for each part, and the library's folder can be copied
+
+### Fixed
+
+**Sources**
+- Pluto TV films that wouldn't play now do
+- AllAnime no longer opens while another anime source is playing
+- Live TV's schedule showed no games when its site moved
+
+**Player**
+- A paused video is no longer reported as stuck loading
 - The next episode starts with the subtitles made for its own copy, not ones like the last episode's that can be out of time
 - Subtitles made for the copy playing are no longer swapped for another release's when auto-timing thinks they don't match
+- Subtitles retime while paused and right after switching copies
+- Captions that come on by themselves skip files typed all in capitals when a normal one is there
+- Watch along jumps to where your friend is, even when your copy of the film goes by a slightly different name
+- Streaming Catalog on Discord keeps its frame rate while the window is covered or the screen is locked
+
+**Titles**
+- A show's season count under its name matches its season buttons (a long show said 2 seasons while showing 18)
+
+**Browse**
+- Letters typed in the search box are no longer taken away when an earlier search comes back
+
+**Messages**
+- The quick-reply box no longer fills with old messages; they're under All messages
+- Escape in the chat box closes the box instead of leaving full screen
+
+**Phones**
 - A phone that can't reach Catalog says what to check: Tailscale on the phone, and the computer awake with Catalog open
 - Catalog on a phone can't get stuck pinched in, with pages wider than the screen
 

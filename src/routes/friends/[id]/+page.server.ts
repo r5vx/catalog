@@ -16,6 +16,8 @@ export type Profile = {
 	joined: number;
 	me: boolean;
 	friendsSince: number | null;
+	/** Their friend code, to give to someone else so they can add them (null: private, or an older meeting point). */
+	code?: string | null;
 	bio: string;
 	color: string;
 	/** How the name looks (null: plain), and the banner picture's number (0: none, the color instead). */

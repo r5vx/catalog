@@ -21,7 +21,7 @@
 	 * Nothing shows until this Catalog is online (Settings → Online).
 	 */
 	type Watching = { title: string; type: 'tv' | 'movie'; year: string; season: number; episode: number; poster: string; room?: string };
-	type Friend = { id: string; name: string; avatar: number; watching: Watching | null; nameStyle?: NameStyle | null; state?: FriendState | null; banner?: number };
+	type Friend = { id: string; name: string; avatar: number; watching: Watching | null; nameStyle?: NameStyle | null; state?: FriendState | null; banner?: number; code?: string | null };
 	/** The status they picked beside My profile, as the meeting point works it out (null: an older Catalog). */
 	type FriendState = 'online' | 'away' | 'dnd' | 'offline';
 	const STATE_WORDS: Record<FriendState, string> = { online: 'Online', away: 'Away', dnd: 'Do not disturb', offline: 'Offline' };
@@ -168,6 +168,14 @@
 		} catch {}
 	}
 
+	/** A friend's code onto the clipboard, to send to someone else who wants to add them. */
+	async function copyTheirCode(friend: Friend) {
+		try {
+			await navigator.clipboard.writeText(friend.code ?? '');
+			note = `${friend.name}${t("'s friend code copied")}: ${friend.code}`;
+		} catch {}
+	}
+
 	async function addFriend(event: SubmitEvent) {
 		event.preventDefault();
 		problem = '';
@@ -265,6 +273,7 @@
 			{ label: t('View their library'), run: () => goto(`/friends/${friend.id}/library`) },
 			{ label: `${t('Whisper to')} ${friend.name}`, run: () => openChat(friend) },
 			{ label: t('Invite to watch together'), run: () => invite(friend) },
+			...(friend.code ? [{ label: `${t('Copy friend code')} · ${friend.code}`, run: () => copyTheirCode(friend) }] : []),
 			{ label: t('Messages'), run: () => goto(`/messages?with=${friend.id}`) }
 		];
 		if (w) {
@@ -653,13 +662,20 @@
 		content: '';
 		position: absolute;
 		inset: 0;
-		background: linear-gradient(90deg, rgb(0 0 0 / 72%), rgb(0 0 0 / 40%));
+		background: linear-gradient(90deg, rgb(0 0 0 / 82%) 0%, rgb(0 0 0 / 62%) 55%, rgb(0 0 0 / 38%) 100%);
 		pointer-events: none;
 	}
 	.card.has-banner .name,
 	.card.has-banner .now {
 		color: #fff;
-		text-shadow: 0 1px 3px rgb(0 0 0 / 70%);
+	}
+	/* A shadow around the drawn letters themselves: a text-shadow muddied gradient names (it's
+	   painted over their see-through letters), and colored names were lost on a busy banner. */
+	.card.has-banner .name {
+		filter: drop-shadow(0 1px 1px rgb(0 0 0 / 95%)) drop-shadow(0 0 5px rgb(0 0 0 / 80%));
+	}
+	.card.has-banner .now {
+		text-shadow: 0 1px 2px rgb(0 0 0 / 95%), 0 0 6px rgb(0 0 0 / 70%);
 	}
 	.card.has-banner .state-dot {
 		border-color: #222;

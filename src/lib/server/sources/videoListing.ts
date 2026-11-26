@@ -2,7 +2,8 @@ import { getOrderCache, saveOrderCache } from '../db/queries';
 
 export type Listing = 'listed' | 'unavailable' | 'unknown';
 const pending = new Map<string, Promise<Listing>>();
-const ttl = { listed: 15 * 60_000, unavailable: 60 * 60_000, unknown: 60_000 };
+// (A removed or private video stays that way: asked again after a day, not every hour.)
+const ttl = { listed: 15 * 60_000, unavailable: 24 * 60 * 60_000, unknown: 60_000 };
 const key = (id: string) => `yt-listing-v1|${id}`;
 export function cachedListing(id: string): Listing | null {
 	const row = getOrderCache(key(id));

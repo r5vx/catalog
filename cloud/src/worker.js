@@ -472,11 +472,29 @@ async function answer(request, env, ctx) {
 		return { hideProfile: Boolean(row?.hide_profile), hideFriends: Boolean(row?.hide_friends) };
 	};
 
+	/**
+	 * A friend's own friend code, shown on their card and profile so it can be passed on to someone
+	 * else (owner, 2026-11-26: "so they can send them to others"). Made once for anyone who never
+	 * opened Add a friend. None for someone who keeps their profile private.
+	 */
+	const codeOf = async (who, kept) => {
+		if (kept) return kept;
+		for (let tries = 0; tries < 5; tries++) {
+			const code = random(8);
+			const made = await env.DB.prepare('INSERT INTO friend_codes (account, code) VALUES (?, ?) ON CONFLICT (account) DO NOTHING').bind(who, code).run().catch(() => null);
+			if (made) {
+				const row = await env.DB.prepare('SELECT code FROM friend_codes WHERE account = ?').bind(who).first();
+				return row?.code ?? '';
+			}
+		}
+		return '';
+	};
+
 	if (is('GET', '/v1/friends')) {
 		await statusTable(env.DB);
 		const [rows, asked, known] = await env.DB.batch([
 			env.DB.prepare(
-				'SELECT a.id, a.name, v.rev AS avatar, p.what, p.at, l.name_style, l.banner_rev, st.status, st.seen FROM friends f JOIN accounts a ON a.id = f.b LEFT JOIN avatars v ON v.account = a.id LEFT JOIN presence p ON p.account = f.b AND p.at > ? LEFT JOIN looks l ON l.account = a.id LEFT JOIN status st ON st.account = a.id WHERE f.a = ? ORDER BY a.name'
+				'SELECT a.id, a.name, v.rev AS avatar, p.what, p.at, l.name_style, l.banner_rev, st.status, st.seen, fc.code, pv.hide_profile FROM friends f JOIN accounts a ON a.id = f.b LEFT JOIN avatars v ON v.account = a.id LEFT JOIN presence p ON p.account = f.b AND p.at > ? LEFT JOIN looks l ON l.account = a.id LEFT JOIN status st ON st.account = a.id LEFT JOIN friend_codes fc ON fc.account = a.id LEFT JOIN privacy pv ON pv.account = a.id WHERE f.a = ? ORDER BY a.name'
 			).bind(Date.now() - 3 * MINUTE, account.id),
 			// Asked to be friends with this account, not answered yet.
 			env.DB.prepare('SELECT a.id, a.name, v.rev AS avatar FROM friend_requests r JOIN accounts a ON a.id = r.from_account LEFT JOIN avatars v ON v.account = a.id WHERE r.to_account = ? ORDER BY r.at DESC LIMIT 20').bind(account.id),
@@ -492,11 +510,15 @@ async function answer(request, env, ctx) {
 					'GROUP BY a.id ORDER BY mutual DESC, a.name LIMIT 12'
 			).bind(account.id)
 		]);
+		// (Codes for friends who never made one, at most a few at a time.)
+		const codes = new Map();
+		let making = 0;
+		for (const r of rows.results) if (!r.hide_profile) codes.set(r.id, r.code ?? (making++ < 20 ? await codeOf(r.id, null) : ''));
 		return json({
 			me: publicAccount(account),
 			friends: rows.results.map((r) => {
 				const watching = r.what && r.status !== 'invisible' ? JSON.parse(r.what) : null;
-				return { id: r.id, name: r.name, avatar: r.avatar ?? 0, watching, at: watching ? r.at : null, nameStyle: lookOf(r.name_style), banner: r.banner_rev ?? 0, state: stateOf(r.status, r.seen, Boolean(watching)) };
+				return { id: r.id, name: r.name, avatar: r.avatar ?? 0, watching, at: watching ? r.at : null, nameStyle: lookOf(r.name_style), banner: r.banner_rev ?? 0, state: stateOf(r.status, r.seen, Boolean(watching)), code: codes.get(r.id) || null };
 			}),
 			requests: asked.results.map((r) => ({ id: r.id, name: r.name, avatar: r.avatar ?? 0 })),
 			suggestions: known.results.map((r) => ({ id: r.id, name: r.name, avatar: r.avatar ?? 0, via: r.via, mutual: r.mutual, requested: Boolean(r.requested) }))
@@ -864,6 +886,7 @@ async function answer(request, env, ctx) {
 				me: them === account.id,
 				...(them === account.id ? { privacy: kept } : {}),
 				friendsSince: known.since || null,
+				code: (await codeOf(them, (await env.DB.prepare('SELECT code FROM friend_codes WHERE account = ?').bind(them).first())?.code)) || null,
 				bio: said?.bio ?? '',
 				color: said?.color ?? '',
 				nameStyle: lookOf(row.name_style),

@@ -1,6 +1,6 @@
 import type { Sport } from '../../live';
 import { works, type OfficialWork } from './official';
-import { cachedListing } from './videoListing';
+import { videoListing } from './videoListing';
 
 const sports: Record<string, Sport> = {
 	FIFA:'soccer', LaLiga:'soccer', 'Serie A':'soccer', 'AFC National Teams':'soccer', 'CON.C.A.C.A.F.':'soccer',
@@ -91,7 +91,12 @@ export function cardTitle(upload: string): { title: string; event: string } {
 	const title = longest.length > shortest.length * 1.6 ? longest : matches.join(' · ');
 	return { title, event: rest.join(' · ') };
 }
-export function publisherReplayPage(params: URLSearchParams) {
+/**
+ * A page of channel replays, each one checked with YouTube before it's shown (owner, 2026-11-26:
+ * "why cant we just make sure they all work ourselves"), so the cards are only ones that play.
+ * Twelve are asked at once; a removed or private video is skipped and kept skipped for a day.
+ */
+export async function publisherReplayPage(params: URLSearchParams) {
 	const allowed = (params.get('sports') || '').split(',').filter(Boolean);
 	const sport = params.get('sport') || 'all';
 	const words = (params.get('q') || '').toLowerCase().trim().split(/\s+/).filter(Boolean);
@@ -100,12 +105,17 @@ export function publisherReplayPage(params: URLSearchParams) {
 	for (const w of candidates) counts[sports[w.channel]] = (counts[sports[w.channel]] || 0) + 1;
 	const filtered = candidates.filter(w => sport === 'all' || sports[w.channel] === sport);
 	let offset = Math.min(filtered.length, Math.max(0, Math.trunc(Number(params.get('offset'))) || 0));
-	const items = [];
-	while (offset < filtered.length && items.length < 12) {
-		const w = filtered[offset++];
-		if (cachedListing(w.videoId) === 'unavailable') continue;
-		const { title, event } = cardTitle(w.uploadTitle);
-		items.push({ id:w.videoId, title, event, kind:kindOf(w.channel), date:w.title.slice(0, 10), upload:w.uploadTitle, channel:w.channel, year:w.year, poster:`https://i.ytimg.com/vi/${w.videoId}/hqdefault.jpg` });
+	const items: { id: string; title: string; event: string; kind: string; date: string; upload: string; channel: string; year: number | null | undefined; poster: string }[] = [];
+	// (At most four rounds of asking per page, so a run of removed videos can't hold the page up.)
+	for (let round = 0; round < 4 && offset < filtered.length && items.length < 12; round++) {
+		const batch = filtered.slice(offset, offset + 12 - items.length);
+		offset += batch.length;
+		const listed = await Promise.all(batch.map((w) => videoListing(w.videoId)));
+		batch.forEach((w, i) => {
+			if (listed[i] === 'unavailable') return;
+			const { title, event } = cardTitle(w.uploadTitle);
+			items.push({ id:w.videoId, title, event, kind:kindOf(w.channel), date:w.title.slice(0, 10), upload:w.uploadTitle, channel:w.channel, year:w.year, poster:`https://i.ytimg.com/vi/${w.videoId}/hqdefault.jpg` });
+		});
 	}
 	return { items, counts, next:offset < filtered.length ? offset : null };
 }

@@ -1221,6 +1221,8 @@
 	 */
 	let mayMoveOn = true;
 	let switchingEpisode = false;
+	/** The video's address when the switch began: a different one playing means the next episode is on. */
+	let switchFromSrc = '';
 	/**
 	 * The episode before is still in the video while another loads (its picture, its sound
 	 * downloaded): hidden, and it won't play. It used to: pressing play while a new episode waited
@@ -1364,6 +1366,48 @@
 			}
 		};
 	});
+
+	/**
+	 * A YouTube copy's whole length (src/routes/api/youtube/hls/[id]/[file]: length.json). Its
+	 * playlists grow while the hidden YouTube window keeps the video, so the video's own length is
+	 * only what's kept so far: the bar crept up a few seconds at a time (owner, 2026-11-26). The bar
+	 * shows this instead, and the kept part as what's loaded.
+	 */
+	let youtubeLength = $state(0);
+	const youtubeStreamId = $derived(youtubeCaptionId(streamUrl));
+	$effect(() => {
+		const id = youtubeStreamId;
+		youtubeLength = 0;
+		if (!id) return;
+		let stopped = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const ask = async (tries: number) => {
+			const answer = await fetch(`/api/youtube/hls/${id}/length.json`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+			if (stopped || id !== youtubeStreamId) return;
+			if (answer?.duration > 0) {
+				youtubeLength = answer.duration;
+				if (videoEl && !switchingEpisode) duration = fullLength();
+			} else if (tries < 15) timer = setTimeout(() => ask(tries + 1), 2000);
+		};
+		void ask(0);
+		return () => {
+			stopped = true;
+			clearTimeout(timer);
+		};
+	});
+
+	/** The video's length: a YouTube copy's whole length while it's still being kept, else the video's own. */
+	function fullLength(): number {
+		const own = videoEl?.duration ?? NaN;
+		return youtubeLength > 0 && (!Number.isFinite(own) || own < youtubeLength) ? youtubeLength : own;
+	}
+
+	/** Furthest a jump can go: a YouTube copy only plays as far as it's kept so far. */
+	function seekable(target: number): number {
+		const own = videoEl?.duration ?? NaN;
+		if (youtubeLength > 0 && Number.isFinite(own) && own < youtubeLength - 1) return Math.min(target, Math.max(0, own - 1));
+		return target;
+	}
 
 	function chooseYoutubeSub(sub: (typeof youtubeSubs)[number]) {
 		if (!captionVideo || !sub.id.startsWith(`youtube-asr:${captionVideo}:`)) return;
@@ -1651,10 +1695,62 @@
 		}
 	}
 
+	/**
+	 * The length jumps are worked out from. Mom's Fire TV (2026-11-26, House of Guinness S1E8):
+	 * forward and back did nothing and every jump went to the start. That's what a length of 0
+	 * does (scan stops at once, every target is capped at 0), so when the bar's length is missing
+	 * the video's own is used.
+	 */
+	function lengthNow(): number {
+		if (duration > 0 && Number.isFinite(duration)) return duration;
+		const own = fullLength();
+		if (own > 0 && Number.isFinite(own)) {
+			notePlayerEvent(`length was ${duration}, used the video's ${fmt(own)}`);
+			duration = own;
+			return own;
+		}
+		return duration;
+	}
+
+	/**
+	 * A jump that didn't land where it was aimed (back at the start, or nowhere), checked a few
+	 * seconds later and sent as a problem report with what the player knew, so the next one says
+	 * why without a photo of the screen.
+	 */
+	let jumpCheck: ReturnType<typeof setTimeout> | undefined;
+	function checkJump(from: number, target: number) {
+		clearTimeout(jumpCheck);
+		if (Math.abs(target - from) < 5) return;
+		jumpCheck = setTimeout(() => {
+			if (!videoEl || switchingEpisode || loadingEpisode || scanDir) return;
+			const at = videoEl.currentTime;
+			if (Math.abs(at - target) < 30) return;
+			const ranges = (r: TimeRanges) => Array.from({ length: Math.min(r.length, 6) }, (_, i) => `${fmt(r.start(i))}-${fmt(r.end(i))}`).join(', ');
+			sendProblemReport(videoTitle || startParams.get('title') || 'A video', {
+				error: `A jump didn't land: aimed at ${fmt(target)} from ${fmt(from)}, playing at ${fmt(at)}`,
+				source: activeFile ? (activeFile.source ?? 'Showbox') : '',
+				copy: activeFile?.name ?? '',
+				quality: activeQuality,
+				length: `bar ${duration}, video ${videoEl.duration}`,
+				seekable: ranges(videoEl.seekable),
+				buffered: ranges(videoEl.buffered),
+				state: `ready ${videoEl.readyState}, network ${videoEl.networkState}, ${videoEl.paused ? 'paused' : 'playing'}, error ${videoEl.error?.code ?? 'none'}`,
+				player: hlsInstance ? 'hls' : 'plain',
+				stream: streamUrl.slice(0, 120),
+				events: playerEvents.map((e) => e.what).slice(-10),
+				kind: 'video'
+			});
+		}, 6000);
+	}
+
 	function seekTo(target: number) {
 		if (!videoEl) return;
-		seekTarget = duration > 0 ? (target / duration) * 100 : 0;
+		const from = videoEl.currentTime;
+		const length = lengthNow();
+		seekTarget = length > 0 ? (target / length) * 100 : 0;
 		isVideoSeeking = true;
+		target = seekable(target);
+		checkJump(from, target);
 		if (hlsInstance) hlsInstance.stopLoad();
 		videoEl.currentTime = target;
 		if (hlsInstance) hlsInstance.startLoad(-1);
@@ -1662,14 +1758,16 @@
 
 	function skip(delta: number) {
 		if (!videoEl) return;
-		const cap = duration > 0.5 ? duration - 0.5 : duration;
+		const length = lengthNow();
+		const cap = length > 0.5 ? length - 0.5 : length;
 		seekTo(Math.max(0, Math.min(cap, videoEl.currentTime + delta)));
 	}
 
 	/** An intro or recap lands on its last second (owner: Skip Intro cut into the start of Dungeon Meshi's story). */
 	const SKIP_LEAVES = 1;
 	function skipSegment(seg: SkipSegment) {
-		const cap = duration > 0.5 ? duration - 0.5 : duration;
+		const length = lengthNow();
+		const cap = length > 0.5 ? length - 0.5 : length;
 		// (Unless another part starts right there, a recap after the intro: its Skip shows at once.)
 		const nextPart = skipSegments.some((s) => s !== seg && s.start > seg.start && Math.abs(s.start - seg.end) < 0.5);
 		const to = seg.type === 'credits' || nextPart ? seg.end : Math.max(videoEl?.currentTime ?? 0, seg.end - SKIP_LEAVES);
@@ -2469,6 +2567,7 @@
 		}, 8000);
 	}
 	onDestroy(() => clearTimeout(jumpLoadTimer));
+	onDestroy(() => clearTimeout(jumpCheck));
 
 	/*
 	 * The picture not moving for 25 s while it should be playing, however that came about: the stall
@@ -2863,6 +2962,13 @@
 
 	/** This video's address, for the mini player or for coming back from it, on `fid` (and episode). */
 	function watchAddress(extra: Record<string, string>, episode = activeEpisode, fid = activeFileFid): string {
+		// A replay or live channel keeps its own address (its id): rebuilt as a title, the mini player
+		// played it as a film and saved a second "Movie" row beside the replay's (owner, 2026-11-26).
+		if (replayMode || publisherReplay || liveMode) {
+			const params = new URLSearchParams(startParams);
+			for (const [key, value] of Object.entries(extra)) params.set(key, value);
+			return `/watch?${params}`;
+		}
 		const args = lastResolveArgs;
 		const params = new URLSearchParams({
 			title: args?.title ?? videoTitle.replace(/ S\d+E\d+$/, ''),
@@ -3515,8 +3621,10 @@
 		const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
 		seekTarget = ratio * 100;
 		isVideoSeeking = true;
+		const target = seekable(ratio * lengthNow());
+		checkJump(videoEl.currentTime, target);
 		if (hlsInstance) hlsInstance.stopLoad();
-		videoEl.currentTime = ratio * duration;
+		videoEl.currentTime = target;
 		if (hlsInstance) hlsInstance.startLoad(-1);
 	}
 
@@ -3648,7 +3756,7 @@
 	let lastScanPress = 0;
 
 	function scan(direction: number) {
-		if (!videoEl || !(duration > 0)) return;
+		if (!videoEl || !(lengthNow() > 0)) return;
 		const now = Date.now();
 		if (now - lastScanPress < 350) return;
 		lastScanPress = now;
@@ -4063,7 +4171,7 @@
 		// while the mini player plays, it's the one saving.)
 		if (liveMode || publisherReplay || !videoTitle || !videoEl || switchingEpisode || loadingEpisode || inMini || miniWaiting) return null;
 		const ct = videoEl.currentTime;
-		const dur = videoEl.duration;
+		const dur = fullLength();
 		if (!dur || !isFinite(dur) || dur < 10 || ct < 3) return null;
 		// Paused, or kept out of sight (Now playing in the corner): friends don't see it as watching
 		// (owner, 2026-11-16). Saves go on every 10 s whatever it's doing, so each one says which.
@@ -4149,7 +4257,7 @@
 
 	function askForRating() {
 		if (ratingAsked || tvMode || miniMode || !libraryEntryId || libraryEntryRating !== null || !videoEl) return;
-		const length = videoEl.duration;
+		const length = fullLength();
 		if (!length || !isFinite(length) || videoEl.currentTime / length < 0.9) return;
 		if (showType === 'tv' && nextEpisode()) return;
 		rateWanted = true;
@@ -4178,7 +4286,7 @@
 	 */
 	function noteUpNext() {
 		if (showType !== 'tv' || !videoEl || switchingEpisode || loadingEpisode) return;
-		const length = videoEl.duration;
+		const length = fullLength();
 		if (!length || !isFinite(length) || videoEl.currentTime / length < 0.95) return;
 		const next = nextEpisode();
 		if (!next) return;
@@ -5027,11 +5135,31 @@
 		}
 	}
 
+	/**
+	 * The next episode playing while the player still thinks it's switching (mom's Fire TV,
+	 * House of Guinness S1E8, 2026-11-26: the bar read "/ 0:00", captions went, and every skip went
+	 * to the start). A load that left early (a 4K file sent to a plain 1080p copy, Showbox held back
+	 * at 360p for another source) never cleared it, and while it's set the length, the clock the
+	 * captions follow and saving the place are all ignored. A new video playing ends the switch.
+	 */
+	function endStuckSwitch() {
+		const v = videoEl;
+		if (!switchingEpisode || !v || loadingEpisode || problem || v.paused || v.readyState < 3) return;
+		if (!v.currentSrc || v.currentSrc === switchFromSrc) return;
+		switchingEpisode = false;
+		notePlayerEvent('the episode switch never finished: ended now it plays');
+		duration = fullLength();
+	}
+
 	function onTimeUpdate() {
+		endStuckSwitch();
 		countPlayed();
 		stepOverPictureHole();
 		if (videoEl && !videoEl.seeking) lastPosition = videoEl.currentTime;
 		if (videoEl && !seeking && !isVideoSeeking && !switchingEpisode) currentTime = videoEl.currentTime;
+		// Playing with no length on the bar (its change came while an episode was still switching):
+		// taken now, or jumps all go to the start.
+		if (videoEl && !(duration > 0) && !videoEl.paused && !loadingEpisode && videoEl.currentTime > 0) lengthNow();
 		if (replayMode) return;
 		if (liveMode) {
 			const edge = hlsInstance?.liveSyncPosition;
@@ -7046,7 +7174,7 @@
 				autoplayFired = false;
 				// (Its length came just before, while still switching, so it wasn't taken then:
 				// the bar read "0:07 / 0:00".)
-				if (videoEl) duration = videoEl.duration;
+				if (videoEl) duration = fullLength();
 				if (seekAfterLoad > 0) {
 					const t = seekAfterLoad;
 					seekAfterLoad = 0;
@@ -7849,6 +7977,7 @@
 		// (Marked as switching first, or the pause would count as you pausing.)
 		skipResume = true;
 		switchingEpisode = true;
+		switchFromSrc = videoEl?.currentSrc ?? '';
 		oldPicture = true;
 		videoEl?.pause();
 		hlsInstance?.stopLoad();
@@ -8449,7 +8578,7 @@
 						class:old-picture={oldPicture}
 						ontimeupdate={onTimeUpdate}
 						ondurationchange={() => {
-							if (videoEl && !switchingEpisode) duration = videoEl.duration;
+							if (videoEl && !switchingEpisode) duration = fullLength();
 						}}
 						onplay={() => {
 							// Never plays out of sight (a load finishing while another page is open); on coming back.
