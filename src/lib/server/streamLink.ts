@@ -12,6 +12,7 @@ import { movyStream, parseMovyShareKey } from './sources/movy';
 import { hianimeStream, parseHianimeShareKey } from './sources/hianime';
 import { vidfastStream, parseVidfastShareKey } from './sources/vidfast';
 import { xumoStream, parseXumoShareKey } from './sources/xumo';
+import { tubiStream, parseTubiShareKey } from './sources/tubi';
 import { plexStream, parsePlexShareKey } from './sources/plex';
 import { plutoStream, parsePlutoShareKey } from './sources/pluto';
 import { nothingFrom } from './reachable';
@@ -73,6 +74,13 @@ export async function streamLink(shareKey: string, fid: number, refresh = false,
 	if (parseXumoShareKey(shareKey)) {
 		const found = await xumoStream(shareKey, refresh);
 		if (!found.url) return { url: '', debug: await nothingFrom('Xumo Play', found.why) };
+		return { url: found.url };
+	}
+
+	// Tubi (sources/tubi.ts): plain HLS only (DRM titles skipped — BuyDRM rejects Electron's CDM).
+	if (parseTubiShareKey(shareKey)) {
+		const found = await tubiStream(shareKey, refresh);
+		if (!found.url) return { url: '', debug: await nothingFrom('Tubi', found.why) };
 		return { url: found.url };
 	}
 

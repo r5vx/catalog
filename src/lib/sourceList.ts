@@ -31,6 +31,7 @@ export const SOURCE_GROUPS: SourceGroup[] = [
 			{ name: 'HiAnime', domain: 'hianime.to', about: 'Japanese audio and English dub' },
 			{ name: 'Aniwave', domain: 'aniwaves.ru', about: 'Japanese audio and English dub' },
 			{ name: 'KickAssAnime', domain: 'kaa.lt', about: 'Japanese audio and English dub' },
+			{ name: 'AllAnime', domain: 'allmanga.to', about: 'Japanese audio and English dub, used last' },
 			{ name: 'Anime Nexus', domain: 'anime.nexus', about: 'Subtitles for anime' }
 		]
 	},

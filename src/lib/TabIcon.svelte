@@ -57,6 +57,9 @@
 	{:else if name === 'youtube'}
 		<!-- a play button -->
 		<rect x="2.5" y="5.5" width="19" height="13" rx="4" /><path d="M10 9.2v5.6l4.8-2.8Z" />
+	{:else if name === 'catasong'}
+		<!-- a music note -->
+		<path d="M9 18V5l11-2v13" /><circle cx="6.5" cy="18" r="2.5" /><circle cx="17.5" cy="16" r="2.5" />
 	{:else if name === 'downloads'}
 		<!-- an arrow down onto a line -->
 		<path d="M12 4v11M7 10l5 5 5-5M5 20h14" />

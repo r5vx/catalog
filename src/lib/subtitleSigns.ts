@@ -16,7 +16,7 @@ type Cue = { start: number; end: number; text: string; top: boolean; song?: bool
 
 const plain = (html: string) => html.replace(/<[^>]*>/g, '').replace(/&[a-z]+;|&#\d+;/g, ' ');
 
-function isSignLine(html: string): boolean {
+function inCapitals(html: string): boolean {
 	const text = plain(html);
 	// A speaker's name or a sound in captions ("[SUBARU]", "(GASPS)") belongs with the talking.
 	if (/^\s*[[(].*[\])]\s*:?\s*$/.test(text)) return false;
@@ -25,6 +25,21 @@ function isSignLine(html: string): boolean {
 	// No small letters at all, and some capitals (not just Japanese or numbers).
 	return !/\p{Ll}/u.test(text) && /\p{Lu}/u.test(text);
 }
+
+/**
+ * Shouted, not written: capitals ending like a sentence ("OK, OK, OK, OK.", "UDC! UDC!",
+ * "FUCK!"). The Day of the Jackal's subtitles write shouts in capitals, and each one went to the
+ * top of the picture, so the line seemed missing from the bottom (owner, 2026-11-26). Signs
+ * rarely end in ! or ? ("NEXT UP:", "KAYO HINAZUKI"); a full stop only after short words, since a
+ * sign's last line can have one (Re:Zero's "PERSON OR ORGANIZATION.").
+ */
+function isShout(html: string): boolean {
+	if (!inCapitals(html)) return false;
+	const text = plain(html);
+	return /[!?…]['"’”]?\s*$/.test(text) || (/\.['"’”]?\s*$/.test(text) && !/\p{L}{5}/u.test(text));
+}
+
+const isSignLine = (html: string) => inCapitals(html) && !isShout(html);
 
 /** `<i>`, `<b>` and `<u>` opened on one line and closed on another: tags dropped from a line on its own. */
 const tidy = (html: string) => {
@@ -43,7 +58,8 @@ export function splitSigns<T extends Cue>(cues: T[]): T[] {
 	for (const cue of cues) {
 		const parts = cue.text.split('\n');
 		const sign = parts.filter(isSignLine);
-		if (!sign.length || cue.top) {
+		// A shout over two lines stays whole ("CRUMBLE AND BURN TO CINDERS, / FALSE SONGSTRESS!!!").
+		if (!sign.length || cue.top || parts.some(isShout)) {
 			out.push(cue);
 			continue;
 		}

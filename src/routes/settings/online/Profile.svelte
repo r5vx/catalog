@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { invalidateAll } from '$app/navigation';
 	import Avatar from '$lib/Avatar.svelte';
 	import PictureCropDialog from '$lib/PictureCropDialog.svelte';
-	import { drawFitted, type Fit } from '$lib/pictureFit';
+	import { squarePicture, type Fit } from '$lib/pictureFit';
 
 	/**
 	 * Settings → Online's name and picture (its own page, Profile, until 2026-11-14): what friends see, for the profile using this page
@@ -19,9 +20,6 @@
 	let saved = $state('');
 	let busy = $state(false);
 	let fileBox = $state<HTMLInputElement | null>(null);
-
-	/** The picture's side, in pixels, as it is kept. Big enough to stay sharp at any size it's shown. */
-	const SIDE = 192;
 
 	async function load() {
 		const status = await fetch('/api/online')
@@ -49,22 +47,15 @@
 		}
 		if (answer.data?.account) account = answer.data.account;
 		saved = done;
+		// The sidebar and top bar picture and name come from the page's data, which isn't asked
+		// again on its own: the old picture stayed there until Catalog was opened again (2026-11-26).
+		await invalidateAll();
 	}
 
 	function saveName(event: SubmitEvent) {
 		event.preventDefault();
 		const clean = name.trim();
 		if (clean && clean !== account?.name) send({ name: clean }, 'Name saved.');
-	}
-
-	/** The chosen square of the image (moved and zoomed in the box first), drawn small, as a JPEG. */
-	async function squared(file: File, fit: Fit): Promise<string> {
-		const image = await createImageBitmap(file);
-		const canvas = document.createElement('canvas');
-		canvas.width = SIDE;
-		canvas.height = SIDE;
-		drawFitted(canvas.getContext('2d')!, image, SIDE, SIDE, fit);
-		return canvas.toDataURL('image/jpeg', 0.85);
 	}
 
 	/** A picture just chosen: moved and zoomed in a round frame before it's sent (as Discord does). */
@@ -87,7 +78,7 @@
 		stopAdjusting();
 		if (!file) return;
 		try {
-			await send({ avatar: await squared(file, fit) }, 'Picture saved.');
+			await send({ avatar: await squarePicture(file, fit) }, 'Picture saved.');
 		} catch {
 			problem = "That file isn't a picture Catalog can read.";
 		}
@@ -109,7 +100,7 @@
 		<h2>Your profile online</h2>
 		<div class="row">
 			<a class="btn btn-primary" href="/friends/{account.id}">Open my profile</a>
-			<a class="btn" href="/friends/{account.id}?edit=1">Banner, name style and favorites</a>
+			<a class="btn" href="/friends/{account.id}?edit=1">Edit profile</a>
 		</div>
 
 		<div class="card">

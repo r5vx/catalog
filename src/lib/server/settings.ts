@@ -192,6 +192,10 @@ export type Settings = {
 	catasongVolume?: string;
 	/** Catasong Endless: best streak per genre (JSON). */
 	catasongEndlessBest?: string;
+	/** '1': Catasong has a link in the sidebar (pinned from the game: lib/catasong/PinToSidebar.svelte). */
+	catasongPinned?: string;
+	/** '0' turns off the automatic Cloudflare solver for AllAnime (turnstileSolver.cjs); on when unset. */
+	autoSolve?: string;
 };
 
 export function readSettings(): Settings {

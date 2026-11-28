@@ -314,14 +314,14 @@ export function electronCloseTurnstile(): void {
 	} catch {}
 }
 
-export function electronSolveTurnstile(url: string, timeout = 60000): Promise<TurnstileResult> {
+export function electronSolveTurnstile(url: string, timeout = 60000, autoSolve = true): Promise<TurnstileResult> {
 	if (typeof process.send !== 'function') {
 		return Promise.resolve({ token: '', provider: 'turnstile', solved: false, error: 'not in Electron' });
 	}
 	const id = String(++counter);
 	return new Promise((resolve) => {
 		pending.set(id, resolve);
-		process.send!({ type: 'solve-turnstile', id, url, timeout });
+		process.send!({ type: 'solve-turnstile', id, url, timeout, autoSolve });
 		setTimeout(() => {
 			if (pending.has(id)) {
 				pending.delete(id);

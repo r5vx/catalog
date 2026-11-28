@@ -23,6 +23,7 @@ import { onMovy, type Wanted } from './sources/movy';
 import { hianimeHas } from './sources/hianime';
 import { confirmedVidfast, vidfastShareKey, vidfastStream } from './sources/vidfast';
 import { onXumo } from './sources/xumo';
+import { onTubi } from './sources/tubi';
 import { onPlex } from './sources/plex';
 import { onPluto } from './sources/pluto';
 import { malEpisodeOf } from './metadata/skiptimes';
@@ -259,8 +260,9 @@ function startCheck(key: string, title: string, type: string, year: string): Pro
 		noted(list, 'Aniwave', onAniwave(title, type, year)),
 		noted(list, 'HiAnime', onHianime(title, type, year)),
 		noted(list, 'KickAssAnime', onKaa(title, type, year)),
-		// Xumo Play, Plex, and Pluto TV: free VOD sources (no account needed).
+		// Xumo Play, Tubi, Plex, and Pluto TV: free VOD sources (no account needed).
 		vod('Xumo Play', onXumo),
+		noted(list, 'Tubi', onTubi(title, type, year)),
 		vod('Plex', onPlex),
 		vod('Pluto TV', onPluto),
 		noted(list, 'Movy', onMovyToo(title, type, year, {

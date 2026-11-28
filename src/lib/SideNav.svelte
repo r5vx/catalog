@@ -25,13 +25,15 @@
 		return '-';
 	});
 
-	const elsewhere = [
+	const elsewhere = $derived([
 		{ key: 'browse', href: '/browse', label: 'Browse' },
 		{ key: 'live', href: '/live', label: 'Live TV' },
 		{ key: 'youtube', href: '/youtube', label: 'YouTube' },
+		// Only once pinned from the game (lib/catasong/PinToSidebar.svelte): it's hidden otherwise.
+		...(page.data.catasongPinned ? [{ key: 'catasong', href: '/catasong', label: 'Catasong' }] : []),
 		{ key: 'downloads', href: '/downloads', label: 'Downloads' },
 		{ key: 'settings', href: '/settings', label: 'Settings' }
-	];
+	]);
 	const here = (href: string) => page.url.pathname === href || page.url.pathname.startsWith(href + '/');
 </script>
 

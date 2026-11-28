@@ -1,14 +1,16 @@
 /**
- * AllAnime's check, done by the person at this computer.
+ * AllAnime's Cloudflare Turnstile solver.
  *
  * AllAnime's GraphQL API returns NEED_CAPTCHA for episode-source queries. The
  * website handles this by showing a Turnstile widget, getting a token, and
  * retrying with { extensions: { captcha: { token, provider: "turnstile" } } }.
  *
- * This opens a small visible window on allmanga.to (the domain the sitekey is
- * registered for) showing only that widget. Catalog does not click it or look
- * inside it: the person ticks the box, and the token the widget hands back is
- * returned. Closing the window gives up.
+ * The solver automatically clicks the Turnstile checkbox using EZSolver's
+ * approach: it patches attachShadow to find the iframe, then simulates
+ * human-like mouse movement and clicks via CDP Input.dispatchMouseEvent
+ * (the same method EZSolver's nodriver uses). The view renders at full size
+ * but off-screen so the user sees nothing. If auto-clicking fails after four
+ * attempts, the visible popup opens for a manual click.
  *
  * Every stage is written to %TEMP%\catalog-turnstile.log (never the token
  * itself), so a failed check says where it stopped.
@@ -39,7 +41,103 @@ function closeTurnstile() {
 	}
 }
 
-async function solveTurnstile(targetUrl, timeoutMs = 120000, parentWin = null) {
+/* ------------------------------------------------ auto-click (EZSolver approach) */
+
+/**
+ * JavaScript injected into the page to find the Turnstile iframe's bounding rect.
+ * Checks both the normal DOM and any shadow roots opened by the attachShadow patch.
+ */
+const FIND_IFRAME_JS = `JSON.stringify((() => {
+	const find = (root) => {
+		if (!root || !root.querySelectorAll) return null;
+		for (const iframe of root.querySelectorAll('iframe')) {
+			if ((iframe.src || '').indexOf('challenges.cloudflare.com') !== -1) {
+				const r = iframe.getBoundingClientRect();
+				if (r.width > 10 && r.height > 10) return { x: r.x, y: r.y, w: r.width, h: r.height };
+			}
+		}
+		return null;
+	};
+	let r = find(document);
+	if (r) return r;
+	for (const sr of (window.__tsShadowRoots || [])) {
+		try { r = find(sr); if (r) return r; } catch {}
+	}
+	return null;
+})())`;
+
+/**
+ * Shadow DOM patch: forces attachShadow to open mode so we can reach the Turnstile
+ * iframe inside any shadow root. Harmless on pages that don't use shadow DOM.
+ */
+const SHADOW_PATCH_JS = `
+if (!window.__tsShadowPatched) {
+	window.__tsShadowPatched = true;
+	window.__tsShadowRoots = [];
+	var _origAS = Element.prototype.attachShadow;
+	Element.prototype.attachShadow = function(init) {
+		if (init) init.mode = 'open';
+		var root = _origAS.call(this, init);
+		window.__tsShadowRoots.push(root);
+		return root;
+	};
+}`;
+
+/**
+ * Simulate a human-like mouse click on the Turnstile checkbox. Finds the iframe,
+ * moves the mouse with random intermediate points (like a real hand), and clicks at
+ * approximately x+28 from the left edge of the iframe (the checkbox position).
+ *
+ * Uses CDP Input.dispatchMouseEvent (the same method EZSolver's nodriver uses) for
+ * reliable clicks that reach cross-origin iframes through the compositor.
+ */
+async function attemptAutoClick(wc, attempt) {
+	try {
+		const rectStr = await wc.executeJavaScript(FIND_IFRAME_JS);
+		const rect = JSON.parse(rectStr || 'null');
+		if (!rect || rect.w < 10 || rect.h < 10) {
+			log('auto-click: iframe not found or too small (attempt ' + (attempt + 1) + ')');
+			return false;
+		}
+
+		const jitter = () => Math.random() * 6 - 3;
+		const clickX = rect.x + 28 + jitter();
+		const clickY = rect.y + rect.h / 2 + jitter();
+
+		try { wc.debugger.attach('1.3'); } catch {}
+
+		const dispatch = (type, x, y, extra) =>
+			wc.debugger.sendCommand('Input.dispatchMouseEvent', { type, x, y, ...extra });
+
+		const startX = rect.x + rect.w + 30 + Math.random() * 80;
+		const startY = rect.y - 20 + Math.random() * (rect.h + 40);
+		await dispatch('mouseMoved', startX, startY);
+		await wait(80 + Math.random() * 120);
+
+		const midX = (startX + clickX) / 2 + jitter() * 2;
+		const midY = (startY + clickY) / 2 + jitter() * 2;
+		await dispatch('mouseMoved', midX, midY);
+		await wait(60 + Math.random() * 100);
+
+		await dispatch('mouseMoved', clickX, clickY);
+		await wait(40 + Math.random() * 80);
+
+		await dispatch('mousePressed', clickX, clickY, { button: 'left', clickCount: 1 });
+		await wait(30 + Math.random() * 50);
+		await dispatch('mouseReleased', clickX, clickY, { button: 'left', clickCount: 1 });
+
+		log('auto-click: clicked (' + Math.round(clickX) + ',' + Math.round(clickY) + ') iframe (' + Math.round(rect.x) + ',' + Math.round(rect.y) + ' ' + Math.round(rect.w) + 'x' + Math.round(rect.h) + ') attempt ' + (attempt + 1));
+		return true;
+	} catch (e) {
+		log('auto-click error (attempt ' + (attempt + 1) + '): ' + (e.message || String(e)));
+		return false;
+	}
+}
+
+const MAX_AUTO_CLICKS = 4;
+const AUTO_CLICK_INTERVAL = 6000;
+
+async function solveTurnstile(targetUrl, timeoutMs = 120000, parentWin = null, autoSolve = true) {
 	const failed = (error) => {
 		log('done: no token (' + error + ')');
 		return { token: '', provider: 'turnstile', solved: false, error };
@@ -60,7 +158,7 @@ async function solveTurnstile(targetUrl, timeoutMs = 120000, parentWin = null) {
 	// main window (falling back to a separate window if Catalog isn't visible) so the
 	// person can complete any Cloudflare check without a popup window.
 	if (typeof targetUrl === 'string' && /^https:\/\/(?:allmanga\.to\/bangumi|mkissa\.to\/anime)\//i.test(targetUrl)) {
-		return openEpisodePageForHuman(electron, ses, targetUrl, timeoutMs, failed, parentWin);
+		return openEpisodePageForHuman(electron, ses, targetUrl, timeoutMs, failed, parentWin, autoSolve);
 	}
 
 	const started = Date.now();
@@ -69,8 +167,7 @@ async function solveTurnstile(targetUrl, timeoutMs = 120000, parentWin = null) {
 	const win = new BrowserWindow({
 		width: 420, height: 300,
 		show: true,
-		center: true,
-		alwaysOnTop: true,
+		...(autoSolve ? { x: -9999, y: -9999, skipTaskbar: true } : { center: true, alwaysOnTop: true }),
 		title: 'AllAnime: tick the box',
 		autoHideMenuBar: true,
 		resizable: false,
@@ -101,6 +198,8 @@ async function solveTurnstile(targetUrl, timeoutMs = 120000, parentWin = null) {
 			document.head.innerHTML = '<title>AllAnime: tick the box</title>';
 			document.body.innerHTML = '';
 			document.body.style.cssText = 'margin:0;background:#1a1a2e;color:#ddd;font:15px system-ui,sans-serif;display:flex;flex-direction:column;gap:16px;justify-content:center;align-items:center;height:100vh;';
+
+			${SHADOW_PATCH_JS}
 
 			window.__check = { token: null, error: null, turnedDown: 0, lastCode: '', stage: 'loading the check', interactive: false };
 
@@ -144,6 +243,8 @@ async function solveTurnstile(targetUrl, timeoutMs = 120000, parentWin = null) {
 		let lastStage = '';
 		let turnedDown = 0;
 		let lastCode = '';
+		let autoClickAttempts = 0;
+		let lastAutoClickAt = 0;
 		// Starts with "turned down" so allanime.ts can tell it from a box nobody ticked.
 		const gaveUp = (how) => failed(turnedDown ? 'turned down by Cloudflare ' + turnedDown + ' time(s), last error ' + lastCode + '; ' + how : how);
 
@@ -162,6 +263,21 @@ async function solveTurnstile(targetUrl, timeoutMs = 120000, parentWin = null) {
 			if (state.stage !== lastStage) {
 				lastStage = state.stage;
 				log('stage: ' + state.stage);
+			}
+
+			// Auto-click when the widget becomes interactive (needs a human click).
+			// Attempts up to MAX_AUTO_CLICKS times with AUTO_CLICK_INTERVAL between them.
+			if (autoSolve && state.interactive && !state.token && autoClickAttempts < MAX_AUTO_CLICKS && Date.now() - lastAutoClickAt > AUTO_CLICK_INTERVAL) {
+				if (autoClickAttempts === 0) await wait(300 + Math.random() * 400);
+				lastAutoClickAt = Date.now();
+				await attemptAutoClick(wc, autoClickAttempts);
+				autoClickAttempts++;
+			}
+			if (state.interactive && !state.token && (!autoSolve || autoClickAttempts >= MAX_AUTO_CLICKS) && !win.isDestroyed() && win.getPosition()[0] < -1000) {
+				log('auto-click: all ' + MAX_AUTO_CLICKS + ' attempts failed in simple path, showing window');
+				win.setSkipTaskbar(false);
+				win.setAlwaysOnTop(true);
+				win.center();
 			}
 
 			if (state.token) {
@@ -184,7 +300,7 @@ async function solveTurnstile(targetUrl, timeoutMs = 120000, parentWin = null) {
 	}
 }
 
-async function openEpisodePageForHuman(electron, ses, episodeUrl, timeoutMs, failed, parentWin) {
+async function openEpisodePageForHuman(electron, ses, episodeUrl, timeoutMs, failed, parentWin, autoSolve = true) {
 	const { BrowserWindow, WebContentsView } = electron;
 	const started = Date.now();
 	const canEmbed = Boolean(
@@ -215,10 +331,11 @@ async function openEpisodePageForHuman(electron, ses, episodeUrl, timeoutMs, fai
 	const POP_W = 520;
 	const POP_H = 520;
 	let visible = false;
+	let solving = false;
 
 	const applyBounds = () => {
 		if (!view || !headerView || !parentWin || parentWin.isDestroyed()) return;
-		if (!visible) {
+		if (!visible && !solving) {
 			headerView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
 			// Keep a tiny on-screen 2x2 rect (with backgroundThrottling: false + muted audio) so Chromium
 			// never freezes/throttles cross-origin player iframes like filelotion.fyi while hidden.
@@ -228,6 +345,11 @@ async function openEpisodePageForHuman(electron, ses, episodeUrl, timeoutMs, fai
 		const [cw, ch] = parentWin.getContentSize();
 		const w = Math.min(POP_W, Math.max(360, cw - 32));
 		const bodyH = Math.min(POP_H, Math.max(320, ch - HEADER_H - 64));
+		if (solving && !visible) {
+			headerView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+			view.setBounds({ x: 0, y: ch + 100, width: w, height: bodyH });
+			return;
+		}
 		const totalH = HEADER_H + bodyH;
 		const x = Math.max(0, Math.round((cw - w) / 2));
 		const y = Math.max(48, Math.round((ch - totalH) / 2));
@@ -238,11 +360,17 @@ async function openEpisodePageForHuman(electron, ses, episodeUrl, timeoutMs, fai
 	const setVisible = (next) => {
 		if (visible === next) return;
 		visible = next;
+		if (!next) solving = false;
 		if (canEmbed) {
 			applyBounds();
 		} else if (win && !win.isDestroyed()) {
-			if (visible) win.show();
-			else win.hide();
+			if (visible) {
+				win.center();
+				win.setAlwaysOnTop(true);
+				win.show();
+			} else if (!solving) {
+				win.hide();
+			}
 		}
 	};
 
@@ -424,9 +552,22 @@ async function openEpisodePageForHuman(electron, ses, episodeUrl, timeoutMs, fai
 		await wc.loadURL(episodeUrl);
 		log('episode page loaded: url=' + wc.getURL() + ' title=' + JSON.stringify(wc.getTitle()));
 
+		// Inject the shadow DOM patch so we can find the Turnstile iframe.
+		await wc.executeJavaScript(SHADOW_PATCH_JS).catch(() => {});
+
 		const deadline = Date.now() + timeoutMs;
 		let lastTitle = wc.getTitle();
-		if (isChallengeTitle(lastTitle)) setVisible(true);
+		let autoClickAttempts = 0;
+		let lastAutoClickAt = 0;
+		if (isChallengeTitle(lastTitle)) {
+			if (autoSolve) {
+				solving = true;
+				applyBounds();
+				if (!canEmbed && win && !win.isDestroyed()) { win.setPosition(-9999, -9999); win.show(); }
+			} else {
+				setVisible(true);
+			}
+		}
 
 		while (Date.now() < deadline) {
 			if (capturedEpisodeData) {
@@ -447,10 +588,29 @@ async function openEpisodePageForHuman(electron, ses, episodeUrl, timeoutMs, fai
 				log('episode page title changed: ' + JSON.stringify(t) + ' url=' + wc.getURL());
 			}
 			if (isChallengeTitle(t)) {
-				setVisible(true);
+				if (autoSolve && !visible && !solving) {
+					solving = true;
+					applyBounds();
+					if (!canEmbed && win && !win.isDestroyed()) { win.setPosition(-9999, -9999); win.show(); }
+				} else if (!autoSolve && !visible) {
+					setVisible(true);
+				}
 				wc.executeJavaScript('document.documentElement.style.overflow="hidden";document.body.style.overflow="hidden";', true).catch(() => {});
+				if (autoSolve && autoClickAttempts < MAX_AUTO_CLICKS && Date.now() - lastAutoClickAt > AUTO_CLICK_INTERVAL) {
+					if (autoClickAttempts === 0) {
+						await wait(1500 + Math.random() * 500);
+						await wc.executeJavaScript(SHADOW_PATCH_JS).catch(() => {});
+						await wait(500);
+					}
+					lastAutoClickAt = Date.now();
+					await attemptAutoClick(wc, autoClickAttempts);
+					autoClickAttempts++;
+				} else if (autoSolve && autoClickAttempts >= MAX_AUTO_CLICKS && !visible) {
+					log('auto-click: all ' + MAX_AUTO_CLICKS + ' attempts failed, showing popup for manual click');
+					setVisible(true);
+				}
 			} else if (t && !/^mkissa\.to\//i.test(t)) {
-				// Cloudflare cleared (or was already verified): hide immediately so the user never sees MKissa's page!
+				solving = false;
 				setVisible(false);
 				if (!passedAt) passedAt = Date.now();
 				// Dismiss MKissa's own "Videos here are embedded from third-party sites" modal (only after

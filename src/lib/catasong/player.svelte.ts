@@ -29,8 +29,16 @@ export class SongPlayer {
 	private envelope: GainNode | null = null;
 	private startedAt = 0;
 	private asked = '';
+	/*
+	 * Closed with its page: nothing it was still fetching may play after. A song that came after the
+	 * owner left Guess the Anime made itself a new AudioContext and played with no page left to stop
+	 * it, and the game opened again couldn't either (2026-11-26).
+	 */
+	private closed = false;
+	private fetches = new AbortController();
 
 	private ensure(): AudioContext {
+		if (this.closed) throw new Error('closed');
 		if (!this.context) {
 			this.context = new AudioContext();
 			this.master = this.context.createGain();
@@ -51,8 +59,9 @@ export class SongPlayer {
 	private early = new Map<string, Promise<AudioBuffer | null>>();
 
 	private fetchDecoded(url: string): Promise<AudioBuffer | null> {
+		if (this.closed) return Promise.resolve(null);
 		const context = this.ensure();
-		return fetch(url)
+		return fetch(url, { signal: this.fetches.signal })
 			.then((response) => (response.ok ? response.arrayBuffer() : Promise.reject(new Error(String(response.status)))))
 			.then((bytes) => context.decodeAudioData(bytes))
 			.catch(() => null);
@@ -60,11 +69,13 @@ export class SongPlayer {
 
 	/** Starts fetching a song that's likely next, so loading it later is instant. */
 	prefetch(url: string) {
+		if (this.closed) return;
 		if (!this.early.has(url)) this.early.set(url, this.fetchDecoded(url));
 	}
 
 	/** Fetches and decodes a song (or takes the one prefetched); a later ask wins over one still coming. */
 	async load(url: string): Promise<boolean> {
+		if (this.closed) return false;
 		this.ensure();
 		this.stop();
 		this.asked = url;
@@ -76,6 +87,7 @@ export class SongPlayer {
 			const early = this.early.get(url);
 			this.early.delete(url);
 			const decoded = (early ? await early : null) ?? (await this.fetchDecoded(url));
+			if (this.closed) return false;
 			if (!decoded) throw new Error('no sound');
 			if (this.asked !== url) return false;
 			this.buffer = decoded;
@@ -97,10 +109,13 @@ export class SongPlayer {
 		this.buffer = null;
 		this.ready = false;
 		this.failed = false;
+		// (A load still coming no longer counts, so it mustn't leave "Loading" up.)
+		this.loading = false;
 	}
 
 	/** Plays `seconds` from `from` (seconds into the music, after its first sound). */
 	play(seconds: number, from = 0) {
+		if (this.closed) return;
 		const context = this.ensure();
 		if (!this.buffer || !this.master) return;
 		this.stop(true);
@@ -173,9 +188,13 @@ export class SongPlayer {
 	}
 
 	close() {
+		this.closed = true;
+		this.fetches.abort();
+		this.early.clear();
 		this.stop(true);
 		void this.context?.close();
 		this.context = null;
+		this.buffer = null;
 	}
 }
 

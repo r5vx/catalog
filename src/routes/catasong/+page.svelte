@@ -14,6 +14,7 @@
 	import BackBar from '$lib/BackBar.svelte';
 	import CoverWall from '$lib/catasong/CoverWall.svelte';
 	import PlayButton from '$lib/catasong/PlayButton.svelte';
+	import PinToSidebar from '$lib/catasong/PinToSidebar.svelte';
 	import Smoke from '$lib/catasong/Smoke.svelte';
 	import SongLinks from '$lib/catasong/SongLinks.svelte';
 	import Visualizer from '$lib/catasong/Visualizer.svelte';
@@ -324,6 +325,7 @@
 
 	<div class="content">
 		<BackBar />
+		<PinToSidebar />
 
 		<header class="top">
 			<div>

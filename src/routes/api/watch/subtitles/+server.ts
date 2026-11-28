@@ -11,6 +11,7 @@ import { isCinemaRecording } from '$lib/watch';
 import { nyaaFileSubtitles, parseNyaaShareKey } from '$lib/server/sources/nyaa';
 import { kitsunekkoSubtitles } from '$lib/server/sources/kitsunekko';
 import { parseXumoShareKey, xumoSubtitles } from '$lib/server/sources/xumo';
+import { parseTubiShareKey, tubiSubtitles } from '$lib/server/sources/tubi';
 import type { RequestHandler } from './$types';
 
 /**
@@ -53,7 +54,9 @@ export const GET: RequestHandler = async ({ url }) => {
 		? within(nyaaFileSubtitles(nyaaShare).catch(() => []), 25_000, [])
 		: parseXumoShareKey(nyaaShare)
 			? within(xumoSubtitles(nyaaShare).catch(() => []), 10_000, [])
-			: Promise.resolve([]);
+			: parseTubiShareKey(nyaaShare)
+				? within(tubiSubtitles(nyaaShare).catch(() => []), 10_000, [])
+				: Promise.resolve([]);
 
 	if (!title) return error(400, 'Missing title');
 

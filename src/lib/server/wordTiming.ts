@@ -7,6 +7,7 @@
 import { createHash } from 'node:crypto';
 import { getOrderCache, saveOrderCache } from './db/queries';
 import type { DelayPlan } from '$lib/subtitleAlign';
+import { planFromMatches } from '$lib/wordTiming';
 
 export type WordJob = { key: string; master: string; language: string; sub: string; duration: number; asked: number; started?: number };
 /** `points`: each matched line [when it starts, how far off] (for checking an answer). */
@@ -18,7 +19,15 @@ const keyOf = (copy: string, sub: string, language: string, audio: number) =>
 
 export function wordAnswer(copy: string, sub: string, language: string, audio: number): WordAnswer | null {
 	const kept = getOrderCache(keyOf(copy, sub, language, audio))?.value as WordAnswer | undefined;
-	return kept ?? null;
+	if (!kept) return null;
+	// Worked out again from the lines it matched, so answers kept before planFromMatches learned
+	// something new have it too (The Day of the Jackal E8: "too few words matched" became a plan
+	// that follows the drift, 2026-11-26), with nothing heard again.
+	if (kept.points && kept.points.length >= 8) {
+		const plan = planFromMatches(kept.points);
+		if (plan) return { ...kept, plan, why: undefined };
+	}
+	return kept;
 }
 
 /** Asks the computer to time these subtitles by their words, unless it has or is doing so. */

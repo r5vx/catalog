@@ -7,6 +7,7 @@ import { backgroundFrom } from '$lib/background';
 import { logoFrom } from '$lib/logo';
 import { readCustomTheme } from '$lib/customTheme';
 import { warmBrowseCache, hasTmdbKey } from '$lib/server/metadata';
+import { warmTubi } from '$lib/server/sources/tubi';
 import { showboxSignin } from '$lib/server/showboxSignin';
 import { onlineConnected, keptMe, warmMe, statusOf, friendCountOf } from '$lib/server/online';
 import { whatsNewCard, whatsNewSeen, WHATS_NEW_SEEN } from '$lib/server/whatsNewCard';
@@ -37,6 +38,7 @@ export const load: LayoutServerLoad = async ({ request, getClientAddress, cookie
 	if (!browseWarmed) {
 		browseWarmed = true;
 		warmBrowseCache();
+		warmTubi();
 	}
 
 	// The sidebar's tabs and their counts, as the library's own tabs have them.
@@ -79,6 +81,8 @@ export const load: LayoutServerLoad = async ({ request, getClientAddress, cookie
 		// Rating stars: 5, or 10 for halves like 8.5 (Settings → Personalization → Ratings).
 		ratingStars: settings.ratingStars === '10' ? 10 : 5,
 		sideNav,
+		// Catasong in the sidebar, once pinned from the game itself.
+		catasongPinned: settings.catasongPinned === '1',
 		altMode: settings.altMode === '1',
 		background: backgroundFrom(settings),
 		// Your own logo, or Catalog's (Settings → Personalization → Logo).

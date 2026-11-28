@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import { getOrderCache, saveOrderCache } from '../db/queries';
 import { electronSolveTurnstile } from '../electron-fetch';
 import { trustVideoHost } from '../relayHosts';
+import { readSettings } from '../settings';
 import { noteSourceAnswer } from '../sourceAnswers';
 import type { FileOption } from '../showbox';
 
@@ -175,7 +176,7 @@ async function askWithCheck<T>(
 			}
 			log(`${what}: check required again right after another ask's check passed`);
 		}
-		const result = await electronSolveTurnstile(episodeUrl || API, CHECK_WAIT);
+		const result = await electronSolveTurnstile(episodeUrl || API, CHECK_WAIT, readSettings().autoSolve !== '0');
 		if (result.solved && result.episodeData) {
 			lastPassed = Date.now();
 			log(`${what}: episode sourceUrls captured directly from MKissa API`);

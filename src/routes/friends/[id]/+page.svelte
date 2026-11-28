@@ -11,6 +11,8 @@
 	import StyledName from '$lib/StyledName.svelte';
 	import { letterColor } from '$lib/avatarColor';
 	import { FONTS, GRADIENTS, NO_STYLE, loadFont, nameStyleToSave, readNameStyle, type NameStyle } from '$lib/nameStyle';
+	import PictureCropDialog from '$lib/PictureCropDialog.svelte';
+	import { squarePicture, type Fit } from '$lib/pictureFit';
 	import type { Titled } from './+page.server';
 
 	/**
@@ -107,6 +109,48 @@
 	let bannerNote = $state('');
 	let bannerBox = $state<HTMLInputElement | null>(null);
 	let nameDraft = $state<NameStyle>({ ...NO_STYLE });
+	/**
+	 * The profile picture, changed here too (owner, 2026-11-26: only Settings → Online had it): one
+	 * picked and not saved yet (a data: address), or the saved one taken away. Moved and zoomed in
+	 * the round box first, the same as Settings → Online.
+	 */
+	let newAvatar = $state<string | null>(null);
+	let avatarRemoved = $state(false);
+	let avatarNote = $state('');
+	let avatarBox = $state<HTMLInputElement | null>(null);
+	let adjustingAvatar = $state<{ file: File; url: string } | null>(null);
+	const hasAvatar = $derived(editing ? Boolean(newAvatar) || (!avatarRemoved && Boolean(person.avatar)) : Boolean(person.avatar));
+
+	function pickAvatar(event: Event) {
+		const file = (event.currentTarget as HTMLInputElement).files?.[0];
+		if (avatarBox) avatarBox.value = '';
+		if (!file) return;
+		avatarNote = '';
+		adjustingAvatar = { file, url: URL.createObjectURL(file) };
+	}
+
+	function stopAdjustingAvatar() {
+		if (adjustingAvatar) URL.revokeObjectURL(adjustingAvatar.url);
+		adjustingAvatar = null;
+	}
+
+	async function applyAvatar(fit: Fit) {
+		const file = adjustingAvatar?.file;
+		stopAdjustingAvatar();
+		if (!file) return;
+		try {
+			newAvatar = await squarePicture(file, fit);
+			avatarRemoved = false;
+		} catch {
+			avatarNote = t("That file isn't a picture Catalog can read.");
+		}
+	}
+
+	function removeAvatar() {
+		newAvatar = null;
+		avatarRemoved = true;
+		avatarNote = '';
+	}
 
 	// While editing, the header shows what's being picked, before it's saved.
 	const shownColor = $derived(editing ? pickedColor : person.color);
@@ -200,6 +244,9 @@
 		newBanner = null;
 		bannerRemoved = false;
 		bannerNote = '';
+		newAvatar = null;
+		avatarRemoved = false;
+		avatarNote = '';
 		// (One color lit up, saved as the effect 'glow' before, is one color with Glow on here.)
 		const saved = readNameStyle(person.nameStyle);
 		nameDraft = saved.effect === 'glow' ? { ...saved, effect: 'solid', glow: true } : saved;
@@ -315,6 +362,18 @@
 	async function save(event: SubmitEvent) {
 		event.preventDefault();
 		saving = true;
+		// The picture is kept with the name (Settings → Online's /v1/me), apart from the rest.
+		if (newAvatar || avatarRemoved) {
+			const pictureSaved = await fetch('/api/online/c/me', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ avatar: newAvatar ?? '' }) }).catch(() => null);
+			if (!pictureSaved?.ok) {
+				saving = false;
+				const answer = await pictureSaved?.json().catch(() => null);
+				note = answer?.error ? `${t("Couldn't save the picture")}: ${answer.error}` : t("Couldn't save the picture");
+				return;
+			}
+			newAvatar = null;
+			avatarRemoved = false;
+		}
 		const response = await fetch('/api/online/c/profile', {
 			method: 'PUT',
 			headers: { 'Content-Type': 'application/json' },
@@ -335,6 +394,8 @@
 		} else {
 			const answer = await response?.json().catch(() => null);
 			note = answer?.error ? `${t("Couldn't save it")}: ${answer.error}` : t("Couldn't save it");
+			// (A picture that was saved shows everywhere all the same.)
+			await invalidateAll();
 		}
 	}
 </script>
@@ -347,7 +408,8 @@
 	<header>
 		<div class="band" class:picture={Boolean(bannerShown)} style:background-image={bannerShown ? `url('${bannerShown}')` : null} aria-hidden="true"></div>
 		<div class="who">
-			<Avatar id={person.id} name={person.name} rev={person.avatar} size={112} />
+			<!-- While editing, the picture being picked (or the letter, when it's taken away). -->
+			<Avatar id={person.id} name={person.name} rev={editing && avatarRemoved ? 0 : person.avatar} src={editing ? (newAvatar ?? '') : ''} size={112} />
 			<div class="names">
 				<h1><StyledName name={person.name} {look} /></h1>
 				{#if person.realName}<p class="faint real-name">{person.realName}</p>{/if}
@@ -403,6 +465,18 @@
 
 	{#if editing}
 		<form class="edit" onsubmit={save}>
+			<div>
+				<span class="label">{t('Picture')}</span>
+				<div class="color">
+					<button type="button" class="btn" onclick={() => avatarBox?.click()}>{hasAvatar ? t('Change picture') : t('Choose a picture')}</button>
+					{#if hasAvatar}<button type="button" class="link" onclick={removeAvatar}>{t('Remove')}</button>{/if}
+					<input bind:this={avatarBox} type="file" accept="image/*" hidden onchange={pickAvatar} />
+				</div>
+				{#if avatarNote}<p class="small hint">{avatarNote}</p>{/if}
+				{#if adjustingAvatar}
+					<PictureCropDialog src={adjustingAvatar.url} title={t('Adjust your picture')} round onapply={applyAvatar} oncancel={stopAdjustingAvatar} />
+				{/if}
+			</div>
 			<label>
 				<span class="label">{t('About you')}</span>
 				<textarea bind:value={bio} maxlength="300" rows="3" placeholder={t('A line or two friends see on your profile')}></textarea>

@@ -36,6 +36,7 @@ import { audioLanguage, audioLanguageName } from '$lib/server/audioLanguage';
 import type { FileOption } from '$lib/server/showbox';
 import { nyaaCopy, nyaaOn } from '$lib/server/sources/nyaa';
 import { xumoFilm, withXumo } from '$lib/server/sources/xumo';
+import { tubiFilm, withTubi } from '$lib/server/sources/tubi';
 import { plexFilm, withPlex } from '$lib/server/sources/plex';
 import { plutoFilm, withPluto } from '$lib/server/sources/pluto';
 import { officialMovies } from '$lib/server/sources/official';
@@ -87,13 +88,14 @@ async function filmCopies(title: string, year: string): Promise<FileOption[]> {
 	// (Not a source's that said lately it hasn't got the film: picked, it failed at once.)
 	// Nyaa's copy last, for an anime film, when it's turned on (sources/nyaa.ts).
 	// Xumo Play, Plex, and Pluto TV free copies, when matched by name and year.
-	const [anime, xumo, plex, pluto] = await Promise.all([
+	const [anime, xumo, tubi, plex, pluto] = await Promise.all([
 		nyaaOn() ? Promise.race([isAnimeFilm(title, year).catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), 3000))]) : null,
 		xumoFilm(title, year),
+		tubiFilm(title, year),
 		plexFilm(title, year),
 		plutoFilm(title, year)
 	]);
-	const freeCopies = withPluto(withPlex(withXumo(unasked(what), xumo), plex), pluto);
+	const freeCopies = withPluto(withPlex(withTubi(withXumo(unasked(what), xumo), tubi), plex), pluto);
 	return [...official, ...freeCopies, ...(anime ? nyaaCopy(what) : [])];
 }
 

@@ -5,7 +5,7 @@
  * file starts the server quietly in the background, waits for it to answer,
  * and shows the window — so from your side it opens like any other program.
  */
-const { app, BrowserWindow, shell, Menu, session } = require('electron');
+const { app, BrowserWindow, shell, Menu, session, components } = require('electron');
 const { openMini, closeMini } = require('./miniPlayer.cjs');
 const { openYouTube, prepareYouTube, youTubeOpen } = require('./youtubeWindow.cjs');
 const { iconPath, useAppIcon } = require('./appIcon.cjs');
@@ -39,6 +39,10 @@ try {
 	const share = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'storage.json'), 'utf8'));
 	if (share?.appCacheBytes > 0) app.commandLine.appendSwitch('disk-cache-size', String(Math.round(share.appCacheBytes)));
 } catch {}
+
+// Widevine CDM: CastLabs Electron (ECS) downloads it via Component Updater at startup.
+// components.whenReady() in the app.whenReady() block waits for the CDM before the window opens.
+let widevineReady = false;
 
 // Settings → Playback → Picture (src/lib/server/videoDrawing.ts): video drawn by Catalog itself, not
 // handed to the graphics card as a layer of its own, which a friend's card put in the wrong place
@@ -884,6 +888,7 @@ function startServer() {
 			// Lets the Settings page offer the "check for updates" button, and
 			// tells it where the project (and the updater script) lives.
 			CATALOG_DESKTOP: '1',
+			CATALOG_WIDEVINE: widevineReady ? '1' : '',
 			CATALOG_PROJECT: projectRoot(),
 			CATALOG_GRAPHICS_OFF: gpuOff ? '1' : '',
 			CATALOG_UPDATE_MODE: SOURCE_MODE ? 'source' : 'release',
@@ -973,7 +978,7 @@ function startServer() {
 		if (message?.type === 'movy-stop') movyStops.get(message.id)?.();
 
 		if (message?.type === 'solve-turnstile') {
-			solveTurnstile(String(message.url), message.timeout || 60000, window)
+			solveTurnstile(String(message.url), message.timeout || 60000, window, message.autoSolve !== false)
 				.then((result) => server?.send({ type: 'solve-turnstile-result', id: message.id, ...result }));
 		}
 
@@ -1966,6 +1971,15 @@ if (!app.requestSingleInstanceLock()) {
 	});
 
 	app.whenReady().then(async () => {
+		if (components?.whenReady) {
+			try {
+				await components.whenReady();
+				widevineReady = true;
+				console.log('[cdm] Widevine CDM ready:', JSON.stringify(components.status()));
+			} catch (err) {
+				console.warn('[cdm] Widevine CDM not available:', err?.message ?? err);
+			}
+		}
 		Menu.setApplicationMenu(null);
 		// Smooth video beside a game that keeps the graphics card busy (electron/gpuPriority.cjs).
 		require('./gpuPriority.cjs').keepGpuPriorityHigh();
@@ -2024,7 +2038,7 @@ if (!app.requestSingleInstanceLock()) {
 					}
 					headers['access-control-allow-origin'] = ['*'];
 					headers['access-control-allow-headers'] = ['*'];
-					headers['access-control-allow-methods'] = ['GET, HEAD, OPTIONS'];
+					headers['access-control-allow-methods'] = ['GET, HEAD, POST, OPTIONS'];
 					callback({ responseHeaders: headers });
 					return;
 				}
@@ -2061,6 +2075,9 @@ if (!app.requestSingleInstanceLock()) {
 						headers['Referer'] = 'https://www.febbox.com/';
 						headers['Origin'] = 'https://www.febbox.com';
 					}
+				} else if (url.includes('adrise.tv') || url.includes('tubitv.com')) {
+					headers['Referer'] = 'https://tubitv.com/';
+					headers['Origin'] = 'https://tubitv.com';
 				} else if (
 					details.resourceType === 'media' ||
 					details.resourceType === 'xmlhttprequest' ||

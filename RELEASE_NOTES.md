@@ -10,7 +10,9 @@ Name the update on the heading line: `## Unreleased — Skip Intro and faster lo
 and stamps it with the version number, date and that name. It refuses to run
 without both.
 
-## Unreleased — Subtitles that stay in time
+## Unreleased
+
+## 4.9.0 — 2026-11-28 — Subtitles that stay in time
 
 ### New
 
@@ -44,7 +46,6 @@ without both.
 - Subtitles that slowly drift out of time through an episode now stay in time all the way through
 - Shouted lines written in capitals stay at the bottom with the other subtitles instead of jumping to the top
 - KickAssAnime streams load more reliably when the player page format changes
-- Source health check reports are more accurate
 
 ## 4.8.1 — 2026-11-26 — Skipping fixed after the next episode, and friend codes on profiles
 

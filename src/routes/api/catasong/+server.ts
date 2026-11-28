@@ -1,4 +1,5 @@
 import { error, json } from '@sveltejs/kit';
+import { updateSettings } from '$lib/server/settings';
 import {
 	coversFor,
 	guessEndless,
@@ -41,12 +42,17 @@ function readGuess(g: Record<string, unknown> | null | undefined): Guess {
 
 /**
  * { genre, guess } guesses today's song; { token, guess } an Endless round's (guess is
- * { id, title, artist, artistId }, or null to skip). { volume } keeps the volume.
+ * { id, title, artist, artistId }, or null to skip). { volume } keeps the volume; { pinned }
+ * puts Catasong in the sidebar or takes it out.
  */
 export async function POST({ request }) {
-	const body = (await request.json().catch(() => ({}))) as { genre?: unknown; token?: unknown; guess?: unknown; volume?: unknown };
+	const body = (await request.json().catch(() => ({}))) as { genre?: unknown; token?: unknown; guess?: unknown; volume?: unknown; pinned?: unknown };
 	if (typeof body.volume === 'number' && Number.isFinite(body.volume)) {
 		setVolume(body.volume);
+		return json({ ok: true });
+	}
+	if (typeof body.pinned === 'boolean') {
+		updateSettings({ catasongPinned: body.pinned ? '1' : '0' });
 		return json({ ok: true });
 	}
 	const guess = readGuess(body.guess as Record<string, unknown> | null | undefined);

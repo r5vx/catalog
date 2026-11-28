@@ -62,3 +62,17 @@ export function drawFitted(pen: CanvasRenderingContext2D, picture: CanvasImageSo
 	pen.imageSmoothingQuality = 'high';
 	pen.drawImage(picture, left, top, w * fit.zoom, h * fit.zoom);
 }
+
+/**
+ * A profile picture as it's kept online: the chosen square of `file` (as picked in
+ * src/lib/PictureCropDialog.svelte), drawn `side` pixels across, as a JPEG data: address. Used by
+ * Settings → Online and Edit profile alike.
+ */
+export async function squarePicture(file: File, fit: Fit, side = 192): Promise<string> {
+	const image = await createImageBitmap(file);
+	const canvas = document.createElement('canvas');
+	canvas.width = side;
+	canvas.height = side;
+	drawFitted(canvas.getContext('2d')!, image, side, side, fit);
+	return canvas.toDataURL('image/jpeg', 0.85);
+}

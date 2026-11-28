@@ -45,6 +45,7 @@ import { channelFiles, handLinksChanged } from './sources/channels';
 import { xumoFiles, withXumo } from './sources/xumo';
 import { plexFiles, withPlex } from './sources/plex';
 import { plutoFiles, withPluto } from './sources/pluto';
+import { tubiFiles, withTubi } from './sources/tubi';
 
 /**
  * 7Movies', Movy's and Vidfast's copies of a film or episode, listed by its TMDB id without asking
@@ -498,10 +499,11 @@ export async function combineEpisodes(
 			const wait = mainShowboxId ? 4000 : 10000;
 			const missedList = () => { partial = true; return new Map<string, FileOption[]>(); };
 			// Fetch independent lists together. Merge them below in source-priority order.
-			const [dated, xumo, plex, pluto, channel] = await Promise.all([
+			const [dated, xumo, plex, pluto, tubi, channel] = await Promise.all([
 				Promise.all(out.map(async (s) => [s, await airDates(show.id, s.number)] as const)),
 				xumoFiles(show, wait).catch(missedList), plexFiles(show, wait).catch(missedList),
-				plutoFiles(show, wait).catch(missedList), channelFiles(show, mainShowboxId ? 4000 : 15000).catch(missedList)
+				plutoFiles(show, wait).catch(missedList), tubiFiles(show, wait).catch(missedList),
+				channelFiles(show, mainShowboxId ? 4000 : 15000).catch(missedList)
 			]);
 			for (const [season, dates] of dated) {
 				for (let episode = 1; episode <= season.count; episode++) {
@@ -538,6 +540,14 @@ export async function combineEpisodes(
 				const [season, episode] = key.split('-').map(Number);
 				const listed = episodes.find((e) => e.season === season && e.episode === episode);
 				if (listed) listed.files = withPluto(listed.files, files);
+				else episodes.push({ season, episode, files });
+				have.add(key);
+				for (const f of files) qualities.add(f.quality);
+			}
+			for (const [key, files] of tubi) {
+				const [season, episode] = key.split('-').map(Number);
+				const listed = episodes.find((e) => e.season === season && e.episode === episode);
+				if (listed) listed.files = withTubi(listed.files, files);
 				else episodes.push({ season, episode, files });
 				have.add(key);
 				for (const f of files) qualities.add(f.quality);

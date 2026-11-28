@@ -125,6 +125,16 @@ const RATES = [25 / 23.976, 23.976 / 25, 25 / 24, 24 / 25, 24 / 23.976, 23.976 /
  * slopes (Theil–Sen) and needs most matches within half a second of it. Null with too little to go by.
  */
 export function planFromMatches(points: Point[]): (DelayPlan & { fits: true; matches: number; agree: number }) | null {
+	const line = straightPlan(points);
+	const stretched = planByStretch(points);
+	// The straight line unless following each stretch fits clearly more lines (it bends to fit
+	// anything a little, so a near tie stays straight).
+	if (stretched && (!line || stretched.agree >= line.agree + Math.max(3, points.length * 0.1))) return stretched;
+	return line;
+}
+
+/** One delay for the whole video (at a steady speed): planFromMatches says why. */
+function straightPlan(points: Point[]): (DelayPlan & { fits: true; matches: number; agree: number }) | null {
 	if (points.length < 8) return null;
 	const slopes: number[] = [];
 	for (let i = 0; i < points.length; i++) {
@@ -150,4 +160,56 @@ export function planFromMatches(points: Point[]): (DelayPlan & { fits: true; mat
 	// Only the ones that agree, for the delay itself.
 	const exact = median(points.filter((p) => Math.abs(p.off - (delay + slope * p.t)) <= 0.5).map((p) => p.off - slope * p.t));
 	return { steps: [{ from: 0, delay: Math.round(exact * 10) / 10 }], fits: true, clear: agree / points.length, rate: 1 + slope, matches: points.length, agree };
+}
+
+/**
+ * Subtitles that fall behind unevenly: made for another cut, with a few frames taken out here and
+ * there, so no one delay or speed fits them. The Day of the Jackal E8's three English files
+ * (owner, 2026-11-26) were 2.5 s out at the start and 10 s by the end, in uneven steps (−3 at 7
+ * minutes, −4.4 at 14, −6.8 at 20, −8 at 25, −10 at 37): one delay left every line a second or
+ * more out somewhere, or none was believed ("too few words matched") and the listening's guess
+ * was used. Here each stretch heard keeps its own delay (what most of its lines agree on), and
+ * between two stretches it moves from one to the next a little at a time.
+ */
+function planByStretch(points: Point[]): (DelayPlan & { fits: true; matches: number; agree: number }) | null {
+	if (points.length < 8) return null;
+	const sorted = [...points].sort((a, b) => a.t - b.t);
+	// The lines of one stretch heard (30 s, matched within 20 s of it) lie close together.
+	const groups: Point[][] = [];
+	for (const p of sorted) {
+		const group = groups.at(-1);
+		if (group && p.t - group.at(-1)!.t < 60) group.push(p);
+		else groups.push([p]);
+	}
+	const anchors: { at: number; delay: number }[] = [];
+	for (const group of groups) {
+		if (group.length < 3) continue;
+		const middle = median(group.map((p) => p.off));
+		const agreeing = group.filter((p) => Math.abs(p.off - middle) <= 0.5);
+		if (agreeing.length < 3 || agreeing.length * 2 <= group.length) continue;
+		const delay = median(agreeing.map((p) => p.off));
+		anchors.push({ at: median(agreeing.map((p) => p.t)) + delay, delay });
+	}
+	if (anchors.length < 3) return null;
+	const delayAtVideo = (t: number) => {
+		if (t <= anchors[0].at) return anchors[0].delay;
+		for (let i = 1; i < anchors.length; i++) {
+			const a = anchors[i - 1];
+			const b = anchors[i];
+			if (t <= b.at) return a.delay + ((b.delay - a.delay) * (t - a.at)) / (b.at - a.at);
+		}
+		return anchors[anchors.length - 1].delay;
+	};
+	const agree = points.filter((p) => Math.abs(p.off - delayAtVideo(p.t + p.off)) <= 0.5).length;
+	if (agree < 8 || agree <= points.length / 2) return null;
+	const tenth = (d: number) => Math.round(d * 10) / 10;
+	const steps = [{ from: 0, delay: tenth(anchors[0].delay) }];
+	for (let i = 1; i < anchors.length; i++) {
+		// Every 10 s between two stretches, where it has moved a tenth or more.
+		for (let t = anchors[i - 1].at + 10; t < anchors[i].at + 10; t += 10) {
+			const delay = tenth(delayAtVideo(Math.min(t, anchors[i].at)));
+			if (Math.abs(delay - steps[steps.length - 1].delay) >= 0.1) steps.push({ from: Math.round(t), delay });
+		}
+	}
+	return { steps, fits: true, clear: agree / points.length, rate: 1, matches: points.length, agree };
 }
