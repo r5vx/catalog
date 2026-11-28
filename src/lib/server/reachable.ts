@@ -4,12 +4,13 @@
  * Any answer counts as reachable, even an error page; only no answer at all doesn't. Kept two minutes.
  */
 export const SITES: Record<string, string> = {
-	'7Movies': 'https://embed.vidrift.net/',
+	'7Movies': 'https://embed.vidrift.net/api/server',
 	Movy: 'https://www.movy.sx/',
 	Vidfast: 'https://vidfast.vc/',
-	'Xumo Play': 'https://valencia-app-mds.xumo.com/',
-	Plex: 'https://plex.tv/',
-	'Pluto TV': 'https://boot.pluto.tv/',
+	'Xumo Play': 'https://valencia-app-mds.xumo.com/v2/proxy/channels/list/10006.json',
+	Plex: 'https://plex.tv/api/v2/ping',
+	'Pluto TV': 'https://boot.pluto.tv/v4/start?appName=web&appVersion=9',
+	Tubi: 'https://tubitv.com/',
 	HiAnime: 'https://zokoanime.video/',
 	Aniwave: 'https://aniwaves.ru/',
 	Showbox: 'https://showbox.media/',

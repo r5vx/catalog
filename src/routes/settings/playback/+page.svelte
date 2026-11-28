@@ -42,6 +42,20 @@
 	};
 	const stops = $derived(data.stops as Stop[]);
 
+	let autoSolve = $state(true);
+	let autoSolveSaved = $state(false);
+	$effect(() => { autoSolve = data.autoSolve; });
+	async function saveAutoSolve(on: boolean) {
+		autoSolve = on;
+		autoSolveSaved = false;
+		const answer = await fetch('/api/auto-solve', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ on })
+		}).catch(() => null);
+		autoSolveSaved = Boolean(answer?.ok);
+	}
+
 	// Picture: how this computer's Catalog window draws video (after it's opened again).
 	let noOverlay = $state(false);
 	let overlaySaved = $state(false);
@@ -171,6 +185,19 @@
 		</div>
 	</section>
 
+	<section>
+		<div class="head"><h2>Cloudflare checks</h2></div>
+		<label class="toggle">
+			<input type="checkbox" checked={autoSolve} onchange={(e) => saveAutoSolve(e.currentTarget.checked)} />
+			Solve AllAnime's check automatically
+		</label>
+		<p class="muted">
+			When on, the check is solved in the background and the source starts playing by itself.
+			When off, a small window opens for you to tick the box.
+		</p>
+		{#if autoSolveSaved}<p class="muted">Saved.</p>{/if}
+	</section>
+
 	<!-- This computer's Catalog window only, read when it starts (src/lib/server/videoDrawing.ts). -->
 	<section>
 		<div class="head"><h2>Picture</h2></div>
@@ -182,6 +209,49 @@
 			Try this if the picture jumps or flickers for a moment on this computer. Takes effect the next time Catalog is opened.
 		</p>
 		{#if overlaySaved}<p class="muted">Saved. Close Catalog and open it again.</p>{/if}
+	</section>
+
+	<section class="wide-full">
+		<div class="head"><h2>Sources</h2></div>
+		<p class="muted">Where Catalog looks for movies and shows to play. Each title checks every source it can use.</p>
+		<div class="source-groups">
+			<div class="source-group">
+				<h3>Movies and TV</h3>
+				<ul class="source-list">
+					<li><strong>Showbox</strong> — films and series, with Febbox accounts</li>
+					<li><strong>7Movies</strong> — films and series via Vidrift</li>
+					<li><strong>Movy</strong> — films and series</li>
+					<li><strong>Vidfast</strong> — films and series</li>
+					<li><strong>Xumo Play</strong> — free films and shows (no account)</li>
+					<li><strong>Tubi</strong> — free films (no account, desktop only)</li>
+					<li><strong>Plex</strong> — free films and shows (no account)</li>
+					<li><strong>Pluto TV</strong> — free films, shows and live TV (no account)</li>
+					<li><strong>YouTube</strong> — matched uploads from publishers</li>
+				</ul>
+			</div>
+			<div class="source-group">
+				<h3>Anime</h3>
+				<ul class="source-list">
+					<li><strong>Aniwave</strong> — sub and dub</li>
+					<li><strong>HiAnime</strong> — sub and dub</li>
+					<li><strong>KickAssAnime</strong> — sub and dub, direct HLS</li>
+				</ul>
+			</div>
+			<div class="source-group">
+				<h3>Torrents (with debrid)</h3>
+				<ul class="source-list">
+					<li><strong>Torrentio</strong> — via Stremio add-ons</li>
+					<li><strong>Nyaa</strong> — anime torrents</li>
+				</ul>
+			</div>
+			<div class="source-group">
+				<h3>Live</h3>
+				<ul class="source-list">
+					<li><strong>DaddyLive</strong> — sports and live channels</li>
+					<li><strong>Pluto TV</strong> — free live channels</li>
+				</ul>
+			</div>
+		</div>
 	</section>
 
 	<!-- Long: across both columns with the wide layout (settings/+layout.svelte). -->
@@ -293,6 +363,43 @@
 	.muted {
 		font-size: 0.93rem;
 		margin: 0;
+	}
+
+	.source-groups {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+		gap: 20px;
+	}
+
+	.source-group h3 {
+		font-size: 0.9rem;
+		font-weight: 600;
+		margin: 0 0 8px;
+		color: var(--ink-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+	}
+
+	.source-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		font-size: 0.88rem;
+	}
+
+	.source-list li {
+		line-height: 1.4;
+	}
+
+	.source-list strong {
+		color: var(--ink);
+	}
+
+	.source-list li {
+		color: var(--ink-muted);
 	}
 
 	.stops {

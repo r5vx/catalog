@@ -14,15 +14,16 @@
 	const pilotCheck = (s: SourceCheck) => ['Movy', 'Vidfast', '7Movies', 'HiAnime'].includes(s.name);
 	const listing = (s: SourceCheck) => s.state === 'listed' || (series && s.state === 'yes' && !pilotCheck(s));
 	const found = $derived(applicable.some((source) => source.state === 'yes' || source.state === 'listed'));
+	const allDone = $derived(applicable.every((s) => s.state !== 'checking'));
 	let showUnavailable = $state(false);
 
 	const visible = $derived(
-		showUnavailable || !found
+		showUnavailable || !found || !allDone
 			? applicable.filter((s) => s.state !== 'skipped')
-			: applicable.filter((s) => s.state === 'yes' || s.state === 'checking' || s.state === 'listed')
+			: applicable.filter((s) => s.state === 'yes' || s.state === 'listed')
 	);
 	const hiddenCount = $derived(
-		found ? applicable.filter((s) => s.state === 'no').length : 0
+		found && allDone ? applicable.filter((s) => s.state === 'no').length : 0
 	);
 </script>
 
@@ -31,9 +32,7 @@
 	<ul class="source-checks" aria-label="Sources">
 		{#each visible as source (source.name)}
 			<li title={source.name === 'YouTube' ? (series ? 'YouTube has a matched upload for one or more episodes' : 'YouTube has a matched upload for this movie') : undefined} class={listing(source) ? 'listed' : source.state} class:quiet={found && source.state === 'checking'}>
-				{#if source.state === 'checking' && found}
-					<span class="dot" aria-hidden="true"></span>
-				{:else if source.state === 'checking'}
+				{#if source.state === 'checking'}
 					<span class="spin" aria-hidden="true"></span>
 				{:else if listing(source)}
 					<span class="dot" aria-hidden="true"></span>
@@ -75,6 +74,7 @@
 		border-radius: 999px;
 		background: var(--surface);
 		color: var(--ink);
+		transition: border-color 0.3s, background 0.3s, color 0.3s, opacity 0.3s;
 	}
 
 	.source-checks .yes {

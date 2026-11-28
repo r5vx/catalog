@@ -372,48 +372,72 @@ export type RoundAnswer =
 	| { waiting: true; have: number; progress: { done: number; of: number } | null }
 	| { empty: true };
 
+export type Choice = { id: number; name: string; other: string | null };
+
 /*
  * Rounds made ahead: AnimeThemes takes about a second to start sending a song and two or three to
  * send it all (owner, 2026-11-26: "takes a while still"). So a round is made, and its song
  * downloaded here, before it's asked for: one per level and song kind, made when the page opens
  * (`warm`) and again each time one is handed out. The page then gets its song from memory.
  */
-const ready = new Map<string, string>();
+/*
+ * While a level is played, two rounds are kept ready, and one whose song has already come is
+ * handed out first. With one, a slow song from AnimeThemes held the next round up, and skipping
+ * on just reached the same wait (owner, 2026-11-26). A song not here in 15 s isn't waited for:
+ * the page tries another round.
+ */
+const READY_PLAYING = 2;
+const ready = new Map<string, string[]>();
 const sounds = new Map<string, Promise<{ bytes: ArrayBuffer; type: string } | null>>();
+/** Rounds whose song has come, and ones whose song didn't. */
+const arrived = new Set<string>();
+const missing = new Set<string>();
 
 function fetchSound(token: string): Promise<{ bytes: ArrayBuffer; type: string } | null> {
 	let sound = sounds.get(token);
 	if (!sound) {
 		const round = rounds.get(token);
 		sound = round
-			? fetch(AUDIO + encodeURIComponent(round.theme.audio), { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(30_000) })
+			? fetch(AUDIO + encodeURIComponent(round.theme.audio), { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15_000) })
 					.then(async (answer) => (answer.ok ? { bytes: await answer.arrayBuffer(), type: answer.headers.get('Content-Type') ?? 'audio/ogg' } : null))
 					.catch(() => null)
+					.then((got) => {
+						(got ? arrived : missing).add(token);
+						return got;
+					})
 			: Promise.resolve(null);
 		sounds.set(token, sound);
 	}
 	return sound;
 }
 
-function prepare(level: Level, kinds: Kinds) {
-	const key = `${level}|${kinds}`;
-	if (ready.has(key)) return;
-	const made = makeRound(level, kinds);
-	if (!('token' in made)) return;
-	ready.set(key, made.token);
-	void fetchSound(made.token);
+/** The rounds kept ready for a level and kind of song, without any whose song didn't come. */
+function readyFor(key: string): string[] {
+	const list = (ready.get(key) ?? []).filter((token) => rounds.has(token) && !missing.has(token));
+	ready.set(key, list);
+	return list;
 }
 
-/** A round: the one made ahead if there is one (its song is already here), and the next is made. */
+function prepare(level: Level, kinds: Kinds, want = 1) {
+	const list = readyFor(`${level}|${kinds}`);
+	while (list.length < want) {
+		const made = makeRound(level, kinds);
+		if (!('token' in made)) return;
+		list.push(made.token);
+		void fetchSound(made.token);
+	}
+}
+
+/** A round: one made ahead if there is one (its song already here if possible), and more are made. */
 export function newRound(level: Level, kinds: Kinds): RoundAnswer {
-	const key = `${level}|${kinds}`;
-	const early = ready.get(key);
-	ready.delete(key);
+	const list = readyFor(`${level}|${kinds}`);
+	const early = list.find((token) => arrived.has(token)) ?? list[0];
+	if (early) list.splice(list.indexOf(early), 1);
 	const round = early ? rounds.get(early) : undefined;
 	const answer: RoundAnswer = early && round ? { token: early, type: round.theme.type } : makeRound(level, kinds);
 	if ('token' in answer) {
 		void fetchSound(answer.token);
-		prepare(level, kinds);
+		prepare(level, kinds, READY_PLAYING);
 	}
 	return answer;
 }
@@ -424,6 +448,7 @@ export async function soundOf(token: string): Promise<{ bytes: ArrayBuffer; type
 	const sound = await fetchSound(token);
 	// Handed over once: the page keeps it decoded, and memory isn't held for songs already played.
 	sounds.delete(token);
+	arrived.delete(token);
 	return sound;
 }
 
@@ -450,11 +475,33 @@ function makeRound(level: Level, kinds: Kinds): RoundAnswer {
 		if (Date.now() - round.at > ROUND_LIFE) {
 			rounds.delete(token);
 			sounds.delete(token);
+			arrived.delete(token);
+			missing.delete(token);
 		}
 	}
 	const token = randomBytes(9).toString('base64url');
 	rounds.set(token, { theme, show, at: Date.now() });
 	return { token, type: theme.type };
+}
+
+/** Four choices for easy mode: the right answer shuffled in with three wrong ones from the same pool. */
+export function choicesFor(token: string): Choice[] | undefined {
+	const round = rounds.get(token);
+	if (!round) return undefined;
+	const all = allShows();
+	const right: Choice = { id: round.show.id, name: round.show.english ?? round.show.romaji, other: round.show.english && round.show.english !== round.show.romaji ? round.show.romaji : null };
+	const pool = [...all.values()].filter((s) => s.id !== round.show.id && !names(s).some((a) => names(round.show).some((b) => sameShowByName(a, b))));
+	for (let i = pool.length - 1; i > 0; i--) {
+		const j = Math.floor(Math.random() * (i + 1));
+		[pool[i], pool[j]] = [pool[j], pool[i]];
+	}
+	const wrong: Choice[] = pool.slice(0, 3).map((s) => ({ id: s.id, name: s.english ?? s.romaji, other: s.english && s.english !== s.romaji ? s.romaji : null }));
+	const choices = [right, ...wrong];
+	for (let i = choices.length - 1; i > 0; i--) {
+		const j = Math.floor(Math.random() * (i + 1));
+		[choices[i], choices[j]] = [choices[j], choices[i]];
+	}
+	return choices;
 }
 
 /** The sound file's address for a round, or undefined for a token that isn't one. */

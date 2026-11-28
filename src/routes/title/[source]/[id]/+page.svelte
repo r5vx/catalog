@@ -75,7 +75,7 @@
 		const params = new URLSearchParams({ title: details.title ?? '', type: data.watchType });
 		if (data.source === 'tmdb') params.set('tmdb', data.sourceId);
 		if (details.year) params.set('year', String(details.year));
-		watchAvailable = null;
+		if (watchAvailable !== true) watchAvailable = null;
 		watchSources = [];
 		return checkWatchable(params, (available, sources) => {
 			watchAvailable = available;

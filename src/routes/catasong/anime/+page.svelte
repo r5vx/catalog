@@ -11,6 +11,7 @@
 	import { untrack } from 'svelte';
 	import CoverWall from '$lib/catasong/CoverWall.svelte';
 	import PlayButton from '$lib/catasong/PlayButton.svelte';
+	import PinToSidebar from '$lib/catasong/PinToSidebar.svelte';
 	import SongLinks from '$lib/catasong/SongLinks.svelte';
 	import Visualizer from '$lib/catasong/Visualizer.svelte';
 	import VolumeSlider from '$lib/catasong/VolumeSlider.svelte';
@@ -22,6 +23,7 @@
 	type Level = (typeof data.levels)[number]['value'];
 	type Kinds = 'op' | 'ed' | 'both';
 	type Part = 'start' | 'any';
+	type Choice = { id: number; name: string; other: string | null };
 	type Name = { id: number; name: string; other: string | null };
 	type Answer = {
 		id: number;
@@ -45,6 +47,7 @@
 	let level = $state<Level>('easy');
 	let kinds = $state<Kinds>('both');
 	let part = $state<Part>('start');
+	let easyMode = $state(false);
 	let best = $state<Partial<Record<Level, number>>>(untrack(() => ({ ...data.best })));
 	let posters = $state<string[]>([]);
 
@@ -60,6 +63,9 @@
 	let won = $state(false);
 	let streak = $state(0);
 	let score = $state(0);
+
+	let choices = $state<Choice[]>([]);
+	let choicePicked = $state<number | null>(null);
 
 	let names = $state<Name[]>([]);
 	let typed = $state('');
@@ -98,13 +104,28 @@
 	async function queueNext() {
 		const askedFor = `${level}|${kinds}`;
 		const round = await askRound();
-		if (`${level}|${kinds}` !== askedFor || !('token' in round)) return;
+		if (gone || `${level}|${kinds}` !== askedFor || !('token' in round)) return;
 		queued = { for: askedFor, round };
 		player.prefetch(audioUrl(round.token));
 	}
 
+	/*
+	 * A song that doesn't come: AnimeThemes was slow for a while (owner, 2026-11-26: "taking forever
+	 * to load"), and the page waited on it with no way on but Give up. Now a song gets 10 s, then
+	 * another round is tried, twice, before "Didn't load"; and after 4 s, Another song is offered.
+	 */
+	const SONG_WAIT = 10_000;
+	let missed = 0;
+	let slow = $state(false);
+	let slowTimer: ReturnType<typeof setTimeout> | undefined;
+	/** The page was left: nothing still coming may start a round or a song. */
+	let gone = false;
+
 	async function nextRound() {
+		if (gone) return;
 		clearTimeout(pollTimer);
+		clearTimeout(slowTimer);
+		slow = false;
 		player.clear();
 		token = null;
 		answer = null;
@@ -112,6 +133,8 @@
 		wrong = [];
 		typed = '';
 		empty = false;
+		choices = [];
+		choicePicked = null;
 		const askedFor = `${level}|${kinds}`;
 		let round: RoundStart | Waiting | { empty: true };
 		if (queued && queued.for === askedFor) {
@@ -121,7 +144,7 @@
 			queued = null;
 			round = await askRound();
 		}
-		if (`${level}|${kinds}` !== askedFor) return;
+		if (gone || `${level}|${kinds}` !== askedFor) return;
 		if ('waiting' in round) {
 			waiting = round;
 			pollTimer = setTimeout(nextRound, 2000);
@@ -135,14 +158,40 @@
 		token = round.token;
 		roundType = round.type;
 		void refreshNames();
-		const loaded = await player.load(audioUrl(round.token));
-		if (token !== round.token || !loaded || !player.buffer) return;
+		slowTimer = setTimeout(() => (slow = true), 4000);
+		const loaded = await Promise.race([player.load(audioUrl(round.token)), new Promise<false>((done) => setTimeout(() => done(false), SONG_WAIT))]);
+		if (gone || token !== round.token) return;
+		clearTimeout(slowTimer);
+		slow = false;
+		if (!loaded || !player.buffer) {
+			if (++missed < 3) {
+				void nextRound();
+				return;
+			}
+			missed = 0;
+			player.clear();
+			player.failed = true;
+			return;
+		}
+		missed = 0;
 		// "Any part": somewhere that still leaves a whole snippet before the end.
 		const room = Math.max(0, player.buffer.duration - player.songStart - SNIPPET - 1);
 		snippetAt = part === 'any' ? Math.random() * room : 0;
 		player.play(SNIPPET, snippetAt);
-		guessEl?.focus();
+		if (!easyMode) guessEl?.focus();
+		if (easyMode && round.token) void loadChoices(round.token);
 		void queueNext();
+	}
+
+	async function loadChoices(forToken: string) {
+		const response = await fetch(`/api/catasong/anime?do=choices&token=${forToken}`).catch(() => null);
+		if (response?.ok && token === forToken) choices = await response.json();
+	}
+
+	function pickChoice(choice: Choice) {
+		if (!token || answer || choicePicked !== null) return;
+		choicePicked = choice.id;
+		void send(choice.id, choice.name);
 	}
 
 	async function refreshNames() {
@@ -275,7 +324,9 @@
 	}
 
 	$effect(() => () => {
+		gone = true;
 		clearTimeout(pollTimer);
+		clearTimeout(slowTimer);
 		player.close();
 	});
 
@@ -297,6 +348,7 @@
 
 	<div class="content">
 		<a class="back" href="/catasong">← Catasong</a>
+		<PinToSidebar />
 
 		<header class="top">
 			<h1 class="title">Guess the Anime</h1>
@@ -313,6 +365,10 @@
 				{/each}
 			</div>
 			<div class="choice-row">
+				<div class="seg" role="group" aria-label="Mode">
+					<button type="button" class:active={easyMode} onclick={() => (easyMode = true)}>Easy</button>
+					<button type="button" class:active={!easyMode} onclick={() => (easyMode = false)}>Hard</button>
+				</div>
 				<div class="seg" role="group" aria-label="Songs">
 					<button type="button" class:active={kinds === 'both'} onclick={() => changeKinds('both')}>Both</button>
 					<button type="button" class:active={kinds === 'op'} onclick={() => changeKinds('op')}>Openings</button>
@@ -362,39 +418,58 @@
 					<div class="viz"><Visualizer {player} /></div>
 				</div>
 
-				{#if player.failed}
+				{#if player.failed || (slow && player.loading)}
 					<button type="button" class="ghost" onclick={nextRound}>Another song</button>
 				{/if}
 
-				{#if !answer && token}
-					<div class="guess-row">
-						<div class="guess">
-							<input
-								bind:this={guessEl}
-								bind:value={typed}
-								oninput={() => (highlighted = 0)}
-								onkeydown={onGuessKey}
-								type="text"
-								placeholder={roundType === 'ED' ? 'Which anime is this ending from?' : 'Which anime is this opening from?'}
-								aria-label="Your guess"
-								autocomplete="off"
-								spellcheck="false"
-							/>
-							{#if suggestions.length}
-								<ul class="suggestions" role="listbox">
-									{#each suggestions as name, i (name.id)}
-										<li role="option" aria-selected={i === highlighted}>
-											<button type="button" class:highlighted={i === highlighted} onmouseenter={() => (highlighted = i)} onclick={() => send(name.id, name.name)}>
-												<span>{name.name}</span>
-												{#if name.other}<span class="by">{name.other}</span>{/if}
-											</button>
-										</li>
-									{/each}
-								</ul>
-							{/if}
-						</div>
-						<button type="button" class="ghost" onclick={() => send(null, '')}>Give up</button>
+				{#if easyMode && choices.length && token}
+					<div class="choices">
+						{#each choices as choice (choice.id)}
+							<button
+								type="button"
+								class="choice-btn"
+								class:wrong={choicePicked === choice.id && wrong.includes(choice.name)}
+								class:right={answer != null && choice.id === answer.id}
+								disabled={answer != null || wrong.includes(choice.name)}
+								onclick={() => pickChoice(choice)}
+							>
+								<span>{choice.name}</span>
+								{#if choice.other}<span class="choice-alt">{choice.other}</span>{/if}
+							</button>
+						{/each}
 					</div>
+				{/if}
+				{#if !answer && token}
+					{#if !easyMode}
+						<div class="guess-row">
+							<div class="guess">
+								<input
+									bind:this={guessEl}
+									bind:value={typed}
+									oninput={() => (highlighted = 0)}
+									onkeydown={onGuessKey}
+									type="text"
+									placeholder={roundType === 'ED' ? 'Which anime is this ending from?' : 'Which anime is this opening from?'}
+									aria-label="Your guess"
+									autocomplete="off"
+									spellcheck="false"
+								/>
+								{#if suggestions.length}
+									<ul class="suggestions" role="listbox">
+										{#each suggestions as name, i (name.id)}
+											<li role="option" aria-selected={i === highlighted}>
+												<button type="button" class:highlighted={i === highlighted} onmouseenter={() => (highlighted = i)} onclick={() => send(name.id, name.name)}>
+													<span>{name.name}</span>
+													{#if name.other}<span class="by">{name.other}</span>{/if}
+												</button>
+											</li>
+										{/each}
+									</ul>
+								{/if}
+							</div>
+							<button type="button" class="ghost" onclick={() => send(null, '')}>Give up</button>
+						</div>
+					{/if}
 					<div class="lives" aria-label="{GUESSES - wrong.length} guesses left">
 						{#each Array(GUESSES) as _, i (i)}
 							<span class="life" class:lost={i < wrong.length}></span>
@@ -901,6 +976,59 @@
 		background: color-mix(in srgb, var(--surface) 70%, transparent);
 		border: 1px solid color-mix(in srgb, var(--ink) 15%, transparent);
 	}
+	.choices {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 10px;
+	}
+	.choice-btn {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 2px;
+		padding: 14px 16px;
+		border-radius: 14px;
+		border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent);
+		background: color-mix(in srgb, var(--surface) 80%, transparent);
+		backdrop-filter: blur(8px);
+		color: var(--ink);
+		font-weight: 600;
+		font-size: 0.95rem;
+		text-align: left;
+		cursor: pointer;
+		transition: transform 0.12s ease, border-color 0.2s ease, background 0.2s ease;
+	}
+	.choice-btn:hover:not(:disabled) {
+		transform: translateY(-1px);
+		border-color: color-mix(in srgb, var(--cs-hot) 60%, transparent);
+	}
+	.choice-btn:active:not(:disabled) {
+		transform: scale(0.97);
+	}
+	.choice-btn:disabled {
+		cursor: default;
+	}
+	.choice-btn.wrong {
+		border-color: color-mix(in srgb, #e5484d 60%, transparent);
+		background: color-mix(in srgb, #e5484d 15%, var(--sunk));
+		color: var(--ink-faint);
+		text-decoration: line-through;
+		animation: shake-choice 0.35s ease;
+	}
+	.choice-btn.right {
+		border-color: #3ddc84;
+		background: color-mix(in srgb, #3ddc84 20%, var(--sunk));
+	}
+	.choice-alt {
+		font-size: 0.78rem;
+		font-weight: 400;
+		color: var(--ink-faint);
+	}
+	@keyframes shake-choice {
+		0%, 100% { transform: none; }
+		25% { transform: translateX(-4px); }
+		75% { transform: translateX(4px); }
+	}
 	.credit {
 		margin: 0;
 		font-size: 0.75rem;
@@ -919,6 +1047,9 @@
 		.guess-row {
 			flex-direction: column;
 			align-items: stretch;
+		}
+		.choices {
+			grid-template-columns: 1fr;
 		}
 	}
 </style>

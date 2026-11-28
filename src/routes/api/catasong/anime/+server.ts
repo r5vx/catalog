@@ -1,5 +1,5 @@
 import { error, json } from '@sveltejs/kit';
-import { guess, guessNames, isKinds, isLevel, newRound, noteStreak, postersFor, warm } from '$lib/server/catasong/anime';
+import { choicesFor, guess, guessNames, isKinds, isLevel, newRound, noteStreak, postersFor, warm } from '$lib/server/catasong/anime';
 
 const fresh = { headers: { 'Cache-Control': 'no-store' } };
 
@@ -23,6 +23,13 @@ export function GET({ url }) {
 		const kinds = url.searchParams.get('kinds') ?? 'both';
 		if (!isLevel(level) || !isKinds(kinds)) error(400, 'Unknown level.');
 		return json(newRound(level, kinds), fresh);
+	}
+	if (what === 'choices') {
+		const token = url.searchParams.get('token');
+		if (!token) error(400, 'Missing token.');
+		const choices = choicesFor(token);
+		if (!choices) error(404, 'Round not found.');
+		return json(choices, fresh);
 	}
 	error(400, 'Unknown ask.');
 }

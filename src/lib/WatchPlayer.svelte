@@ -886,13 +886,16 @@
 	const playingCopy = (f: FileOption) => !!streamUrl && !oldPicture && !loadingEpisode && !problem && activeFileFid === f.fid;
 	const needsLookup = (f: FileOption) => !playingCopy(f) && (knownEmpty(f) || ((f.source === '7Movies' || f.source === 'Movy') && recentLink(f) !== true));
 
+	const drmConfigs = new Map<string, { licenseUrl: string }>();
+
 	/** A link for this copy (empty `url` when its source has nothing), noting the empty ones. */
 	async function askCopy(copy: FileOption): Promise<{ url: string; debug?: string }> {
 		if (needsHandoff(copy)) return { url: '', debug: 'This YouTube source does not play in Catalog on this device.' };
 		try {
 			const resp = await fetch(`/api/watch/stream?share_key=${encodeURIComponent(shareOf(copy))}&fid=${copy.fid}${aheadParam()}`);
-			const answer: { url: string; debug?: string } = resp.ok ? await resp.json() : { url: '' };
+			const answer: { url: string; debug?: string; drm?: { licenseUrl: string } } = resp.ok ? await resp.json() : { url: '' };
 			if (resp.ok) linkAnswers.set(copyId(copy), { at: Date.now(), found: Boolean(answer.url) });
+			if (answer.drm) drmConfigs.set(shareOf(copy), answer.drm);
 			return answer;
 		} catch {
 			return { url: '' };
@@ -1452,6 +1455,23 @@
 
 	const listedFiles = $derived(currentFiles.filter(f => !needsLookup(f)));
 	const lookups = $derived(currentFiles.filter(needsLookup));
+
+	const autoProbing = new Set<string>();
+	$effect(() => {
+		const toProbe = lookups;
+		untrack(() => {
+			const bySource = new Map<string, FileOption>();
+			for (const f of toProbe) {
+				const key = `${sourceLabel(f)}|${f.audio ?? ''}`;
+				if (!bySource.has(key) && !autoProbing.has(key)) bySource.set(key, f);
+			}
+			for (const [key, f] of bySource) {
+				autoProbing.add(key);
+				askCopy(f).finally(() => autoProbing.delete(key));
+			}
+		});
+	});
+
 	const activeFile = $derived(
 		(activeFileFid ? currentFiles.find((f) => f.fid === activeFileFid) : null) ??
 		currentFiles.find((f) => f.quality === activeQuality) ?? null
@@ -6896,10 +6916,21 @@
 						: untrack(() => savedPlace());
 			// (Its pieces come a couple ahead: src/lib/fetchAhead.ts says why.)
 			let player: Hls | null = null;
+			const drm = activeFile ? drmConfigs.get(shareOf(activeFile)) : undefined;
 			const hls = new Hls({
 				// (Live: its pieces are fetched as they appear, not ahead.)
 				...(liveMode ? {} : { fLoader: fetchAheadLoader(() => player, markBytes) }),
 				autoStartLoad: false,
+				// Widevine DRM (Tubi): CastLabs Electron's CDM decrypts via hls.js's EME.
+				...(drm ? {
+					emeEnabled: true,
+					drmSystems: { 'com.widevine.alpha': { licenseUrl: drm.licenseUrl } },
+					licenseXhrSetup: (xhr: XMLHttpRequest, url: string) => {
+						xhr.open('POST', url, true);
+						xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+						xhr.setRequestHeader('customData', '');
+					},
+				} : {}),
 				// Catalog draws its own subtitles: none of the browser's, from captions some videos
 				// carry inside them or a subtitle track their playlist lists. Live: the captions a
 				// channel carries are read, and drawn by Catalog like any subtitles (addLiveCues).
@@ -7089,9 +7120,10 @@
 				if (data.type === Hls.ErrorTypes.NETWORK_ERROR && refused && failedPiece && !prevStreamUrl && !liveMode && switchFromMissingPiece(failedPiece)) return;
 				if (prevStreamUrl) {
 					if (qualityTimer) { clearTimeout(qualityTimer); qualityTimer = null; }
-					showQualityToast('That file could not be played. Try a different one.');
+					const httpCode = (data as any).response?.code;
+					showQualityToast(`That file could not be played. Try a different one. (${data.details}${httpCode ? ` ${httpCode}` : ''})`);
 					const t = videoEl?.currentTime ?? 0;
-					notePlayerEvent(`copy failed (${data.details}): returning to previous copy at ${fmt(t)}`);
+					notePlayerEvent(`copy failed (${data.details}${httpCode ? ` http=${httpCode}` : ''}): returning to previous copy at ${fmt(t)}`);
 					seekAfterLoad = t;
 					streamUrl = prevStreamUrl;
 					activeFileFid = prevFileFid;
@@ -8281,12 +8313,7 @@
 					{/if}
 				{/each}
 				{#if lookups.length}
-					<p class="popup-label">Sources to check · no stream confirmed</p>
-					{#each lookups as f (f.fid)}
-						<button class="popup-item" onclick={() => { changeToFile(f); showFilePicker = false; }}>
-							{knownEmpty(f) ? 'Recheck' : 'Check'} {sourceLabel(f)}{f.hevc ? ' (HEVC)' : ''}
-						</button>
-					{/each}
+					<p class="popup-label checking-label"><span class="spin-inline" aria-hidden="true"></span>Checking {lookups.length === 1 ? '1 source' : `${lookups.length} sources`}</p>
 				{/if}
 			</div>
 		{/if}
@@ -9731,6 +9758,8 @@
 	   subtitles changed underneath (they vanished until the mouse went over them). Own layer too. */
 	.popup { transform: translateZ(0); position: absolute; bottom: 60px; right: 16px; background: rgba(18, 18, 18, 0.96); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; padding: 8px 0; min-width: 190px; max-width: min(420px, 50vw); max-height: 400px; overflow-y: auto; z-index: 20; }
 	.popup-label { display: flex; align-items: center; font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: rgba(255, 255, 255, 0.4); margin: 0; padding: 8px 16px 4px; }
+	.checking-label { gap: 7px; }
+	.spin-inline { display: inline-block; width: 10px; height: 10px; border: 1.5px solid rgba(255,255,255,0.4); border-right-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; flex: none; }
 	.popup-item { display: flex; align-items: center; gap: 8px; padding: 7px 16px; font-size: 0.84rem; color: rgba(255, 255, 255, 0.8); cursor: pointer; border: none; background: none; width: 100%; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.popup-item:hover { background: rgba(255, 255, 255, 0.08); }
 	.popup-item.active { color: var(--accent, #e994c2); }

@@ -194,6 +194,22 @@ export function kaaCopies(
 	return list;
 }
 
+function findM3u8(html: string): string | null {
+	const plain = html.match(/https?:\/\/[^"'<>\s&]+\.m3u8(?:\?[^"'<>\s&]*)?/i);
+	if (plain) return plain[0];
+	const b64 = html.match(/atob\(["']([A-Za-z0-9+/=]+)["']\)/);
+	if (b64) {
+		try {
+			const decoded = Buffer.from(b64[1], 'base64').toString();
+			const inner = decoded.match(/https?:\/\/[^\s"'<>&]+\.m3u8(?:\?[^\s"'<>&]*)?/i);
+			if (inner) return inner[0];
+		} catch {}
+	}
+	const jsonSrc = html.match(/"(?:src|file|source|url|video_url)":\s*"(https?:[^"]+\.m3u8[^"]*)"/i);
+	if (jsonSrc) return jsonSrc[1].replace(/\\\//g, '/');
+	return null;
+}
+
 export async function kaaStream(shareKey: string, fresh = false): Promise<{ url: string; why: string }> {
 	const parsed = parseKaaShareKey(shareKey);
 	if (!parsed) return { url: '', why: '' };
@@ -207,6 +223,7 @@ export async function kaaStream(shareKey: string, fresh = false): Promise<{ url:
 		`/api/show/${encodeURIComponent(parsed.slug)}/episode/ep-${parsed.epNum}-${encodeURIComponent(parsed.epSlug)}`
 	);
 	const servers = ep?.servers ?? [];
+	if (!servers.length) console.warn(`[kaa] no servers for ep ${parsed.epNum} of ${parsed.slug}`);
 	for (const srv of servers) {
 		if (!srv.src) continue;
 		try {
@@ -214,16 +231,16 @@ export async function kaaStream(shareKey: string, fresh = false): Promise<{ url:
 				headers: { 'User-Agent': UA, Referer: `${SITE}/` },
 				signal: AbortSignal.timeout(10_000)
 			});
-			if (!resp.ok) continue;
+			if (!resp.ok) { console.warn(`[kaa] server ${srv.name ?? '?'} returned ${resp.status}`); continue; }
 			const html = await resp.text();
-			const match = html.match(/https?:\/\/[^"'<>\s&]+\.m3u8(?:\?[^"'<>\s&]*)?/i);
-			if (match) {
-				const m3u8 = match[0];
+			const m3u8 = findM3u8(html);
+			if (m3u8) {
 				trustVideoHost(m3u8, 'kaa');
 				streamCache.set(shareKey, { until: Date.now() + 30 * MINUTE, url: m3u8 });
 				return { url: m3u8, why: '' };
 			}
-		} catch {}
+			console.warn(`[kaa] no m3u8 found in ${srv.name ?? '?'} (${html.length} chars)`);
+		} catch (e) { console.warn(`[kaa] server ${srv.name ?? '?'} error:`, e); }
 	}
 	return { url: '', why: "KickAssAnime couldn't load this episode right now" };
 }

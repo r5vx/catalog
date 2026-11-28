@@ -12,7 +12,7 @@ async function probe({ id, name, url }: { id: string; name: string; url: string 
 		code = res.status;
 		await res.body?.cancel();
 	} catch { /* No HTTP response. */ }
-	const status = !code ? 'Unreachable' : code < 300 ? 'Responding' : code < 400 ? 'Redirected' : [401, 403, 429].includes(code) ? 'Access limited' : code >= 500 ? 'Server error' : 'Endpoint error';
+	const status = !code ? 'Unreachable' : code < 400 ? 'Responding' : [401, 403, 429].includes(code) ? 'Access limited' : code >= 500 ? 'Server error' : 'Endpoint error';
 	return { id, name, status, code, ms: Date.now() - start };
 }
 

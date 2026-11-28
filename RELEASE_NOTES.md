@@ -10,7 +10,39 @@ Name the update on the heading line: `## Unreleased — Skip Intro and faster lo
 and stamps it with the version number, date and that name. It refuses to run
 without both.
 
-## Unreleased
+## Unreleased — Subtitles that stay in time
+
+### New
+
+- Tubi as a source: free films and TV shows from Tubi appear alongside other copies (desktop app only)
+
+**Catasong**
+- Guess the Anime has an Easy mode with four multiple-choice answers to pick from
+
+**Settings**
+- Settings → Playback lists every source Catalog uses, grouped by type
+
+### Improved
+
+**Player**
+- AllAnime's Cloudflare check is solved automatically instead of needing a manual click (Settings → Playback to turn off)
+- Sources are checked automatically when you open the source picker instead of needing a button press
+- Source chips on title pages stay steady while checking instead of flickering between states
+- The Watch and Download buttons stay put once a source is found
+
+**Online**
+- Edit profile can change or remove your profile picture
+
+### Fixed
+
+**Online**
+- A new profile picture shows in the sidebar and top bar straight away
+
+**Player**
+- Subtitles that slowly drift out of time through an episode now stay in time all the way through
+- Shouted lines written in capitals stay at the bottom with the other subtitles instead of jumping to the top
+- KickAssAnime streams load more reliably when the player page format changes
+- Source health check reports are more accurate
 
 ## 4.8.1 — 2026-11-26 — Skipping fixed after the next episode, and friend codes on profiles
 
