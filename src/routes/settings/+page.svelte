@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SourceCards from './SourceCards.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -90,6 +91,8 @@
 		</button>
 	</div>
 </section>
+
+<SourceCards />
 
 <style>
 	.overview {

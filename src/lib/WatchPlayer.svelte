@@ -3243,9 +3243,11 @@
 	 * owner as a problem report, with which copy it was and what the source said (debugInfo), so a
 	 * TV or phone that "isn't working" says why without anyone taking a photo of the screen.
 	 */
+	/** A message that isn't a fault (an episode not out yet): shown, never sent as a problem report. */
+	let notAFault = '';
 	$effect(() => {
 		const said = problem;
-		if (!said) return;
+		if (!said || said === notAFault) return;
 		untrack(() =>
 			sendProblemReport(videoTitle || startParams.get('title') || 'A video', {
 				error: said,
@@ -7699,7 +7701,11 @@
 			if (data.episodes) {
 				// Fall back between episodes only when no specific episode was requested.
 				if (!playable(activeEpisode) && resumeSeason && resumeEpisode) {
-					problem = `No playable source listed for S${resumeSeason}E${resumeEpisode}.`;
+					// Not out yet (SVU S28E7 picked on mom's TV a week before it aired): says when, and isn't reported.
+					const asked = episodes.find((e) => e.season === resumeSeason && e.episode === resumeEpisode);
+					const airs = asked ? notAvailableText(asked) : '';
+					if (airs.startsWith('Airs')) problem = notAFault = `S${resumeSeason}E${resumeEpisode} isn't out yet · ${airs}`;
+					else problem = `No playable source listed for S${resumeSeason}E${resumeEpisode}.`;
 					return;
 				}
 				if (!playable(activeEpisode)) {

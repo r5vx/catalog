@@ -16,11 +16,8 @@ without both.
 
 - Tubi as a source: free films and TV shows from Tubi appear alongside other copies (desktop app only)
 
-**Catasong**
-- Guess the Anime has an Easy mode with four multiple-choice answers to pick from
-
 **Settings**
-- Settings → Playback lists every source Catalog uses, grouped by type
+- The first Settings page shows every site Catalog plays from, as cards in each site's own colors, with whether it's online right now
 
 ### Improved
 
@@ -38,7 +35,12 @@ without both.
 **Online**
 - A new profile picture shows in the sidebar and top bar straight away
 
+**Settings**
+- Settings → Library opens even when the kept lookups in the library file are damaged
+- Settings → Services says "More Febbox accounts" instead of just "More accounts"
+
 **Player**
+- Picking an episode that isn't out yet says when it airs instead of "No playable source listed"
 - Subtitles that slowly drift out of time through an episode now stay in time all the way through
 - Shouted lines written in capitals stay at the bottom with the other subtitles instead of jumping to the top
 - KickAssAnime streams load more reliably when the player page format changes

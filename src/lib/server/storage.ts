@@ -80,9 +80,19 @@ export type StorageReport = {
 	limitMb: number;
 };
 
+/** A table's kept size; 0 when it can't be read, so a damaged cache never stops Settings → Library opening. */
+function keptBytes(sql: string): number {
+	try {
+		return (db.prepare(sql).get() as { n: number }).n;
+	} catch (e) {
+		console.error('[storage]', e);
+		return 0;
+	}
+}
+
 export function storageReport(): StorageReport {
-	const subtitles = (db.prepare('SELECT COALESCE(sum(length(content)), 0) AS n FROM saved_subtitles').get() as { n: number }).n;
-	const lookups = (db.prepare('SELECT COALESCE(sum(length(value)), 0) AS n FROM watch_order_cache').get() as { n: number }).n;
+	const subtitles = keptBytes('SELECT COALESCE(sum(length(content)), 0) AS n FROM saved_subtitles');
+	const lookups = keptBytes('SELECT COALESCE(sum(length(value)), 0) AS n FROM watch_order_cache');
 	const libraryFile = fileSize(dbPath) + fileSize(`${dbPath}-wal`);
 	return {
 		// The library file holds the kept subtitles and lookups too; they're shown on their own.

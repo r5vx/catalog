@@ -248,9 +248,9 @@
 				</form>
 			</details>
 			<div class="more">
-				<h3>More accounts</h3>
+				<h3>More Febbox accounts</h3>
 				<p class="muted">
-					Each account has its own daily HD allowance. Catalog uses whichever has the most left.
+					Each Febbox account has its own daily HD allowance. Catalog uses whichever has the most left.
 				</p>
 				{#if moreResult}
 					<p class="msg" class:good={moreResult.ok} class:bad={!moreResult.ok} role="status">{moreResult.text}</p>
@@ -272,11 +272,11 @@
 				{/each}
 				{#if inDesktopApp}
 					<button type="button" class="btn" onclick={addAccount} disabled={addingMore}>
-						{addingMore ? 'Logging in…' : 'Add another account'}
+						{addingMore ? 'Logging in…' : 'Add another Febbox account'}
 					</button>
 				{/if}
 				<details>
-					<summary>{inDesktopApp ? 'Paste its key instead' : "Paste another account's key"}</summary>
+					<summary>{inDesktopApp ? 'Paste its key instead' : "Paste another Febbox account's key"}</summary>
 					<form method="POST" action="?/saveFebboxMore" class="inline-form">
 						<input type="password" name="febboxKey" placeholder="Paste a key" autocomplete="off" />
 						<button type="submit" class="btn btn-primary">Add</button>
